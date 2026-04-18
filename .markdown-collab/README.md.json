@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "file": "README.md",
+  "comments": [
+    {
+      "id": "c_1f12864a",
+      "anchor": {
+        "text": "An AI agent",
+        "contextBefore": ") can read and act on.\n\n## Workflow\n\n1. ",
+        "contextAfter": " (or you) writes a Markdown document.\n2."
+      },
+      "body": "it can be other tools too. not just claude",
+      "author": "user",
+      "createdAt": "2026-04-18T07:37:43.584Z",
+      "resolved": true,
+      "replies": [
+        {
+          "author": "ai",
+          "body": "Generalized step 1 of the Workflow from \"Claude Code (or you)\" to \"An AI agent (or you)\" and updated anchor.text to match. The summary line above already says \"Claude Code (and other agentic AIs)\", so the agent-agnostic framing is now consistent throughout the Workflow. Left step 4 (\"run `claude`\") and the skill-install section as-is because those are Claude-Code-specific by design — other agents rely on the AGENTS.md fallback, which the README covers in its own section.",
+          "createdAt": "2026-04-18T15:30:00Z"
+        },
+        {
+          "author": "user",
+          "body": "",
+          "createdAt": "2026-04-18T07:39:16.560Z"
+        }
+      ]
+    }
+  ]
+}

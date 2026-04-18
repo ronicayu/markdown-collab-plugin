@@ -1,0 +1,97 @@
+{
+  "name": "markdown-collab-plugin",
+  "displayName": "Markdown Collab",
+  "description": "Review comments on Markdown files that Claude Code can read and act on.",
+  "version": "0.2.0",
+  "publisher": "markdown-collab",
+  "engines": {
+    "vscode": "^1.80.0",
+    "node": ">=20"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onLanguage:markdown",
+    "onCommand:markdownCollab.installClaudeSkill",
+    "onCommand:markdownCollab.initializeAgents",
+    "onCommand:markdownCollab.validate",
+    "onCommand:markdownCollab.copyClaudePrompt",
+    "onCommand:markdownCollab.reloadComments",
+    "onView:markdownCollab.review"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "markdownCollab.installClaudeSkill", "title": "Markdown Collab: Install Claude Skill" },
+      { "command": "markdownCollab.initializeAgents", "title": "Markdown Collab: Initialize AGENTS.md" },
+      { "command": "markdownCollab.copyClaudePrompt", "title": "Markdown Collab: Copy Claude Prompt" },
+      { "command": "markdownCollab.reloadComments", "title": "Markdown Collab: Reload Comments" },
+      { "command": "markdownCollab.validate", "title": "Markdown Collab: Validate Sidecars" },
+      { "command": "markdownCollab.reattachOrphan", "title": "Re-attach Orphaned Comment" },
+      { "command": "markdownCollab.revealComment", "title": "Reveal Markdown Comment" },
+      { "command": "markdownCollab.createThread", "title": "Add Comment" },
+      { "command": "markdownCollab.addReply", "title": "Reply" },
+      { "command": "markdownCollab.toggleResolve", "title": "Toggle Resolved" }
+    ],
+    "menus": {
+      "commandPalette": [
+        { "command": "markdownCollab.createThread", "when": "false" },
+        { "command": "markdownCollab.addReply", "when": "false" },
+        { "command": "markdownCollab.toggleResolve", "when": "false" },
+        { "command": "markdownCollab.reattachOrphan", "when": "false" },
+        { "command": "markdownCollab.revealComment", "when": "false" }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "markdownCollab.createThread",
+          "group": "inline",
+          "when": "commentController == markdown-collab && commentThreadIsEmpty"
+        },
+        {
+          "command": "markdownCollab.addReply",
+          "group": "inline",
+          "when": "commentController == markdown-collab && !commentThreadIsEmpty && commentThread != markdown-collab-readonly"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "markdownCollab.toggleResolve",
+          "group": "inline@1",
+          "when": "commentController == markdown-collab && !commentThreadIsEmpty && commentThread != markdown-collab-readonly"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "markdownCollab.reattachOrphan",
+          "when": "view == markdownCollab.orphanedComments && viewItem == markdownCollab.orphanComment",
+          "group": "inline"
+        }
+      ]
+    },
+    "views": {
+      "explorer": [
+        {
+          "id": "markdownCollab.orphanedComments",
+          "name": "Orphaned Markdown Comments",
+          "when": "markdownCollab.hasOrphans"
+        },
+        {
+          "id": "markdownCollab.review",
+          "name": "Markdown Review",
+          "when": "markdownCollab.hasReview"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.80.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}
