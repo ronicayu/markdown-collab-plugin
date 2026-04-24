@@ -162,6 +162,9 @@ pre { background: var(--vscode-textCodeBlock-background, #1e1e1e); padding: 0.75
 .mdc-orphans { margin-top: 2rem; padding: 0.5rem 0.75rem; border: 1px dashed var(--vscode-descriptionForeground); border-radius: 4px; }
 .mdc-orphans h4 { margin: 0 0 0.5rem; color: var(--vscode-descriptionForeground); font-size: 0.85em; }
 .mdc-status { font-size: 0.85em; color: var(--vscode-descriptionForeground); }
+.mdc-floating { position: absolute; display: none; padding: 0.25rem 0.6rem; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em; box-shadow: 0 2px 6px rgba(0,0,0,0.4); z-index: 30; white-space: nowrap; }
+.mdc-floating:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
+.mdc-floating::before { content: "💬 "; }
 </style>
 </head><body>
 <div class="mdc-toolbar">
@@ -169,6 +172,7 @@ pre { background: var(--vscode-textCodeBlock-background, #1e1e1e); padding: 0.75
   <span class="mdc-status" id="mdcStatus">${payload.readOnly ? "Read-only: sidecar has a newer schema version." : ""}</span>
 </div>
 <div id="mdcContent">${body}</div>
+<button class="mdc-floating" id="mdcFloating">Comment</button>
 ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (${payload.orphans.length})</h4>${payload.orphans.map((o) => `<div class="mdc-msg"><span class="author">${escapeHtml(o.author)}</span>: ${escapeHtml(o.body)}</div>`).join("")}</div>` : ""}
 <aside class="mdc-panel" id="mdcPanel">
   <header><h3 id="mdcPanelTitle"></h3><button id="mdcPanelClose">✕</button></header>
@@ -223,23 +227,59 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
     if(el && el.dataset.commentId) openFor(el.dataset.commentId);
   });
 
-  document.getElementById("mdcNew").onclick = () => {
+  function triggerCreate(selected){
     if(readOnly) return;
+    if(!selected || selected.trim().length < 3){
+      statusEl.textContent = "Selection too short.";
+      return;
+    }
+    statusEl.textContent = "Waiting for comment body...";
+    vscode.postMessage({type: "createStart", selectedText: selected});
+  }
+
+  document.getElementById("mdcNew").onclick = () => {
     const sel = window.getSelection();
     if(!sel || sel.isCollapsed){
       statusEl.textContent = "Select some rendered text first.";
       return;
     }
-    const selected = sel.toString();
-    if(selected.trim().length < 3){
-      statusEl.textContent = "Selection too short.";
-      return;
-    }
-    const body = prompt("Comment body:");
-    if(!body) return;
-    statusEl.textContent = "Creating comment...";
-    vscode.postMessage({type: "create", selectedText: selected, body: body});
+    triggerCreate(sel.toString());
   };
+
+  const floating = document.getElementById("mdcFloating");
+  let floatingSelection = "";
+  function hideFloating(){ floating.style.display = "none"; floatingSelection = ""; }
+  function showFloatingFor(sel){
+    if(readOnly) return;
+    if(!sel || sel.rangeCount === 0) return hideFloating();
+    const text = sel.toString();
+    if(text.trim().length < 3) return hideFloating();
+    const r = sel.getRangeAt(0).getBoundingClientRect();
+    if(r.width === 0 && r.height === 0) return hideFloating();
+    floating.style.top = (window.scrollY + r.top - 36) + "px";
+    floating.style.left = (window.scrollX + r.left + (r.width/2) - 40) + "px";
+    floating.style.display = "block";
+    floatingSelection = text;
+  }
+  document.addEventListener("selectionchange", () => {
+    const sel = document.getSelection();
+    if(!sel || sel.isCollapsed) return hideFloating();
+    // Don't show over panel content.
+    const node = sel.anchorNode;
+    if(node && node.nodeType === 1 && node.closest && node.closest(".mdc-panel")) return hideFloating();
+    if(node && node.parentElement && node.parentElement.closest(".mdc-panel")) return hideFloating();
+    showFloatingFor(sel);
+  });
+  floating.addEventListener("mousedown", (e) => { e.preventDefault(); });
+  floating.addEventListener("click", () => {
+    const sel = floatingSelection;
+    hideFloating();
+    triggerCreate(sel);
+  });
+  window.addEventListener("scroll", () => {
+    const sel = document.getSelection();
+    if(sel && !sel.isCollapsed) showFloatingFor(sel); else hideFloating();
+  });
 
   window.addEventListener("message", (ev) => {
     const m = ev.data;
@@ -298,7 +338,7 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
     try {
       if (m.type === "reply") await this.onReply(msg as ReplyMsg);
       else if (m.type === "toggleResolve") await this.onToggleResolve(msg as ResolveMsg);
-      else if (m.type === "create") await this.onCreate(msg as CreateMsg);
+      else if (m.type === "createStart") await this.onCreateStart(msg as CreateStartMsg);
     } catch (e) {
       this.output.appendLine(`Preview action failed: ${(e as Error).message}`);
       this.panel.webview.postMessage({
@@ -332,21 +372,29 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
     await this.render();
   }
 
-  private async onCreate(msg: CreateMsg): Promise<void> {
+  private async onCreateStart(msg: CreateStartMsg): Promise<void> {
     const p = this.sidecarPath();
     const folder = vscode.workspace.getWorkspaceFolder(this.doc.uri);
     if (!p || !folder) return;
     const text = this.doc.getText();
-    // Locate the selected rendered text back in the raw source. Exact match
-    // preferred; fall back to whitespace-normalized search using the same
-    // strategy the anchor resolver uses in reverse. Reject if ambiguous —
-    // the user can switch to the source editor for finer control.
+    // Locate the selected rendered text back in the raw source before
+    // prompting. If the selection can't be mapped, fail fast — no point
+    // asking for a body we can't attach.
     const located = locateSelectionInSource(text, msg.selectedText);
     if (!located) {
       this.panel.webview.postMessage({
         type: "status",
         text: "Could not locate selection in source (ambiguous or not found).",
       });
+      return;
+    }
+    const body = await vscode.window.showInputBox({
+      prompt: "Comment body",
+      placeHolder: `Commenting on: ${truncate(msg.selectedText, 80)}`,
+      ignoreFocusOut: true,
+    });
+    if (!body || !body.trim()) {
+      this.panel.webview.postMessage({ type: "status", text: "" });
       return;
     }
     const anchor: Anchor = {
@@ -357,7 +405,7 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
     const mdRel = path.relative(folder.uri.fsPath, this.doc.uri.fsPath);
     await addComment(p, mdRel, {
       anchor,
-      body: msg.body,
+      body,
       author: "user",
       createdAt: new Date().toISOString(),
     });
@@ -479,8 +527,7 @@ interface ResolveMsg {
   resolved: boolean;
 }
 
-interface CreateMsg {
-  type: "create";
+interface CreateStartMsg {
+  type: "createStart";
   selectedText: string;
-  body: string;
 }
