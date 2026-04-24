@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "publisher": "markdown-collab",
   "engines": {
     "vscode": "^1.80.0",
@@ -163,6 +163,7 @@
     "vitest": "^1.6.0"
   },
   "dependencies": {
-    "markdown-it": "^14.1.1"
+    "markdown-it": "^14.1.1",
+    "mermaid": "^11.14.0"
   }
 }

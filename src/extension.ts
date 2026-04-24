@@ -76,7 +76,7 @@ export function activate(context: vscode.ExtensionContext): void {
         );
         return;
       }
-      PreviewPanel.show(editor.document, output);
+      PreviewPanel.show(editor.document, output, context.extensionUri);
     }),
     vscode.commands.registerCommand("markdownCollab.validate", async () => {
       await runValidate(output);

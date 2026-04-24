@@ -13,6 +13,8 @@ node_modules/**
 !node_modules/mdurl/**
 !node_modules/punycode.js/**
 !node_modules/uc.micro/**
+!node_modules/mermaid/package.json
+!node_modules/mermaid/dist/mermaid.min.js
 tsconfig.json
 vitest.config.ts
 .gitignore

@@ -24,7 +24,11 @@ import type { Anchor, Comment } from "./types";
 export class PreviewPanel {
   private static readonly panels = new Map<string, PreviewPanel>();
 
-  public static show(doc: vscode.TextDocument, output: vscode.OutputChannel): void {
+  public static show(
+    doc: vscode.TextDocument,
+    output: vscode.OutputChannel,
+    extensionUri: vscode.Uri,
+  ): void {
     const key = doc.uri.fsPath;
     const existing = PreviewPanel.panels.get(key);
     if (existing) {
@@ -35,9 +39,17 @@ export class PreviewPanel {
       "markdownCollabPreview",
       `Preview: ${path.basename(doc.uri.fsPath)}`,
       vscode.ViewColumn.Beside,
-      { enableScripts: true, retainContextWhenHidden: true },
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        // Grant the webview read access to the extension's node_modules so
+        // mermaid.min.js can be served as a local resource under CSP.
+        localResourceRoots: [
+          vscode.Uri.joinPath(extensionUri, "node_modules"),
+        ],
+      },
     );
-    const instance = new PreviewPanel(panel, doc, output);
+    const instance = new PreviewPanel(panel, doc, output, extensionUri);
     PreviewPanel.panels.set(key, instance);
     panel.onDidDispose(() => {
       PreviewPanel.panels.delete(key);
@@ -59,8 +71,22 @@ export class PreviewPanel {
     private readonly panel: vscode.WebviewPanel,
     private readonly doc: vscode.TextDocument,
     private readonly output: vscode.OutputChannel,
+    private readonly extensionUri: vscode.Uri,
   ) {
     this.md = new MarkdownIt({ html: false, linkify: true, breaks: false });
+    // Custom fence renderer: hand off ```mermaid blocks to the client-side
+    // mermaid library as-is. All other fenced blocks fall back to the default.
+    const defaultFence =
+      this.md.renderer.rules.fence ??
+      ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
+    this.md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+      const token = tokens[idx];
+      const info = (token.info || "").trim().toLowerCase();
+      if (info === "mermaid") {
+        return `<pre class="mermaid">${escapeHtml(token.content)}</pre>`;
+      }
+      return defaultFence(tokens, idx, options, env, self);
+    };
 
     this.disposables.push(
       panel.webview.onDidReceiveMessage((msg) => this.handleMessage(msg)),
@@ -136,7 +162,21 @@ export class PreviewPanel {
     const nonce = cryptoNonce();
     const body = this.renderBodyWithHighlights(payload);
     const commentsJson = JSON.stringify(payload.comments).replace(/</g, "\\u003c");
-    const csp = `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';`;
+    const mermaidUri = this.panel.webview.asWebviewUri(
+      vscode.Uri.joinPath(
+        this.extensionUri,
+        "node_modules",
+        "mermaid",
+        "dist",
+        "mermaid.min.js",
+      ),
+    );
+    const cspSource = this.panel.webview.cspSource;
+    // mermaid renders SVG inline; it does not fetch external assets at
+    // runtime so img-src and font-src remain locked to the webview origin.
+    // 'unsafe-eval' is required because mermaid's dompurify build uses
+    // Function() under the hood for configuration parsing.
+    const csp = `default-src 'none'; style-src 'unsafe-inline'; img-src ${cspSource} data:; font-src ${cspSource} data:; script-src 'nonce-${nonce}' 'unsafe-eval' ${cspSource};`;
     return `<!DOCTYPE html><html><head>
 <meta charset="utf-8" />
 <meta http-equiv="Content-Security-Policy" content="${csp}" />
@@ -174,6 +214,9 @@ pre { background: var(--vscode-textCodeBlock-background, #1e1e1e); padding: 0.75
 .mdc-inline-compose .mdc-inline-submit { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
 .mdc-inline-compose .mdc-inline-cancel { background: transparent; color: var(--vscode-foreground); border: 1px solid var(--vscode-panel-border); }
 .mdc-danger { background: var(--vscode-errorForeground, #d73a49) !important; color: #fff; }
+pre.mermaid { background: transparent; padding: 0.5rem 0; text-align: center; }
+pre.mermaid svg { max-width: 100%; height: auto; }
+.mermaid-error { color: var(--vscode-errorForeground); font-family: var(--vscode-editor-font-family, monospace); white-space: pre-wrap; padding: 0.5rem; border: 1px dashed var(--vscode-errorForeground); border-radius: 4px; }
 </style>
 </head><body>
 <div class="mdc-toolbar">
@@ -194,6 +237,27 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
   <header><h3 id="mdcPanelTitle"></h3><button id="mdcPanelClose">✕</button></header>
   <div id="mdcPanelBody"></div>
 </aside>
+<script nonce="${nonce}" src="${mermaidUri}"></script>
+<script nonce="${nonce}">
+(function(){
+  try {
+    const isDark = (document.body.classList && document.body.classList.contains("vscode-dark")) ||
+      window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    if (window.mermaid && window.mermaid.initialize) {
+      window.mermaid.initialize({
+        startOnLoad: false,
+        theme: isDark ? "dark" : "default",
+        securityLevel: "strict",
+      });
+      window.mermaid.run({ querySelector: "pre.mermaid" }).catch((e) => {
+        console.error("mermaid render failed", e);
+      });
+    }
+  } catch (e) {
+    console.error("mermaid init failed", e);
+  }
+})();
+</script>
 <script nonce="${nonce}">
 (function(){
   const vscode = acquireVsCodeApi();
