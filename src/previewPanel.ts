@@ -346,45 +346,28 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
   }
 
   private renderBodyWithHighlights(payload: PreviewPayload): string {
-    // We tokenize the doc into non-overlapping pieces: comment anchors vs
-    // surrounding prose, render each piece through markdown-it separately, and
-    // stitch the results. This is intentionally simple — block-level tokens
-    // that straddle comment boundaries will render twice as independent blocks.
-    // For inline anchors (the common case) it produces correct output.
-    const { text, comments } = payload;
-    if (comments.length === 0) {
-      return this.md.render(text);
-    }
+    // Render the full document once so block structure (paragraphs, lists,
+    // headings) is preserved. Post-process the resulting HTML to wrap each
+    // anchor's rendered inline form in a highlight span. Splitting the source
+    // at anchor offsets and re-rendering each slice would break paragraphs
+    // into multiple <p> blocks around the anchor.
+    let html = this.md.render(payload.text);
+    if (payload.comments.length === 0) return html;
 
-    // Drop overlapping comments on render: prefer the earliest-start/longest
-    // one. Overlapping anchors can't be represented as nested spans without
-    // broken HTML, and overlap is already a sidecar-edge-case.
-    const nonOverlap: ResolvedComment[] = [];
-    let cursor = 0;
-    for (const c of comments) {
-      if (c.start < cursor) continue;
-      nonOverlap.push(c);
-      cursor = c.end;
+    for (const c of payload.comments) {
+      const needle = this.md.renderInline(payload.text.slice(c.start, c.end));
+      if (!needle) continue;
+      const wrapped = wrapFirstOutsideTags(html, needle, (inner) => {
+        const cls = "mdc-anchor" + (c.resolved ? " resolved" : "");
+        const badge =
+          c.replies.length > 0
+            ? `<span class="mdc-badge">${c.replies.length + 1}</span>`
+            : "";
+        return `<span class="${cls}" data-comment-id="${escapeAttr(c.id)}" title="${escapeAttr(truncate(c.body, 120))}">${inner}${badge}</span>`;
+      });
+      if (wrapped !== null) html = wrapped;
     }
-
-    const parts: string[] = [];
-    let pos = 0;
-    for (const c of nonOverlap) {
-      if (c.start > pos) {
-        parts.push(this.md.render(text.slice(pos, c.start)));
-      }
-      const anchored = this.md.renderInline(text.slice(c.start, c.end));
-      const cls = "mdc-anchor" + (c.resolved ? " resolved" : "");
-      const badge = c.replies.length > 0 ? `<span class="mdc-badge">${c.replies.length + 1}</span>` : "";
-      parts.push(
-        `<span class="${cls}" data-comment-id="${escapeAttr(c.id)}" title="${escapeAttr(truncate(c.body, 120))}">${anchored}${badge}</span>`,
-      );
-      pos = c.end;
-    }
-    if (pos < text.length) {
-      parts.push(this.md.render(text.slice(pos)));
-    }
-    return parts.join("");
+    return html;
   }
 
   private async handleMessage(msg: unknown): Promise<void> {
@@ -486,6 +469,50 @@ export function locateSelectionInSource(
   const s = map[hits[0]];
   const e = map[hits[0] + needle.length];
   return { start: s, end: e };
+}
+
+/**
+ * Locate the first occurrence of `needle` inside `html` that lies entirely
+ * within text content (not inside a tag's attribute list) and does not
+ * straddle a tag boundary unless the boundary matches byte-for-byte. Wrap the
+ * matched slice with `wrap(inner)` and return the new HTML. Returns null if
+ * the needle cannot be located.
+ *
+ * This is deliberately a string-level match rather than a DOM walk — the
+ * rendered HTML is already known to have been produced by markdown-it with
+ * `html: false`, so tag shapes are regular, and the needle itself is the
+ * markdown-it output for the same source text, so embedded tags line up.
+ */
+function wrapFirstOutsideTags(
+  html: string,
+  needle: string,
+  wrap: (inner: string) => string,
+): string | null {
+  if (needle.length === 0) return null;
+  let searchFrom = 0;
+  while (searchFrom <= html.length - needle.length) {
+    const idx = html.indexOf(needle, searchFrom);
+    if (idx === -1) return null;
+    if (!isInsideTag(html, idx)) {
+      return html.slice(0, idx) + wrap(needle) + html.slice(idx + needle.length);
+    }
+    searchFrom = idx + 1;
+  }
+  return null;
+}
+
+/**
+ * True if the offset sits inside `<... >` (tag open, attributes, or tag
+ * close). Scans leftward to the nearest unquoted `<` or `>`; if `<` is
+ * closer, we're inside a tag.
+ */
+function isInsideTag(html: string, offset: number): boolean {
+  for (let i = offset - 1; i >= 0; i--) {
+    const ch = html[i];
+    if (ch === ">") return false;
+    if (ch === "<") return true;
+  }
+  return false;
 }
 
 function allIndexes(hay: string, needle: string): number[] {
