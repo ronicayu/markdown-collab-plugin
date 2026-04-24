@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.3.5",
+  "version": "0.4.0",
   "publisher": "markdown-collab",
   "engines": {
     "vscode": "^1.80.0",
@@ -68,6 +68,11 @@
       {
         "command": "markdownCollab.toggleResolve",
         "title": "Toggle Resolved"
+      },
+      {
+        "command": "markdownCollab.deleteThread",
+        "title": "Delete Comment",
+        "icon": "$(trash)"
       }
     ],
     "menus": {
@@ -82,6 +87,10 @@
         },
         {
           "command": "markdownCollab.toggleResolve",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.deleteThread",
           "when": "false"
         },
         {
@@ -109,6 +118,11 @@
         {
           "command": "markdownCollab.toggleResolve",
           "group": "inline@1",
+          "when": "commentController == markdown-collab && !commentThreadIsEmpty && commentThread != markdown-collab-readonly"
+        },
+        {
+          "command": "markdownCollab.deleteThread",
+          "group": "inline@2",
           "when": "commentController == markdown-collab && !commentThreadIsEmpty && commentThread != markdown-collab-readonly"
         }
       ],

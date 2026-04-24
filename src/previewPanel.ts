@@ -5,6 +5,7 @@ import { resolve as resolveAnchor } from "./anchor";
 import {
   addComment,
   addReply,
+  deleteComment,
   loadSidecar,
   setResolved,
   sidecarPathFor,
@@ -172,6 +173,7 @@ pre { background: var(--vscode-textCodeBlock-background, #1e1e1e); padding: 0.75
 .mdc-inline-compose button { padding: 0.25rem 0.75rem; cursor: pointer; border: none; border-radius: 2px; font-size: 0.85em; }
 .mdc-inline-compose .mdc-inline-submit { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
 .mdc-inline-compose .mdc-inline-cancel { background: transparent; color: var(--vscode-foreground); border: 1px solid var(--vscode-panel-border); }
+.mdc-danger { background: var(--vscode-errorForeground, #d73a49) !important; color: #fff; }
 </style>
 </head><body>
 <div class="mdc-toolbar">
@@ -216,6 +218,7 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
       '<div class="mdc-actions">' +
         '<button id="mdcSendReply">Reply</button>' +
         '<button id="mdcToggleResolve">'+(c.resolved?"Reopen":"Resolve")+'</button>' +
+        '<button id="mdcDelete" class="mdc-danger">Delete</button>' +
       '</div>';
     panelBody.innerHTML = msgsHtml + actions;
     panel.classList.add("open");
@@ -227,6 +230,11 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
       };
       document.getElementById("mdcToggleResolve").onclick = () => {
         vscode.postMessage({type: "toggleResolve", commentId: currentId, resolved: !c.resolved});
+      };
+      document.getElementById("mdcDelete").onclick = () => {
+        // Confirmation lives in the extension (VS Code native modal) because
+        // webview confirm() is not reliable across hosts.
+        vscode.postMessage({type: "delete", commentId: currentId});
       };
     }
   }
@@ -404,6 +412,7 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
       if (m.type === "reply") await this.onReply(msg as ReplyMsg);
       else if (m.type === "toggleResolve") await this.onToggleResolve(msg as ResolveMsg);
       else if (m.type === "create") await this.onCreate(msg as CreateMsg);
+      else if (m.type === "delete") await this.onDelete(msg as DeleteMsg);
     } catch (e) {
       this.output.appendLine(`Preview action failed: ${(e as Error).message}`);
       this.panel.webview.postMessage({
@@ -427,6 +436,19 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
       body: msg.body,
       createdAt: new Date().toISOString(),
     });
+    await this.render();
+  }
+
+  private async onDelete(msg: DeleteMsg): Promise<void> {
+    const p = this.sidecarPath();
+    if (!p) return;
+    const confirm = await vscode.window.showWarningMessage(
+      "Delete this comment thread? Replies will be removed too.",
+      { modal: true },
+      "Delete",
+    );
+    if (confirm !== "Delete") return;
+    await deleteComment(p, msg.commentId);
     await this.render();
   }
 
@@ -629,4 +651,9 @@ interface CreateMsg {
   type: "create";
   selectedText: string;
   body: string;
+}
+
+interface DeleteMsg {
+  type: "delete";
+  commentId: string;
 }

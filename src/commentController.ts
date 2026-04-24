@@ -5,6 +5,7 @@ import { isAnchorTextValid, resolve as resolveAnchor } from "./anchor";
 import {
   addComment,
   addReply,
+  deleteComment,
   loadSidecar,
   saveSidecar,
   setResolved,
@@ -243,6 +244,10 @@ export class MarkdownCollabController implements vscode.Disposable {
       vscode.commands.registerCommand(
         "markdownCollab.toggleResolve",
         (thread: vscode.CommentThread) => this.handleToggleResolve(thread),
+      ),
+      vscode.commands.registerCommand(
+        "markdownCollab.deleteThread",
+        (thread: vscode.CommentThread) => this.handleDeleteThread(thread),
       ),
     );
 
@@ -772,6 +777,49 @@ export class MarkdownCollabController implements vscode.Disposable {
       this.output.appendLine(`Failed to toggle resolve: ${(e as Error).message}`);
       void vscode.window.showErrorMessage(
         `Markdown Collab: failed to toggle resolve: ${(e as Error).message}`,
+      );
+    }
+  }
+
+  private async handleDeleteThread(thread: vscode.CommentThread): Promise<void> {
+    const doc = this.findDocForUri(thread.uri);
+    if (!doc) return;
+    if (this.readOnlyDocs.has(doc.uri.fsPath)) {
+      void vscode.window.showWarningMessage(
+        "This sidecar is from a newer plugin version. Open it in a newer Markdown Collab to edit.",
+      );
+      return;
+    }
+    const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
+    if (!folder) return;
+    const sidecarPath = sidecarPathFor(doc.uri.fsPath, folder.uri.fsPath);
+    if (!sidecarPath) return;
+    const commentId = this.commentIdForThread(doc.uri, thread);
+    if (!commentId) return;
+    const confirm = await vscode.window.showWarningMessage(
+      "Delete this comment thread? Replies will be removed too.",
+      { modal: true },
+      "Delete",
+    );
+    if (confirm !== "Delete") return;
+    try {
+      const removed = await deleteComment(sidecarPath, commentId);
+      if (!removed) {
+        void vscode.window.showWarningMessage(
+          "Comment was already gone.",
+        );
+      }
+      thread.dispose();
+      const map = this.threads.get(doc.uri.fsPath);
+      if (map) {
+        map.delete(commentId);
+        if (map.size === 0) this.threads.delete(doc.uri.fsPath);
+      }
+      await this.refreshMtime(sidecarPath, doc.uri.fsPath);
+    } catch (e) {
+      this.output.appendLine(`Failed to delete comment: ${(e as Error).message}`);
+      void vscode.window.showErrorMessage(
+        `Markdown Collab: failed to delete comment: ${(e as Error).message}`,
       );
     }
   }

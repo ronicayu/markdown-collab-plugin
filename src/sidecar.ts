@@ -356,3 +356,17 @@ export async function setResolved(
     await saveSidecar(sidecarPath, sidecar);
   });
 }
+
+export async function deleteComment(
+  sidecarPath: string,
+  commentId: string,
+): Promise<boolean> {
+  return enqueue(sidecarPath, async () => {
+    const sidecar = await loadForMutation(sidecarPath);
+    const before = sidecar.comments.length;
+    sidecar.comments = sidecar.comments.filter((c) => c.id !== commentId);
+    if (sidecar.comments.length === before) return false;
+    await saveSidecar(sidecarPath, sidecar);
+    return true;
+  });
+}
