@@ -472,10 +472,13 @@ export class MarkdownCollabController implements vscode.Disposable {
         docOrphans.push(comment);
         continue;
       }
-      const vsRange = new vscode.Range(
-        doc.positionAt(range.start),
-        doc.positionAt(range.end),
-      );
+      // Collapse the thread range to a single point at the anchor start.
+      // VS Code renders a gutter icon on every visual wrap segment a thread
+      // range covers, so long anchors on word-wrapped lines produce multiple
+      // icons for one comment. A point range yields exactly one icon while
+      // still correctly placing the thread on the anchor's starting line.
+      const anchorStart = doc.positionAt(range.start);
+      const vsRange = new vscode.Range(anchorStart, anchorStart);
       if (keep.has(comment.id) && existing.has(comment.id)) {
         // Reuse the live thread object, just update its surface fields. Also
         // nudge the range — VS Code's CommentThread.range is writable and
