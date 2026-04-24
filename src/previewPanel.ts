@@ -280,20 +280,24 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
     if(!n) return null;
     return n.nodeType === 1 ? n : (n.parentElement || null);
   }
-  function isInlineCodeSelection(sel){
+  function enclosingInlineCode(sel){
     const a = selectionContainerEl(sel);
     const f = sel && sel.focusNode && (sel.focusNode.nodeType === 1 ? sel.focusNode : sel.focusNode.parentElement);
-    if(!a || !f) return false;
+    if(!a || !f) return null;
     const codeA = a.closest && a.closest("code");
     const codeF = f.closest && f.closest("code");
-    // Only inline code counts — exclude fenced blocks (<pre><code>).
-    if(!codeA || codeA !== codeF) return false;
-    if(codeA.parentElement && codeA.parentElement.tagName === "PRE") return false;
-    return true;
+    if(!codeA || codeA !== codeF) return null;
+    if(codeA.parentElement && codeA.parentElement.tagName === "PRE") return null;
+    return codeA;
   }
   function captureSelection(sel){
     const raw = sel ? sel.toString() : "";
-    const inline = isInlineCodeSelection(sel);
+    const code = enclosingInlineCode(sel);
+    // Only treat as "inline code selection" when the selection covers the
+    // entire code text. A partial selection (e.g., a word inside a compound
+    // identifier) must be searched as-is in the raw markdown, since the raw
+    // partial string will match the substring inside the backticks.
+    const inline = !!(code && raw === (code.textContent || ""));
     return { raw: raw, inline: inline };
   }
   function showFloatingFor(sel){
