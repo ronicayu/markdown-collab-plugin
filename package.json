@@ -2,13 +2,15 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "markdown-collab",
   "engines": {
     "vscode": "^1.80.0",
     "node": ">=20"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "activationEvents": [
     "onLanguage:markdown",
     "onCommand:markdownCollab.installClaudeSkill",
@@ -16,29 +18,80 @@
     "onCommand:markdownCollab.validate",
     "onCommand:markdownCollab.copyClaudePrompt",
     "onCommand:markdownCollab.reloadComments",
+    "onCommand:markdownCollab.openPreview",
     "onView:markdownCollab.review"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
-      { "command": "markdownCollab.installClaudeSkill", "title": "Markdown Collab: Install Claude Skill" },
-      { "command": "markdownCollab.initializeAgents", "title": "Markdown Collab: Initialize AGENTS.md" },
-      { "command": "markdownCollab.copyClaudePrompt", "title": "Markdown Collab: Copy Claude Prompt" },
-      { "command": "markdownCollab.reloadComments", "title": "Markdown Collab: Reload Comments" },
-      { "command": "markdownCollab.validate", "title": "Markdown Collab: Validate Sidecars" },
-      { "command": "markdownCollab.reattachOrphan", "title": "Re-attach Orphaned Comment" },
-      { "command": "markdownCollab.revealComment", "title": "Reveal Markdown Comment" },
-      { "command": "markdownCollab.createThread", "title": "Add Comment" },
-      { "command": "markdownCollab.addReply", "title": "Reply" },
-      { "command": "markdownCollab.toggleResolve", "title": "Toggle Resolved" }
+      {
+        "command": "markdownCollab.installClaudeSkill",
+        "title": "Markdown Collab: Install Claude Skill"
+      },
+      {
+        "command": "markdownCollab.initializeAgents",
+        "title": "Markdown Collab: Initialize AGENTS.md"
+      },
+      {
+        "command": "markdownCollab.copyClaudePrompt",
+        "title": "Markdown Collab: Copy Claude Prompt"
+      },
+      {
+        "command": "markdownCollab.reloadComments",
+        "title": "Markdown Collab: Reload Comments"
+      },
+      {
+        "command": "markdownCollab.validate",
+        "title": "Markdown Collab: Validate Sidecars"
+      },
+      {
+        "command": "markdownCollab.openPreview",
+        "title": "Markdown Collab: Open Preview with Comments",
+        "category": "Markdown Collab"
+      },
+      {
+        "command": "markdownCollab.reattachOrphan",
+        "title": "Re-attach Orphaned Comment"
+      },
+      {
+        "command": "markdownCollab.revealComment",
+        "title": "Reveal Markdown Comment"
+      },
+      {
+        "command": "markdownCollab.createThread",
+        "title": "Add Comment"
+      },
+      {
+        "command": "markdownCollab.addReply",
+        "title": "Reply"
+      },
+      {
+        "command": "markdownCollab.toggleResolve",
+        "title": "Toggle Resolved"
+      }
     ],
     "menus": {
       "commandPalette": [
-        { "command": "markdownCollab.createThread", "when": "false" },
-        { "command": "markdownCollab.addReply", "when": "false" },
-        { "command": "markdownCollab.toggleResolve", "when": "false" },
-        { "command": "markdownCollab.reattachOrphan", "when": "false" },
-        { "command": "markdownCollab.revealComment", "when": "false" }
+        {
+          "command": "markdownCollab.createThread",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.addReply",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.toggleResolve",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.reattachOrphan",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.revealComment",
+          "when": "false"
+        }
       ],
       "comments/commentThread/context": [
         {
@@ -93,5 +146,9 @@
     "@types/vscode": "^1.80.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
+  },
+  "dependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "markdown-it": "^14.1.1"
   }
 }

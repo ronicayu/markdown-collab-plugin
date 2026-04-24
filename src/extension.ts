@@ -5,6 +5,7 @@ import { ensureAgentsSnippet } from "./agents";
 import { resolve as resolveAnchor } from "./anchor";
 import { MarkdownCollabController, extractAnchor } from "./commentController";
 import { OrphanView } from "./orphanView";
+import { PreviewPanel } from "./previewPanel";
 import { ReviewView, type ReviewNode } from "./reviewView";
 import { SidecarWatcher } from "./sidecarWatcher";
 import { installClaudeSkill } from "./skill";
@@ -25,9 +26,15 @@ export function activate(context: vscode.ExtensionContext): void {
   // directly.
   const sidecarWatcher = new SidecarWatcher(
     {
-      reload: (d) => controller.reloadDoc(d),
+      reload: async (d) => {
+        await controller.reloadDoc(d);
+        PreviewPanel.notifySidecarChange(d.uri.fsPath);
+      },
       isReloading: (p) => controller.isReloading(p),
-      onExternalChange: (p) => controller.onExternalChange(p),
+      onExternalChange: (p) => {
+        controller.onExternalChange(p);
+        PreviewPanel.notifySidecarChange(p);
+      },
     },
     output,
   );
@@ -60,6 +67,16 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand("markdownCollab.reloadComments", async () => {
       await controller.reloadActive();
+    }),
+    vscode.commands.registerCommand("markdownCollab.openPreview", async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || editor.document.languageId !== "markdown") {
+        void vscode.window.showWarningMessage(
+          "Open a Markdown file first, then run this command.",
+        );
+        return;
+      }
+      PreviewPanel.show(editor.document, output);
     }),
     vscode.commands.registerCommand("markdownCollab.validate", async () => {
       await runValidate(output);
