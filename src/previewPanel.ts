@@ -6,6 +6,8 @@ import {
   addComment,
   addReply,
   deleteComment,
+  editCommentBody,
+  editReplyBody,
   loadSidecar,
   setResolved,
   sidecarPathFor,
@@ -217,6 +219,10 @@ pre { background: var(--vscode-textCodeBlock-background, #1e1e1e); padding: 0.75
 pre.mermaid { background: transparent; padding: 0.5rem 0; text-align: center; }
 pre.mermaid svg { max-width: 100%; height: auto; }
 .mermaid-error { color: var(--vscode-errorForeground); font-family: var(--vscode-editor-font-family, monospace); white-space: pre-wrap; padding: 0.5rem; border: 1px dashed var(--vscode-errorForeground); border-radius: 4px; }
+.mdc-msg .mdc-msg-actions { margin-top: 0.25rem; display: flex; gap: 0.5rem; }
+.mdc-msg .mdc-msg-actions button { background: none; border: none; padding: 0; color: var(--vscode-textLink-foreground); cursor: pointer; font-size: 0.8em; }
+.mdc-msg .mdc-msg-actions button:hover { text-decoration: underline; }
+.mdc-msg textarea.mdc-msg-edit { width: 100%; box-sizing: border-box; min-height: 3rem; font-family: inherit; padding: 0.25rem; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); margin-top: 0.25rem; }
 </style>
 </head><body>
 <div class="mdc-toolbar">
@@ -275,8 +281,19 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
     if(!c) return;
     currentId = id;
     panelTitle.textContent = (c.resolved ? "[Resolved] " : "") + (c.author || "anon");
-    const msgs = [{author: c.author, body: c.body, createdAt: c.createdAt}].concat(c.replies || []);
-    const msgsHtml = msgs.map(m => '<div class="mdc-msg"><span class="author">'+esc(m.author)+'</span><span class="ts">'+esc(fmt(m.createdAt))+'</span><div>'+esc(m.body)+'</div></div>').join("");
+    const msgs = [{author: c.author, body: c.body, createdAt: c.createdAt, _isRoot: true}].concat((c.replies || []).map((r, i) => Object.assign({_replyIndex: i}, r)));
+    const msgsHtml = msgs.map((m, i) => {
+      const editable = !readOnly;
+      const editBtn = editable
+        ? '<div class="mdc-msg-actions"><button class="mdc-msg-edit" data-msg-idx="'+i+'">Edit</button></div>'
+        : "";
+      return '<div class="mdc-msg" data-msg-idx="'+i+'">'
+        + '<span class="author">'+esc(m.author)+'</span>'
+        + '<span class="ts">'+esc(fmt(m.createdAt))+'</span>'
+        + '<div class="mdc-msg-body">'+esc(m.body)+'</div>'
+        + editBtn
+        + '</div>';
+    }).join("");
     const actions = readOnly ? "" :
       '<textarea class="mdc-reply" id="mdcReplyBox" placeholder="Reply..."></textarea>' +
       '<div class="mdc-actions">' +
@@ -300,6 +317,40 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
         // webview confirm() is not reliable across hosts.
         vscode.postMessage({type: "delete", commentId: currentId});
       };
+      // Per-message edit buttons: swap body for textarea, post an edit
+      // message on save. The msgs array carries _isRoot / _replyIndex hints
+      // so each row knows whether to edit the root body or a reply.
+      Array.prototype.forEach.call(panelBody.querySelectorAll(".mdc-msg-edit"), function(btn){
+        btn.addEventListener("click", function(){
+          const idx = Number(btn.getAttribute("data-msg-idx"));
+          const m = msgs[idx];
+          const row = panelBody.querySelector('.mdc-msg[data-msg-idx="'+idx+'"]');
+          if(!row) return;
+          const bodyEl = row.querySelector(".mdc-msg-body");
+          const actionsEl = row.querySelector(".mdc-msg-actions");
+          const original = m.body || "";
+          const ta = document.createElement("textarea");
+          ta.className = "mdc-msg-edit";
+          ta.value = original;
+          bodyEl.replaceWith(ta);
+          actionsEl.innerHTML = '<button class="mdc-msg-save">Save</button><button class="mdc-msg-cancel">Cancel</button>';
+          setTimeout(function(){ ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 0);
+          const rerender = function(){ openFor(currentId); };
+          actionsEl.querySelector(".mdc-msg-save").onclick = function(){
+            const next = ta.value;
+            if(next === original){ rerender(); return; }
+            const payload = m._isRoot
+              ? { type: "edit", commentId: currentId, body: next }
+              : { type: "editReply", commentId: currentId, replyIndex: m._replyIndex, body: next };
+            vscode.postMessage(payload);
+          };
+          actionsEl.querySelector(".mdc-msg-cancel").onclick = rerender;
+          ta.addEventListener("keydown", function(e){
+            if(e.key === "Escape") rerender();
+            else if(e.key === "Enter" && (e.metaKey || e.ctrlKey)) actionsEl.querySelector(".mdc-msg-save").click();
+          });
+        });
+      });
     }
   }
 
@@ -481,6 +532,8 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
       else if (m.type === "toggleResolve") await this.onToggleResolve(msg as ResolveMsg);
       else if (m.type === "create") await this.onCreate(msg as CreateMsg);
       else if (m.type === "delete") await this.onDelete(msg as DeleteMsg);
+      else if (m.type === "edit") await this.onEdit(msg as EditMsg);
+      else if (m.type === "editReply") await this.onEditReply(msg as EditReplyMsg);
     } catch (e) {
       this.output.appendLine(`Preview action failed: ${(e as Error).message}`);
       this.panel.webview.postMessage({
@@ -504,6 +557,22 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
       body: msg.body,
       createdAt: new Date().toISOString(),
     });
+    await this.render();
+  }
+
+  private async onEdit(msg: EditMsg): Promise<void> {
+    const p = this.sidecarPath();
+    if (!p) return;
+    if (!msg.body || !msg.body.trim()) return;
+    await editCommentBody(p, msg.commentId, msg.body);
+    await this.render();
+  }
+
+  private async onEditReply(msg: EditReplyMsg): Promise<void> {
+    const p = this.sidecarPath();
+    if (!p) return;
+    if (!msg.body || !msg.body.trim()) return;
+    await editReplyBody(p, msg.commentId, msg.replyIndex, msg.body);
     await this.render();
   }
 
@@ -724,4 +793,17 @@ interface CreateMsg {
 interface DeleteMsg {
   type: "delete";
   commentId: string;
+}
+
+interface EditMsg {
+  type: "edit";
+  commentId: string;
+  body: string;
+}
+
+interface EditReplyMsg {
+  type: "editReply";
+  commentId: string;
+  replyIndex: number;
+  body: string;
 }

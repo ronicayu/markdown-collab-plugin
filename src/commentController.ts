@@ -6,6 +6,8 @@ import {
   addComment,
   addReply,
   deleteComment,
+  editCommentBody,
+  editReplyBody,
   loadSidecar,
   saveSidecar,
   setResolved,
@@ -114,6 +116,12 @@ interface ReplyLike {
 // `vscode.Comment` is an interface so we implement it directly.
 class StoredThreadComment implements vscode.Comment {
   public contextValue?: string;
+  /**
+   * Position within the parent comment's reply list. `undefined` for the
+   * root comment. Used by the edit command to route the write to the right
+   * sidecar field.
+   */
+  public replyIndex?: number;
   constructor(
     public body: string | vscode.MarkdownString,
     public mode: vscode.CommentMode,
@@ -248,6 +256,18 @@ export class MarkdownCollabController implements vscode.Disposable {
       vscode.commands.registerCommand(
         "markdownCollab.deleteThread",
         (thread: vscode.CommentThread) => this.handleDeleteThread(thread),
+      ),
+      vscode.commands.registerCommand(
+        "markdownCollab.editComment",
+        (c: vscode.Comment) => this.handleBeginEdit(c),
+      ),
+      vscode.commands.registerCommand(
+        "markdownCollab.saveEdit",
+        (c: vscode.Comment) => this.handleSaveEdit(c),
+      ),
+      vscode.commands.registerCommand(
+        "markdownCollab.cancelEdit",
+        (c: vscode.Comment) => this.handleCancelEdit(c),
       ),
     );
 
@@ -548,30 +568,41 @@ export class MarkdownCollabController implements vscode.Disposable {
   }
 
   private buildThreadComments(comment: Comment): vscode.Comment[] {
+    const readOnly = this.readOnlyDocs.has(this.docPathForComment(comment.id) ?? "");
     const out: StoredThreadComment[] = [];
-    out.push(
-      new StoredThreadComment(
-        new vscode.MarkdownString(comment.body),
-        vscode.CommentMode.Preview,
-        { name: comment.author },
-        comment.id,
-        true,
-        this.safeDate(comment.createdAt),
-      ),
+    const root = new StoredThreadComment(
+      new vscode.MarkdownString(comment.body),
+      vscode.CommentMode.Preview,
+      { name: comment.author },
+      comment.id,
+      true,
+      this.safeDate(comment.createdAt),
     );
-    for (const reply of comment.replies) {
-      out.push(
-        new StoredThreadComment(
-          new vscode.MarkdownString(reply.body),
-          vscode.CommentMode.Preview,
-          { name: reply.author },
-          comment.id,
-          false,
-          this.safeDate(reply.createdAt),
-        ),
+    root.contextValue = readOnly ? "markdown-collab-readonly" : "markdown-collab-editable";
+    out.push(root);
+    for (let i = 0; i < comment.replies.length; i++) {
+      const reply = comment.replies[i];
+      const c = new StoredThreadComment(
+        new vscode.MarkdownString(reply.body),
+        vscode.CommentMode.Preview,
+        { name: reply.author },
+        comment.id,
+        false,
+        this.safeDate(reply.createdAt),
       );
+      c.replyIndex = i;
+      c.contextValue = readOnly ? "markdown-collab-readonly" : "markdown-collab-editable";
+      out.push(c);
     }
     return out;
+  }
+
+  /** Walk the thread map to find which doc a comment id belongs to. */
+  private docPathForComment(commentId: string): string | undefined {
+    for (const [docPath, map] of this.threads) {
+      if (map.has(commentId)) return docPath;
+    }
+    return undefined;
   }
 
   private labelForComment(comment: Comment): string {
@@ -781,6 +812,98 @@ export class MarkdownCollabController implements vscode.Disposable {
       void vscode.window.showErrorMessage(
         `Markdown Collab: failed to toggle resolve: ${(e as Error).message}`,
       );
+    }
+  }
+
+  /**
+   * Mutate the target comment's mode in place within its thread. VS Code
+   * listens for mutations to `thread.comments`; reassigning the array with
+   * the same comments (mode updated) forces a re-render.
+   */
+  private setCommentMode(
+    target: vscode.Comment,
+    mode: vscode.CommentMode,
+  ): { thread: vscode.CommentThread; docPath: string } | null {
+    const stored = target as StoredThreadComment;
+    const docPath = this.docPathForComment(stored.commentId);
+    if (!docPath) return null;
+    const entry = this.threads.get(docPath)?.get(stored.commentId);
+    if (!entry) return null;
+    const next = entry.thread.comments.map((c) => {
+      if (c === target) {
+        (c as StoredThreadComment).mode = mode;
+      }
+      return c;
+    });
+    entry.thread.comments = next;
+    return { thread: entry.thread, docPath };
+  }
+
+  private async handleBeginEdit(target: vscode.Comment): Promise<void> {
+    const stored = target as StoredThreadComment;
+    const docPath = this.docPathForComment(stored.commentId);
+    if (!docPath) return;
+    if (this.readOnlyDocs.has(docPath)) {
+      void vscode.window.showWarningMessage(
+        "This sidecar is from a newer plugin version. Open it in a newer Markdown Collab to edit.",
+      );
+      return;
+    }
+    this.setCommentMode(target, vscode.CommentMode.Editing);
+  }
+
+  private async handleCancelEdit(target: vscode.Comment): Promise<void> {
+    // Drop any in-progress edits by reloading the stored body from sidecar.
+    const stored = target as StoredThreadComment;
+    const docPath = this.docPathForComment(stored.commentId);
+    if (!docPath) return;
+    const doc = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === docPath);
+    if (doc) await this.reload(doc);
+  }
+
+  private async handleSaveEdit(target: vscode.Comment): Promise<void> {
+    const stored = target as StoredThreadComment;
+    const docPath = this.docPathForComment(stored.commentId);
+    if (!docPath) return;
+    if (this.readOnlyDocs.has(docPath)) {
+      void vscode.window.showWarningMessage(
+        "This sidecar is from a newer plugin version. Open it in a newer Markdown Collab to edit.",
+      );
+      return;
+    }
+    const folder = vscode.workspace.workspaceFolders?.find((f) =>
+      docPath.startsWith(f.uri.fsPath),
+    );
+    if (!folder) return;
+    const sidecarPath = sidecarPathFor(docPath, folder.uri.fsPath);
+    if (!sidecarPath) return;
+    // VS Code mutates `target.body` to the edited text; it may be a plain
+    // string or a MarkdownString depending on what we seeded.
+    const next =
+      typeof target.body === "string" ? target.body : target.body.value;
+    try {
+      if (stored.replyIndex === undefined) {
+        await editCommentBody(sidecarPath, stored.commentId, next);
+      } else {
+        await editReplyBody(
+          sidecarPath,
+          stored.commentId,
+          stored.replyIndex,
+          next,
+        );
+      }
+      const doc = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === docPath);
+      if (doc) {
+        await this.refreshMtime(sidecarPath, docPath);
+        await this.reload(doc);
+      }
+    } catch (e) {
+      this.output.appendLine(`Failed to save edit: ${(e as Error).message}`);
+      void vscode.window.showErrorMessage(
+        `Markdown Collab: failed to save edit: ${(e as Error).message}`,
+      );
+      const doc = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === docPath);
+      if (doc) await this.reload(doc);
     }
   }
 

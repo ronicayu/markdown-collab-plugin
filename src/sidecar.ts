@@ -357,6 +357,40 @@ export async function setResolved(
   });
 }
 
+export async function editCommentBody(
+  sidecarPath: string,
+  commentId: string,
+  newBody: string,
+): Promise<boolean> {
+  return enqueue(sidecarPath, async () => {
+    const sidecar = await loadForMutation(sidecarPath);
+    const comment = sidecar.comments.find((c) => c.id === commentId);
+    if (!comment) return false;
+    if (comment.body === newBody) return true;
+    comment.body = newBody;
+    await saveSidecar(sidecarPath, sidecar);
+    return true;
+  });
+}
+
+export async function editReplyBody(
+  sidecarPath: string,
+  commentId: string,
+  replyIndex: number,
+  newBody: string,
+): Promise<boolean> {
+  return enqueue(sidecarPath, async () => {
+    const sidecar = await loadForMutation(sidecarPath);
+    const comment = sidecar.comments.find((c) => c.id === commentId);
+    if (!comment) return false;
+    if (replyIndex < 0 || replyIndex >= comment.replies.length) return false;
+    if (comment.replies[replyIndex].body === newBody) return true;
+    comment.replies[replyIndex].body = newBody;
+    await saveSidecar(sidecarPath, sidecar);
+    return true;
+  });
+}
+
 export async function deleteComment(
   sidecarPath: string,
   commentId: string,

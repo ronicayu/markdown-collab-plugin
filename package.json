@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "publisher": "markdown-collab",
   "engines": {
     "vscode": "^1.80.0",
@@ -73,6 +73,19 @@
         "command": "markdownCollab.deleteThread",
         "title": "Delete Comment",
         "icon": "$(trash)"
+      },
+      {
+        "command": "markdownCollab.editComment",
+        "title": "Edit",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "markdownCollab.saveEdit",
+        "title": "Save"
+      },
+      {
+        "command": "markdownCollab.cancelEdit",
+        "title": "Cancel"
       }
     ],
     "menus": {
@@ -91,6 +104,18 @@
         },
         {
           "command": "markdownCollab.deleteThread",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.editComment",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.saveEdit",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.cancelEdit",
           "when": "false"
         },
         {
@@ -124,6 +149,25 @@
           "command": "markdownCollab.deleteThread",
           "group": "inline@2",
           "when": "commentController == markdown-collab && !commentThreadIsEmpty && commentThread != markdown-collab-readonly"
+        }
+      ],
+      "comments/comment/title": [
+        {
+          "command": "markdownCollab.editComment",
+          "group": "group@1",
+          "when": "commentController == markdown-collab && comment == markdown-collab-editable"
+        }
+      ],
+      "comments/comment/context": [
+        {
+          "command": "markdownCollab.saveEdit",
+          "group": "inline@1",
+          "when": "commentController == markdown-collab && comment == markdown-collab-editable"
+        },
+        {
+          "command": "markdownCollab.cancelEdit",
+          "group": "inline@2",
+          "when": "commentController == markdown-collab && comment == markdown-collab-editable"
         }
       ],
       "view/item/context": [
