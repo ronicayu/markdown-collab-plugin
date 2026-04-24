@@ -78,6 +78,26 @@ Unit tests run under Vitest. VS Code API surface is stubbed in `src/test/vscode-
 
 Press **F5** in VS Code to launch an Extension Development Host for manual verification.
 
+## Known issues
+
+### Multiple gutter icons on word-wrapped lines
+
+When `editor.wordWrap` is on and an anchor lives on a long logical line, VS Code
+renders a comment gutter icon on **every visual wrap row** of that line. This
+is how VS Code's Comments API renders glyph-margin decorations; extensions
+cannot override it. The sidecar still stores exactly one comment — only the
+visual icon count is inflated.
+
+Workarounds:
+
+- Disable word-wrap for markdown only. Add to `settings.json`:
+
+  ```json
+  "[markdown]": { "editor.wordWrap": "off" }
+  ```
+- Use the preview (`Markdown Collab: Open Preview with Comments`). The preview
+  renders anchor highlights as plain inline spans and is unaffected.
+
 ## Out of scope (v1)
 
 - Multi-user collaboration with author attribution.
