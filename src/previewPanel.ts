@@ -165,14 +165,28 @@ pre { background: var(--vscode-textCodeBlock-background, #1e1e1e); padding: 0.75
 .mdc-floating { position: absolute; display: none; padding: 0.25rem 0.6rem; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em; box-shadow: 0 2px 6px rgba(0,0,0,0.4); z-index: 30; white-space: nowrap; }
 .mdc-floating:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
 .mdc-floating::before { content: "💬 "; }
+.mdc-inline-compose { position: absolute; display: none; width: 320px; background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px; padding: 0.5rem; box-shadow: 0 4px 12px rgba(0,0,0,0.4); z-index: 40; }
+.mdc-inline-compose textarea { width: 100%; box-sizing: border-box; min-height: 3rem; font-family: inherit; padding: 0.25rem; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); resize: vertical; }
+.mdc-inline-compose .mdc-inline-hint { font-size: 0.75em; color: var(--vscode-descriptionForeground); margin: 0.25rem 0; }
+.mdc-inline-compose .mdc-inline-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+.mdc-inline-compose button { padding: 0.25rem 0.75rem; cursor: pointer; border: none; border-radius: 2px; font-size: 0.85em; }
+.mdc-inline-compose .mdc-inline-submit { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+.mdc-inline-compose .mdc-inline-cancel { background: transparent; color: var(--vscode-foreground); border: 1px solid var(--vscode-panel-border); }
 </style>
 </head><body>
 <div class="mdc-toolbar">
-  <button id="mdcNew" ${payload.readOnly ? "disabled" : ""}>Add Comment from Selection</button>
-  <span class="mdc-status" id="mdcStatus">${payload.readOnly ? "Read-only: sidecar has a newer schema version." : ""}</span>
+  <span class="mdc-status" id="mdcStatus">${payload.readOnly ? "Read-only: sidecar has a newer schema version." : "Select text to add a comment."}</span>
 </div>
 <div id="mdcContent">${body}</div>
 <button class="mdc-floating" id="mdcFloating">Comment</button>
+<div class="mdc-inline-compose" id="mdcCompose">
+  <textarea id="mdcComposeBody" placeholder="Add a comment..."></textarea>
+  <div class="mdc-inline-hint" id="mdcComposeHint"></div>
+  <div class="mdc-inline-actions">
+    <button class="mdc-inline-cancel" id="mdcComposeCancel">Cancel</button>
+    <button class="mdc-inline-submit" id="mdcComposeSubmit">Comment</button>
+  </div>
+</div>
 ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (${payload.orphans.length})</h4>${payload.orphans.map((o) => `<div class="mdc-msg"><span class="author">${escapeHtml(o.author)}</span>: ${escapeHtml(o.body)}</div>`).join("")}</div>` : ""}
 <aside class="mdc-panel" id="mdcPanel">
   <header><h3 id="mdcPanelTitle"></h3><button id="mdcPanelClose">✕</button></header>
@@ -227,56 +241,97 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
     if(el && el.dataset.commentId) openFor(el.dataset.commentId);
   });
 
-  function triggerCreate(selected){
-    if(readOnly) return;
-    if(!selected || selected.trim().length < 3){
-      statusEl.textContent = "Selection too short.";
-      return;
-    }
-    statusEl.textContent = "Waiting for comment body...";
-    vscode.postMessage({type: "createStart", selectedText: selected});
-  }
-
-  document.getElementById("mdcNew").onclick = () => {
-    const sel = window.getSelection();
-    if(!sel || sel.isCollapsed){
-      statusEl.textContent = "Select some rendered text first.";
-      return;
-    }
-    triggerCreate(sel.toString());
-  };
-
   const floating = document.getElementById("mdcFloating");
-  let floatingSelection = "";
-  function hideFloating(){ floating.style.display = "none"; floatingSelection = ""; }
+  const compose = document.getElementById("mdcCompose");
+  const composeBody = document.getElementById("mdcComposeBody");
+  const composeHint = document.getElementById("mdcComposeHint");
+  const composeCancel = document.getElementById("mdcComposeCancel");
+  const composeSubmit = document.getElementById("mdcComposeSubmit");
+  let pendingSelection = "";
+  let composeOpen = false;
+
+  function hideFloating(){ floating.style.display = "none"; }
+  function anchorRectForSelection(sel){
+    if(!sel || sel.rangeCount === 0) return null;
+    const r = sel.getRangeAt(0).getBoundingClientRect();
+    if(r.width === 0 && r.height === 0) return null;
+    return r;
+  }
+  function positionBelow(el, rect, width){
+    const pad = 8;
+    const w = width || el.offsetWidth || 320;
+    let left = window.scrollX + rect.left + (rect.width / 2) - (w / 2);
+    const maxLeft = window.scrollX + document.documentElement.clientWidth - w - pad;
+    if(left > maxLeft) left = maxLeft;
+    if(left < window.scrollX + pad) left = window.scrollX + pad;
+    el.style.left = left + "px";
+    el.style.top = (window.scrollY + rect.bottom + pad) + "px";
+  }
   function showFloatingFor(sel){
     if(readOnly) return;
-    if(!sel || sel.rangeCount === 0) return hideFloating();
-    const text = sel.toString();
-    if(text.trim().length < 3) return hideFloating();
-    const r = sel.getRangeAt(0).getBoundingClientRect();
-    if(r.width === 0 && r.height === 0) return hideFloating();
-    floating.style.top = (window.scrollY + r.top - 36) + "px";
-    floating.style.left = (window.scrollX + r.left + (r.width/2) - 40) + "px";
+    if(composeOpen) return;
+    const r = anchorRectForSelection(sel);
+    const text = sel ? sel.toString() : "";
+    if(!r || text.trim().length < 3) return hideFloating();
+    const node = sel.anchorNode;
+    if(node && ((node.nodeType === 1 && node.closest && node.closest(".mdc-panel, .mdc-inline-compose")) || (node.parentElement && node.parentElement.closest(".mdc-panel, .mdc-inline-compose")))) return hideFloating();
+    positionBelow(floating, r, 90);
     floating.style.display = "block";
-    floatingSelection = text;
+    pendingSelection = text;
+  }
+  function openCompose(rect){
+    if(readOnly) return;
+    hideFloating();
+    composeOpen = true;
+    compose.style.display = "block";
+    positionBelow(compose, rect, 320);
+    composeBody.value = "";
+    composeHint.textContent = "On: " + pendingSelection.slice(0, 80) + (pendingSelection.length > 80 ? "…" : "");
+    statusEl.textContent = "";
+    setTimeout(() => composeBody.focus(), 0);
+  }
+  function closeCompose(){
+    composeOpen = false;
+    compose.style.display = "none";
+    pendingSelection = "";
+    composeBody.value = "";
+    statusEl.textContent = "";
   }
   document.addEventListener("selectionchange", () => {
+    if(composeOpen) return;
     const sel = document.getSelection();
     if(!sel || sel.isCollapsed) return hideFloating();
-    // Don't show over panel content.
-    const node = sel.anchorNode;
-    if(node && node.nodeType === 1 && node.closest && node.closest(".mdc-panel")) return hideFloating();
-    if(node && node.parentElement && node.parentElement.closest(".mdc-panel")) return hideFloating();
     showFloatingFor(sel);
   });
   floating.addEventListener("mousedown", (e) => { e.preventDefault(); });
   floating.addEventListener("click", () => {
-    const sel = floatingSelection;
-    hideFloating();
-    triggerCreate(sel);
+    const sel = document.getSelection();
+    const r = anchorRectForSelection(sel) || floating.getBoundingClientRect();
+    if(!pendingSelection || pendingSelection.trim().length < 3) return;
+    openCompose(r);
+  });
+  composeCancel.addEventListener("click", closeCompose);
+  composeSubmit.addEventListener("click", () => {
+    const body = composeBody.value.trim();
+    if(!body){ composeBody.focus(); return; }
+    if(!pendingSelection || pendingSelection.trim().length < 3){
+      statusEl.textContent = "Selection lost — re-select and try again.";
+      closeCompose();
+      return;
+    }
+    statusEl.textContent = "Creating comment...";
+    vscode.postMessage({type: "create", selectedText: pendingSelection, body: body});
+    closeCompose();
+  });
+  composeBody.addEventListener("keydown", (e) => {
+    if(e.key === "Escape"){ closeCompose(); }
+    else if(e.key === "Enter" && (e.metaKey || e.ctrlKey)){ composeSubmit.click(); }
   });
   window.addEventListener("scroll", () => {
+    if(composeOpen){
+      // Keep compose pinned to its last position; too jittery to follow scroll.
+      return;
+    }
     const sel = document.getSelection();
     if(sel && !sel.isCollapsed) showFloatingFor(sel); else hideFloating();
   });
@@ -338,7 +393,7 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
     try {
       if (m.type === "reply") await this.onReply(msg as ReplyMsg);
       else if (m.type === "toggleResolve") await this.onToggleResolve(msg as ResolveMsg);
-      else if (m.type === "createStart") await this.onCreateStart(msg as CreateStartMsg);
+      else if (m.type === "create") await this.onCreate(msg as CreateMsg);
     } catch (e) {
       this.output.appendLine(`Preview action failed: ${(e as Error).message}`);
       this.panel.webview.postMessage({
@@ -372,29 +427,18 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
     await this.render();
   }
 
-  private async onCreateStart(msg: CreateStartMsg): Promise<void> {
+  private async onCreate(msg: CreateMsg): Promise<void> {
     const p = this.sidecarPath();
     const folder = vscode.workspace.getWorkspaceFolder(this.doc.uri);
     if (!p || !folder) return;
+    if (!msg.body || !msg.body.trim()) return;
     const text = this.doc.getText();
-    // Locate the selected rendered text back in the raw source before
-    // prompting. If the selection can't be mapped, fail fast — no point
-    // asking for a body we can't attach.
     const located = locateSelectionInSource(text, msg.selectedText);
     if (!located) {
       this.panel.webview.postMessage({
         type: "status",
         text: "Could not locate selection in source (ambiguous or not found).",
       });
-      return;
-    }
-    const body = await vscode.window.showInputBox({
-      prompt: "Comment body",
-      placeHolder: `Commenting on: ${truncate(msg.selectedText, 80)}`,
-      ignoreFocusOut: true,
-    });
-    if (!body || !body.trim()) {
-      this.panel.webview.postMessage({ type: "status", text: "" });
       return;
     }
     const anchor: Anchor = {
@@ -405,7 +449,7 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
     const mdRel = path.relative(folder.uri.fsPath, this.doc.uri.fsPath);
     await addComment(p, mdRel, {
       anchor,
-      body,
+      body: msg.body,
       author: "user",
       createdAt: new Date().toISOString(),
     });
@@ -527,7 +571,8 @@ interface ResolveMsg {
   resolved: boolean;
 }
 
-interface CreateStartMsg {
-  type: "createStart";
+interface CreateMsg {
+  type: "create";
   selectedText: string;
+  body: string;
 }
