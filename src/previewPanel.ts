@@ -247,7 +247,7 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
   const composeHint = document.getElementById("mdcComposeHint");
   const composeCancel = document.getElementById("mdcComposeCancel");
   const composeSubmit = document.getElementById("mdcComposeSubmit");
-  let pendingSelection = "";
+  let pendingSelection = { raw: "", inline: false };
   let composeOpen = false;
 
   function hideFloating(){ floating.style.display = "none"; }
@@ -267,17 +267,38 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
     el.style.left = left + "px";
     el.style.top = (window.scrollY + rect.bottom + pad) + "px";
   }
+  function selectionContainerEl(sel){
+    const n = sel && sel.anchorNode;
+    if(!n) return null;
+    return n.nodeType === 1 ? n : (n.parentElement || null);
+  }
+  function isInlineCodeSelection(sel){
+    const a = selectionContainerEl(sel);
+    const f = sel && sel.focusNode && (sel.focusNode.nodeType === 1 ? sel.focusNode : sel.focusNode.parentElement);
+    if(!a || !f) return false;
+    const codeA = a.closest && a.closest("code");
+    const codeF = f.closest && f.closest("code");
+    // Only inline code counts — exclude fenced blocks (<pre><code>).
+    if(!codeA || codeA !== codeF) return false;
+    if(codeA.parentElement && codeA.parentElement.tagName === "PRE") return false;
+    return true;
+  }
+  function captureSelection(sel){
+    const raw = sel ? sel.toString() : "";
+    const inline = isInlineCodeSelection(sel);
+    return { raw: raw, inline: inline };
+  }
   function showFloatingFor(sel){
     if(readOnly) return;
     if(composeOpen) return;
     const r = anchorRectForSelection(sel);
-    const text = sel ? sel.toString() : "";
-    if(!r || text.trim().length < 3) return hideFloating();
-    const node = sel.anchorNode;
-    if(node && ((node.nodeType === 1 && node.closest && node.closest(".mdc-panel, .mdc-inline-compose")) || (node.parentElement && node.parentElement.closest(".mdc-panel, .mdc-inline-compose")))) return hideFloating();
+    const cap = captureSelection(sel);
+    if(!r || cap.raw.trim().length < 3) return hideFloating();
+    const container = selectionContainerEl(sel);
+    if(container && container.closest && container.closest(".mdc-panel, .mdc-inline-compose")) return hideFloating();
     positionBelow(floating, r, 90);
     floating.style.display = "block";
-    pendingSelection = text;
+    pendingSelection = cap;
   }
   function openCompose(rect){
     if(readOnly) return;
@@ -286,14 +307,15 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
     compose.style.display = "block";
     positionBelow(compose, rect, 320);
     composeBody.value = "";
-    composeHint.textContent = "On: " + pendingSelection.slice(0, 80) + (pendingSelection.length > 80 ? "…" : "");
+    const preview = pendingSelection.raw.slice(0, 80) + (pendingSelection.raw.length > 80 ? "…" : "");
+    composeHint.textContent = (pendingSelection.inline ? "On \`" + preview + "\`" : "On: " + preview);
     statusEl.textContent = "";
     setTimeout(() => composeBody.focus(), 0);
   }
   function closeCompose(){
     composeOpen = false;
     compose.style.display = "none";
-    pendingSelection = "";
+    pendingSelection = { raw: "", inline: false };
     composeBody.value = "";
     statusEl.textContent = "";
   }
@@ -307,20 +329,25 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
   floating.addEventListener("click", () => {
     const sel = document.getSelection();
     const r = anchorRectForSelection(sel) || floating.getBoundingClientRect();
-    if(!pendingSelection || pendingSelection.trim().length < 3) return;
+    if(!pendingSelection.raw || pendingSelection.raw.trim().length < 3) return;
     openCompose(r);
   });
   composeCancel.addEventListener("click", closeCompose);
   composeSubmit.addEventListener("click", () => {
     const body = composeBody.value.trim();
     if(!body){ composeBody.focus(); return; }
-    if(!pendingSelection || pendingSelection.trim().length < 3){
+    if(!pendingSelection.raw || pendingSelection.raw.trim().length < 3){
       statusEl.textContent = "Selection lost — re-select and try again.";
       closeCompose();
       return;
     }
+    // Inline-code selection: DOM strips the delimiters, raw markdown keeps
+    // them; wrap back before sending so the source lookup matches.
+    const selectedText = pendingSelection.inline
+      ? "\`" + pendingSelection.raw + "\`"
+      : pendingSelection.raw;
     statusEl.textContent = "Creating comment...";
-    vscode.postMessage({type: "create", selectedText: pendingSelection, body: body});
+    vscode.postMessage({type: "create", selectedText: selectedText, body: body});
     closeCompose();
   });
   composeBody.addEventListener("keydown", (e) => {
