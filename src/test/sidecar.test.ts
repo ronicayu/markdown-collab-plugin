@@ -12,6 +12,9 @@ import {
   addComment,
   addReply,
   setResolved,
+  deleteComment,
+  editCommentBody,
+  editReplyBody,
   wasSelfWrite,
   __resetSelfWriteTokens,
 } from "../sidecar";
@@ -555,5 +558,139 @@ describe("concurrent mutations on the same path", () => {
     expect(replies).toHaveLength(1 + N);
     const bodies = new Set(replies.map((r) => r.body));
     for (let i = 0; i < N; i++) expect(bodies.has(`reply-${i}`)).toBe(true);
+  });
+});
+
+describe("deleteComment", () => {
+  it("removes the matching comment and returns true", async () => {
+    const target = path.join(tmpDir, "del.md.json");
+    await saveSidecar(target, validSidecar());
+    const result = await deleteComment(target, "c_abcdef12");
+    expect(result).toBe(true);
+    const loaded = await loadSidecar(target);
+    expect(loaded?.sidecar.comments).toHaveLength(0);
+  });
+
+  it("returns false and does not rewrite when commentId is unknown", async () => {
+    const target = path.join(tmpDir, "del-missing.md.json");
+    await saveSidecar(target, validSidecar());
+    const before = await fs.stat(target);
+    await new Promise((r) => setTimeout(r, 20));
+    const result = await deleteComment(target, "c_99999999");
+    expect(result).toBe(false);
+    const after = await fs.stat(target);
+    expect(after.mtimeMs).toBe(before.mtimeMs);
+  });
+
+  it("rejects writes against a read-only forward-version sidecar", async () => {
+    const target = path.join(tmpDir, "del-future.md.json");
+    const future: any = { ...validSidecar(), version: 99 };
+    await fs.writeFile(target, JSON.stringify(future, null, 2), "utf8");
+    await expect(deleteComment(target, "c_abcdef12")).rejects.toThrow(/unknown version/);
+  });
+
+  it("serializes concurrent deletes for the same id without corrupting JSON", async () => {
+    const target = path.join(tmpDir, "del-concurrent.md.json");
+    await saveSidecar(target, validSidecar());
+    const N = 5;
+    const calls = Array.from({ length: N }, () => deleteComment(target, "c_abcdef12"));
+    const results = await Promise.all(calls);
+    // First call wins; subsequent calls find nothing to delete.
+    expect(results.filter((r) => r === true)).toHaveLength(1);
+    const loaded = await loadSidecar(target);
+    expect(loaded?.sidecar.comments).toHaveLength(0);
+  });
+});
+
+describe("editCommentBody", () => {
+  it("updates the body and returns true", async () => {
+    const target = path.join(tmpDir, "edit.md.json");
+    await saveSidecar(target, validSidecar());
+    const result = await editCommentBody(target, "c_abcdef12", "rewritten");
+    expect(result).toBe(true);
+    const loaded = await loadSidecar(target);
+    expect(loaded?.sidecar.comments[0].body).toBe("rewritten");
+  });
+
+  it("returns false and does not rewrite for an unknown id", async () => {
+    const target = path.join(tmpDir, "edit-missing.md.json");
+    await saveSidecar(target, validSidecar());
+    const before = await fs.stat(target);
+    await new Promise((r) => setTimeout(r, 20));
+    const result = await editCommentBody(target, "c_99999999", "rewritten");
+    expect(result).toBe(false);
+    const after = await fs.stat(target);
+    expect(after.mtimeMs).toBe(before.mtimeMs);
+  });
+
+  it("returns true and skips the write when the body is unchanged", async () => {
+    const target = path.join(tmpDir, "edit-noop.md.json");
+    await saveSidecar(target, validSidecar());
+    __resetSelfWriteTokens();
+    const before = await fs.stat(target);
+    await new Promise((r) => setTimeout(r, 20));
+    const result = await editCommentBody(
+      target,
+      "c_abcdef12",
+      "please rewrite",
+    );
+    expect(result).toBe(true);
+    const after = await fs.stat(target);
+    // No write means no mtime bump and no self-write token consumed.
+    expect(after.mtimeMs).toBe(before.mtimeMs);
+    const consumed = await wasSelfWrite(target);
+    expect(consumed).toBe(false);
+  });
+
+  it("rejects writes against a read-only forward-version sidecar", async () => {
+    const target = path.join(tmpDir, "edit-future.md.json");
+    const future: any = { ...validSidecar(), version: 99 };
+    await fs.writeFile(target, JSON.stringify(future, null, 2), "utf8");
+    await expect(
+      editCommentBody(target, "c_abcdef12", "x"),
+    ).rejects.toThrow(/unknown version/);
+  });
+});
+
+describe("editReplyBody", () => {
+  it("updates the indexed reply", async () => {
+    const target = path.join(tmpDir, "edit-reply.md.json");
+    await saveSidecar(target, validSidecar());
+    const result = await editReplyBody(target, "c_abcdef12", 0, "updated");
+    expect(result).toBe(true);
+    const loaded = await loadSidecar(target);
+    expect(loaded?.sidecar.comments[0].replies[0].body).toBe("updated");
+  });
+
+  it("returns false for an out-of-range replyIndex (negative)", async () => {
+    const target = path.join(tmpDir, "edit-reply-neg.md.json");
+    await saveSidecar(target, validSidecar());
+    const result = await editReplyBody(target, "c_abcdef12", -1, "x");
+    expect(result).toBe(false);
+  });
+
+  it("returns false for an out-of-range replyIndex (too large)", async () => {
+    const target = path.join(tmpDir, "edit-reply-big.md.json");
+    await saveSidecar(target, validSidecar());
+    const result = await editReplyBody(target, "c_abcdef12", 99, "x");
+    expect(result).toBe(false);
+  });
+
+  it("returns false for an unknown commentId", async () => {
+    const target = path.join(tmpDir, "edit-reply-missing.md.json");
+    await saveSidecar(target, validSidecar());
+    const result = await editReplyBody(target, "c_99999999", 0, "x");
+    expect(result).toBe(false);
+  });
+
+  it("returns true and skips the write when the reply body is unchanged", async () => {
+    const target = path.join(tmpDir, "edit-reply-noop.md.json");
+    await saveSidecar(target, validSidecar());
+    const before = await fs.stat(target);
+    await new Promise((r) => setTimeout(r, 20));
+    const result = await editReplyBody(target, "c_abcdef12", 0, "done");
+    expect(result).toBe(true);
+    const after = await fs.stat(target);
+    expect(after.mtimeMs).toBe(before.mtimeMs);
   });
 });

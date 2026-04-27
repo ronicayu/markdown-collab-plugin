@@ -8,10 +8,10 @@ export const CLI_SCRIPT_CONTENT = `#!/usr/bin/env node
 // Markdown Collab agent helper.
 //
 // Filters sidecars to actionable comments only and applies targeted
-// mutations (reply / delete / set-anchor). Lets the agent operate on a
-// large corpus of resolved comments without loading any of them into
-// context. All writes are atomic (temp + rename) and validate the
-// schema before committing.
+// mutations (reply / delete / set-anchor / validate). Lets the agent
+// operate on a large corpus of resolved comments without loading any
+// of them into context. Writes are atomic (temp + rename) with cleanup
+// on rename failure. Schema validation runs on every read.
 //
 // Usage:
 //   node mdc.mjs list [--workspace <ws>] [--file <rel-md-path>]
@@ -19,12 +19,17 @@ export const CLI_SCRIPT_CONTENT = `#!/usr/bin/env node
 //   node mdc.mjs delete <sidecar> <commentId>
 //   node mdc.mjs set-anchor <sidecar> <commentId> --text <s> [--before <s>] [--after <s>]
 //   node mdc.mjs validate <sidecar>
+//
+// Argv: positional args (subcommand <pos1> <pos2>) come first; flags
+// (--name value) follow. Use \`--\` to terminate flag parsing if a
+// positional value happens to start with \`--\`.
 
 import {
   readFileSync,
   writeFileSync,
   mkdirSync,
   renameSync,
+  unlinkSync,
   readdirSync,
   statSync,
   existsSync,
@@ -32,22 +37,75 @@ import {
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 
-const argv = process.argv.slice(2);
-const cmd = argv[0];
-const rest = argv.slice(1);
-
 function fail(msg, code = 1) {
   process.stderr.write(\`mdc: \${msg}\\n\`);
   process.exit(code);
+  throw new Error(msg); // unreachable in practice; satisfies static control-flow analysis
 }
+
+// Split argv into positional and flag arrays. \`--\` terminates flag parsing
+// so a positional that legitimately starts with \`--\` can be passed verbatim.
+function splitArgs(argv) {
+  const positional = [];
+  const flags = new Map();
+  let i = 0;
+  let endOfFlags = false;
+  while (i < argv.length) {
+    const a = argv[i];
+    if (!endOfFlags && a === "--") { endOfFlags = true; i++; continue; }
+    if (!endOfFlags && a.startsWith("--")) {
+      const name = a.slice(2);
+      const val = argv[i + 1];
+      if (val === undefined || (val.startsWith("--") && val !== "--")) {
+        // Bare flag with no value — treat as boolean true (none of our
+        // current commands use this, so we just store true for forward use).
+        flags.set(name, true);
+        i++;
+      } else {
+        flags.set(name, val);
+        i += 2;
+      }
+    } else {
+      positional.push(a);
+      i++;
+    }
+  }
+  return { positional, flags };
+}
+
+const { positional, flags } = splitArgs(process.argv.slice(2));
+const cmd = positional[0];
+const pos = positional.slice(1);
 
 function flag(name, def) {
-  const i = rest.indexOf(name);
-  if (i === -1) return def;
-  return rest[i + 1];
+  return flags.has(name) ? flags.get(name) : def;
 }
 
-function readSidecar(p) {
+const ID_RE = /^c_[0-9a-f]{8}$/;
+function validateComment(c, i) {
+  if (!c || typeof c !== "object" || Array.isArray(c)) return \`comment[\${i}] must be an object\`;
+  if (typeof c.id !== "string" || !ID_RE.test(c.id)) return \`comment[\${i}].id invalid\`;
+  if (!c.anchor || typeof c.anchor !== "object") return \`comment[\${i}].anchor must be an object\`;
+  for (const k of ["text", "contextBefore", "contextAfter"]) {
+    if (typeof c.anchor[k] !== "string") return \`comment[\${i}].anchor.\${k} must be a string\`;
+  }
+  if (typeof c.body !== "string") return \`comment[\${i}].body must be a string\`;
+  if (typeof c.author !== "string") return \`comment[\${i}].author must be a string\`;
+  if (typeof c.createdAt !== "string") return \`comment[\${i}].createdAt must be a string\`;
+  if (typeof c.resolved !== "boolean") return \`comment[\${i}].resolved must be a boolean\`;
+  if (!Array.isArray(c.replies)) return \`comment[\${i}].replies must be an array\`;
+  for (let j = 0; j < c.replies.length; j++) {
+    const r = c.replies[j];
+    if (!r || typeof r !== "object") return \`comment[\${i}].replies[\${j}] must be an object\`;
+    if (typeof r.author !== "string") return \`comment[\${i}].replies[\${j}].author must be a string\`;
+    if (typeof r.body !== "string") return \`comment[\${i}].replies[\${j}].body must be a string\`;
+    if (typeof r.createdAt !== "string") return \`comment[\${i}].replies[\${j}].createdAt must be a string\`;
+  }
+  return null;
+}
+
+function readSidecar(p, opts) {
+  const strict = !!(opts && opts.strict);
   if (!existsSync(p)) fail(\`sidecar not found: \${p}\`, 2);
   let raw;
   try { raw = readFileSync(p, "utf8"); }
@@ -58,14 +116,30 @@ function readSidecar(p) {
   if (!data || data.version !== 1 || typeof data.file !== "string" || !Array.isArray(data.comments)) {
     fail(\`schema mismatch in \${p} (need version=1)\`, 2);
   }
+  if (strict) {
+    for (let i = 0; i < data.comments.length; i++) {
+      const err = validateComment(data.comments[i], i);
+      if (err) fail(\`schema mismatch in \${p}: \${err}\`, 2);
+    }
+  }
   return data;
 }
 
 function writeSidecar(p, data) {
   mkdirSync(dirname(p), { recursive: true });
   const tmp = \`\${p}.tmp.\${randomBytes(8).toString("hex")}\`;
-  writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
-  renameSync(tmp, p);
+  try {
+    writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
+  } catch (e) {
+    try { unlinkSync(tmp); } catch (_) {}
+    fail(\`write failed: \${p}: \${e.message}\`, 2);
+  }
+  try {
+    renameSync(tmp, p);
+  } catch (e) {
+    try { unlinkSync(tmp); } catch (_) {}
+    fail(\`rename failed: \${p}: \${e.message}\`, 2);
+  }
 }
 
 function nowZ() {
@@ -89,9 +163,22 @@ function findSidecars(workspaceRoot, mdRel) {
   if (!existsSync(root)) return [];
   const out = [];
   function walk(dir) {
-    for (const e of readdirSync(dir)) {
+    let entries;
+    try { entries = readdirSync(dir); }
+    catch (e) {
+      // A single unreadable subdir shouldn't blank the agent's worklist.
+      // Surface the failure on stderr and keep walking siblings.
+      process.stderr.write(\`mdc: skipping unreadable dir \${dir}: \${e.message}\\n\`);
+      return;
+    }
+    for (const e of entries) {
       const p = join(dir, e);
-      const st = statSync(p);
+      let st;
+      try { st = statSync(p); }
+      catch (err) {
+        process.stderr.write(\`mdc: skipping unreadable entry \${p}: \${err.message}\\n\`);
+        continue;
+      }
       if (st.isDirectory()) walk(p);
       else if (e.endsWith(".md.json")) out.push(p);
     }
@@ -101,8 +188,8 @@ function findSidecars(workspaceRoot, mdRel) {
 }
 
 if (cmd === "list") {
-  const ws = flag("--workspace", process.cwd());
-  const md = flag("--file");
+  const ws = flag("workspace", process.cwd());
+  const md = flag("file");
   const sidecars = findSidecars(ws, md);
   const out = [];
   for (const sc of sidecars) {
@@ -126,10 +213,11 @@ if (cmd === "list") {
 }
 
 if (cmd === "reply") {
-  const sc = rest[0];
-  const id = rest[1];
-  const body = flag("--body");
-  if (!sc || !id || body == null) fail("usage: reply <sidecar> <id> --body <text>");
+  const sc = pos[0];
+  const id = pos[1];
+  const body = flag("body");
+  if (!sc || !id || body == null || body === true) fail("usage: reply <sidecar> <id> --body <text>");
+  if (typeof body !== "string" || body.trim() === "") fail("--body cannot be empty", 4);
   const data = readSidecar(sc);
   const c = data.comments.find((x) => x.id === id);
   if (!c) fail(\`comment \${id} not found\`, 3);
@@ -140,8 +228,8 @@ if (cmd === "reply") {
 }
 
 if (cmd === "delete") {
-  const sc = rest[0];
-  const id = rest[1];
+  const sc = pos[0];
+  const id = pos[1];
   if (!sc || !id) fail("usage: delete <sidecar> <id>");
   const data = readSidecar(sc);
   const before = data.comments.length;
@@ -153,26 +241,31 @@ if (cmd === "delete") {
 }
 
 if (cmd === "set-anchor") {
-  const sc = rest[0];
-  const id = rest[1];
-  const text = flag("--text");
-  const before = flag("--before", "");
-  const after = flag("--after", "");
-  if (!sc || !id || text == null) fail("usage: set-anchor <sidecar> <id> --text <s> [--before <s>] [--after <s>]");
+  const sc = pos[0];
+  const id = pos[1];
+  const text = flag("text");
+  const before = flag("before", "");
+  const after = flag("after", "");
+  if (!sc || !id || text == null || text === true) fail("usage: set-anchor <sidecar> <id> --text <s> [--before <s>] [--after <s>]");
+  if (typeof text !== "string") fail("--text must be a string", 4);
   if (text.replace(/\\s/g, "").length < 8) fail("anchor.text needs >= 8 non-whitespace chars", 4);
   const data = readSidecar(sc);
   const c = data.comments.find((x) => x.id === id);
   if (!c) fail(\`comment \${id} not found\`, 3);
-  c.anchor = { text, contextBefore: before, contextAfter: after };
+  c.anchor = {
+    text,
+    contextBefore: typeof before === "string" ? before : "",
+    contextAfter: typeof after === "string" ? after : "",
+  };
   writeSidecar(sc, data);
   process.stdout.write(\`ok: anchor updated for \${id}\\n\`);
   process.exit(0);
 }
 
 if (cmd === "validate") {
-  const sc = rest[0];
+  const sc = pos[0];
   if (!sc) fail("usage: validate <sidecar>");
-  const data = readSidecar(sc);
+  const data = readSidecar(sc, { strict: true });
   process.stdout.write(\`ok: version=\${data.version} comments=\${data.comments.length}\\n\`);
   process.exit(0);
 }

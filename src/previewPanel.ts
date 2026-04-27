@@ -141,27 +141,37 @@ export class PreviewPanel {
       if (seq !== this.renderSeq) return;
       this.panel.webview.html = this.renderHtml(payload);
     } catch (e) {
+      // Don't let the preview look stale: replace the HTML with an error
+      // banner pointing at the output channel. Stale-on-error was the
+      // worst outcome — silent regressions hidden behind unchanged HTML.
+      const msg = (e as Error).message;
+      this.output.appendLine(`Preview render failed: ${msg}`);
+      if (seq === this.renderSeq) {
+        this.panel.webview.html = renderErrorHtml(msg);
+      }
+    }
+  }
+
+  private async readDocText(): Promise<string> {
+    // Prefer disk content over the live buffer: an external writer (the AI
+    // skill, a CLI tool) can update the file faster than VS Code reloads the
+    // buffer, and the sidecar's anchors are written against disk content.
+    // Fall back to the buffer when the user has unsaved local edits or the
+    // disk read fails (with a logged reason — silently masking ENOENT here
+    // would leave the user staring at stale content with no signal).
+    if (this.doc.isDirty) return this.doc.getText();
+    try {
+      return await fs.readFile(this.doc.uri.fsPath, "utf8");
+    } catch (e) {
       this.output.appendLine(
-        `Preview render failed: ${(e as Error).message}`,
+        `Disk read failed for ${this.doc.uri.fsPath}; using buffer: ${(e as Error).message}`,
       );
+      return this.doc.getText();
     }
   }
 
   private async buildPayload(): Promise<PreviewPayload> {
-    // Prefer disk content over the live buffer: an external writer (the AI
-    // skill, a CLI tool) can update the file faster than VS Code reloads the
-    // buffer, and the sidecar's anchors are written against disk content.
-    // Fall back to the buffer when the user has unsaved local edits.
-    let text: string;
-    if (this.doc.isDirty) {
-      text = this.doc.getText();
-    } else {
-      try {
-        text = await fs.readFile(this.doc.uri.fsPath, "utf8");
-      } catch {
-        text = this.doc.getText();
-      }
-    }
+    const text = await this.readDocText();
     const folder = vscode.workspace.getWorkspaceFolder(this.doc.uri);
     const resolvedComments: ResolvedComment[] = [];
     let orphaned: Comment[] = [];
@@ -788,8 +798,23 @@ pre.mermaid svg { max-width: 100%; height: auto; }
     return sidecarPathFor(this.doc.uri.fsPath, folder.uri.fsPath);
   }
 
-  private async onReply(msg: ReplyMsg): Promise<void> {
+  /**
+   * Resolve the sidecar path or surface a status message in the webview.
+   * Replaces the silent `if (!p) return` pattern that left the user
+   * staring at a clicked button with no feedback when the .md is outside
+   * any workspace folder.
+   */
+  private requireSidecarPath(action: string): string | null {
     const p = this.sidecarPath();
+    if (p) return p;
+    const reason = `Cannot ${action}: file is not in a workspace folder.`;
+    this.output.appendLine(reason);
+    this.panel.webview.postMessage({ type: "status", text: reason });
+    return null;
+  }
+
+  private async onReply(msg: ReplyMsg): Promise<void> {
+    const p = this.requireSidecarPath("reply");
     if (!p) return;
     await addReply(p, msg.commentId, {
       author: "user",
@@ -820,9 +845,15 @@ pre.mermaid svg { max-width: 100%; height: auto; }
           this.output.appendLine(
             `openExternal failed for ${raw}: ${(e as Error).message}`,
           );
+          void vscode.window.showWarningMessage(
+            `Could not open ${raw}: ${(e as Error).message}`,
+          );
         }
       } else {
         this.output.appendLine(`Refusing to open link with scheme '${scheme}'.`);
+        void vscode.window.showWarningMessage(
+          `Refusing to open link with scheme '${scheme}'.`,
+        );
       }
       return;
     }
@@ -834,12 +865,30 @@ pre.mermaid svg { max-width: 100%; height: auto; }
     let pathPart: string;
     try {
       pathPart = decodeURIComponent(noFrag);
-    } catch {
+    } catch (e) {
+      this.output.appendLine(
+        `decodeURIComponent failed for ${noFrag}: ${(e as Error).message}; using raw`,
+      );
       pathPart = noFrag;
     }
 
+    // Reject any link that resolves outside the document's workspace folder.
+    // Without this, a malicious markdown file could slip in
+    // [click](../../../etc/passwd) and a click would expose arbitrary
+    // filesystem content via vscode.open.
+    const folder = vscode.workspace.getWorkspaceFolder(this.doc.uri);
     const baseDir = path.dirname(this.doc.uri.fsPath);
     const resolved = path.resolve(baseDir, pathPart);
+    const root = folder ? folder.uri.fsPath : baseDir;
+    if (!isInsideRoot(resolved, root)) {
+      this.output.appendLine(
+        `Refusing link outside workspace root (${root}): ${resolved}`,
+      );
+      void vscode.window.showWarningMessage(
+        `Link blocked: ${pathPart} resolves outside the workspace.`,
+      );
+      return;
+    }
 
     try {
       const stat = await fs.stat(resolved);
@@ -849,7 +898,10 @@ pre.mermaid svg { max-width: 100%; height: auto; }
         );
         return;
       }
-    } catch {
+    } catch (e) {
+      this.output.appendLine(
+        `Linked file stat failed for ${resolved}: ${(e as Error).message}`,
+      );
       void vscode.window.showWarningMessage(
         `Linked file not found: ${resolved}`,
       );
@@ -882,11 +934,14 @@ pre.mermaid svg { max-width: 100%; height: auto; }
       this.output.appendLine(
         `vscode.open failed for ${resolved}: ${(e as Error).message}`,
       );
+      void vscode.window.showWarningMessage(
+        `Could not open ${resolved}: ${(e as Error).message}`,
+      );
     }
   }
 
   private async onEdit(msg: EditMsg): Promise<void> {
-    const p = this.sidecarPath();
+    const p = this.requireSidecarPath("edit");
     if (!p) return;
     if (!msg.body || !msg.body.trim()) return;
     await editCommentBody(p, msg.commentId, msg.body);
@@ -894,7 +949,7 @@ pre.mermaid svg { max-width: 100%; height: auto; }
   }
 
   private async onEditReply(msg: EditReplyMsg): Promise<void> {
-    const p = this.sidecarPath();
+    const p = this.requireSidecarPath("edit reply");
     if (!p) return;
     if (!msg.body || !msg.body.trim()) return;
     await editReplyBody(p, msg.commentId, msg.replyIndex, msg.body);
@@ -902,7 +957,7 @@ pre.mermaid svg { max-width: 100%; height: auto; }
   }
 
   private async onDelete(msg: DeleteMsg): Promise<void> {
-    const p = this.sidecarPath();
+    const p = this.requireSidecarPath("delete");
     if (!p) return;
     const confirm = await vscode.window.showWarningMessage(
       "Delete this comment thread? Replies will be removed too.",
@@ -915,18 +970,22 @@ pre.mermaid svg { max-width: 100%; height: auto; }
   }
 
   private async onToggleResolve(msg: ResolveMsg): Promise<void> {
-    const p = this.sidecarPath();
+    const p = this.requireSidecarPath("resolve");
     if (!p) return;
     await setResolved(p, msg.commentId, msg.resolved);
     await this.render();
   }
 
   private async onCreate(msg: CreateMsg): Promise<void> {
-    const p = this.sidecarPath();
+    const p = this.requireSidecarPath("create comment");
     const folder = vscode.workspace.getWorkspaceFolder(this.doc.uri);
     if (!p || !folder) return;
     if (!msg.body || !msg.body.trim()) return;
-    const text = this.doc.getText();
+    // Use the same text source the preview rendered from. Without this the
+    // selection-to-source lookup races: render reads disk while onCreate
+    // would read buffer, and on a divergence the anchor lands at the wrong
+    // offset (or fails to locate).
+    const text = await this.readDocText();
     const located = locateSelectionInSource(text, msg.selectedText);
     if (!located) {
       this.panel.webview.postMessage({
@@ -983,6 +1042,44 @@ export function locateSelectionInSource(
 }
 
 /**
+ * Minimal HTML shown when buildPayload / renderHtml throws. Keeps the
+ * webview frame alive (so the panel doesn't appear blank), surfaces the
+ * error message, and points the user at the output channel for detail.
+ */
+function renderErrorHtml(message: string): string {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8" /><style>
+body { font-family: var(--vscode-font-family, -apple-system, sans-serif); color: var(--vscode-foreground); padding: 2rem; }
+.box { border: 1px solid var(--vscode-errorForeground); border-radius: 4px; padding: 1rem; max-width: 640px; }
+h1 { margin-top: 0; font-size: 1.1em; color: var(--vscode-errorForeground); }
+pre { background: var(--vscode-textCodeBlock-background, transparent); padding: 0.5rem; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word; }
+small { color: var(--vscode-descriptionForeground); }
+</style></head><body><div class="box">
+<h1>Preview render failed</h1>
+<pre>${escapeHtml(message)}</pre>
+<small>See <strong>Output → Markdown Collab</strong> for full context. Click the refresh button after fixing the file to retry.</small>
+</div></body></html>`;
+}
+
+/**
+ * True when `target` is the same path as `root` or any descendant. Used to
+ * confine link-routing to the workspace folder of the previewed document.
+ * Both arguments must be absolute filesystem paths. The comparison is
+ * case-sensitive on POSIX and case-insensitive on win32 (matching how the
+ * filesystem itself behaves), and uses `path.relative` so symlinks at the
+ * boundary collapse correctly.
+ */
+export function isInsideRoot(target: string, root: string): boolean {
+  const a = path.resolve(target);
+  const b = path.resolve(root);
+  if (a === b) return true;
+  const rel = path.relative(b, a);
+  if (rel === "" ) return true;
+  if (rel.startsWith("..")) return false;
+  if (path.isAbsolute(rel)) return false;
+  return true;
+}
+
+/**
  * Locate the first occurrence of `needle` inside `html` that lies entirely
  * within text content (not inside a tag's attribute list) and does not
  * straddle a tag boundary unless the boundary matches byte-for-byte. Wrap the
@@ -994,7 +1091,7 @@ export function locateSelectionInSource(
  * `html: false`, so tag shapes are regular, and the needle itself is the
  * markdown-it output for the same source text, so embedded tags line up.
  */
-function wrapFirstOutsideTags(
+export function wrapFirstOutsideTags(
   html: string,
   needle: string,
   wrap: (inner: string) => string,
@@ -1017,7 +1114,7 @@ function wrapFirstOutsideTags(
  * close). Scans leftward to the nearest unquoted `<` or `>`; if `<` is
  * closer, we're inside a tag.
  */
-function isInsideTag(html: string, offset: number): boolean {
+export function isInsideTag(html: string, offset: number): boolean {
   for (let i = offset - 1; i >= 0; i--) {
     const ch = html[i];
     if (ch === ">") return false;
@@ -1108,10 +1205,15 @@ function parseSimpleFrontmatter(
     if (colon === -1) return null;
     const key = line.slice(0, colon).trim();
     let value = line.slice(colon + 1).trim();
-    if (value === "" || value === "[]" || value === "{}") {
-      // Lists/maps without a value on the same line indicate complex YAML.
-      // Treat empty value as legitimate, but bail on `[items]` shorthand
-      // that would render unhelpfully.
+    // Inline JSON-style flow collections (`tags: [a, b]`, `meta: {x: 1}`)
+    // need a real YAML parser to render meaningfully — fall back so the user
+    // sees the raw block instead of the literal "[a, b]" string masquerading
+    // as a value.
+    if (
+      (value.startsWith("[") && value.endsWith("]")) ||
+      (value.startsWith("{") && value.endsWith("}"))
+    ) {
+      return null;
     }
     if (
       (value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||

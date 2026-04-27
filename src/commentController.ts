@@ -835,9 +835,20 @@ export class MarkdownCollabController implements vscode.Disposable {
     if (!docPath) return null;
     const entry = this.threads.get(docPath)?.get(stored.commentId);
     if (!entry) return null;
+    const readOnly = this.readOnlyDocs.has(docPath);
     const next = entry.thread.comments.map((c) => {
       if (c === target) {
-        (c as StoredThreadComment).mode = mode;
+        const sc = c as StoredThreadComment;
+        sc.mode = mode;
+        // Toggle contextValue so the comments/comment/* menus only show
+        // Save/Cancel while the comment is actually being edited, and Edit
+        // only while it's not. Without this, Save/Cancel appear on every
+        // editable comment regardless of mode.
+        sc.contextValue = readOnly
+          ? "markdown-collab-readonly"
+          : mode === vscode.CommentMode.Editing
+            ? "markdown-collab-editing"
+            : "markdown-collab-editable";
       }
       return c;
     });
@@ -855,12 +866,17 @@ export class MarkdownCollabController implements vscode.Disposable {
       );
       return;
     }
+    // Mark the thread as actively-edited so a watcher-triggered reload
+    // doesn't dispose it from under VS Code's inline editor. Cleared by
+    // handleSaveEdit / handleCancelEdit.
+    this.activeEdits.add(stored.commentId);
     this.setCommentMode(target, vscode.CommentMode.Editing);
   }
 
   private async handleCancelEdit(target: vscode.Comment): Promise<void> {
     // Drop any in-progress edits by reloading the stored body from sidecar.
     const stored = target as StoredThreadComment;
+    this.activeEdits.delete(stored.commentId);
     const docPath = this.docPathForComment(stored.commentId);
     if (!docPath) return;
     const doc = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === docPath);
@@ -880,9 +896,18 @@ export class MarkdownCollabController implements vscode.Disposable {
     const folder = vscode.workspace.workspaceFolders?.find((f) =>
       docPath.startsWith(f.uri.fsPath),
     );
-    if (!folder) return;
+    if (!folder) {
+      void vscode.window.showWarningMessage(
+        "Cannot save edit — file is not in a workspace folder.",
+      );
+      this.activeEdits.delete(stored.commentId);
+      return;
+    }
     const sidecarPath = sidecarPathFor(docPath, folder.uri.fsPath);
-    if (!sidecarPath) return;
+    if (!sidecarPath) {
+      this.activeEdits.delete(stored.commentId);
+      return;
+    }
     // VS Code mutates `target.body` to the edited text; it may be a plain
     // string or a MarkdownString depending on what we seeded.
     const next =
@@ -901,15 +926,32 @@ export class MarkdownCollabController implements vscode.Disposable {
       const doc = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === docPath);
       if (doc) {
         await this.refreshMtime(sidecarPath, docPath);
+        // Drop the active-edit flag *before* reload so reloadInner builds a
+        // fresh thread (rather than patching the editing one in place).
+        this.activeEdits.delete(stored.commentId);
         await this.reload(doc);
+      } else {
+        this.activeEdits.delete(stored.commentId);
       }
     } catch (e) {
       this.output.appendLine(`Failed to save edit: ${(e as Error).message}`);
       void vscode.window.showErrorMessage(
         `Markdown Collab: failed to save edit: ${(e as Error).message}`,
       );
+      this.activeEdits.delete(stored.commentId);
       const doc = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === docPath);
-      if (doc) await this.reload(doc);
+      if (doc) {
+        try {
+          await this.reload(doc);
+        } catch (rollbackErr) {
+          this.output.appendLine(
+            `Reload after failed save also failed: ${(rollbackErr as Error).message}`,
+          );
+          void vscode.window.showErrorMessage(
+            "Save failed and the thread could not be refreshed — close and reopen the comment to recover.",
+          );
+        }
+      }
     }
   }
 
@@ -1025,6 +1067,7 @@ export class MarkdownCollabController implements vscode.Disposable {
         : null;
       if (!oldSidecar || !newSidecar) continue;
       let renamed = false;
+      let sidecarMissing = false;
       try {
         await fs.mkdir(path.dirname(newSidecar), { recursive: true });
         await fs.rename(oldSidecar, newSidecar);
@@ -1033,17 +1076,35 @@ export class MarkdownCollabController implements vscode.Disposable {
         const err = e as NodeJS.ErrnoException;
         if (err.code === "ENOENT") {
           // No sidecar existed for this .md — nothing to do.
+          sidecarMissing = true;
         } else {
-          this.output.appendLine(
-            `Failed to move sidecar ${oldSidecar} → ${newSidecar}: ${err.message}`,
-          );
-          void vscode.window.showWarningMessage(
-            `Markdown Collab: could not move sidecar for ${path.basename(
-              oldUri.fsPath,
-            )} — ${err.message}`,
-          );
+          // Cross-device or permission error. Fall back to copy-then-unlink
+          // so the user's comments still follow the rename instead of
+          // vanishing from the new location.
+          try {
+            await fs.copyFile(oldSidecar, newSidecar);
+            await fs.unlink(oldSidecar).catch(() => {
+              // Couldn't remove the old sidecar — log it but treat the move
+              // as successful from the user's perspective; the orphaned
+              // copy at the old location won't be referenced again.
+              this.output.appendLine(
+                `Copied sidecar to ${newSidecar} but could not remove ${oldSidecar}; orphaned copy left in place.`,
+              );
+            });
+            renamed = true;
+          } catch (copyErr) {
+            this.output.appendLine(
+              `Failed to move sidecar ${oldSidecar} → ${newSidecar}: ${err.message}; copy fallback: ${(copyErr as Error).message}`,
+            );
+            void vscode.window.showWarningMessage(
+              `Markdown Collab: could not move sidecar for ${path.basename(
+                oldUri.fsPath,
+              )} — comments may be lost. ${err.message}`,
+            );
+          }
         }
       }
+      void sidecarMissing;
       // CommentThread.uri is readonly, so we must dispose+rebuild, not re-key.
       // Threads attached to the old URI would never render on the renamed doc.
       const oldKey = oldUri.fsPath;
@@ -1083,13 +1144,22 @@ export class MarkdownCollabController implements vscode.Disposable {
   ): Promise<void> {
     const stopResolved = path.resolve(stopAt);
     let dir = path.resolve(startDir);
-    // Walk up from the file's parent to (but not including) `stopAt`.
-    // rmdir is best-effort: ENOTEMPTY / ENOENT / EBUSY etc. are all fine.
+    // Walk up from the file's parent to (but not including) `stopAt`. rmdir
+    // is best-effort — ENOTEMPTY / ENOENT / EBUSY mean "stop here, that's
+    // fine". Anything else is a programmer bug or a real FS problem and
+    // deserves a log line so it doesn't get masked.
+    const expected = new Set(["ENOTEMPTY", "ENOENT", "EBUSY", "EEXIST", "EPERM", "EACCES"]);
     while (dir !== stopResolved && dir.startsWith(stopResolved + path.sep)) {
       try {
         await fs.rmdir(dir);
-      } catch {
-        return; // First non-empty (or missing) directory halts the walk.
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (!code || !expected.has(code)) {
+          this.output.appendLine(
+            `cleanupEmptyAncestors: unexpected ${code ?? "error"} at ${dir}: ${(e as Error).message}`,
+          );
+        }
+        return;
       }
       const parent = path.dirname(dir);
       if (parent === dir) return;
