@@ -611,7 +611,13 @@ export class MarkdownCollabController implements vscode.Disposable {
 
   private safeDate(iso: string): Date | undefined {
     const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? undefined : d;
+    if (Number.isNaN(d.getTime())) return undefined;
+    // Clamp future timestamps to "now". An external writer (the AI skill,
+    // a CLI tool) may emit a non-UTC or otherwise off-by-timezone string;
+    // VS Code's relative formatter would then render "in 6 hrs" which is
+    // worse than just showing "just now".
+    const now = Date.now();
+    return d.getTime() > now ? new Date(now) : d;
   }
 
   private disposeThreadsFor(uri: vscode.Uri, keep?: ReadonlySet<string>): void {

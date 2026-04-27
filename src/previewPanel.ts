@@ -348,7 +348,7 @@ pre.mermaid svg { max-width: 100%; height: auto; }
   let activeFilter = prior.filter || "unresolved";
 
   function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[ch])); }
-  function fmt(iso){ if(!iso) return ""; const d = new Date(iso); return isNaN(d.getTime()) ? "" : d.toLocaleString(); }
+  function fmt(iso){ if(!iso) return ""; const d = new Date(iso); if(isNaN(d.getTime())) return ""; const now = Date.now(); return (d.getTime() > now ? new Date(now) : d).toLocaleString(); }
   function truncate(s, n){ s = String(s == null ? "" : s); return s.length <= n ? s : s.slice(0, n - 1) + "…"; }
 
   function pillFor(c){

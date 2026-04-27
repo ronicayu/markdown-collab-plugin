@@ -74,8 +74,9 @@ For each file, apply edits in the order from the plan. After each edit:
    - Verify these still uniquely identify the location: the new \`anchor.text\` plus its contexts must occur exactly once in the new file.
 3. **Append a reply** to the comment's \`replies\` array describing what you did:
    \`\`\`json
-   { "author": "ai", "body": "<one or two sentences explaining the change>", "createdAt": "<ISO 8601 UTC>" }
+   { "author": "ai", "body": "<one or two sentences explaining the change>", "createdAt": "<UTC ISO 8601 with Z suffix>" }
    \`\`\`
+   Use the **actual current UTC time** with a trailing \`Z\` (e.g. \`2026-04-27T15:42:11Z\`). Do NOT use a local-time string without a timezone, do NOT pre-compute a future timestamp. If you have shell access, run \`date -u +%Y-%m-%dT%H:%M:%SZ\`. Bad timestamps render as "in 6 hrs" in VS Code and confuse the human reviewer.
    Be specific — quote the new wording, name the section, link to the heading. Don't say "done" with no detail.
 4. **For comments you cannot fully address** (ambiguous request, missing information, conflicting with another comment), reply with what you tried and what you need from the human. Do not pretend it's done.
 
