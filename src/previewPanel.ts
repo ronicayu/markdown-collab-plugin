@@ -1,3 +1,4 @@
+import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
 import MarkdownIt from "markdown-it";
@@ -90,7 +91,21 @@ export class PreviewPanel {
       return defaultFence(tokens, idx, options, env, self);
     };
 
+    // External-write watcher for the .md file. VS Code's onDidChangeTextDocument
+    // only fires for buffer-level edits — when an external process (the AI
+    // skill, a CLI editor) rewrites the file, the buffer may lag. The watcher
+    // covers that gap so the preview re-renders even when VS Code hasn't yet
+    // reloaded the buffer for the open .md.
+    const docWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(
+        path.dirname(doc.uri.fsPath),
+        path.basename(doc.uri.fsPath),
+      ),
+    );
     this.disposables.push(
+      docWatcher,
+      docWatcher.onDidChange(() => void this.render()),
+      docWatcher.onDidCreate(() => void this.render()),
       panel.webview.onDidReceiveMessage((msg) => this.handleMessage(msg)),
       vscode.workspace.onDidChangeTextDocument((e) => {
         if (e.document.uri.fsPath === doc.uri.fsPath) void this.render();
@@ -131,7 +146,20 @@ export class PreviewPanel {
   }
 
   private async buildPayload(): Promise<PreviewPayload> {
-    const text = this.doc.getText();
+    // Prefer disk content over the live buffer: an external writer (the AI
+    // skill, a CLI tool) can update the file faster than VS Code reloads the
+    // buffer, and the sidecar's anchors are written against disk content.
+    // Fall back to the buffer when the user has unsaved local edits.
+    let text: string;
+    if (this.doc.isDirty) {
+      text = this.doc.getText();
+    } else {
+      try {
+        text = await fs.readFile(this.doc.uri.fsPath, "utf8");
+      } catch {
+        text = this.doc.getText();
+      }
+    }
     const folder = vscode.workspace.getWorkspaceFolder(this.doc.uri);
     const resolvedComments: ResolvedComment[] = [];
     let orphaned: Comment[] = [];
