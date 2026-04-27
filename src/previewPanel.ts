@@ -164,6 +164,7 @@ export class PreviewPanel {
     const nonce = cryptoNonce();
     const body = this.renderBodyWithHighlights(payload);
     const commentsJson = JSON.stringify(payload.comments).replace(/</g, "\\u003c");
+    const orphansJson = JSON.stringify(payload.orphans).replace(/</g, "\\u003c");
     const mermaidUri = this.panel.webview.asWebviewUri(
       vscode.Uri.joinPath(
         this.extensionUri,
@@ -183,27 +184,45 @@ export class PreviewPanel {
 <meta charset="utf-8" />
 <meta http-equiv="Content-Security-Policy" content="${csp}" />
 <style>
-body { font-family: var(--vscode-font-family, -apple-system, sans-serif); color: var(--vscode-foreground); padding: 1rem 2rem; line-height: 1.6; max-width: 960px; margin: 0 auto; }
+html, body { margin: 0; padding: 0; }
+body { font-family: var(--vscode-font-family, -apple-system, sans-serif); color: var(--vscode-foreground); line-height: 1.6; display: flex; align-items: flex-start; }
+.mdc-main { flex: 1 1 auto; min-width: 0; padding: 1rem 2rem; max-width: 960px; }
+.mdc-sidebar { flex: 0 0 360px; position: sticky; top: 0; align-self: flex-start; max-height: 100vh; overflow-y: auto; border-left: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background, var(--vscode-editor-background)); padding: 0.75rem; box-sizing: border-box; }
+@media (max-width: 900px) { body { flex-direction: column; } .mdc-sidebar { flex: 1 0 auto; width: 100%; border-left: none; border-top: 1px solid var(--vscode-panel-border); position: static; max-height: none; } }
 code, pre { font-family: var(--vscode-editor-font-family, monospace); }
 pre { background: var(--vscode-textCodeBlock-background, #1e1e1e); padding: 0.75rem; overflow-x: auto; border-radius: 4px; }
-.mdc-anchor { background: rgba(255, 204, 0, 0.25); border-bottom: 2px solid rgba(255, 204, 0, 0.9); cursor: pointer; padding: 0 1px; }
+.mdc-anchor { background: rgba(255, 204, 0, 0.25); border-bottom: 2px solid rgba(255, 204, 0, 0.9); cursor: pointer; padding: 0 1px; transition: background 120ms ease; }
 .mdc-anchor.resolved { background: rgba(100, 200, 100, 0.15); border-bottom-color: rgba(100, 200, 100, 0.6); }
+.mdc-anchor.flash { background: rgba(255, 204, 0, 0.65); }
 .mdc-badge { display: inline-block; font-size: 0.75em; padding: 0 4px; margin-left: 2px; border-radius: 8px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); vertical-align: super; }
 .mdc-toolbar { position: sticky; top: 0; background: var(--vscode-editor-background); padding: 0.5rem 0; z-index: 10; border-bottom: 1px solid var(--vscode-panel-border); display: flex; gap: 0.5rem; align-items: center; }
 .mdc-toolbar button { padding: 0.25rem 0.75rem; cursor: pointer; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 2px; }
 .mdc-toolbar button:disabled { opacity: 0.5; cursor: not-allowed; }
-.mdc-panel { position: fixed; right: 1rem; bottom: 1rem; width: 360px; max-height: 60vh; overflow-y: auto; background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px; padding: 0.75rem; box-shadow: 0 2px 8px rgba(0,0,0,0.3); display: none; z-index: 20; }
-.mdc-panel.open { display: block; }
-.mdc-panel header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
-.mdc-panel header h3 { margin: 0; font-size: 0.95em; }
-.mdc-panel header button { background: none; color: var(--vscode-foreground); border: none; cursor: pointer; font-size: 1.1em; }
-.mdc-msg { border-top: 1px solid var(--vscode-panel-border); padding: 0.5rem 0; font-size: 0.9em; }
+.mdc-sidebar h3 { margin: 0 0 0.25rem; font-size: 0.95em; }
+.mdc-sidebar .mdc-counts { font-size: 0.8em; color: var(--vscode-descriptionForeground); margin-bottom: 0.75rem; }
+.mdc-sidebar .mdc-empty { font-size: 0.85em; color: var(--vscode-descriptionForeground); padding: 0.5rem 0; }
+.mdc-card { border: 1px solid var(--vscode-panel-border); border-radius: 4px; padding: 0.5rem 0.6rem; margin-bottom: 0.5rem; cursor: pointer; background: var(--vscode-editorWidget-background); }
+.mdc-card:hover { border-color: var(--vscode-focusBorder, var(--vscode-button-background)); }
+.mdc-card.active { border-color: var(--vscode-focusBorder, var(--vscode-button-background)); box-shadow: 0 0 0 1px var(--vscode-focusBorder, var(--vscode-button-background)); }
+.mdc-card-head { display: flex; gap: 0.4rem; align-items: baseline; flex-wrap: wrap; font-size: 0.85em; }
+.mdc-card-head .author { font-weight: 600; }
+.mdc-card-head .ts { color: var(--vscode-descriptionForeground); }
+.mdc-pill { display: inline-block; font-size: 0.7em; padding: 1px 6px; border-radius: 8px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+.mdc-pill.resolved { background: rgba(100, 200, 100, 0.35); color: var(--vscode-foreground); }
+.mdc-pill.orphan { background: var(--vscode-errorForeground); color: #fff; }
+.mdc-pill.replies { background: transparent; border: 1px solid var(--vscode-panel-border); color: var(--vscode-descriptionForeground); }
+.mdc-card .preview { font-size: 0.85em; margin-top: 0.25rem; max-height: 3.4em; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.mdc-card .anchor-snippet { font-size: 0.75em; color: var(--vscode-descriptionForeground); font-family: var(--vscode-editor-font-family, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0.25rem; }
+.mdc-card-body { display: none; margin-top: 0.5rem; }
+.mdc-card.open .mdc-card-body { display: block; }
+.mdc-card.open .preview { display: none; }
+.mdc-msg { border-top: 1px solid var(--vscode-panel-border); padding: 0.4rem 0; font-size: 0.9em; }
+.mdc-msg:first-child { border-top: none; }
 .mdc-msg .author { font-weight: 600; }
 .mdc-msg .ts { color: var(--vscode-descriptionForeground); font-size: 0.85em; margin-left: 0.5rem; }
-.mdc-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
-.mdc-reply { width: 100%; box-sizing: border-box; min-height: 3rem; font-family: inherit; padding: 0.25rem; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); }
-.mdc-orphans { margin-top: 2rem; padding: 0.5rem 0.75rem; border: 1px dashed var(--vscode-descriptionForeground); border-radius: 4px; }
-.mdc-orphans h4 { margin: 0 0 0.5rem; color: var(--vscode-descriptionForeground); font-size: 0.85em; }
+.mdc-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; }
+.mdc-actions button { padding: 0.2rem 0.55rem; font-size: 0.8em; }
+.mdc-reply { width: 100%; box-sizing: border-box; min-height: 3rem; font-family: inherit; padding: 0.25rem; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); margin-top: 0.5rem; }
 .mdc-status { font-size: 0.85em; color: var(--vscode-descriptionForeground); }
 .mdc-floating { position: absolute; display: none; padding: 0.25rem 0.6rem; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em; box-shadow: 0 2px 6px rgba(0,0,0,0.4); z-index: 30; white-space: nowrap; }
 .mdc-floating:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
@@ -225,23 +244,25 @@ pre.mermaid svg { max-width: 100%; height: auto; }
 .mdc-msg textarea.mdc-msg-edit { width: 100%; box-sizing: border-box; min-height: 3rem; font-family: inherit; padding: 0.25rem; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); margin-top: 0.25rem; }
 </style>
 </head><body>
-<div class="mdc-toolbar">
-  <span class="mdc-status" id="mdcStatus">${payload.readOnly ? "Read-only: sidecar has a newer schema version." : "Select text to add a comment."}</span>
-</div>
-<div id="mdcContent">${body}</div>
-<button class="mdc-floating" id="mdcFloating">Comment</button>
-<div class="mdc-inline-compose" id="mdcCompose">
-  <textarea id="mdcComposeBody" placeholder="Add a comment..."></textarea>
-  <div class="mdc-inline-hint" id="mdcComposeHint"></div>
-  <div class="mdc-inline-actions">
-    <button class="mdc-inline-cancel" id="mdcComposeCancel">Cancel</button>
-    <button class="mdc-inline-submit" id="mdcComposeSubmit">Comment</button>
+<main class="mdc-main">
+  <div class="mdc-toolbar">
+    <span class="mdc-status" id="mdcStatus">${payload.readOnly ? "Read-only: sidecar has a newer schema version." : "Select text to add a comment."}</span>
   </div>
-</div>
-${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (${payload.orphans.length})</h4>${payload.orphans.map((o) => `<div class="mdc-msg"><span class="author">${escapeHtml(o.author)}</span>: ${escapeHtml(o.body)}</div>`).join("")}</div>` : ""}
-<aside class="mdc-panel" id="mdcPanel">
-  <header><h3 id="mdcPanelTitle"></h3><button id="mdcPanelClose">✕</button></header>
-  <div id="mdcPanelBody"></div>
+  <div id="mdcContent">${body}</div>
+  <button class="mdc-floating" id="mdcFloating">Comment</button>
+  <div class="mdc-inline-compose" id="mdcCompose">
+    <textarea id="mdcComposeBody" placeholder="Add a comment..."></textarea>
+    <div class="mdc-inline-hint" id="mdcComposeHint"></div>
+    <div class="mdc-inline-actions">
+      <button class="mdc-inline-cancel" id="mdcComposeCancel">Cancel</button>
+      <button class="mdc-inline-submit" id="mdcComposeSubmit">Comment</button>
+    </div>
+  </div>
+</main>
+<aside class="mdc-sidebar" id="mdcSidebar">
+  <h3>Comments</h3>
+  <div class="mdc-counts" id="mdcCounts"></div>
+  <div id="mdcList"></div>
 </aside>
 <script nonce="${nonce}" src="${mermaidUri}"></script>
 <script nonce="${nonce}">
@@ -268,22 +289,112 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
 (function(){
   const vscode = acquireVsCodeApi();
   const comments = ${commentsJson};
+  const orphans = ${orphansJson};
   const readOnly = ${payload.readOnly ? "true" : "false"};
-  const byId = new Map(comments.map(c => [c.id, c]));
-  const panel = document.getElementById("mdcPanel");
-  const panelTitle = document.getElementById("mdcPanelTitle");
-  const panelBody = document.getElementById("mdcPanelBody");
+  const byId = new Map();
+  comments.forEach(c => byId.set(c.id, Object.assign({_orphan: false}, c)));
+  orphans.forEach(o => byId.set(o.id, Object.assign({_orphan: true}, o)));
+  const listEl = document.getElementById("mdcList");
+  const countsEl = document.getElementById("mdcCounts");
   const statusEl = document.getElementById("mdcStatus");
   let currentId = null;
 
-  function openFor(id){
+  function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[ch])); }
+  function fmt(iso){ if(!iso) return ""; const d = new Date(iso); return isNaN(d.getTime()) ? "" : d.toLocaleString(); }
+  function truncate(s, n){ s = String(s == null ? "" : s); return s.length <= n ? s : s.slice(0, n - 1) + "…"; }
+
+  function pillFor(c){
+    if(c._orphan) return '<span class="mdc-pill orphan">Orphan</span>';
+    if(c.resolved) return '<span class="mdc-pill resolved">Resolved</span>';
+    return '<span class="mdc-pill">Open</span>';
+  }
+  function repliesPill(c){
+    const n = (c.replies || []).length;
+    return n > 0 ? '<span class="mdc-pill replies">'+(n+1)+' msgs</span>' : "";
+  }
+
+  function renderList(){
+    const all = Array.from(byId.values());
+    // Sort: live first by anchor offset, then orphans by createdAt.
+    all.sort((a, b) => {
+      if(a._orphan !== b._orphan) return a._orphan ? 1 : -1;
+      if(!a._orphan) return (a.start || 0) - (b.start || 0);
+      return String(a.createdAt || "").localeCompare(String(b.createdAt || ""));
+    });
+    const live = all.filter(c => !c._orphan);
+    const resolved = live.filter(c => c.resolved).length;
+    const open = live.length - resolved;
+    const orph = all.length - live.length;
+    countsEl.textContent = all.length === 0
+      ? "No comments yet. Select text to add one."
+      : (open + " open" + (resolved ? " · " + resolved + " resolved" : "") + (orph ? " · " + orph + " orphan" : ""));
+    if(all.length === 0){
+      listEl.innerHTML = '<div class="mdc-empty">Highlight some text in the preview to add the first comment.</div>';
+      return;
+    }
+    listEl.innerHTML = all.map(c => {
+      const snippet = c._orphan && c.anchor && c.anchor.text
+        ? '<div class="anchor-snippet" title="Original anchor (no longer found in source)">' + esc(truncate(c.anchor.text, 80)) + '</div>'
+        : "";
+      return '<div class="mdc-card" data-id="'+esc(c.id)+'">'
+        + '<div class="mdc-card-head">'
+        +   '<span class="author">'+esc(c.author || "anon")+'</span>'
+        +   '<span class="ts">'+esc(fmt(c.createdAt))+'</span>'
+        +   pillFor(c)
+        +   repliesPill(c)
+        + '</div>'
+        + '<div class="preview">'+esc(c.body)+'</div>'
+        + snippet
+        + '<div class="mdc-card-body" data-body-for="'+esc(c.id)+'"></div>'
+        + '</div>';
+    }).join("");
+    // Wire card-level click to expand. Clicks on action buttons inside an
+    // expanded card stop propagation so the card doesn't re-collapse.
+    Array.prototype.forEach.call(listEl.querySelectorAll(".mdc-card"), function(card){
+      card.addEventListener("click", function(e){
+        if(e.target.closest && (e.target.closest("button") || e.target.closest("textarea") || e.target.closest(".mdc-card-body"))) return;
+        const id = card.getAttribute("data-id");
+        toggleExpand(id);
+      });
+    });
+    // If a card was open before re-render, restore it.
+    if(currentId && byId.has(currentId)) expandCard(currentId);
+  }
+
+  function flashAnchor(id){
+    const el = document.querySelector('.mdc-anchor[data-comment-id="'+CSS.escape(id)+'"]');
+    if(!el) return;
+    el.scrollIntoView({behavior: "smooth", block: "center"});
+    el.classList.add("flash");
+    setTimeout(() => el.classList.remove("flash"), 800);
+  }
+
+  function toggleExpand(id){
+    if(currentId === id){
+      // Collapse
+      const card = listEl.querySelector('.mdc-card[data-id="'+CSS.escape(id)+'"]');
+      if(card){ card.classList.remove("open", "active"); }
+      currentId = null;
+      return;
+    }
+    expandCard(id);
+  }
+
+  function expandCard(id){
     const c = byId.get(id);
     if(!c) return;
     currentId = id;
-    panelTitle.textContent = (c.resolved ? "[Resolved] " : "") + (c.author || "anon");
-    const msgs = [{author: c.author, body: c.body, createdAt: c.createdAt, _isRoot: true}].concat((c.replies || []).map((r, i) => Object.assign({_replyIndex: i}, r)));
+    Array.prototype.forEach.call(listEl.querySelectorAll(".mdc-card"), function(card){
+      card.classList.remove("open", "active");
+    });
+    const card = listEl.querySelector('.mdc-card[data-id="'+CSS.escape(id)+'"]');
+    if(!card) return;
+    card.classList.add("open", "active");
+    const body = card.querySelector(".mdc-card-body");
+    const msgs = [{author: c.author, body: c.body, createdAt: c.createdAt, _isRoot: true}]
+      .concat((c.replies || []).map((r, i) => Object.assign({_replyIndex: i}, r)));
+    const editable = !readOnly && !c._orphan;
     const msgsHtml = msgs.map((m, i) => {
-      const editable = !readOnly;
       const editBtn = editable
         ? '<div class="mdc-msg-actions"><button class="mdc-msg-edit" data-msg-idx="'+i+'">Edit</button></div>'
         : "";
@@ -294,37 +405,40 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
         + editBtn
         + '</div>';
     }).join("");
-    const actions = readOnly ? "" :
-      '<textarea class="mdc-reply" id="mdcReplyBox" placeholder="Reply..."></textarea>' +
+    const orphanNote = c._orphan
+      ? '<div class="mdc-empty">This comment\\'s anchor no longer matches the document. Re-attach it from the editor (right-click the orphan in Explorer).</div>'
+      : "";
+    const actionsHtml = (readOnly || c._orphan) ? "" :
+      '<textarea class="mdc-reply" placeholder="Reply..."></textarea>' +
       '<div class="mdc-actions">' +
-        '<button id="mdcSendReply">Reply</button>' +
-        '<button id="mdcToggleResolve">'+(c.resolved?"Reopen":"Resolve")+'</button>' +
-        '<button id="mdcDelete" class="mdc-danger">Delete</button>' +
+        '<button class="mdc-send-reply">Reply</button>' +
+        '<button class="mdc-toggle-resolve">'+(c.resolved?"Reopen":"Resolve")+'</button>' +
+        '<button class="mdc-delete mdc-danger">Delete</button>' +
       '</div>';
-    panelBody.innerHTML = msgsHtml + actions;
-    panel.classList.add("open");
-    if(!readOnly){
-      document.getElementById("mdcSendReply").onclick = () => {
-        const body = document.getElementById("mdcReplyBox").value.trim();
-        if(!body) return;
-        vscode.postMessage({type: "reply", commentId: currentId, body: body});
+    body.innerHTML = msgsHtml + orphanNote + actionsHtml;
+    if(!c._orphan) flashAnchor(id);
+    if(!readOnly && !c._orphan){
+      const replyBox = body.querySelector(".mdc-reply");
+      body.querySelector(".mdc-send-reply").onclick = (e) => {
+        e.stopPropagation();
+        const txt = replyBox.value.trim();
+        if(!txt) return;
+        vscode.postMessage({type: "reply", commentId: id, body: txt});
       };
-      document.getElementById("mdcToggleResolve").onclick = () => {
-        vscode.postMessage({type: "toggleResolve", commentId: currentId, resolved: !c.resolved});
+      body.querySelector(".mdc-toggle-resolve").onclick = (e) => {
+        e.stopPropagation();
+        vscode.postMessage({type: "toggleResolve", commentId: id, resolved: !c.resolved});
       };
-      document.getElementById("mdcDelete").onclick = () => {
-        // Confirmation lives in the extension (VS Code native modal) because
-        // webview confirm() is not reliable across hosts.
-        vscode.postMessage({type: "delete", commentId: currentId});
+      body.querySelector(".mdc-delete").onclick = (e) => {
+        e.stopPropagation();
+        vscode.postMessage({type: "delete", commentId: id});
       };
-      // Per-message edit buttons: swap body for textarea, post an edit
-      // message on save. The msgs array carries _isRoot / _replyIndex hints
-      // so each row knows whether to edit the root body or a reply.
-      Array.prototype.forEach.call(panelBody.querySelectorAll(".mdc-msg-edit"), function(btn){
-        btn.addEventListener("click", function(){
+      Array.prototype.forEach.call(body.querySelectorAll(".mdc-msg-edit"), function(btn){
+        btn.addEventListener("click", function(ev){
+          ev.stopPropagation();
           const idx = Number(btn.getAttribute("data-msg-idx"));
           const m = msgs[idx];
-          const row = panelBody.querySelector('.mdc-msg[data-msg-idx="'+idx+'"]');
+          const row = body.querySelector('.mdc-msg[data-msg-idx="'+idx+'"]');
           if(!row) return;
           const bodyEl = row.querySelector(".mdc-msg-body");
           const actionsEl = row.querySelector(".mdc-msg-actions");
@@ -334,35 +448,35 @@ ${payload.orphans.length > 0 ? `<div class="mdc-orphans"><h4>Orphaned comments (
           ta.value = original;
           bodyEl.replaceWith(ta);
           actionsEl.innerHTML = '<button class="mdc-msg-save">Save</button><button class="mdc-msg-cancel">Cancel</button>';
-          setTimeout(function(){ ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 0);
-          const rerender = function(){ openFor(currentId); };
-          actionsEl.querySelector(".mdc-msg-save").onclick = function(){
+          setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 0);
+          const rerender = () => expandCard(id);
+          actionsEl.querySelector(".mdc-msg-save").onclick = (sev) => {
+            sev.stopPropagation();
             const next = ta.value;
             if(next === original){ rerender(); return; }
             const payload = m._isRoot
-              ? { type: "edit", commentId: currentId, body: next }
-              : { type: "editReply", commentId: currentId, replyIndex: m._replyIndex, body: next };
+              ? { type: "edit", commentId: id, body: next }
+              : { type: "editReply", commentId: id, replyIndex: m._replyIndex, body: next };
             vscode.postMessage(payload);
           };
-          actionsEl.querySelector(".mdc-msg-cancel").onclick = rerender;
-          ta.addEventListener("keydown", function(e){
-            if(e.key === "Escape") rerender();
-            else if(e.key === "Enter" && (e.metaKey || e.ctrlKey)) actionsEl.querySelector(".mdc-msg-save").click();
+          actionsEl.querySelector(".mdc-msg-cancel").onclick = (cev) => {
+            cev.stopPropagation();
+            rerender();
+          };
+          ta.addEventListener("keydown", (kev) => {
+            if(kev.key === "Escape") rerender();
+            else if(kev.key === "Enter" && (kev.metaKey || kev.ctrlKey)) actionsEl.querySelector(".mdc-msg-save").click();
           });
         });
       });
     }
   }
 
-  function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[ch])); }
-  function fmt(iso){ if(!iso) return ""; const d = new Date(iso); return isNaN(d.getTime()) ? "" : d.toLocaleString(); }
-
-  document.getElementById("mdcPanelClose").onclick = () => { panel.classList.remove("open"); currentId = null; };
-
   document.addEventListener("click", (e) => {
     const el = e.target.closest ? e.target.closest(".mdc-anchor") : null;
-    if(el && el.dataset.commentId) openFor(el.dataset.commentId);
+    if(el && el.dataset.commentId) expandCard(el.dataset.commentId);
   });
+  renderList();
 
   const floating = document.getElementById("mdcFloating");
   const compose = document.getElementById("mdcCompose");
