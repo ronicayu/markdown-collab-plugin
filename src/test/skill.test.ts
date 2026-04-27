@@ -15,8 +15,8 @@ afterEach(async () => {
 });
 
 describe("SKILL_REL_PATH", () => {
-  it("points to the markdown-collab skill under .claude/skills", () => {
-    expect(SKILL_REL_PATH).toBe(".claude/skills/markdown-collab/SKILL.md");
+  it("points to the vs-markdown-collab skill under .claude/skills", () => {
+    expect(SKILL_REL_PATH).toBe(".claude/skills/vs-markdown-collab/SKILL.md");
   });
 });
 

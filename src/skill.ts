@@ -1,10 +1,10 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 
-export const SKILL_REL_PATH = ".claude/skills/markdown-collab/SKILL.md";
+export const SKILL_REL_PATH = ".claude/skills/vs-markdown-collab/SKILL.md";
 
 export const SKILL_CONTENT = `---
-name: markdown-collab
+name: vs-markdown-collab
 description: Agentic workflow for addressing review comments on Markdown (.md) files in a Markdown Collab workspace (a workspace containing a .markdown-collab/ folder). TRIGGER when the user asks to address, resolve, respond to, incorporate, or act on review comments, notes, suggestions, or feedback on any Markdown document. Trigger phrases include "address the comments on foo.md", "apply the review feedback", "respond to the notes in README", "incorporate the suggestions", "fix the markdown collab comments", "work through the review on docs/spec.md".
 ---
 
