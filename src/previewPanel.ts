@@ -277,6 +277,12 @@ pre { background: var(--vscode-textCodeBlock-background, #1e1e1e); padding: 0.75
 pre.mermaid { background: transparent; padding: 0.5rem 0; text-align: center; }
 pre.mermaid svg { max-width: 100%; height: auto; }
 .mermaid-error { color: var(--vscode-errorForeground); font-family: var(--vscode-editor-font-family, monospace); white-space: pre-wrap; padding: 0.5rem; border: 1px dashed var(--vscode-errorForeground); border-radius: 4px; }
+.mdc-frontmatter { margin-bottom: 1rem; padding: 0.5rem 0.75rem; background: var(--vscode-textBlockQuote-background, var(--vscode-editorWidget-background)); border-left: 3px solid var(--vscode-textLink-foreground, var(--vscode-button-background)); border-radius: 2px; font-size: 0.9em; }
+.mdc-frontmatter table { border-collapse: collapse; width: 100%; }
+.mdc-frontmatter th, .mdc-frontmatter td { padding: 0.15rem 0.5rem 0.15rem 0; text-align: left; vertical-align: top; }
+.mdc-frontmatter th { color: var(--vscode-descriptionForeground); font-weight: 600; white-space: nowrap; width: 1%; }
+.mdc-frontmatter td { word-break: break-word; }
+.mdc-frontmatter.raw pre { margin: 0; padding: 0; background: transparent; font-family: var(--vscode-editor-font-family, monospace); white-space: pre-wrap; overflow-x: auto; }
 .mdc-msg .mdc-msg-actions { margin-top: 0.25rem; display: flex; gap: 0.5rem; }
 .mdc-msg .mdc-msg-actions button { background: none; border: none; padding: 0; color: var(--vscode-textLink-foreground); cursor: pointer; font-size: 0.8em; }
 .mdc-msg .mdc-msg-actions button:hover { text-decoration: underline; }
@@ -727,13 +733,17 @@ pre.mermaid svg { max-width: 100%; height: auto; }
   }
 
   private renderBodyWithHighlights(payload: PreviewPayload): string {
-    // Render the full document once so block structure (paragraphs, lists,
-    // headings) is preserved. Post-process the resulting HTML to wrap each
-    // anchor's rendered inline form in a highlight span. Splitting the source
-    // at anchor offsets and re-rendering each slice would break paragraphs
-    // into multiple <p> blocks around the anchor.
-    let html = this.md.render(payload.text);
-    if (payload.comments.length === 0) return html;
+    // Strip leading YAML frontmatter so markdown-it doesn't render it as a
+    // thematic break + code block. We render it ourselves as a styled
+    // metadata box prepended to the body.
+    const fm = extractFrontmatter(payload.text);
+    const fmHtml = fm.yaml !== null ? renderFrontmatterHtml(fm.yaml) : "";
+
+    // Render the body without the frontmatter so paragraph structure is
+    // preserved. Post-process the resulting HTML to wrap each anchor's
+    // rendered inline form in a highlight span.
+    let html = this.md.render(fm.rest);
+    if (payload.comments.length === 0) return fmHtml + html;
 
     for (const c of payload.comments) {
       const needle = this.md.renderInline(payload.text.slice(c.start, c.end));
@@ -748,7 +758,7 @@ pre.mermaid svg { max-width: 100%; height: auto; }
       });
       if (wrapped !== null) html = wrapped;
     }
-    return html;
+    return fmHtml + html;
   }
 
   private async handleMessage(msg: unknown): Promise<void> {
@@ -1048,6 +1058,70 @@ function collapseWs(text: string): { normalized: string; map: number[] } {
   }
   map.push(text.length);
   return { normalized, map };
+}
+
+/**
+ * Detect a leading YAML frontmatter block: `---\n...\n---\n` at offset 0.
+ * Returns the inner YAML text, the rest of the markdown, and the byte
+ * length consumed (0 when no frontmatter is present).
+ */
+export function extractFrontmatter(text: string): {
+  yaml: string | null;
+  rest: string;
+  consumed: number;
+} {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
+  if (!m) return { yaml: null, rest: text, consumed: 0 };
+  return { yaml: m[1], rest: text.slice(m[0].length), consumed: m[0].length };
+}
+
+/**
+ * Render a frontmatter block as a metadata table. Falls back to a `<pre>`
+ * dump for anything more complex than top-level `key: value` pairs (nested
+ * keys, arrays, anchors, etc.) so we never silently mangle complex YAML.
+ */
+export function renderFrontmatterHtml(yaml: string): string {
+  const parsed = parseSimpleFrontmatter(yaml);
+  if (parsed === null) {
+    return `<div class="mdc-frontmatter raw"><pre>${escapeHtml(yaml)}</pre></div>`;
+  }
+  if (parsed.length === 0) return "";
+  const rows = parsed
+    .map(
+      (kv) =>
+        `<tr><th>${escapeHtml(kv.key)}</th><td>${escapeHtml(kv.value)}</td></tr>`,
+    )
+    .join("");
+  return `<div class="mdc-frontmatter"><table>${rows}</table></div>`;
+}
+
+function parseSimpleFrontmatter(
+  yaml: string,
+): Array<{ key: string; value: string }> | null {
+  const out: Array<{ key: string; value: string }> = [];
+  const lines = yaml.split(/\r?\n/);
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    if (/^\s/.test(line)) return null; // indented = nested → fallback to pre
+    if (line.trimStart().startsWith("#")) continue; // comment line
+    const colon = line.indexOf(":");
+    if (colon === -1) return null;
+    const key = line.slice(0, colon).trim();
+    let value = line.slice(colon + 1).trim();
+    if (value === "" || value === "[]" || value === "{}") {
+      // Lists/maps without a value on the same line indicate complex YAML.
+      // Treat empty value as legitimate, but bail on `[items]` shorthand
+      // that would render unhelpfully.
+    }
+    if (
+      (value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
+      (value.startsWith("'") && value.endsWith("'") && value.length >= 2)
+    ) {
+      value = value.slice(1, -1);
+    }
+    out.push({ key, value });
+  }
+  return out;
 }
 
 function escapeHtml(s: string): string {
