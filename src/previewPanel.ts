@@ -232,8 +232,12 @@ pre { background: var(--vscode-textCodeBlock-background, #1e1e1e); padding: 0.75
 .mdc-toolbar .mdc-icon-btn.spinning { animation: mdc-spin 0.8s linear infinite; pointer-events: none; }
 @keyframes mdc-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .mdc-sidebar h3 { margin: 0 0 0.25rem; font-size: 0.95em; }
-.mdc-sidebar .mdc-counts { font-size: 0.8em; color: var(--vscode-descriptionForeground); margin-bottom: 0.75rem; }
+.mdc-sidebar .mdc-counts { font-size: 0.8em; color: var(--vscode-descriptionForeground); margin-bottom: 0.5rem; }
 .mdc-sidebar .mdc-empty { font-size: 0.85em; color: var(--vscode-descriptionForeground); padding: 0.5rem 0; }
+.mdc-filter { display: flex; gap: 0.25rem; margin-bottom: 0.75rem; }
+.mdc-filter button { flex: 1; padding: 0.2rem 0.4rem; font-size: 0.8em; cursor: pointer; background: transparent; color: var(--vscode-foreground); border: 1px solid var(--vscode-panel-border); border-radius: 3px; }
+.mdc-filter button.active { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: var(--vscode-button-background); }
+.mdc-filter button:hover:not(.active) { background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.06)); }
 .mdc-card { border: 1px solid var(--vscode-panel-border); border-radius: 4px; padding: 0.5rem 0.6rem; margin-bottom: 0.5rem; cursor: pointer; background: var(--vscode-editorWidget-background); }
 .mdc-card:hover { border-color: var(--vscode-focusBorder, var(--vscode-button-background)); }
 .mdc-card.active { border-color: var(--vscode-focusBorder, var(--vscode-button-background)); box-shadow: 0 0 0 1px var(--vscode-focusBorder, var(--vscode-button-background)); }
@@ -297,6 +301,11 @@ pre.mermaid svg { max-width: 100%; height: auto; }
 <aside class="mdc-sidebar" id="mdcSidebar">
   <h3>Comments</h3>
   <div class="mdc-counts" id="mdcCounts"></div>
+  <div class="mdc-filter" id="mdcFilter">
+    <button data-filter="unresolved" class="active">Unresolved</button>
+    <button data-filter="resolved">Resolved</button>
+    <button data-filter="all">All</button>
+  </div>
   <div id="mdcList"></div>
 </aside>
 <script nonce="${nonce}" src="${mermaidUri}"></script>
@@ -331,8 +340,12 @@ pre.mermaid svg { max-width: 100%; height: auto; }
   orphans.forEach(o => byId.set(o.id, Object.assign({_orphan: true}, o)));
   const listEl = document.getElementById("mdcList");
   const countsEl = document.getElementById("mdcCounts");
+  const filterEl = document.getElementById("mdcFilter");
   const statusEl = document.getElementById("mdcStatus");
   let currentId = null;
+  // Restore filter from previous webview state if any; default unresolved.
+  const prior = (vscode.getState && vscode.getState()) || {};
+  let activeFilter = prior.filter || "unresolved";
 
   function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[ch])); }
   function fmt(iso){ if(!iso) return ""; const d = new Date(iso); return isNaN(d.getTime()) ? "" : d.toLocaleString(); }
@@ -348,6 +361,13 @@ pre.mermaid svg { max-width: 100%; height: auto; }
     return n > 0 ? '<span class="mdc-pill replies">'+(n+1)+' msgs</span>' : "";
   }
 
+  function passesFilter(c){
+    if(activeFilter === "all") return true;
+    if(activeFilter === "resolved") return !!c.resolved;
+    // "unresolved" — orphans count as unresolved unless explicitly resolved.
+    return !c.resolved;
+  }
+
   function renderList(){
     const all = Array.from(byId.values());
     // Sort: live first by anchor offset, then orphans by createdAt.
@@ -357,17 +377,23 @@ pre.mermaid svg { max-width: 100%; height: auto; }
       return String(a.createdAt || "").localeCompare(String(b.createdAt || ""));
     });
     const live = all.filter(c => !c._orphan);
-    const resolved = live.filter(c => c.resolved).length;
-    const open = live.length - resolved;
-    const orph = all.length - live.length;
+    const resolvedTotal = all.filter(c => c.resolved).length;
+    const orphTotal = all.length - live.length;
+    const unresolvedTotal = all.length - resolvedTotal;
     countsEl.textContent = all.length === 0
       ? "No comments yet. Select text to add one."
-      : (open + " open" + (resolved ? " · " + resolved + " resolved" : "") + (orph ? " · " + orph + " orphan" : ""));
+      : (unresolvedTotal + " unresolved" + (resolvedTotal ? " · " + resolvedTotal + " resolved" : "") + (orphTotal ? " · " + orphTotal + " orphan" : ""));
+    const filtered = all.filter(passesFilter);
     if(all.length === 0){
       listEl.innerHTML = '<div class="mdc-empty">Highlight some text in the preview to add the first comment.</div>';
       return;
     }
-    listEl.innerHTML = all.map(c => {
+    if(filtered.length === 0){
+      const what = activeFilter === "resolved" ? "resolved" : (activeFilter === "unresolved" ? "unresolved" : "");
+      listEl.innerHTML = '<div class="mdc-empty">No '+what+' comments. Switch filter to see others.</div>';
+      return;
+    }
+    listEl.innerHTML = filtered.map(c => {
       const snippet = c._orphan && c.anchor && c.anchor.text
         ? '<div class="anchor-snippet" title="Original anchor (no longer found in source)">' + esc(truncate(c.anchor.text, 80)) + '</div>'
         : "";
@@ -428,7 +454,7 @@ pre.mermaid svg { max-width: 100%; height: auto; }
     const body = card.querySelector(".mdc-card-body");
     const msgs = [{author: c.author, body: c.body, createdAt: c.createdAt, _isRoot: true}]
       .concat((c.replies || []).map((r, i) => Object.assign({_replyIndex: i}, r)));
-    const editable = !readOnly && !c._orphan;
+    const editable = !readOnly;
     const msgsHtml = msgs.map((m, i) => {
       const editBtn = editable
         ? '<div class="mdc-msg-actions"><button class="mdc-msg-edit" data-msg-idx="'+i+'">Edit</button></div>'
@@ -441,9 +467,9 @@ pre.mermaid svg { max-width: 100%; height: auto; }
         + '</div>';
     }).join("");
     const orphanNote = c._orphan
-      ? '<div class="mdc-empty">This comment\\'s anchor no longer matches the document. Re-attach it from the editor (right-click the orphan in Explorer).</div>'
+      ? '<div class="mdc-empty">Anchor no longer matches the document. You can still reply, resolve, or delete; to re-attach to new text, use the editor (right-click the orphan in Explorer).</div>'
       : "";
-    const actionsHtml = (readOnly || c._orphan) ? "" :
+    const actionsHtml = readOnly ? "" :
       '<textarea class="mdc-reply" placeholder="Reply..."></textarea>' +
       '<div class="mdc-actions">' +
         '<button class="mdc-send-reply">Reply</button>' +
@@ -452,7 +478,7 @@ pre.mermaid svg { max-width: 100%; height: auto; }
       '</div>';
     body.innerHTML = msgsHtml + orphanNote + actionsHtml;
     if(!c._orphan) flashAnchor(id);
-    if(!readOnly && !c._orphan){
+    if(!readOnly){
       const replyBox = body.querySelector(".mdc-reply");
       body.querySelector(".mdc-send-reply").onclick = (e) => {
         e.stopPropagation();
@@ -509,7 +535,33 @@ pre.mermaid svg { max-width: 100%; height: auto; }
 
   document.addEventListener("click", (e) => {
     const el = e.target.closest ? e.target.closest(".mdc-anchor") : null;
-    if(el && el.dataset.commentId) expandCard(el.dataset.commentId);
+    if(el && el.dataset.commentId){
+      const c = byId.get(el.dataset.commentId);
+      // Anchor click on a card that's hidden by the current filter widens the
+      // filter to "All" so the user can find it in the sidebar.
+      if(c && !passesFilter(c)) setFilter("all");
+      expandCard(el.dataset.commentId);
+    }
+  });
+
+  function setFilter(name){
+    if(activeFilter === name) return;
+    activeFilter = name;
+    if(vscode.setState) vscode.setState(Object.assign({}, prior, {filter: name}));
+    Array.prototype.forEach.call(filterEl.querySelectorAll("button"), function(b){
+      b.classList.toggle("active", b.getAttribute("data-filter") === name);
+    });
+    // If the currently expanded card no longer passes the filter, drop the
+    // selection so it doesn't appear hidden-but-active.
+    if(currentId){
+      const c = byId.get(currentId);
+      if(!c || !passesFilter(c)) currentId = null;
+    }
+    renderList();
+  }
+  Array.prototype.forEach.call(filterEl.querySelectorAll("button"), function(b){
+    b.addEventListener("click", function(){ setFilter(b.getAttribute("data-filter")); });
+    b.classList.toggle("active", b.getAttribute("data-filter") === activeFilter);
   });
 
   const refreshBtn = document.getElementById("mdcRefresh");
