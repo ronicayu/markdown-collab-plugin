@@ -31,17 +31,19 @@ export class PreviewPanel {
     doc: vscode.TextDocument,
     output: vscode.OutputChannel,
     extensionUri: vscode.Uri,
+    viewColumn: vscode.ViewColumn = vscode.ViewColumn.Beside,
   ): void {
     const key = doc.uri.fsPath;
     const existing = PreviewPanel.panels.get(key);
     if (existing) {
-      existing.panel.reveal(vscode.ViewColumn.Beside);
+      // Re-reveal in the column it currently lives in — never relocate.
+      existing.panel.reveal(existing.panel.viewColumn ?? viewColumn);
       return;
     }
     const panel = vscode.window.createWebviewPanel(
       "markdownCollabPreview",
       `Preview: ${path.basename(doc.uri.fsPath)}`,
-      vscode.ViewColumn.Beside,
+      viewColumn,
       {
         enableScripts: true,
         retainContextWhenHidden: true,
@@ -848,7 +850,12 @@ pre.mermaid svg { max-width: 100%; height: auto; }
     if (resolved.toLowerCase().endsWith(".md")) {
       try {
         const targetDoc = await vscode.workspace.openTextDocument(targetUri);
-        PreviewPanel.show(targetDoc, this.output, this.extensionUri);
+        // Open the linked preview in the same column the current preview
+        // lives in. Without this, ViewColumn.Beside creates a new side
+        // group and the new preview shows up as a split rather than as a
+        // tab in the same group.
+        const sameColumn = this.panel.viewColumn ?? vscode.ViewColumn.Active;
+        PreviewPanel.show(targetDoc, this.output, this.extensionUri, sameColumn);
       } catch (e) {
         void vscode.window.showErrorMessage(
           `Failed to open ${resolved}: ${(e as Error).message}`,
