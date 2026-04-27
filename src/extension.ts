@@ -68,16 +68,41 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("markdownCollab.reloadComments", async () => {
       await controller.reloadActive();
     }),
-    vscode.commands.registerCommand("markdownCollab.openPreview", async () => {
-      const editor = vscode.window.activeTextEditor;
-      if (!editor || editor.document.languageId !== "markdown") {
-        void vscode.window.showWarningMessage(
-          "Open a Markdown file first, then run this command.",
-        );
-        return;
-      }
-      PreviewPanel.show(editor.document, output, context.extensionUri);
-    }),
+    vscode.commands.registerCommand(
+      "markdownCollab.openPreview",
+      async (arg?: vscode.Uri) => {
+        // Right-click invocations from explorer/context, editor/title/context,
+        // and editor/context all pass the resource as the first argument.
+        // The command palette path passes nothing — fall back to the active
+        // editor in that case.
+        const uri =
+          arg instanceof vscode.Uri
+            ? arg
+            : vscode.window.activeTextEditor?.document.uri;
+        if (!uri) {
+          void vscode.window.showWarningMessage(
+            "Open a Markdown file first, then run this command.",
+          );
+          return;
+        }
+        let doc: vscode.TextDocument;
+        try {
+          doc = await vscode.workspace.openTextDocument(uri);
+        } catch (e) {
+          void vscode.window.showErrorMessage(
+            `Failed to open ${uri.fsPath}: ${(e as Error).message}`,
+          );
+          return;
+        }
+        if (doc.languageId !== "markdown" && !uri.fsPath.toLowerCase().endsWith(".md")) {
+          void vscode.window.showWarningMessage(
+            "Markdown Collab preview only supports .md files.",
+          );
+          return;
+        }
+        PreviewPanel.show(doc, output, context.extensionUri);
+      },
+    ),
     vscode.commands.registerCommand("markdownCollab.validate", async () => {
       await runValidate(output);
     }),

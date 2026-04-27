@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "publisher": "markdown-collab",
   "engines": {
     "vscode": "^1.80.0",
@@ -175,6 +175,27 @@
           "command": "markdownCollab.reattachOrphan",
           "when": "view == markdownCollab.orphanedComments && viewItem == markdownCollab.orphanComment",
           "group": "inline"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "markdownCollab.openPreview",
+          "when": "resourceExtname == .md",
+          "group": "navigation@30"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "markdownCollab.openPreview",
+          "when": "resourceExtname == .md",
+          "group": "1_open"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "markdownCollab.openPreview",
+          "when": "resourceLangId == markdown",
+          "group": "navigation@30"
         }
       ]
     },
