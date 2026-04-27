@@ -224,8 +224,13 @@ pre { background: var(--vscode-textCodeBlock-background, #1e1e1e); padding: 0.75
 .mdc-anchor.flash { background: rgba(255, 204, 0, 0.65); }
 .mdc-badge { display: inline-block; font-size: 0.75em; padding: 0 4px; margin-left: 2px; border-radius: 8px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); vertical-align: super; }
 .mdc-toolbar { position: sticky; top: 0; background: var(--vscode-editor-background); padding: 0.5rem 0; z-index: 10; border-bottom: 1px solid var(--vscode-panel-border); display: flex; gap: 0.5rem; align-items: center; }
+.mdc-toolbar .mdc-spacer { flex: 1; }
 .mdc-toolbar button { padding: 0.25rem 0.75rem; cursor: pointer; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 2px; }
 .mdc-toolbar button:disabled { opacity: 0.5; cursor: not-allowed; }
+.mdc-toolbar .mdc-icon-btn { background: transparent; color: var(--vscode-foreground); padding: 0.25rem 0.4rem; border: 1px solid transparent; border-radius: 4px; font-size: 1.05em; line-height: 1; }
+.mdc-toolbar .mdc-icon-btn:hover { background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.08)); border-color: var(--vscode-panel-border); }
+.mdc-toolbar .mdc-icon-btn.spinning { animation: mdc-spin 0.8s linear infinite; pointer-events: none; }
+@keyframes mdc-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .mdc-sidebar h3 { margin: 0 0 0.25rem; font-size: 0.95em; }
 .mdc-sidebar .mdc-counts { font-size: 0.8em; color: var(--vscode-descriptionForeground); margin-bottom: 0.75rem; }
 .mdc-sidebar .mdc-empty { font-size: 0.85em; color: var(--vscode-descriptionForeground); padding: 0.5rem 0; }
@@ -275,6 +280,8 @@ pre.mermaid svg { max-width: 100%; height: auto; }
 <main class="mdc-main">
   <div class="mdc-toolbar">
     <span class="mdc-status" id="mdcStatus">${payload.readOnly ? "Read-only: sidecar has a newer schema version." : "Select text to add a comment."}</span>
+    <span class="mdc-spacer"></span>
+    <button class="mdc-icon-btn" id="mdcRefresh" title="Refresh preview (re-read file and comments)" aria-label="Refresh">↻</button>
   </div>
   <div id="mdcContent">${body}</div>
   <button class="mdc-floating" id="mdcFloating">Comment</button>
@@ -504,6 +511,17 @@ pre.mermaid svg { max-width: 100%; height: auto; }
     const el = e.target.closest ? e.target.closest(".mdc-anchor") : null;
     if(el && el.dataset.commentId) expandCard(el.dataset.commentId);
   });
+
+  const refreshBtn = document.getElementById("mdcRefresh");
+  if(refreshBtn){
+    refreshBtn.addEventListener("click", () => {
+      refreshBtn.classList.add("spinning");
+      vscode.postMessage({type: "refresh"});
+      // Spinner clears on next render (the whole HTML is replaced) or after
+      // a 1.5s safety timeout if nothing changed.
+      setTimeout(() => refreshBtn.classList.remove("spinning"), 1500);
+    });
+  }
   renderList();
 
   const floating = document.getElementById("mdcFloating");
@@ -676,6 +694,7 @@ pre.mermaid svg { max-width: 100%; height: auto; }
       else if (m.type === "delete") await this.onDelete(msg as DeleteMsg);
       else if (m.type === "edit") await this.onEdit(msg as EditMsg);
       else if (m.type === "editReply") await this.onEditReply(msg as EditReplyMsg);
+      else if (m.type === "refresh") await this.render();
     } catch (e) {
       this.output.appendLine(`Preview action failed: ${(e as Error).message}`);
       this.panel.webview.postMessage({
