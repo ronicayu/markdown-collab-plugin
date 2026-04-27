@@ -541,6 +541,19 @@ pre.mermaid svg { max-width: 100%; height: auto; }
       // filter to "All" so the user can find it in the sidebar.
       if(c && !passesFilter(c)) setFilter("all");
       expandCard(el.dataset.commentId);
+      return;
+    }
+    // Hyperlink interception: route .md links to a new preview, other paths
+    // to vscode.open, absolute URLs to the OS browser. Lets clicking
+    // [foo.md](foo.md) inside the preview drill in to that doc.
+    const a = e.target.closest ? e.target.closest("a") : null;
+    if(a){
+      const href = a.getAttribute("href");
+      if(!href) return;
+      // In-doc fragments stay local — let the webview's default scroll.
+      if(href.charAt(0) === "#") return;
+      e.preventDefault();
+      vscode.postMessage({type: "openLink", href: href});
     }
   });
 
@@ -747,6 +760,7 @@ pre.mermaid svg { max-width: 100%; height: auto; }
       else if (m.type === "edit") await this.onEdit(msg as EditMsg);
       else if (m.type === "editReply") await this.onEditReply(msg as EditReplyMsg);
       else if (m.type === "refresh") await this.render();
+      else if (m.type === "openLink") await this.onOpenLink(msg as OpenLinkMsg);
     } catch (e) {
       this.output.appendLine(`Preview action failed: ${(e as Error).message}`);
       this.panel.webview.postMessage({
@@ -771,6 +785,87 @@ pre.mermaid svg { max-width: 100%; height: auto; }
       createdAt: new Date().toISOString(),
     });
     await this.render();
+  }
+
+  private async onOpenLink(msg: OpenLinkMsg): Promise<void> {
+    const raw = (msg.href || "").trim();
+    if (!raw) return;
+
+    // Absolute URLs go to the OS handler. Allow only safe schemes — never
+    // dispatch javascript: or data: through openExternal.
+    const schemeMatch = /^([a-z][a-z0-9+.-]*):/i.exec(raw);
+    if (schemeMatch) {
+      const scheme = schemeMatch[1].toLowerCase();
+      if (
+        scheme === "http" ||
+        scheme === "https" ||
+        scheme === "mailto" ||
+        scheme === "tel"
+      ) {
+        try {
+          await vscode.env.openExternal(vscode.Uri.parse(raw));
+        } catch (e) {
+          this.output.appendLine(
+            `openExternal failed for ${raw}: ${(e as Error).message}`,
+          );
+        }
+      } else {
+        this.output.appendLine(`Refusing to open link with scheme '${scheme}'.`);
+      }
+      return;
+    }
+
+    // Strip fragment and query — both are out of scope for now. Decode the
+    // path so spaces/utf-8 in markdown links resolve to real filenames.
+    const noFrag = raw.split("#")[0].split("?")[0];
+    if (noFrag === "") return;
+    let pathPart: string;
+    try {
+      pathPart = decodeURIComponent(noFrag);
+    } catch {
+      pathPart = noFrag;
+    }
+
+    const baseDir = path.dirname(this.doc.uri.fsPath);
+    const resolved = path.resolve(baseDir, pathPart);
+
+    try {
+      const stat = await fs.stat(resolved);
+      if (stat.isDirectory()) {
+        void vscode.window.showWarningMessage(
+          `Cannot open directory in preview: ${resolved}`,
+        );
+        return;
+      }
+    } catch {
+      void vscode.window.showWarningMessage(
+        `Linked file not found: ${resolved}`,
+      );
+      return;
+    }
+
+    const targetUri = vscode.Uri.file(resolved);
+    if (resolved.toLowerCase().endsWith(".md")) {
+      try {
+        const targetDoc = await vscode.workspace.openTextDocument(targetUri);
+        PreviewPanel.show(targetDoc, this.output, this.extensionUri);
+      } catch (e) {
+        void vscode.window.showErrorMessage(
+          `Failed to open ${resolved}: ${(e as Error).message}`,
+        );
+      }
+      return;
+    }
+
+    // Non-markdown — hand off to VS Code's default opener so the user gets
+    // the right editor (image viewer, JSON formatter, source editor, etc.).
+    try {
+      await vscode.commands.executeCommand("vscode.open", targetUri);
+    } catch (e) {
+      this.output.appendLine(
+        `vscode.open failed for ${resolved}: ${(e as Error).message}`,
+      );
+    }
   }
 
   private async onEdit(msg: EditMsg): Promise<void> {
@@ -1019,4 +1114,9 @@ interface EditReplyMsg {
   commentId: string;
   replyIndex: number;
   body: string;
+}
+
+interface OpenLinkMsg {
+  type: "openLink";
+  href: string;
 }
