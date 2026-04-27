@@ -67,11 +67,15 @@ Before writing anything, for each file:
 For each file, apply edits in the order from the plan. After each edit:
 
 1. **Write the \`.md\` file FIRST. Sidecar second.** This invariant is critical — if the process is interrupted between writes, a stale sidecar pointing at old text is recoverable; a fresh sidecar pointing at vanished text is not.
-2. **Update the anchor** for any comment whose target text you rewrote:
-   - Set \`anchor.text\` to a stable substring of the new passage (≥ 8 non-whitespace chars).
+2. **Update the anchor** ONLY when you rewrote the anchored passage in place. If you DELETED the anchored passage (the comment said "remove this", "drop this section", "cut", etc.), leave the anchor untouched — the comment will correctly surface as an orphan in the UI, and the human can then resolve or delete it. Never re-anchor a deleted comment to neighbouring text; that produces a misleading link to content the comment was never about.
+
+   When you DID rewrite the passage:
+   - Set \`anchor.text\` to a stable substring of the new passage (≥ 8 non-whitespace chars). The substring must be a verbatim continuation of the original intent — quoting the new wording of the same idea, not an unrelated nearby sentence.
    - Update \`anchor.contextBefore\` to the up-to-40-character window immediately before the new \`anchor.text\` in the file.
    - Update \`anchor.contextAfter\` to the up-to-40-character window immediately after.
    - Verify these still uniquely identify the location: the new \`anchor.text\` plus its contexts must occur exactly once in the new file.
+
+   If you cannot honestly say the new anchor points to a rewritten version of the same idea, leave the anchor untouched and let the comment orphan. Don't paper over deletions or splits.
 3. **Append a reply** to the comment's \`replies\` array describing what you did:
    \`\`\`json
    { "author": "ai", "body": "<one or two sentences explaining the change>", "createdAt": "<UTC ISO 8601 with Z suffix>" }
@@ -85,7 +89,8 @@ For each file, apply edits in the order from the plan. After each edit:
 You MUST NOT:
 - Change \`comment.resolved\`. Only the human resolves comments.
 - Delete, reorder, or re-id comments. Only the human deletes.
-- Modify \`anchor\` for comments whose target text was unchanged.
+- Modify \`anchor\` for comments whose target text was unchanged or deleted (only rewrites trigger anchor updates — see Phase 4 step 2).
+- Re-anchor a comment to nearby unrelated text after a deletion. Let it orphan.
 - Touch \`comment.id\`, \`comment.author\`, \`comment.createdAt\`, or any reply's existing fields.
 - Bump \`sidecar.version\`.
 - Edit a sidecar whose \`.md\` file you have not just modified (no speculative anchor "cleanups").
@@ -116,6 +121,7 @@ Use the comment id (\`c_xxxxxxxx\`) so they can find each thread in VS Code.
 - Don't reply with vague "applied" — say what you applied.
 - Don't fabricate that you handled a comment you couldn't actually address.
 - Don't update an anchor unless you actually rewrote its target.
+- Don't re-anchor a deleted passage to nearby unrelated text. Deletions become orphans by design.
 - Don't operate on a workspace without a \`.markdown-collab/\` directory — surface this rather than create one.
 `;
 
