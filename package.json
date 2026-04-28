@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.9.3",
+  "version": "0.10.0",
   "publisher": "markdown-collab",
   "engines": {
     "vscode": "^1.80.0",
@@ -19,6 +19,8 @@
     "onCommand:markdownCollab.copyClaudePrompt",
     "onCommand:markdownCollab.reloadComments",
     "onCommand:markdownCollab.openPreview",
+    "onCommand:markdownCollab.sendAllToClaude",
+    "onCommand:markdownCollab.startClaudeTerminal",
     "onView:markdownCollab.review"
   ],
   "main": "./out/extension.js",
@@ -86,8 +88,27 @@
       {
         "command": "markdownCollab.cancelEdit",
         "title": "Cancel"
+      },
+      {
+        "command": "markdownCollab.sendAllToClaude",
+        "title": "Markdown Collab: Send Unresolved Comments to Claude"
+      },
+      {
+        "command": "markdownCollab.startClaudeTerminal",
+        "title": "Markdown Collab: Start Claude Review Terminal"
       }
     ],
+    "configuration": {
+      "title": "Markdown Collab",
+      "properties": {
+        "markdownCollab.sendMode": {
+          "type": "string",
+          "enum": ["ask", "terminal", "ipc", "clipboard"],
+          "default": "ask",
+          "description": "How the 'Send to Claude' button delivers comments. 'terminal' types into a running Claude REPL, 'ipc' enqueues for a Claude `mdc-wait` watch loop, 'clipboard' copies the prompt for manual paste, 'ask' prompts on first use and remembers the choice per workspace."
+        }
+      }
+    },
     "menus": {
       "commandPalette": [
         {

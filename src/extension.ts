@@ -7,8 +7,12 @@ import { MarkdownCollabController, extractAnchor } from "./commentController";
 import { OrphanView } from "./orphanView";
 import { PreviewPanel } from "./previewPanel";
 import { ReviewView, type ReviewNode } from "./reviewView";
+import { buildReviewPayload, type SendMode } from "./sendToClaude";
 import { SidecarWatcher } from "./sidecarWatcher";
 import { installClaudeSkill } from "./skill";
+import { IpcServer } from "./transports/ipcServer";
+import { sendViaTerminal, startClaudeTerminal } from "./transports/terminal";
+import { TerminalTracker } from "./transports/terminalTracker";
 import { runValidate } from "./validate";
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -54,6 +58,23 @@ export function activate(context: vscode.ExtensionContext): void {
     treeDataProvider: reviewView,
   });
   context.subscriptions.push(reviewTree, reviewView);
+
+  // Track terminals for the "Send to Claude → terminal" path. The tracker
+  // subscribes to shell-integration events when available; older VS Code
+  // hosts fall back to name-match + active-terminal heuristics.
+  const terminalTracker = new TerminalTracker();
+  terminalTracker.activate(context.subscriptions);
+  context.subscriptions.push(terminalTracker);
+
+  // Per-workspace IPC servers, lazily started on first "ipc" send for each
+  // folder. Cleaned up on extension deactivate.
+  const ipcServers = new Map<string, IpcServer>();
+  context.subscriptions.push({
+    dispose: () => {
+      for (const s of ipcServers.values()) void s.dispose();
+      ipcServers.clear();
+    },
+  });
 
   context.subscriptions.push(
     vscode.commands.registerCommand("markdownCollab.installClaudeSkill", async () => {
@@ -124,6 +145,37 @@ export function activate(context: vscode.ExtensionContext): void {
             `revealComment failed for ${node.docPath}: ${(e as Error).message}`,
           );
         }
+      },
+    ),
+    vscode.commands.registerCommand(
+      "markdownCollab.startClaudeTerminal",
+      async () => {
+        startClaudeTerminal(terminalTracker);
+      },
+    ),
+    vscode.commands.registerCommand(
+      "markdownCollab.sendAllToClaude",
+      async (arg?: vscode.Uri) => {
+        const uri =
+          arg instanceof vscode.Uri
+            ? arg
+            : vscode.window.activeTextEditor?.document.uri;
+        if (!uri) {
+          void vscode.window.showWarningMessage(
+            "Open a Markdown file first, then run this command.",
+          );
+          return;
+        }
+        let doc: vscode.TextDocument;
+        try {
+          doc = await vscode.workspace.openTextDocument(uri);
+        } catch (e) {
+          void vscode.window.showErrorMessage(
+            `Failed to open ${uri.fsPath}: ${(e as Error).message}`,
+          );
+          return;
+        }
+        await invokeSendAllToClaude(doc, output, terminalTracker, ipcServers);
       },
     ),
     vscode.commands.registerCommand(
@@ -334,6 +386,147 @@ async function invokeReattachOrphan(
       `Failed to re-attach: ${(e as Error).message}`,
     );
   }
+}
+
+async function invokeSendAllToClaude(
+  doc: vscode.TextDocument,
+  output: vscode.OutputChannel,
+  tracker: TerminalTracker,
+  ipcServers: Map<string, IpcServer>,
+): Promise<void> {
+  const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
+  if (!folder) {
+    void vscode.window.showWarningMessage(
+      "Markdown file is outside any workspace folder.",
+    );
+    return;
+  }
+  const result = await buildReviewPayload(doc, output);
+  if (result.kind === "no-workspace") {
+    void vscode.window.showWarningMessage(
+      "Markdown file is outside any workspace folder.",
+    );
+    return;
+  }
+  if (result.kind === "no-sidecar") {
+    void vscode.window.showWarningMessage(
+      "No comments to send — this file has no sidecar yet.",
+    );
+    return;
+  }
+  if (result.kind === "empty") {
+    void vscode.window.showInformationMessage(
+      "No unresolved comments on this file.",
+    );
+    return;
+  }
+  const payload = result.payload;
+
+  const config = vscode.workspace.getConfiguration("markdownCollab");
+  let mode = config.get<SendMode>("sendMode", "ask");
+  if (mode === "ask") {
+    const picked = await pickSendMode(payload.unresolvedCount);
+    if (!picked) return;
+    mode = picked;
+  }
+
+  if (mode === "clipboard") {
+    await vscode.env.clipboard.writeText(payload.prompt);
+    void vscode.window.showInformationMessage(
+      `Prompt for ${payload.unresolvedCount} comment${
+        payload.unresolvedCount === 1 ? "" : "s"
+      } copied — paste into Claude Code.`,
+    );
+    return;
+  }
+
+  if (mode === "terminal") {
+    const sendResult = await sendViaTerminal(payload, tracker, {
+      offerStartTerminal: async () => {
+        const choice = await vscode.window.showInformationMessage(
+          "No Claude terminal detected.",
+          { modal: false },
+          "Start Claude in new terminal",
+          "Switch to clipboard",
+          "Cancel",
+        );
+        if (choice === "Start Claude in new terminal") {
+          const terminal = startClaudeTerminal(tracker);
+          // Give the REPL a beat to initialize before we paste into it.
+          await new Promise((r) => setTimeout(r, 1500));
+          return terminal;
+        }
+        if (choice === "Switch to clipboard") {
+          await vscode.env.clipboard.writeText(payload.prompt);
+          void vscode.window.showInformationMessage(
+            "Prompt copied — paste into Claude Code.",
+          );
+        }
+        return null;
+      },
+    });
+    if (!sendResult.ok && sendResult.reason === "no-target") {
+      // The clipboard fallback toast above already fired; nothing more to do.
+      return;
+    }
+    if (!sendResult.ok) return;
+    void vscode.window.showInformationMessage(
+      `Sent to "${sendResult.terminalName}".`,
+    );
+    return;
+  }
+
+  if (mode === "ipc") {
+    const folderKey = folder.uri.fsPath;
+    let server = ipcServers.get(folderKey);
+    if (!server) {
+      server = new IpcServer(folderKey, output);
+      try {
+        await server.start();
+      } catch (e) {
+        output.appendLine(`IPC start failed: ${(e as Error).message}`);
+        void vscode.window.showErrorMessage(
+          `Could not start IPC server: ${(e as Error).message}`,
+        );
+        return;
+      }
+      ipcServers.set(folderKey, server);
+    }
+    server.enqueue(payload);
+    const status = server.pollerActive
+      ? `Delivered to Claude (mdc-wait is listening).`
+      : `Queued — run \`node ~/.claude/skills/vs-markdown-collab/mdc-wait.mjs\` in Claude to pick it up.`;
+    void vscode.window.showInformationMessage(status);
+    return;
+  }
+}
+
+async function pickSendMode(
+  unresolvedCount: number,
+): Promise<SendMode | null> {
+  const items: Array<vscode.QuickPickItem & { mode: SendMode }> = [
+    {
+      label: "Send to active terminal",
+      description: "Type the prompt into a running Claude REPL",
+      mode: "terminal",
+    },
+    {
+      label: "Queue for `mdc-wait`",
+      description: "Use the IPC long-poll for a Claude watch loop",
+      mode: "ipc",
+    },
+    {
+      label: "Copy to clipboard",
+      description: "Paste manually into Claude",
+      mode: "clipboard",
+    },
+  ];
+  const pick = await vscode.window.showQuickPick(items, {
+    placeHolder: `How to send ${unresolvedCount} unresolved comment${
+      unresolvedCount === 1 ? "" : "s"
+    } to Claude? (Set markdownCollab.sendMode to skip this prompt.)`,
+  });
+  return pick?.mode ?? null;
 }
 
 async function pickWorkspaceFolder(): Promise<vscode.WorkspaceFolder | undefined> {

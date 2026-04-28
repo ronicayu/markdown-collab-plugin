@@ -244,6 +244,10 @@ pre { background: var(--vscode-textCodeBlock-background, #1e1e1e); padding: 0.75
 .mdc-toolbar .mdc-icon-btn.spinning { animation: mdc-spin 0.8s linear infinite; pointer-events: none; }
 @keyframes mdc-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .mdc-sidebar h3 { margin: 0 0 0.25rem; font-size: 0.95em; }
+.mdc-sidebar .mdc-send-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
+.mdc-sidebar .mdc-send-row button { padding: 0.3rem 0.6rem; font-size: 0.85em; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 2px; cursor: pointer; }
+.mdc-sidebar .mdc-send-row button:disabled { opacity: 0.5; cursor: not-allowed; }
+.mdc-sidebar .mdc-send-row button:hover:not(:disabled) { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
 .mdc-sidebar .mdc-counts { font-size: 0.8em; color: var(--vscode-descriptionForeground); margin-bottom: 0.5rem; }
 .mdc-sidebar .mdc-empty { font-size: 0.85em; color: var(--vscode-descriptionForeground); padding: 0.5rem 0; }
 .mdc-filter { display: flex; gap: 0.25rem; margin-bottom: 0.75rem; }
@@ -318,6 +322,9 @@ pre.mermaid svg { max-width: 100%; height: auto; }
 </main>
 <aside class="mdc-sidebar" id="mdcSidebar">
   <h3>Comments</h3>
+  <div class="mdc-send-row">
+    <button id="mdcSendAll" disabled title="Send all unresolved comments to Claude">Send to Claude</button>
+  </div>
   <div class="mdc-counts" id="mdcCounts"></div>
   <div class="mdc-filter" id="mdcFilter">
     <button data-filter="unresolved" class="active">Unresolved</button>
@@ -401,6 +408,13 @@ pre.mermaid svg { max-width: 100%; height: auto; }
     countsEl.textContent = all.length === 0
       ? "No comments yet. Select text to add one."
       : (unresolvedTotal + " unresolved" + (resolvedTotal ? " · " + resolvedTotal + " resolved" : "") + (orphTotal ? " · " + orphTotal + " orphan" : ""));
+    const sendBtn = document.getElementById("mdcSendAll");
+    if(sendBtn){
+      sendBtn.disabled = unresolvedTotal === 0;
+      sendBtn.textContent = unresolvedTotal === 0
+        ? "Send to Claude"
+        : "Send " + unresolvedTotal + " to Claude";
+    }
     const filtered = all.filter(passesFilter);
     if(all.length === 0){
       listEl.innerHTML = '<div class="mdc-empty">Highlight some text in the preview to add the first comment.</div>';
@@ -595,6 +609,13 @@ pre.mermaid svg { max-width: 100%; height: auto; }
     b.classList.toggle("active", b.getAttribute("data-filter") === activeFilter);
   });
 
+  const sendAllBtn = document.getElementById("mdcSendAll");
+  if(sendAllBtn){
+    sendAllBtn.addEventListener("click", () => {
+      if(sendAllBtn.disabled) return;
+      vscode.postMessage({type: "sendAllToClaude"});
+    });
+  }
   const refreshBtn = document.getElementById("mdcRefresh");
   if(refreshBtn){
     refreshBtn.addEventListener("click", () => {
@@ -823,6 +844,12 @@ pre.mermaid svg { max-width: 100%; height: auto; }
       else if (m.type === "editReply") await this.onEditReply(msg as EditReplyMsg);
       else if (m.type === "refresh") await this.render();
       else if (m.type === "openLink") await this.onOpenLink(msg as OpenLinkMsg);
+      else if (m.type === "sendAllToClaude") {
+        await vscode.commands.executeCommand(
+          "markdownCollab.sendAllToClaude",
+          this.doc.uri,
+        );
+      }
     } catch (e) {
       this.output.appendLine(`Preview action failed: ${(e as Error).message}`);
       this.panel.webview.postMessage({
