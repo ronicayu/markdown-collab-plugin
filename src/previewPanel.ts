@@ -1039,10 +1039,38 @@ export function locateSelectionInSource(
   const { normalized, map } = collapseWs(source);
   const needle = trimmed.replace(/\s+/g, " ");
   const hits = allIndexes(normalized, needle);
-  if (hits.length !== 1) return null;
-  const s = map[hits[0]];
-  const e = map[hits[0] + needle.length];
-  return { start: s, end: e };
+  if (hits.length === 1) {
+    const s = map[hits[0]];
+    const e = map[hits[0] + needle.length];
+    return { start: s, end: e };
+  }
+
+  // Tolerant-separator fallback for selections that cross markdown markup.
+  // Browser Selection.toString() concatenates table cells with \t and rows
+  // with \n; the raw markdown has `|` and other non-whitespace markup
+  // between the same visible tokens. Same problem when the user selects
+  // through emphasis markers (`**bold**` rendered as bold). Build a regex
+  // that allows runs of whitespace plus the common markdown punctuation
+  // (`|`, `*`, `_`, `~`, `` ` ``, `-`) between non-whitespace tokens of
+  // the needle, then accept only when the match is unique in source.
+  const tokens = trimmed.split(/\s+/).filter((t) => t.length > 0);
+  if (tokens.length < 2) return null;
+  const sep = /[\s|*_~`\-]+/.source;
+  const pattern = tokens.map(escapeRegex).join(sep);
+  const re = new RegExp(pattern, "g");
+  let onlyMatch: { start: number; end: number } | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(source)) !== null) {
+    if (onlyMatch !== null) return null; // ambiguous — bail
+    onlyMatch = { start: m.index, end: m.index + m[0].length };
+    // Avoid zero-length-match infinite loops.
+    if (m.index === re.lastIndex) re.lastIndex++;
+  }
+  return onlyMatch;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**

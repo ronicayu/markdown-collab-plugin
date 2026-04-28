@@ -167,6 +167,51 @@ describe("locateSelectionInSource", () => {
     expect(locateSelectionInSource("anything", "")).toBeNull();
     expect(locateSelectionInSource("anything", "   \n\t")).toBeNull();
   });
+
+  // Cross-cell selection: Chromium puts \t between table cells and \n
+  // between rows. Source markdown uses `|` (non-whitespace) between cells,
+  // so the whitespace-normalize fallback can't bridge it.
+  it("locates a selection that crosses table cells (tab-separated)", () => {
+    const source = "| Term | Meaning |\n|------|---------|\n| SC | Singapore Customs |\n";
+    const selection = "SC\tSingapore Customs";
+    const r = locateSelectionInSource(source, selection);
+    expect(r).not.toBeNull();
+    if (r) {
+      const slice = source.slice(r.start, r.end);
+      expect(slice).toContain("SC");
+      expect(slice).toContain("Singapore Customs");
+    }
+  });
+
+  it("locates a selection that crosses emphasis markers", () => {
+    // Rendered: "SC value" (bold + plain). DOM toString() = "SC value".
+    // Source has the asterisks; whitespace-only normalization can't bridge.
+    // The tolerant fallback anchors on the inner span; the trailing
+    // emphasis markers between tokens are absorbed by the separator class.
+    const source = "Header\n\n**SC** value of the term\n";
+    const r = locateSelectionInSource(source, "SC value");
+    expect(r).not.toBeNull();
+    if (r) {
+      const slice = source.slice(r.start, r.end);
+      expect(slice).toContain("SC");
+      expect(slice).toContain("value");
+      expect(slice).toContain("**"); // emphasis markers between tokens are part of the anchor
+    }
+  });
+
+  it("returns null when the tolerant fallback finds multiple matches", () => {
+    const ambiguous = "| a | x |\n| a | x |\n";
+    const r = locateSelectionInSource(ambiguous, "a\tx");
+    expect(r).toBeNull();
+  });
+
+  it("doesn't tolerate-match a single-token selection (would over-trigger)", () => {
+    // A single word never goes through the tolerant fallback — it would
+    // match every occurrence anywhere in the doc.
+    const source = "foo bar foo baz";
+    const r = locateSelectionInSource(source, "foo");
+    expect(r).toBeNull(); // ambiguous via exact path; tolerant doesn't apply
+  });
 });
 
 describe("isInsideRoot", () => {
