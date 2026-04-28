@@ -665,7 +665,11 @@ pre.mermaid svg { max-width: 100%; height: auto; }
     const cap = captureSelection(sel);
     if(!r || cap.raw.trim().length < 3) return hideFloating();
     const container = selectionContainerEl(sel);
-    if(container && container.closest && container.closest(".mdc-panel, .mdc-inline-compose")) return hideFloating();
+    // Selecting text inside the sidebar / compose / popup must NOT offer a
+    // "Comment on this selection" affordance — those regions are chrome,
+    // not source content. Without this skip, picking up a quote from an
+    // existing comment body would try to anchor it as a NEW comment.
+    if(container && container.closest && container.closest(".mdc-panel, .mdc-inline-compose, .mdc-sidebar")) return hideFloating();
     positionBelow(floating, r, 90);
     floating.style.display = "block";
     pendingSelection = cap;
