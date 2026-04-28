@@ -6,6 +6,7 @@ import {
   isInsideTag,
   locateSelectionInSource,
   renderFrontmatterHtml,
+  softContextMatch,
   wrapFirstOutsideTags,
 } from "../previewPanel";
 
@@ -134,6 +135,26 @@ describe("wrapFirstOutsideTags", () => {
     const out = wrapFirstOutsideTags(html, "foo", (s) => `<mark>${s}</mark>`);
     expect(out).toBe("<p><mark>foo</mark></p><p>foo</p>");
   });
+
+  it("skips N text-content occurrences when skip is provided", () => {
+    const html = "<p>document is here</p><table><thead><tr><th>document</th></tr></thead></table>";
+    const out = wrapFirstOutsideTags(html, "document", (s) => `<mark>${s}</mark>`, 1);
+    expect(out).toBe(
+      "<p>document is here</p><table><thead><tr><th><mark>document</mark></th></tr></thead></table>",
+    );
+  });
+
+  it("returns null when skip exceeds available text-content matches", () => {
+    const html = "<p>foo</p>";
+    const out = wrapFirstOutsideTags(html, "foo", (s) => `<mark>${s}</mark>`, 2);
+    expect(out).toBeNull();
+  });
+
+  it("skip=0 behaves identically to the default (wraps first)", () => {
+    const html = "<p>bar</p><p>bar</p>";
+    const out = wrapFirstOutsideTags(html, "bar", (s) => `<mark>${s}</mark>`, 0);
+    expect(out).toBe("<p><mark>bar</mark></p><p>bar</p>");
+  });
 });
 
 describe("locateSelectionInSource", () => {
@@ -211,6 +232,62 @@ describe("locateSelectionInSource", () => {
     const source = "foo bar foo baz";
     const r = locateSelectionInSource(source, "foo");
     expect(r).toBeNull(); // ambiguous via exact path; tolerant doesn't apply
+  });
+
+  it("resolves ambiguous match using context", () => {
+    // "document" appears in prose and in the table header — ambiguous without context.
+    const source = "The document describes the overview.\n\n| document | description |\n|---|---|\n| a | b |\n";
+    expect(locateSelectionInSource(source, "document")).toBeNull();
+    // DOM contextBefore for prose occurrence: rendered text ending at the selection
+    const r0 = locateSelectionInSource(source, "document", {
+      before: "The ",
+      after: " describes the overview.",
+    });
+    expect(r0).toEqual({ start: 4, end: 12 });
+    // DOM contextAfter for table header: rendered table cell context
+    const r1 = locateSelectionInSource(source, "document", {
+      before: "",
+      after: "\tdescription\ta\tb",
+    });
+    expect(r1).not.toBeNull();
+    expect(source.slice(r1!.start, r1!.end)).toBe("document");
+    expect(r1!.start).toBeGreaterThan(12);
+  });
+
+  it("returns null when context does not disambiguate", () => {
+    const source = "| Col | document |\n|---|---|\n| document | val |\n";
+    // Both occurrences have " | " around them — context too similar
+    expect(locateSelectionInSource(source, "document", { before: "x", after: "y" })).toBeNull();
+  });
+
+  it("still returns null for ambiguous match without context", () => {
+    const source = "| Col | document |\n|---|---|\n| document | val |\n";
+    expect(locateSelectionInSource(source, "document")).toBeNull();
+  });
+});
+
+describe("softContextMatch", () => {
+  it("matches when DOM context is a normalized suffix of source context", () => {
+    // Source has pipe and spaces; DOM has just the text
+    expect(softContextMatch("| Col1 | ", "Col1\t")).toBe(true);
+  });
+
+  it("matches when DOM context is a normalized prefix of source context", () => {
+    expect(softContextMatch(" | description |", "\tdescription\t")).toBe(true);
+  });
+
+  it("returns false for empty context", () => {
+    expect(softContextMatch("", "something")).toBe(false);
+    expect(softContextMatch("something", "")).toBe(false);
+  });
+
+  it("returns false when contexts have no overlap", () => {
+    expect(softContextMatch("alpha beta", "gamma delta")).toBe(false);
+  });
+
+  it("ignores markdown punctuation differences", () => {
+    // Source context has ** around bold text; DOM just has the text
+    expect(softContextMatch("see **important** ", "see important ")).toBe(true);
   });
 });
 

@@ -613,7 +613,7 @@ pre.mermaid svg { max-width: 100%; height: auto; }
   const composeHint = document.getElementById("mdcComposeHint");
   const composeCancel = document.getElementById("mdcComposeCancel");
   const composeSubmit = document.getElementById("mdcComposeSubmit");
-  let pendingSelection = { raw: "", inline: false };
+  let pendingSelection = { raw: "", inline: false, contextBefore: "", contextAfter: "" };
   let composeOpen = false;
 
   function hideFloating(){ floating.style.display = "none"; }
@@ -656,7 +656,27 @@ pre.mermaid svg { max-width: 100%; height: auto; }
     // identifier) must be searched as-is in the raw markdown, since the raw
     // partial string will match the substring inside the backticks.
     const inline = !!(code && raw === (code.textContent || ""));
-    return { raw: raw, inline: inline };
+    // Capture surrounding rendered text so ambiguous selections (e.g. a
+    // table column name repeated in prose) can be disambiguated using
+    // contextBefore / contextAfter — the same mechanism the sidecar uses.
+    let contextBefore = "", contextAfter = "";
+    if(sel && sel.rangeCount > 0 && raw.length > 0){
+      try {
+        const content = document.getElementById("mdcContent");
+        if(content){
+          const range = sel.getRangeAt(0);
+          const preRange = document.createRange();
+          preRange.setStart(content, 0);
+          preRange.setEnd(range.startContainer, range.startOffset);
+          contextBefore = preRange.toString().slice(-40);
+          const postRange = document.createRange();
+          postRange.setStart(range.endContainer, range.endOffset);
+          postRange.setEndAfter(content.lastChild || content);
+          contextAfter = postRange.toString().slice(0, 40);
+        }
+      } catch(e){ /* ignore DOM range errors */ }
+    }
+    return { raw: raw, inline: inline, contextBefore: contextBefore, contextAfter: contextAfter };
   }
   function showFloatingFor(sel){
     if(readOnly) return;
@@ -689,7 +709,7 @@ pre.mermaid svg { max-width: 100%; height: auto; }
   function closeCompose(){
     composeOpen = false;
     compose.style.display = "none";
-    pendingSelection = { raw: "", inline: false };
+    pendingSelection = { raw: "", inline: false, contextBefore: "", contextAfter: "" };
     composeBody.value = "";
     statusEl.textContent = "";
   }
@@ -721,7 +741,7 @@ pre.mermaid svg { max-width: 100%; height: auto; }
       ? "\`" + pendingSelection.raw + "\`"
       : pendingSelection.raw;
     statusEl.textContent = "Creating comment...";
-    vscode.postMessage({type: "create", selectedText: selectedText, body: body});
+    vscode.postMessage({type: "create", selectedText: selectedText, body: body, contextBefore: pendingSelection.contextBefore, contextAfter: pendingSelection.contextAfter});
     closeCompose();
   });
   composeBody.addEventListener("keydown", (e) => {
@@ -762,6 +782,22 @@ pre.mermaid svg { max-width: 100%; height: auto; }
     for (const c of payload.comments) {
       const needle = this.md.renderInline(payload.text.slice(c.start, c.end));
       if (!needle) continue;
+      // Count preceding occurrences of the raw anchor text in the body
+      // (excluding frontmatter) so we highlight the correct position
+      // when the same text appears multiple times (e.g. table columns).
+      const rawAnchor = payload.text.slice(c.start, c.end);
+      const bodyOffset = c.start - fm.consumed;
+      let skip = 0;
+      if (bodyOffset > 0) {
+        const before = fm.rest.slice(0, bodyOffset);
+        let si = 0;
+        while (si <= before.length - rawAnchor.length) {
+          const idx = before.indexOf(rawAnchor, si);
+          if (idx === -1) break;
+          skip++;
+          si = idx + 1;
+        }
+      }
       const wrapped = wrapFirstOutsideTags(html, needle, (inner) => {
         const cls = "mdc-anchor" + (c.resolved ? " resolved" : "");
         const badge =
@@ -769,7 +805,7 @@ pre.mermaid svg { max-width: 100%; height: auto; }
             ? `<span class="mdc-badge">${c.replies.length + 1}</span>`
             : "";
         return `<span class="${cls}" data-comment-id="${escapeAttr(c.id)}" title="${escapeAttr(truncate(c.body, 120))}">${inner}${badge}</span>`;
-      });
+      }, skip);
       if (wrapped !== null) html = wrapped;
     }
     return fmHtml + html;
@@ -990,7 +1026,10 @@ pre.mermaid svg { max-width: 100%; height: auto; }
     // would read buffer, and on a divergence the anchor lands at the wrong
     // offset (or fails to locate).
     const text = await this.readDocText();
-    const located = locateSelectionInSource(text, msg.selectedText);
+    const selCtx = msg.contextBefore || msg.contextAfter
+      ? { before: msg.contextBefore ?? "", after: msg.contextAfter ?? "" }
+      : undefined;
+    const located = locateSelectionInSource(text, msg.selectedText, selCtx);
     if (!located) {
       this.panel.webview.postMessage({
         type: "status",
@@ -1025,6 +1064,7 @@ pre.mermaid svg { max-width: 100%; height: auto; }
 export function locateSelectionInSource(
   source: string,
   selected: string,
+  selectionContext?: { before: string; after: string },
 ): { start: number; end: number } | null {
   const trimmed = selected.trim();
   if (trimmed.length === 0) return null;
@@ -1032,7 +1072,21 @@ export function locateSelectionInSource(
   if (exact.length === 1) {
     return { start: exact[0], end: exact[0] + trimmed.length };
   }
-  if (exact.length > 1) return null;
+  if (exact.length > 1) {
+    if (selectionContext) {
+      const winners = exact.filter((idx) => {
+        const srcBefore = source.slice(Math.max(0, idx - 40), idx);
+        const srcAfter = source.slice(idx + trimmed.length, idx + trimmed.length + 40);
+        const bMatch = selectionContext.before.length > 0 && softContextMatch(srcBefore, selectionContext.before);
+        const aMatch = selectionContext.after.length > 0 && softContextMatch(srcAfter, selectionContext.after);
+        return bMatch || aMatch;
+      });
+      if (winners.length === 1) {
+        return { start: winners[0], end: winners[0] + trimmed.length };
+      }
+    }
+    return null;
+  }
 
   // Whitespace-normalized fallback: collapse runs in both source and needle,
   // find a unique match in normalized space, then map back.
@@ -1071,6 +1125,35 @@ export function locateSelectionInSource(
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Soft match between source-markdown context and DOM-rendered context.
+ * The DOM text has no markdown syntax (`|`, `*`, `` ` ``, etc.), while
+ * the source keeps them. Normalizing both to just word-character runs
+ * bridged by single spaces lets the comparison succeed across these
+ * cosmetic differences.
+ *
+ * `srcCtx` is the raw markdown surrounding the candidate occurrence;
+ * `domCtx` is the rendered text captured from the webview DOM.
+ * For a "before" context the source ends / DOM ends at the anchor; for an
+ * "after" context they start at the anchor. We check whether the
+ * normalized tail of one matches the tail of the other (before-context)
+ * or the head matches (after-context) — a shared suffix/prefix of at
+ * least 4 normalised characters is required.
+ */
+export function softContextMatch(srcCtx: string, domCtx: string): boolean {
+  const norm = (s: string) => s.replace(/[\W_]+/g, " ").trim().toLowerCase();
+  const s = norm(srcCtx);
+  const d = norm(domCtx);
+  if (s.length === 0 || d.length === 0) return false;
+  const minLen = 4;
+  // Compare tails (before-context) and heads (after-context).
+  if (s.length >= minLen && d.length >= minLen) {
+    if (s.endsWith(d) || d.endsWith(s)) return true;
+    if (s.startsWith(d) || d.startsWith(s)) return true;
+  }
+  return false;
 }
 
 /**
@@ -1127,14 +1210,19 @@ export function wrapFirstOutsideTags(
   html: string,
   needle: string,
   wrap: (inner: string) => string,
+  skip: number = 0,
 ): string | null {
   if (needle.length === 0) return null;
   let searchFrom = 0;
+  let skipped = 0;
   while (searchFrom <= html.length - needle.length) {
     const idx = html.indexOf(needle, searchFrom);
     if (idx === -1) return null;
     if (!isInsideTag(html, idx)) {
-      return html.slice(0, idx) + wrap(needle) + html.slice(idx + needle.length);
+      if (skipped >= skip) {
+        return html.slice(0, idx) + wrap(needle) + html.slice(idx + needle.length);
+      }
+      skipped++;
     }
     searchFrom = idx + 1;
   }
@@ -1311,6 +1399,8 @@ interface CreateMsg {
   type: "create";
   selectedText: string;
   body: string;
+  contextBefore?: string;
+  contextAfter?: string;
 }
 
 interface DeleteMsg {
