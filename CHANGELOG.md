@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.13.1 — 2026-04-29
+
+### Fixed: tailer + channel server may buffer their stdout
+
+Both `mdc-tail.mjs` and `mdc-channel.mjs` were using `process.stdout.write`. Per [Node docs](https://nodejs.org/api/process.html#a-note-on-process-io), that call is **asynchronous on POSIX when stdout is a pipe** — and Claude Code captures both scripts' stdout via a pipe. Lines could sit in the libuv write queue until the event loop ticked, especially when the script was busy doing other work (reading, watching, JSON-parsing).
+
+Both scripts now write through `fs.writeSync(1, …)`: a synchronous, immediate write to file descriptor 1. Each emitted line / JSON-RPC message arrives at Claude Code's reader the instant the underlying `appendFile` (or `notification`) fires, with no buffering window. This is the same fix the previous `tail -f` → `mdc-tail.mjs` switch was meant to guarantee — but only `tail`'s buffering was actually being addressed; Node's own pipe-write buffering was still in play.
+
 ## 0.13.0 — 2026-04-29
 
 ### New transport: `mcp-channel` — native Claude Code channel events

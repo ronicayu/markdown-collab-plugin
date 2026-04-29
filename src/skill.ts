@@ -282,9 +282,10 @@ export const TAIL_SCRIPT_CONTENT = `#!/usr/bin/env node
 //   When run as a background bash with stdout connected to a pipe (which is
 //   how Claude Code captures it), \`tail -f\` switches to block-buffered mode
 //   on most platforms — lines aren't visible to Monitor until ~4 KB
-//   accumulates. Node's process.stdout.write flushes per-call when stdout
-//   is a pipe, so each appended line surfaces immediately as a Monitor
-//   notification.
+//   accumulates. We avoid that by writing through fs.writeSync(1, ...) so
+//   every emitted line is flushed synchronously to fd 1; Node's regular
+//   process.stdout.write is itself buffered on POSIX pipes and would have
+//   the same problem.
 //
 // Acked-event suppression:
 //   The VS Code extension writes a sibling \`.events.acked.jsonl\` whenever
@@ -300,8 +301,16 @@ export const TAIL_SCRIPT_CONTENT = `#!/usr/bin/env node
 // Default: streams ONLY new lines (history is skipped, matching \`tail -n 0\`).
 // Pass --from-start to replay all existing events first.
 
-import { readFileSync, statSync, watch, openSync, readSync, closeSync, existsSync } from "node:fs";
+import { readFileSync, statSync, watch, openSync, readSync, closeSync, existsSync, writeSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+
+// Synchronous, unbuffered write to stdout. process.stdout.write is async
+// when stdout is a pipe on POSIX, so lines could sit in the buffer until
+// the event loop ticks — bad for Monitor / TaskOutput which expects each
+// notification to arrive as soon as the underlying append happens.
+function emit(line) {
+  writeSync(1, line);
+}
 
 function fail(msg, code = 1) {
   process.stderr.write(\`mdc-tail: \${msg}\\n\`);
@@ -428,7 +437,7 @@ function drain() {
         if (obj && typeof obj.id === "string") id = obj.id;
       } catch { /* fall through */ }
       if (id && ackedIds.has(id)) continue;
-      process.stdout.write(line + "\\n");
+      emit(line + "\\n");
     }
   } finally {
     closeSync(fd);
@@ -490,7 +499,7 @@ export const CHANNEL_SCRIPT_CONTENT = `#!/usr/bin/env node
 // Reference: https://code.claude.com/docs/en/channels-reference
 
 import { createServer } from "node:http";
-import { writeFileSync, unlinkSync, mkdirSync, existsSync } from "node:fs";
+import { writeFileSync, unlinkSync, mkdirSync, existsSync, writeSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 
@@ -519,7 +528,10 @@ let buffer = "";
 let initialized = false;
 
 function send(message) {
-  process.stdout.write(JSON.stringify(message) + "\\n");
+  // writeSync to fd 1 — process.stdout.write is async on POSIX pipes and
+  // Claude Code is on the other end of this pipe expecting line-delimited
+  // JSON-RPC. Buffering would stall the handshake and notifications.
+  writeSync(1, JSON.stringify(message) + "\\n");
 }
 
 function sendNotification(method, params) {
