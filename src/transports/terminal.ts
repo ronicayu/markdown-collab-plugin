@@ -67,18 +67,6 @@ export async function sendViaTerminal(
     }
   }
 
-  if (resolution.reliability !== "high") {
-    const choice = await vscode.window.showInformationMessage(
-      `Send ${payload.unresolvedCount} unresolved comment${
-        payload.unresolvedCount === 1 ? "" : "s"
-      } to terminal "${resolution.terminal.name}"?`,
-      { modal: false },
-      "Send",
-      "Cancel",
-    );
-    if (choice !== "Send") return { ok: false, reason: "cancelled" };
-  }
-
   const { terminal } = resolution;
   terminal.sendText(BP_START + payload.prompt + BP_END, false);
   terminal.sendText("", true);

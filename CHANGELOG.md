@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.3 — 2026-04-29
+
+### Removed: terminal-mode "Send N to terminal …?" confirmation toast
+
+The terminal transport's detection ladder used to show a *Send / Cancel* toast for medium- and low-reliability matches (name-based or active-terminal). That toast fires on every click against an already-spawned `Claude Review` terminal once VS Code restarts and the in-memory owned-set is empty, which is exactly the steady-state path. The friction outweighed the safety it bought; the click is the user's explicit intent already. Toast removed; injection is unconditional now.
+
 ## 0.13.2 — 2026-04-29
 
 ### README rewrite for users
