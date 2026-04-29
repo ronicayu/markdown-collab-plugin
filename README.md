@@ -55,10 +55,35 @@ The preview sidebar has a **Send to Claude** button. It bundles every unresolved
 
 - **`terminal`** — bracketed-paste the prompt into a running `claude` REPL in any open VS Code terminal. Detection ladder: terminals the extension spawned, then shell-integration evidence of `claude`, then name match `/claude/i`, then the active terminal (with confirmation toast). Falls back to spawning a new "Claude Review" terminal if none is found.
 - **`channel`** — append one JSON line per click to `<workspace>/.markdown-collab/.events.jsonl`. Claude runs the bundled `mdc-tail.mjs` in a background bash and subscribes via the `Monitor` tool, so each click surfaces as a model notification with no polling and no Bash 600s ceiling. The extension auto-acks events whose comments have all been addressed (last reply is `ai`, or comment is resolved/deleted) by appending to a sibling `.events.acked.jsonl`; the tailer suppresses acked events so a `--from-start` replay never re-bothers Claude with old batches. (Plain `tail -f` block-buffers when its stdout is a pipe — the bundled tailer flushes per line to fix that.) The skill's "Channel watch loop" section walks Claude through the pattern.
+- **`mcp-channel`** — push the payload to a small bundled MCP server (`mdc-channel.mjs`) that emits `notifications/claude/channel`, so the event arrives in Claude's next turn as a native `<channel source="markdown-collab" file="…" id="evt_…">` tag. No `Monitor`/`BashOutput` needed. **Requires Claude Code v2.1.80+ and a one-time `.mcp.json` setup** — see "MCP channel setup" below. (Doesn't help when MCP is fully disabled by enterprise policy; use `terminal` in that case.)
 - **`clipboard`** — copies the prompt for manual paste.
 - **`ask`** (default) — quick-pick on first click per workspace, then remembered. Run **Markdown Collab: Reset Send Mode** to clear the remembered choice.
 
-No MCP required for any transport.
+`terminal`, `channel`, and `clipboard` work with **no MCP**. `mcp-channel` requires MCP (Claude Code's channel feature is built on it).
+
+### MCP channel setup
+
+Skip if you're using `terminal`, `channel`, or `clipboard`.
+
+1. Run **Markdown Collab: Install Claude Skill** to drop `mdc-channel.mjs` into `~/.claude/skills/vs-markdown-collab/`.
+2. Register the server. Project-level `.mcp.json` or user-level `~/.claude.json`:
+   ```json
+   {
+     "mcpServers": {
+       "markdown-collab": {
+         "command": "node",
+         "args": ["~/.claude/skills/vs-markdown-collab/mdc-channel.mjs"]
+       }
+     }
+   }
+   ```
+3. Start Claude Code with the development flag (channels are research preview):
+   ```bash
+   claude --dangerously-load-development-channels server:markdown-collab
+   ```
+4. Set `markdownCollab.sendMode` to `mcp-channel` in VS Code (or pick from the quick-pick).
+
+Each click then arrives as `<channel source="markdown-collab" file="..." count="N" id="evt_...">{...payload JSON...}</channel>` on Claude's next turn.
 
 ## Storage layout
 

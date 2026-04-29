@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.12.3",
+  "version": "0.13.0",
   "publisher": "markdown-collab",
   "license": "MIT",
   "repository": {
@@ -125,15 +125,16 @@
       "properties": {
         "markdownCollab.sendMode": {
           "type": "string",
-          "enum": ["ask", "terminal", "channel", "clipboard"],
+          "enum": ["ask", "terminal", "channel", "mcp-channel", "clipboard"],
           "enumDescriptions": [
             "Prompt the first time per workspace, then remember the choice. Run 'Markdown Collab: Reset Send Mode' to clear the remembered choice.",
             "Type the prompt into a running Claude REPL via bracketed paste. Falls back to spawning a 'Claude Review' terminal if none is detected.",
             "Append one JSON line per click to .markdown-collab/.events.jsonl. Claude reads it via the bundled mdc-tail.mjs in a background bash + Monitor — no polling, no Bash 600s timeout.",
+            "Push the payload to the bundled MCP channel server so Claude receives a native <channel> tag on its next turn. Requires Claude Code v2.1.80+ and a one-time .mcp.json setup (see README).",
             "Copy the prompt to the clipboard for manual paste into Claude."
           ],
           "default": "ask",
-          "markdownDescription": "How the **Send to Claude** button delivers unresolved comments to Claude Code. No MCP required for any mode.\n\n- `ask` — quick-pick on first use per workspace; remembers the choice (run **Markdown Collab: Reset Send Mode** to clear).\n- `terminal` — bracketed-paste into a running `claude` REPL.\n- `channel` — append to `.markdown-collab/.events.jsonl` for a `tail` + `Monitor` watch loop.\n- `clipboard` — copy the prompt for manual paste."
+          "markdownDescription": "How the **Send to Claude** button delivers unresolved comments to Claude Code.\n\n- `ask` — quick-pick on first use per workspace; remembers the choice (run **Markdown Collab: Reset Send Mode** to clear).\n- `terminal` — bracketed-paste into a running `claude` REPL. No MCP required.\n- `channel` — append to `.markdown-collab/.events.jsonl` for a `tail` + `Monitor` watch loop. No MCP required, but needs a streaming-tool harness.\n- `mcp-channel` — native MCP channel: events arrive as `<channel source=\"markdown-collab\">` tags. Requires Claude Code v2.1.80+, claude.ai login, and a one-time `.mcp.json` setup.\n- `clipboard` — copy the prompt for manual paste."
         }
       }
     },

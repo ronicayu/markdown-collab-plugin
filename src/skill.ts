@@ -4,6 +4,7 @@ import * as path from "path";
 export const SKILL_REL_PATH = ".claude/skills/vs-markdown-collab/SKILL.md";
 export const CLI_SCRIPT_REL = ".claude/skills/vs-markdown-collab/mdc.mjs";
 export const TAIL_SCRIPT_REL = ".claude/skills/vs-markdown-collab/mdc-tail.mjs";
+export const CHANNEL_SCRIPT_REL = ".claude/skills/vs-markdown-collab/mdc-channel.mjs";
 
 export const CLI_SCRIPT_CONTENT = `#!/usr/bin/env node
 // Markdown Collab agent helper.
@@ -469,6 +470,186 @@ setInterval(() => { loadAcked(); drain(); }, 500).unref?.();
 process.stdin.resume();
 `;
 
+export const CHANNEL_SCRIPT_CONTENT = `#!/usr/bin/env node
+// Markdown Collab — Claude Code MCP channel server (research preview).
+//
+// Spawned by Claude Code over stdio when the user runs:
+//   claude --dangerously-load-development-channels server:markdown-collab
+// after registering this script in .mcp.json or ~/.claude.json:
+//   "markdown-collab": { "command": "node", "args": ["<this script>"] }
+//
+// What it does:
+// - Implements the minimum MCP handshake to declare the experimental
+//   "claude/channel" capability. (Hand-rolled JSON-RPC; no SDK dep.)
+// - Opens a localhost HTTP listener on a random port and writes the port
+//   plus a per-session bearer token to <workspace>/.markdown-collab/.channel.json.
+// - On POST /push, forwards the body to Claude as a notifications/claude/channel
+//   event so it arrives in Claude's next turn as a <channel source="markdown-collab" ...>
+//   tag.
+//
+// Reference: https://code.claude.com/docs/en/channels-reference
+
+import { createServer } from "node:http";
+import { writeFileSync, unlinkSync, mkdirSync, existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { randomBytes } from "node:crypto";
+
+function findWorkspace(start) {
+  let cur = resolve(start);
+  while (true) {
+    if (existsSync(join(cur, ".markdown-collab"))) return cur;
+    const parent = dirname(cur);
+    if (parent === cur) return null;
+    cur = parent;
+  }
+}
+
+let workspace = process.env.MDC_WORKSPACE || null;
+for (let i = 0; i < process.argv.length; i++) {
+  if (process.argv[i] === "--workspace") workspace = process.argv[i + 1];
+}
+workspace = workspace || findWorkspace(process.cwd()) || process.cwd();
+
+// ---------------------------------------------------------------------------
+// JSON-RPC over stdio
+// ---------------------------------------------------------------------------
+
+let nextId = 1;
+let buffer = "";
+let initialized = false;
+
+function send(message) {
+  process.stdout.write(JSON.stringify(message) + "\\n");
+}
+
+function sendNotification(method, params) {
+  send({ jsonrpc: "2.0", method, params });
+}
+
+function reply(id, result) {
+  send({ jsonrpc: "2.0", id, result });
+}
+
+function replyError(id, code, message) {
+  send({ jsonrpc: "2.0", id, error: { code, message } });
+}
+
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  let nl;
+  while ((nl = buffer.indexOf("\\n")) >= 0) {
+    const line = buffer.slice(0, nl).trim();
+    buffer = buffer.slice(nl + 1);
+    if (!line) continue;
+    let msg;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    handle(msg);
+  }
+});
+
+function handle(msg) {
+  if (msg.method === "initialize") {
+    reply(msg.id, {
+      protocolVersion: msg.params?.protocolVersion ?? "2024-11-05",
+      capabilities: {
+        experimental: { "claude/channel": {} },
+      },
+      serverInfo: { name: "markdown-collab", version: "0.13.0" },
+      instructions:
+        "Markdown Collab review batches arrive as <channel source=markdown-collab file=... count=N id=evt_...>. " +
+        "The body is JSON: { prompt, file, unresolvedCount, comments }. " +
+        "Address each unresolved comment per the vs-markdown-collab skill, then mark the event addressed " +
+        "by writing an ack line to <workspace>/.markdown-collab/.events.acked.jsonl using the event id from the tag.",
+    });
+    return;
+  }
+  if (msg.method === "initialized" || msg.method === "notifications/initialized") {
+    initialized = true;
+    return;
+  }
+  if (msg.method === "shutdown") {
+    reply(msg.id, {});
+    cleanup();
+    process.exit(0);
+  }
+  // Unknown methods: respond with method-not-found if it's a request.
+  if (typeof msg.id !== "undefined") {
+    replyError(msg.id, -32601, "method not found: " + msg.method);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Localhost HTTP receiver — extension POSTs button-click payloads here
+// ---------------------------------------------------------------------------
+
+const token = randomBytes(32).toString("hex");
+const channelDir = join(workspace, ".markdown-collab");
+const channelFile = join(channelDir, ".channel.json");
+
+const server = createServer((req, res) => {
+  const remote = req.socket.remoteAddress ?? "";
+  if (remote !== "127.0.0.1" && remote !== "::1" && remote !== "::ffff:127.0.0.1") {
+    res.statusCode = 403; res.end(); return;
+  }
+  if (req.headers.authorization !== \`Bearer \${token}\`) {
+    res.statusCode = 401; res.end(); return;
+  }
+  if (req.method !== "POST" || req.url !== "/push") {
+    res.statusCode = 404; res.end(); return;
+  }
+  const chunks = [];
+  let total = 0;
+  req.on("data", (c) => {
+    total += c.length;
+    if (total > 256 * 1024) { res.statusCode = 413; res.end(); req.destroy(); return; }
+    chunks.push(c);
+  });
+  req.on("end", () => {
+    if (res.writableEnded) return;
+    let payload;
+    try { payload = JSON.parse(Buffer.concat(chunks).toString("utf8")); }
+    catch { res.statusCode = 400; res.end("bad json"); return; }
+    if (!initialized) { res.statusCode = 503; res.end("not initialized"); return; }
+    sendNotification("notifications/claude/channel", {
+      content: JSON.stringify(payload, null, 2),
+      meta: {
+        file: String(payload.file ?? ""),
+        count: String(payload.unresolvedCount ?? 0),
+        id: String(payload.id ?? ""),
+      },
+    });
+    res.statusCode = 200; res.end("ok");
+  });
+});
+
+server.listen(0, "127.0.0.1", () => {
+  const port = server.address().port;
+  mkdirSync(channelDir, { recursive: true });
+  writeFileSync(
+    channelFile,
+    JSON.stringify({ port, token, pid: process.pid }, null, 2),
+    { mode: 0o600 },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Cleanup
+// ---------------------------------------------------------------------------
+
+function cleanup() {
+  try { unlinkSync(channelFile); } catch {}
+  try { server.close(); } catch {}
+}
+process.on("SIGINT", () => { cleanup(); process.exit(0); });
+process.on("SIGTERM", () => { cleanup(); process.exit(0); });
+process.on("exit", cleanup);
+`;
+
 export const SKILL_CONTENT = `---
 name: vs-markdown-collab
 description: Agentic workflow for addressing review comments on Markdown (.md) files in a Markdown Collab workspace (a workspace containing a .markdown-collab/ folder). TRIGGER when the user asks to address, resolve, respond to, incorporate, or act on review comments, notes, suggestions, or feedback on any Markdown document. Trigger phrases include "address the comments on foo.md", "apply the review feedback", "respond to the notes in README", "incorporate the suggestions", "fix the markdown collab comments", "work through the review on docs/spec.md".
@@ -514,7 +695,36 @@ Invoke when:
 - The user names one or more \`.md\` files and asks you to act on review comments / feedback / notes.
 - The user says "address the markdown collab comments" without naming files (operate workspace-wide).
 - The user references a specific comment thread or quote and asks you to apply / respond.
-- The user asks you to "watch for review batches" or to wait for the VS Code "Send to Claude" button (use the channel watch loop below).
+- The user asks you to "watch for review batches" or to wait for the VS Code "Send to Claude" button (use the channel watch loop or MCP channel mode below).
+
+## MCP channel mode (preferred when supported)
+
+Claude Code v2.1.80+ supports first-party MCP channels: events arrive natively as \`<channel source="markdown-collab" file="..." count="N" id="evt_…">\` tags in your context with no streaming-tool dependency.
+
+**Setup (one-time):**
+
+1. Run the **Markdown Collab: Install Claude Skill** command in VS Code. This drops \`mdc-channel.mjs\` into \`~/.claude/skills/vs-markdown-collab/\`.
+2. Add the server to \`~/.claude.json\` (user-level) or the workspace's \`.mcp.json\` (project-level):
+   \`\`\`json
+   {
+     "mcpServers": {
+       "markdown-collab": {
+         "command": "node",
+         "args": ["~/.claude/skills/vs-markdown-collab/mdc-channel.mjs"]
+       }
+     }
+   }
+   \`\`\`
+3. Start Claude with the development flag (channels are still research preview):
+   \`\`\`
+   claude --dangerously-load-development-channels server:markdown-collab
+   \`\`\`
+4. Set \`markdownCollab.sendMode\` to \`mcp-channel\` in VS Code, or pick it from the quick-pick.
+
+**Runtime:**
+The button click POSTs to the running channel server, which fires \`notifications/claude/channel\`. The body of the \`<channel>\` tag is the same JSON payload \`{prompt, file, unresolvedCount, comments}\`. Address each comment per Phases 1–6, then append \`{"id": "<id-from-tag>"}\` to \`<workspace>/.markdown-collab/.events.acked.jsonl\` so the extension knows the batch is done.
+
+**Caveats:** channels require claude.ai login (no API keys / Console), and the protocol is research preview — Anthropic warns it may change. If channels aren't supported in your harness or version, fall back to one of the modes below.
 
 ## Channel watch loop (button-driven)
 
@@ -677,6 +887,7 @@ export async function installClaudeSkill(
 async function syncCliScript(homeDir: string): Promise<void> {
   await syncScript(path.join(homeDir, CLI_SCRIPT_REL), CLI_SCRIPT_CONTENT);
   await syncScript(path.join(homeDir, TAIL_SCRIPT_REL), TAIL_SCRIPT_CONTENT);
+  await syncScript(path.join(homeDir, CHANNEL_SCRIPT_REL), CHANNEL_SCRIPT_CONTENT);
 }
 
 async function syncScript(target: string, content: string): Promise<void> {

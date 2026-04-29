@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.13.0 — 2026-04-29
+
+### New transport: `mcp-channel` — native Claude Code channel events
+
+Adds a fifth `markdownCollab.sendMode`: **`mcp-channel`**. The skill installer now also drops `mdc-channel.mjs` next to `mdc.mjs` and `mdc-tail.mjs`. That script is a hand-rolled MCP server (no SDK dep) that:
+
+- Speaks the minimum JSON-RPC handshake to declare `experimental.capabilities['claude/channel']`.
+- Listens on a localhost HTTP port and writes the port + per-session bearer token to `<workspace>/.markdown-collab/.channel.json`.
+- On `POST /push`, fires `notifications/claude/channel`, so the payload arrives in Claude's next turn as a native `<channel source="markdown-collab" file="…" count="N" id="evt_…">` tag — no streaming tool, no Bash 600s ceiling, no polling.
+
+When the user clicks **Send to Claude** in `mcp-channel` mode, the extension looks up `.channel.json`, POSTs the same envelope it would have written to the events log (and still does — `mcp-channel` mode appends to both the events log and the channel, so ack-based suppression still works), and shows a success toast.
+
+**One-time setup** for users who want this mode (added to the README):
+
+1. Run **Markdown Collab: Install Claude Skill**.
+2. Add to `~/.claude.json` or the workspace's `.mcp.json`:
+   ```json
+   { "mcpServers": { "markdown-collab": { "command": "node", "args": ["~/.claude/skills/vs-markdown-collab/mdc-channel.mjs"] } } }
+   ```
+3. Start Claude with `claude --dangerously-load-development-channels server:markdown-collab`.
+
+### Caveats
+
+- Channels are research preview as of Claude Code v2.1.80 — protocol may change.
+- Requires claude.ai login (not API-key / Console).
+- Doesn't help when MCP is fully disabled by enterprise policy — channels are MCP under the hood. Use `terminal` mode in that case.
+
+### Tests
+
+5 new tests cover the extension-side transport (not-running, 401, 500, ECONNREFUSED, success-with-bearer-auth-and-correct-body). The MCP server itself was end-to-end smoke-verified during development: spawn → handshake → POST → `notifications/claude/channel` line on stdout with correct meta.
+
 ## 0.12.3 — 2026-04-29
 
 ### SKILL.md: harness-capability fallbacks for the channel watch loop

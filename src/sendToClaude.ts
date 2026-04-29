@@ -3,7 +3,12 @@ import * as vscode from "vscode";
 import { loadSidecar, sidecarPathFor } from "./sidecar";
 import type { Comment } from "./types";
 
-export type SendMode = "terminal" | "channel" | "clipboard" | "ask";
+export type SendMode =
+  | "terminal"
+  | "channel"
+  | "mcp-channel"
+  | "clipboard"
+  | "ask";
 
 export interface ReviewPayload {
   prompt: string;

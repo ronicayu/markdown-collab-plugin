@@ -11,6 +11,7 @@ import { buildReviewPayload, type SendMode } from "./sendToClaude";
 import { SidecarWatcher } from "./sidecarWatcher";
 import { installClaudeSkill } from "./skill";
 import { EVENT_LOG_REL, EventLog } from "./transports/eventLog";
+import { sendViaMcpChannel } from "./transports/mcpChannel";
 import { sendViaTerminal, startClaudeTerminal } from "./transports/terminal";
 import { TerminalTracker } from "./transports/terminalTracker";
 import { runValidate } from "./validate";
@@ -410,7 +411,12 @@ async function invokeReattachOrphan(
 const REMEMBERED_SEND_MODE_KEY = "markdownCollab.rememberedSendMode";
 
 function isConcreteSendMode(v: unknown): v is Exclude<SendMode, "ask"> {
-  return v === "terminal" || v === "channel" || v === "clipboard";
+  return (
+    v === "terminal" ||
+    v === "channel" ||
+    v === "mcp-channel" ||
+    v === "clipboard"
+  );
 }
 
 function normalizeSendMode(v: unknown): SendMode {
@@ -529,15 +535,16 @@ async function invokeSendAllToClaude(
     return;
   }
 
-  if (mode === "channel") {
+  if (mode === "channel" || mode === "mcp-channel") {
     const folderKey = folder.uri.fsPath;
     let log = eventLogs.get(folderKey);
     if (!log) {
       log = new EventLog(folderKey);
       eventLogs.set(folderKey, log);
     }
+    let envelope;
     try {
-      await log.append(payload);
+      envelope = await log.append(payload);
     } catch (e) {
       output.appendLine(`Event log append failed: ${(e as Error).message}`);
       void vscode.window.showErrorMessage(
@@ -545,9 +552,33 @@ async function invokeSendAllToClaude(
       );
       return;
     }
-    void vscode.window.showInformationMessage(
-      `Appended to ${EVENT_LOG_REL}. In Claude, run \`mdc-tail.mjs\` in background and Monitor it.${rememberedSuffix}`,
-    );
+    if (mode === "channel") {
+      void vscode.window.showInformationMessage(
+        `Appended to ${EVENT_LOG_REL}. In Claude, run \`mdc-tail.mjs\` in background and Monitor it.${rememberedSuffix}`,
+      );
+      return;
+    }
+    // mcp-channel: also push directly to the running MCP channel server so
+    // the event arrives as a <channel> tag on Claude's next turn.
+    const result = await sendViaMcpChannel(folderKey, envelope);
+    if (result.ok) {
+      void vscode.window.showInformationMessage(
+        `Sent via MCP channel.${rememberedSuffix}`,
+      );
+    } else if (result.reason === "not-running") {
+      void vscode.window.showWarningMessage(
+        "MCP channel server isn't running. Start Claude with `--dangerously-load-development-channels server:markdown-collab` or run 'Markdown Collab: Install Claude Skill' if mdc-channel.mjs is missing. The payload was still appended to the events log.",
+      );
+    } else {
+      output.appendLine(
+        `mcp-channel push failed (${result.reason}): ${result.detail ?? "no detail"}`,
+      );
+      void vscode.window.showErrorMessage(
+        `MCP channel push failed: ${result.reason}${
+          result.detail ? ` (${result.detail})` : ""
+        }`,
+      );
+    }
     return;
   }
 }
@@ -565,6 +596,12 @@ async function pickSendMode(
       label: "Append to event log",
       description: "For a Claude `tail -f` + Monitor watch loop",
       mode: "channel",
+    },
+    {
+      label: "Push to MCP channel",
+      description:
+        "Native <channel> event in Claude (requires Claude Code v2.1.80+ + .mcp.json setup)",
+      mode: "mcp-channel",
     },
     {
       label: "Copy to clipboard",
