@@ -23,6 +23,21 @@ export function activate(context: vscode.ExtensionContext): void {
   controller.activate(context.subscriptions);
   context.subscriptions.push(controller);
 
+  // Per-workspace event logs, materialized lazily on first "channel" send
+  // for each folder. The log is plain append-only newline-delimited JSON;
+  // Claude reads it via `tail -f` + Monitor.
+  const eventLogs = new Map<string, EventLog>();
+
+  function reconcileAllEventLogs(): void {
+    for (const log of eventLogs.values()) {
+      log.reconcile().catch((e) => {
+        output.appendLine(
+          `EventLog.reconcile failed: ${(e as Error).message}`,
+        );
+      });
+    }
+  }
+
   // Live sidecar watcher — routes external .markdown-collab/*.md.json edits
   // back into the controller. The watcher is decoupled from the controller's
   // internals via a minimal host interface so it can be unit-tested against
@@ -33,11 +48,13 @@ export function activate(context: vscode.ExtensionContext): void {
       reload: async (d) => {
         await controller.reloadDoc(d);
         PreviewPanel.notifySidecarChange(d.uri.fsPath);
+        reconcileAllEventLogs();
       },
       isReloading: (p) => controller.isReloading(p),
       onExternalChange: (p) => {
         controller.onExternalChange(p);
         PreviewPanel.notifySidecarChange(p);
+        reconcileAllEventLogs();
       },
     },
     output,
@@ -65,11 +82,6 @@ export function activate(context: vscode.ExtensionContext): void {
   const terminalTracker = new TerminalTracker();
   terminalTracker.activate(context.subscriptions);
   context.subscriptions.push(terminalTracker);
-
-  // Per-workspace event logs, materialized lazily on first "channel" send
-  // for each folder. The log is plain append-only newline-delimited JSON;
-  // Claude reads it via `tail -f` + Monitor.
-  const eventLogs = new Map<string, EventLog>();
 
   context.subscriptions.push(
     vscode.commands.registerCommand("markdownCollab.installClaudeSkill", async () => {
@@ -519,7 +531,7 @@ async function invokeSendAllToClaude(
       return;
     }
     void vscode.window.showInformationMessage(
-      `Appended to ${EVENT_LOG_REL}. In Claude, run \`tail -f ${EVENT_LOG_REL}\` in background and Monitor it.${rememberedSuffix}`,
+      `Appended to ${EVENT_LOG_REL}. In Claude, run \`mdc-tail.mjs\` in background and Monitor it.${rememberedSuffix}`,
     );
     return;
   }

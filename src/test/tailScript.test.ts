@@ -118,6 +118,40 @@ describe("mdc-tail.mjs", () => {
     expect(stdout()).toContain("first.md");
   });
 
+  it("skips events whose id is recorded in .events.acked.jsonl", async () => {
+    const logPath = path.join(tmpDir, logRel);
+    const ackedPath = path.join(tmpDir, ".markdown-collab", ".events.acked.jsonl");
+    await fs.writeFile(logPath, "");
+    await fs.writeFile(ackedPath, '{"id":"evt_alreadydone"}\n');
+    const { stdout } = spawnTail();
+    await new Promise((r) => setTimeout(r, 200));
+    await fs.appendFile(
+      logPath,
+      '{"id":"evt_alreadydone","file":"old.md"}\n' +
+        '{"id":"evt_freshbatch","file":"new.md"}\n',
+    );
+    await waitFor(() => stdout().includes('"new.md"'));
+    expect(stdout()).toContain("new.md");
+    expect(stdout()).not.toContain("old.md");
+  });
+
+  it("respects acks that arrive after the tailer is already running", async () => {
+    const logPath = path.join(tmpDir, logRel);
+    const ackedPath = path.join(tmpDir, ".markdown-collab", ".events.acked.jsonl");
+    await fs.writeFile(logPath, "");
+    await fs.writeFile(ackedPath, "");
+    const { stdout } = spawnTail();
+    await new Promise((r) => setTimeout(r, 200));
+    // Ack lands first, then the corresponding event line appears.
+    await fs.appendFile(ackedPath, '{"id":"evt_late"}\n');
+    await new Promise((r) => setTimeout(r, 600)); // give the watcher time to ingest
+    await fs.appendFile(logPath, '{"id":"evt_late","file":"suppressed.md"}\n');
+    await fs.appendFile(logPath, '{"id":"evt_other","file":"emitted.md"}\n');
+    await waitFor(() => stdout().includes('"emitted.md"'));
+    expect(stdout()).toContain("emitted.md");
+    expect(stdout()).not.toContain("suppressed.md");
+  });
+
   it("fails fast when the workspace has no .markdown-collab dir", async () => {
     const stranded = await fs.mkdtemp(path.join(os.tmpdir(), "mdcollab-strand-"));
     try {

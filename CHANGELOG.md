@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.12.0 — 2026-04-29
+
+### Channel events auto-ack once Claude has addressed them
+
+Each event written to `.markdown-collab/.events.jsonl` now carries a unique `evt_…` id. After every sidecar mutation the extension reconciles the event log: when every comment referenced by an unacked event is either resolved, deleted, or has an `ai`-authored last reply, the event id is appended to a sibling `.markdown-collab/.events.acked.jsonl`.
+
+`mdc-tail.mjs` reads the ack file on startup, watches it for new ids, and silently suppresses any event whose id is acked. So:
+
+- Restarting the watch (or running with `--from-start`) no longer re-bothers Claude with batches it has already addressed.
+- The events file stays append-only — both files are race-free; no in-place rewrites, no torn reads.
+
+### Removed
+
+- The "torn appends" gap where a tailer restarted after a long session would re-emit every historical batch.
+
 ## 0.11.4 — 2026-04-29
 
 ### Marketplace publish prerequisites

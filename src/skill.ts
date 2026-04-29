@@ -285,6 +285,14 @@ export const TAIL_SCRIPT_CONTENT = `#!/usr/bin/env node
 //   is a pipe, so each appended line surfaces immediately as a Monitor
 //   notification.
 //
+// Acked-event suppression:
+//   The VS Code extension writes a sibling \`.events.acked.jsonl\` whenever
+//   every comment in a previously-emitted event has been addressed (last
+//   reply is \`ai\`, or the comment was resolved/deleted). The tailer reads
+//   that file on startup and watches it; any event whose id is already
+//   acked is silently skipped on emit. This makes \`--from-start\` safe to
+//   re-run without re-bothering Claude with already-addressed batches.
+//
 // Usage:
 //   node mdc-tail.mjs [--workspace <ws>] [--from-start]
 //
@@ -324,10 +332,10 @@ const ws = args.workspace || process.env.MDC_WORKSPACE || findWorkspace(process.
 if (!ws) fail("could not locate a workspace with a .markdown-collab/ directory; pass --workspace <path>");
 
 const logPath = join(ws, ".markdown-collab", ".events.jsonl");
+const ackedPath = join(ws, ".markdown-collab", ".events.acked.jsonl");
 
-// Seek position. When the file doesn't exist yet, start at 0 and wait for
-// the first append to materialize it; fs.watch on the parent dir handles
-// the create event.
+// Seek positions. When a file doesn't exist yet we start at 0 and wait for
+// fs.watch to surface its creation.
 let pos = 0;
 try {
   const st = statSync(logPath);
@@ -335,8 +343,51 @@ try {
 } catch {
   pos = 0;
 }
+let ackedPos = 0;
+const ackedIds = new Set();
 
 let leftover = "";
+let ackedLeftover = "";
+
+function loadAcked() {
+  let st;
+  try {
+    st = statSync(ackedPath);
+  } catch {
+    return;
+  }
+  if (st.size < ackedPos) {
+    ackedPos = 0;
+    ackedLeftover = "";
+    ackedIds.clear();
+  }
+  if (st.size === ackedPos) return;
+  const fd = openSync(ackedPath, "r");
+  try {
+    const need = st.size - ackedPos;
+    const buf = Buffer.alloc(need);
+    let read = 0;
+    while (read < need) {
+      const n = readSync(fd, buf, read, need - read, ackedPos + read);
+      if (n === 0) break;
+      read += n;
+    }
+    ackedPos += read;
+    ackedLeftover += buf.subarray(0, read).toString("utf8");
+    let nl;
+    while ((nl = ackedLeftover.indexOf("\\n")) >= 0) {
+      const line = ackedLeftover.slice(0, nl);
+      ackedLeftover = ackedLeftover.slice(nl + 1);
+      if (line.length === 0) continue;
+      try {
+        const obj = JSON.parse(line);
+        if (obj && typeof obj.id === "string") ackedIds.add(obj.id);
+      } catch { /* skip malformed */ }
+    }
+  } finally {
+    closeSync(fd);
+  }
+}
 
 function drain() {
   let st;
@@ -367,34 +418,52 @@ function drain() {
     while ((nl = leftover.indexOf("\\n")) >= 0) {
       const line = leftover.slice(0, nl);
       leftover = leftover.slice(nl + 1);
-      if (line.length > 0) process.stdout.write(line + "\\n");
+      if (line.length === 0) continue;
+      // Suppress emission when this event is already acked. Parse defensively;
+      // a malformed line is forwarded as-is so debugging stays observable.
+      let id = null;
+      try {
+        const obj = JSON.parse(line);
+        if (obj && typeof obj.id === "string") id = obj.id;
+      } catch { /* fall through */ }
+      if (id && ackedIds.has(id)) continue;
+      process.stdout.write(line + "\\n");
     }
   } finally {
     closeSync(fd);
   }
 }
 
+loadAcked();
 drain();
 
-// Watch the file. fs.watch may fire 'rename' on some platforms when the
+// Watch both files. fs.watch may fire 'rename' on some platforms when a
 // file is replaced; in that case we re-arm by polling.
-let watcher = null;
-function arm() {
-  try {
-    watcher = watch(logPath, { persistent: true }, () => drain());
-    watcher.on("error", () => {
-      if (watcher) watcher.close();
+function armWatch(target, onChange) {
+  let watcher = null;
+  function arm() {
+    try {
+      watcher = watch(target, { persistent: true }, () => onChange());
+      watcher.on("error", () => {
+        if (watcher) watcher.close();
+        setTimeout(arm, 250);
+      });
+    } catch {
       setTimeout(arm, 250);
-    });
-  } catch {
-    setTimeout(arm, 250);
+    }
   }
+  arm();
 }
-arm();
+armWatch(logPath, drain);
+armWatch(ackedPath, () => {
+  loadAcked();
+  // After acks update, no need to re-emit anything from the main log —
+  // an ack arrives AFTER the corresponding event was emitted (if at all).
+});
 
 // Belt-and-suspenders polling — handles editors / FS layers that drop
 // inotify events. Cheap; runs every 500ms.
-setInterval(drain, 500).unref?.();
+setInterval(() => { loadAcked(); drain(); }, 500).unref?.();
 
 // Keep the process alive forever.
 process.stdin.resume();

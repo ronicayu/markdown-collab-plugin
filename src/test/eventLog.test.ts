@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
-import { EVENT_LOG_REL, EventLog } from "../transports/eventLog";
+import { EVENT_ACKED_REL, EVENT_LOG_REL, EventLog } from "../transports/eventLog";
 import type { ReviewPayload } from "../sendToClaude";
+import type { Comment, Sidecar } from "../types";
 
 let tmpDir: string;
 
@@ -89,5 +90,151 @@ describe("EventLog", () => {
     expect(files).toEqual(
       Array.from({ length: 10 }, (_, i) => `f${i}.md`).sort(),
     );
+  });
+
+  it("stamps each appended line with a unique evt_ id", async () => {
+    const log = new EventLog(tmpDir);
+    const seen = new Set<string>();
+    for (let i = 0; i < 5; i++) {
+      const env = await log.append(fixturePayload({ file: `f${i}.md` }));
+      expect(env.id).toMatch(/^evt_[0-9a-f]{12}$/);
+      seen.add(env.id);
+    }
+    expect(seen.size).toBe(5);
+  });
+});
+
+function commentFixture(id: string, opts: Partial<Comment> = {}): Comment {
+  return {
+    id,
+    anchor: { text: "anchored phrase", contextBefore: "", contextAfter: "" },
+    body: "consider rephrasing",
+    author: "human",
+    createdAt: "2026-04-01T00:00:00Z",
+    resolved: false,
+    replies: [],
+    ...opts,
+  };
+}
+
+async function seedSidecar(rootDir: string, mdRel: string, sidecar: Sidecar): Promise<void> {
+  const sidecarPath = path.join(rootDir, ".markdown-collab", mdRel + ".json");
+  await fs.mkdir(path.dirname(sidecarPath), { recursive: true });
+  await fs.writeFile(sidecarPath, JSON.stringify(sidecar, null, 2));
+}
+
+describe("EventLog.reconcile", () => {
+  it("acks an event when every referenced comment has an AI reply", async () => {
+    const log = new EventLog(tmpDir);
+    const env = await log.append({
+      prompt: "x",
+      file: "guide.md",
+      unresolvedCount: 1,
+      comments: [commentFixture("c_aaaaaaaa")],
+    });
+    await seedSidecar(tmpDir, "guide.md", {
+      version: 1,
+      file: "guide.md",
+      comments: [
+        commentFixture("c_aaaaaaaa", {
+          replies: [
+            { author: "ai", body: "addressed", createdAt: "2026-04-29T00:00:00Z" },
+          ],
+        }),
+      ],
+    });
+    await log.reconcile();
+    const acks = await readLines(path.join(tmpDir, EVENT_ACKED_REL));
+    expect(acks).toHaveLength(1);
+    expect(JSON.parse(acks[0]).id).toBe(env.id);
+  });
+
+  it("acks an event when its referenced comments are resolved", async () => {
+    const log = new EventLog(tmpDir);
+    await log.append({
+      prompt: "x",
+      file: "guide.md",
+      unresolvedCount: 1,
+      comments: [commentFixture("c_aaaaaaaa")],
+    });
+    await seedSidecar(tmpDir, "guide.md", {
+      version: 1,
+      file: "guide.md",
+      comments: [commentFixture("c_aaaaaaaa", { resolved: true })],
+    });
+    await log.reconcile();
+    const acks = await readLines(path.join(tmpDir, EVENT_ACKED_REL));
+    expect(acks).toHaveLength(1);
+  });
+
+  it("does NOT ack when at least one comment lacks an AI reply", async () => {
+    const log = new EventLog(tmpDir);
+    await log.append({
+      prompt: "x",
+      file: "guide.md",
+      unresolvedCount: 2,
+      comments: [commentFixture("c_aaaaaaaa"), commentFixture("c_bbbbbbbb")],
+    });
+    await seedSidecar(tmpDir, "guide.md", {
+      version: 1,
+      file: "guide.md",
+      comments: [
+        commentFixture("c_aaaaaaaa", {
+          replies: [
+            { author: "ai", body: "done", createdAt: "2026-04-29T00:00:00Z" },
+          ],
+        }),
+        commentFixture("c_bbbbbbbb"),
+      ],
+    });
+    await log.reconcile();
+    const acks = await fs
+      .readFile(path.join(tmpDir, EVENT_ACKED_REL), "utf8")
+      .catch(() => "");
+    expect(acks).toBe("");
+  });
+
+  it("is idempotent — re-running reconcile does not duplicate ack lines", async () => {
+    const log = new EventLog(tmpDir);
+    await log.append({
+      prompt: "x",
+      file: "guide.md",
+      unresolvedCount: 1,
+      comments: [commentFixture("c_aaaaaaaa")],
+    });
+    await seedSidecar(tmpDir, "guide.md", {
+      version: 1,
+      file: "guide.md",
+      comments: [
+        commentFixture("c_aaaaaaaa", {
+          replies: [
+            { author: "ai", body: "done", createdAt: "2026-04-29T00:00:00Z" },
+          ],
+        }),
+      ],
+    });
+    await log.reconcile();
+    await log.reconcile();
+    await log.reconcile();
+    const acks = await readLines(path.join(tmpDir, EVENT_ACKED_REL));
+    expect(acks).toHaveLength(1);
+  });
+
+  it("treats a deleted comment as addressed", async () => {
+    const log = new EventLog(tmpDir);
+    await log.append({
+      prompt: "x",
+      file: "guide.md",
+      unresolvedCount: 1,
+      comments: [commentFixture("c_aaaaaaaa")],
+    });
+    await seedSidecar(tmpDir, "guide.md", {
+      version: 1,
+      file: "guide.md",
+      comments: [],
+    });
+    await log.reconcile();
+    const acks = await readLines(path.join(tmpDir, EVENT_ACKED_REL));
+    expect(acks).toHaveLength(1);
   });
 });
