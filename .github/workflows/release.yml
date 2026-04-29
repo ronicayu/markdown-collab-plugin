@@ -63,12 +63,43 @@ jobs:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: npx --yes ovsx publish markdown-collab-plugin.vsix --pat "$OVSX_PAT"
 
+      - name: Extract release notes from CHANGELOG.md
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Pull the section starting with "## $VERSION " (followed by space or end-of-line)
+          # up to (but not including) the next "## " heading. Empty if no match —
+          # the next step then falls back to --generate-notes.
+          awk -v ver="$VERSION" '
+            BEGIN { capture = 0 }
+            /^## / {
+              if (capture) exit
+              if ($2 == ver) { capture = 1; next }
+            }
+            capture { print }
+          ' CHANGELOG.md > release-notes.md
+          # Trim trailing blank lines.
+          sed -e :a -e '/^$/N;/\n$/ba' -i.bak release-notes.md && rm -f release-notes.md.bak
+          if [ -s release-notes.md ]; then
+            echo "Release notes for $VERSION:"
+            cat release-notes.md
+          else
+            echo "No CHANGELOG entry for $VERSION; will fall back to auto-generated notes."
+          fi
+
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            markdown-collab-plugin.vsix \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes
+          if [ -s release-notes.md ]; then
+            gh release create "$GITHUB_REF_NAME" \
+              markdown-collab-plugin.vsix \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file release-notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              markdown-collab-plugin.vsix \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi
