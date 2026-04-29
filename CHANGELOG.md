@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.2 — 2026-04-29
+
+### SKILL.md: tighten Monitor-vs-TaskOutput guidance
+
+Claude sessions were hanging on `TaskOutput block=true` against the long-running `mdc-tail.mjs` background bash, because `TaskOutput` waits for *completion* — and the tailer never completes by design. The watch-loop section of the bundled SKILL.md now explicitly says "use **Monitor** (not TaskOutput)" and explains why, with a fallback hint for harnesses that expose the same capability under a different name (e.g. `BashOutput`).
+
 ## 0.12.1 — 2026-04-29
 
 ### Fixed: silent no-op when sendMode was an unknown value (e.g. "ipc")

@@ -526,7 +526,7 @@ The VS Code extension exposes a "Send to Claude" button on each Markdown preview
    \`\`\`
    Use the absolute workspace path. Do NOT use \`tail -f\` directly — when its stdout is a pipe (which it is for background bash), most platforms switch \`tail\` to block-buffered output and Monitor sees nothing until ~4 KB accumulates. \`mdc-tail.mjs\` flushes per line.
 
-2. **Subscribe with the Monitor tool** on the returned background process id. Each appended line surfaces as a model notification — no polling, no Bash 600s ceiling, no re-invocation loop.
+2. **Subscribe with the \`Monitor\` tool** (NOT \`TaskOutput\` — TaskOutput waits for completion, but \`mdc-tail.mjs\` runs forever and would never return). Pass the background bash's process id. Each appended line to the events log surfaces as a model notification. If your harness exposes the equivalent under a different name (e.g. \`BashOutput\`), use that — same semantics. The defining property is "streams each stdout line as a notification while the process keeps running."
 
 3. **Per notification**, parse the JSON line as \`{prompt, file, unresolvedCount, comments, ts}\`. Address the batch on \`<workspace>/<file>\` per Phases 1–6 above, then return to the Monitor stream for the next event.
 
