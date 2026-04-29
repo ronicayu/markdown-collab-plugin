@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.4 — 2026-04-29
+
+### Marketplace publish prerequisites
+
+- Added MIT `LICENSE` at repo root.
+- Added `repository`, `homepage`, `bugs`, `license`, and `keywords` fields to `package.json`.
+
+These were the two `vsce` warnings blocking marketplace publish; with these in place, set `VSCE_PAT` (and optionally `OVSX_PAT`) as repo secrets, push a `v*` tag, and the existing release workflow handles the publish step.
+
 ## 0.11.3 — 2026-04-29
 
 ### Remember the Send to Claude mode after first pick
