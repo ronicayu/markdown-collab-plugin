@@ -526,7 +526,12 @@ The VS Code extension exposes a "Send to Claude" button on each Markdown preview
    \`\`\`
    Use the absolute workspace path. Do NOT use \`tail -f\` directly — when its stdout is a pipe (which it is for background bash), most platforms switch \`tail\` to block-buffered output and Monitor sees nothing until ~4 KB accumulates. \`mdc-tail.mjs\` flushes per line.
 
-2. **Subscribe with the \`Monitor\` tool** (NOT \`TaskOutput\` — TaskOutput waits for completion, but \`mdc-tail.mjs\` runs forever and would never return). Pass the background bash's process id. Each appended line to the events log surfaces as a model notification. If your harness exposes the equivalent under a different name (e.g. \`BashOutput\`), use that — same semantics. The defining property is "streams each stdout line as a notification while the process keeps running."
+2. **Subscribe to the bash's stdout stream.** Look for a tool whose contract is "each stdout line of a long-running process surfaces as a model notification" — typically \`Monitor\` or \`BashOutput\`. NOT \`TaskOutput\`: \`TaskOutput\` waits for the task to *complete*, and \`mdc-tail.mjs\` runs forever by design.
+
+   **If neither \`Monitor\` nor \`BashOutput\` is in your tool list**, the channel transport cannot run reactively in this harness. Options:
+   - Stop the tailer (kill the background bash) and tell the user to switch the VS Code setting \`markdownCollab.sendMode\` to \`terminal\` — that mode bracketed-pastes each click directly into your REPL, no watch loop required.
+   - Or fall back to polling: call \`TaskOutput block=false\` on the bash periodically, diff against the last-seen offset of stdout, process any new JSON lines. Functional but consumes one iteration per poll.
+   - Or skip the tailer entirely and \`Read\` \`.markdown-collab/.events.jsonl\` directly each turn, tracking the highest line you've already addressed.
 
 3. **Per notification**, parse the JSON line as \`{prompt, file, unresolvedCount, comments, ts}\`. Address the batch on \`<workspace>/<file>\` per Phases 1–6 above, then return to the Monitor stream for the next event.
 

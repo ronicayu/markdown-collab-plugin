@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.3 — 2026-04-29
+
+### SKILL.md: harness-capability fallbacks for the channel watch loop
+
+Some Claude Code harnesses don't expose a per-line stdout-streaming tool (`Monitor` / `BashOutput`) — they only have `TaskOutput`, which waits for completion and is therefore the wrong fit for the long-running `mdc-tail.mjs`. The skill's "Channel watch loop" section now spells out three fallbacks for that case: switch the VS Code setting to `terminal` mode, poll with `TaskOutput block=false`, or `Read` the events file directly each turn. The terminal transport remains the recommended path for harnesses without streaming.
+
 ## 0.12.2 — 2026-04-29
 
 ### SKILL.md: tighten Monitor-vs-TaskOutput guidance
