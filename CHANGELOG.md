@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.13.2 — 2026-04-29
+
+### README rewrite for users
+
+The README is reorganized into a top-down "what is this → quick start → daily use → mode picker → troubleshooting" flow rather than a feature dump. Adds:
+
+- **Quick start**: 5 numbered steps from `code --install-extension` to first review reply.
+- **Choosing a send mode**: a decision matrix that explicitly recommends `terminal` when MCP and channel features aren't available in the user's environment, and explains *why* for each row.
+- **Send mode details**: per-mode setup blocks with copy-pasteable commands.
+- **Settings reference**: documents `markdownCollab.sendMode` and its values.
+- **Troubleshooting**: covers the four most common stuck states from this iteration cycle (silent click on stale `ipc` value, channel-mode lines not arriving, `--channels ignored`, orphaned comments, gutter icon multiplication).
+- **Storage layout**: now lists the runtime dotfiles (`.events.jsonl`, `.events.acked.jsonl`, `.channel.json`) with the recommended `.gitignore` snippet.
+
+No code change.
+
 ## 0.13.1 — 2026-04-29
 
 ### Fixed: tailer + channel server may buffer their stdout
