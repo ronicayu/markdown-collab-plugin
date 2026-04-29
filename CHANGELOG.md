@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.14.0 — 2026-04-29
+
+### Comments and replies render as Markdown in the preview sidebar
+
+Both the collapsed card snippets and the expanded message bodies now render Markdown via the same `markdown-it` instance the document body uses. Bold, italics, inline `code`, fenced blocks, links, lists, blockquotes, and tables all render in place.
+
+- Server-side rendering: `bodyHtml` is computed in the host (TypeScript) and injected into the webview JSON. `markdown-it` runs with `html: false`, so any raw HTML in a comment body is escaped — same XSS posture as before.
+- The collapsed two-line preview keeps the inline-paragraph treatment (no awkward block-level margin) and still clamps at two lines.
+- The textarea editor for **Edit** keeps the raw markdown source — what the human typed is what they see.
+- Falls back to escaped plain text if a comment was authored before this version (`c.bodyHtml || esc(c.body)`).
+
+Bumps to 0.14.0.
+
 ## 0.13.3 — 2026-04-29
 
 ### Removed: terminal-mode "Send N to terminal …?" confirmation toast

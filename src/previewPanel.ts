@@ -13,7 +13,7 @@ import {
   setResolved,
   sidecarPathFor,
 } from "./sidecar";
-import type { Anchor, Comment } from "./types";
+import type { Anchor, Comment, Reply } from "./types";
 
 /**
  * Self-contained preview webview for a markdown doc. Renders the doc via
@@ -170,11 +170,32 @@ export class PreviewPanel {
     }
   }
 
+  /**
+   * Render a comment / reply body as Markdown. Uses the same MarkdownIt
+   * instance as the document body (`html: false` ⇒ raw HTML in the body
+   * is escaped, mitigating XSS via comment content). Trailing newline
+   * stripped so adjacent block elements don't collect extra whitespace.
+   */
+  private renderCommentBody(body: string): string {
+    return this.md.render(body).replace(/\n+$/, "");
+  }
+
+  private renderComment<T extends Comment>(c: T): T & RenderedComment {
+    return {
+      ...c,
+      bodyHtml: this.renderCommentBody(c.body),
+      replies: c.replies.map((r) => ({
+        ...r,
+        bodyHtml: this.renderCommentBody(r.body),
+      })),
+    };
+  }
+
   private async buildPayload(): Promise<PreviewPayload> {
     const text = await this.readDocText();
     const folder = vscode.workspace.getWorkspaceFolder(this.doc.uri);
     const resolvedComments: ResolvedComment[] = [];
-    let orphaned: Comment[] = [];
+    const orphaned: RenderedComment[] = [];
     let readOnly = false;
 
     if (folder) {
@@ -186,11 +207,12 @@ export class PreviewPanel {
         if (loaded) {
           readOnly = loaded.mode === "read-only-unknown-version";
           for (const c of loaded.sidecar.comments) {
+            const rendered = this.renderComment(c);
             const range = resolveAnchor(text, c.anchor);
             if (range) {
-              resolvedComments.push({ ...c, start: range.start, end: range.end });
+              resolvedComments.push({ ...rendered, start: range.start, end: range.end });
             } else {
-              orphaned.push(c);
+              orphaned.push(rendered);
             }
           }
         }
@@ -293,6 +315,23 @@ pre { background: var(--vscode-textCodeBlock-background, #1e1e1e); padding: 0.75
 .mdc-pill.orphan { background: var(--vscode-errorForeground); color: #fff; }
 .mdc-pill.replies { background: transparent; border: 1px solid var(--vscode-panel-border); color: var(--vscode-descriptionForeground); }
 .mdc-card .preview { font-size: 0.85em; margin-top: 0.25rem; max-height: 3.4em; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.mdc-card .preview p { margin: 0; display: inline; }
+.mdc-card .preview h1, .mdc-card .preview h2, .mdc-card .preview h3, .mdc-card .preview h4, .mdc-card .preview h5, .mdc-card .preview h6 { font-size: 1em; font-weight: 600; margin: 0; display: inline; }
+.mdc-card .preview ul, .mdc-card .preview ol { margin: 0; padding-left: 1.2em; }
+.mdc-card .preview pre, .mdc-card .preview blockquote { margin: 0; padding: 0; background: transparent; }
+.mdc-card .preview code { font-size: 0.9em; padding: 0 0.2em; background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.15)); border-radius: 2px; }
+.mdc-msg-body { margin-top: 0.15rem; }
+.mdc-msg-body > *:first-child { margin-top: 0; }
+.mdc-msg-body > *:last-child { margin-bottom: 0; }
+.mdc-msg-body p { margin: 0.25rem 0; }
+.mdc-msg-body ul, .mdc-msg-body ol { margin: 0.25rem 0; padding-left: 1.2em; }
+.mdc-msg-body code { font-size: 0.9em; padding: 0 0.25em; background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.15)); border-radius: 2px; font-family: var(--vscode-editor-font-family, monospace); }
+.mdc-msg-body pre { font-size: 0.85em; padding: 0.4rem 0.5rem; margin: 0.35rem 0; background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.15)); border-radius: 3px; overflow-x: auto; }
+.mdc-msg-body pre code { background: transparent; padding: 0; }
+.mdc-msg-body blockquote { margin: 0.25rem 0; padding: 0.1rem 0 0.1rem 0.6rem; border-left: 3px solid var(--vscode-textBlockQuote-border, var(--vscode-panel-border)); color: var(--vscode-descriptionForeground); }
+.mdc-msg-body table { border-collapse: collapse; margin: 0.25rem 0; }
+.mdc-msg-body th, .mdc-msg-body td { padding: 0.1rem 0.4rem; border: 1px solid var(--vscode-panel-border); }
+.mdc-msg-body img { max-width: 100%; }
 .mdc-card .anchor-snippet { font-size: 0.75em; color: var(--vscode-descriptionForeground); font-family: var(--vscode-editor-font-family, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0.25rem; }
 .mdc-card-body { display: none; margin-top: 0.5rem; }
 .mdc-card.open .mdc-card-body { display: block; }
@@ -473,7 +512,7 @@ pre.mermaid svg { max-width: 100%; height: auto; }
         +   pillFor(c)
         +   repliesPill(c)
         + '</div>'
-        + '<div class="preview">'+esc(c.body)+'</div>'
+        + '<div class="preview">'+(c.bodyHtml || esc(c.body))+'</div>'
         + snippet
         + '<div class="mdc-card-body" data-body-for="'+esc(c.id)+'"></div>'
         + '</div>';
@@ -521,7 +560,7 @@ pre.mermaid svg { max-width: 100%; height: auto; }
     if(!card) return;
     card.classList.add("open", "active");
     const body = card.querySelector(".mdc-card-body");
-    const msgs = [{author: c.author, body: c.body, createdAt: c.createdAt, _isRoot: true}]
+    const msgs = [{author: c.author, body: c.body, bodyHtml: c.bodyHtml, createdAt: c.createdAt, _isRoot: true}]
       .concat((c.replies || []).map((r, i) => Object.assign({_replyIndex: i}, r)));
     const editable = !readOnly;
     const msgsHtml = msgs.map((m, i) => {
@@ -531,7 +570,7 @@ pre.mermaid svg { max-width: 100%; height: auto; }
       return '<div class="mdc-msg" data-msg-idx="'+i+'">'
         + '<span class="author">'+esc(m.author)+'</span>'
         + '<span class="ts">'+esc(fmt(m.createdAt))+'</span>'
-        + '<div class="mdc-msg-body">'+esc(m.body)+'</div>'
+        + '<div class="mdc-msg-body">'+(m.bodyHtml || esc(m.body))+'</div>'
         + editBtn
         + '</div>';
     }).join("");
@@ -1457,7 +1496,13 @@ function cryptoNonce(): string {
 // Internal types
 // -----------------------------------------------------------------------------
 
-interface ResolvedComment extends Comment {
+type RenderedReply = Reply & { bodyHtml: string };
+type RenderedComment = Omit<Comment, "replies"> & {
+  bodyHtml: string;
+  replies: RenderedReply[];
+};
+
+interface ResolvedComment extends RenderedComment {
   start: number;
   end: number;
 }
@@ -1465,7 +1510,7 @@ interface ResolvedComment extends Comment {
 interface PreviewPayload {
   text: string;
   comments: ResolvedComment[];
-  orphans: Comment[];
+  orphans: RenderedComment[];
   readOnly: boolean;
 }
 
