@@ -413,6 +413,11 @@ function isConcreteSendMode(v: unknown): v is Exclude<SendMode, "ask"> {
   return v === "terminal" || v === "channel" || v === "clipboard";
 }
 
+function normalizeSendMode(v: unknown): SendMode {
+  if (v === "ask" || isConcreteSendMode(v)) return v;
+  return "ask";
+}
+
 async function invokeSendAllToClaude(
   doc: vscode.TextDocument,
   output: vscode.OutputChannel,
@@ -449,7 +454,17 @@ async function invokeSendAllToClaude(
   const payload = result.payload;
 
   const config = vscode.workspace.getConfiguration("markdownCollab");
-  let mode = config.get<SendMode>("sendMode", "ask");
+  const rawMode = config.get<unknown>("sendMode", "ask");
+  let mode = normalizeSendMode(rawMode);
+  if (mode !== rawMode) {
+    output.appendLine(
+      `markdownCollab.sendMode "${String(rawMode)}" is not recognized; falling back to "ask". ` +
+        `Valid values: ask, terminal, channel, clipboard. (The "ipc" mode was renamed to "channel" in 0.11.0.)`,
+    );
+    void vscode.window.showWarningMessage(
+      `markdownCollab.sendMode "${String(rawMode)}" is no longer supported — falling back to ask. Update your settings to one of: terminal, channel, clipboard.`,
+    );
+  }
   let justRemembered = false;
   if (mode === "ask") {
     const remembered = workspaceState.get<unknown>(REMEMBERED_SEND_MODE_KEY);

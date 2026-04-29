@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.1 — 2026-04-29
+
+### Fixed: silent no-op when sendMode was an unknown value (e.g. "ipc")
+
+Users upgrading from 0.10.x had `markdownCollab.sendMode: "ipc"` in their workspace settings.json. After the rename to "channel" in 0.11.0, that value is no longer in the schema enum but VS Code still serves it via `config.get`. The dispatcher's three `if (mode === ...)` branches all missed, so the **Send to Claude** button silently did nothing — the events log never grew.
+
+Now the dispatcher normalizes any unrecognized value back to "ask" (so the user gets the quick-pick instead of a no-op), surfaces a one-line warning naming the offending value, and writes a longer note to the output channel telling them about the 0.11.0 rename.
+
 ## 0.12.0 — 2026-04-29
 
 ### Channel events auto-ack once Claude has addressed them
