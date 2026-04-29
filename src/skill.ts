@@ -3,7 +3,6 @@ import * as path from "path";
 
 export const SKILL_REL_PATH = ".claude/skills/vs-markdown-collab/SKILL.md";
 export const CLI_SCRIPT_REL = ".claude/skills/vs-markdown-collab/mdc.mjs";
-export const WAIT_SCRIPT_REL = ".claude/skills/vs-markdown-collab/mdc-wait.mjs";
 
 export const CLI_SCRIPT_CONTENT = `#!/usr/bin/env node
 // Markdown Collab agent helper.
@@ -274,96 +273,6 @@ if (cmd === "validate") {
 fail("unknown command. supported: list | reply | delete | set-anchor | validate");
 `;
 
-export const WAIT_SCRIPT_CONTENT = `#!/usr/bin/env node
-// Markdown Collab IPC long-poll client.
-//
-// Blocks until the VS Code extension enqueues a review payload via its
-// localhost HTTP server, then prints the JSON to stdout and exits.
-//
-// Endpoint: <workspace>/.markdown-collab/.endpoint.json — written by the
-// extension at activation. Contains { port, token, pid }.
-//
-// Usage:
-//   node mdc-wait.mjs [--workspace <ws>] [--timeoutSec 300]
-//
-// Exit codes:
-//   0 — payload received OR poll timed out (stdout: payload JSON or {"status":"timeout"})
-//   1 — endpoint unreachable / unconfigured / auth failure
-
-import { readFileSync, existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { request } from "node:http";
-
-function fail(msg, code = 1) {
-  process.stderr.write(\`mdc-wait: \${msg}\\n\`);
-  process.exit(code);
-}
-
-function parseArgs(argv) {
-  const out = { workspace: null, timeoutSec: 300 };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--workspace") out.workspace = argv[++i];
-    else if (a === "--timeoutSec") out.timeoutSec = Number(argv[++i]) || 300;
-  }
-  return out;
-}
-
-function findWorkspace(start) {
-  let cur = resolve(start);
-  while (true) {
-    if (existsSync(join(cur, ".markdown-collab"))) return cur;
-    const parent = dirname(cur);
-    if (parent === cur) return null;
-    cur = parent;
-  }
-}
-
-const args = parseArgs(process.argv.slice(2));
-const ws = args.workspace || process.env.MDC_WORKSPACE || findWorkspace(process.cwd());
-if (!ws) fail("could not locate a workspace with a .markdown-collab/ directory; pass --workspace <path>");
-
-const endpointPath = join(ws, ".markdown-collab", ".endpoint.json");
-let endpoint;
-try {
-  endpoint = JSON.parse(readFileSync(endpointPath, "utf8"));
-} catch (e) {
-  fail(\`cannot read \${endpointPath}: \${e.message} — is the VS Code extension active in this workspace?\`);
-}
-if (!endpoint || typeof endpoint.port !== "number" || typeof endpoint.token !== "string") {
-  fail(\`endpoint file at \${endpointPath} is malformed\`);
-}
-
-const timeoutSec = Math.max(1, Math.min(600, args.timeoutSec));
-
-const req = request({
-  host: "127.0.0.1",
-  port: endpoint.port,
-  path: \`/poll?timeoutSec=\${timeoutSec}\`,
-  method: "GET",
-  headers: { Authorization: \`Bearer \${endpoint.token}\` },
-}, (res) => {
-  const chunks = [];
-  res.on("data", (c) => chunks.push(c));
-  res.on("end", () => {
-    if (res.statusCode === 204) {
-      process.stdout.write(JSON.stringify({ status: "timeout" }) + "\\n");
-      process.exit(0);
-    }
-    if (res.statusCode !== 200) {
-      fail(\`unexpected status \${res.statusCode}\`);
-    }
-    process.stdout.write(Buffer.concat(chunks).toString("utf8") + "\\n");
-    process.exit(0);
-  });
-});
-req.setTimeout((timeoutSec + 30) * 1000, () => {
-  req.destroy(new Error("HTTP socket timed out before server responded"));
-});
-req.on("error", (e) => fail(\`request failed: \${e.message}\`));
-req.end();
-`;
-
 export const SKILL_CONTENT = `---
 name: vs-markdown-collab
 description: Agentic workflow for addressing review comments on Markdown (.md) files in a Markdown Collab workspace (a workspace containing a .markdown-collab/ folder). TRIGGER when the user asks to address, resolve, respond to, incorporate, or act on review comments, notes, suggestions, or feedback on any Markdown document. Trigger phrases include "address the comments on foo.md", "apply the review feedback", "respond to the notes in README", "incorporate the suggestions", "fix the markdown collab comments", "work through the review on docs/spec.md".
@@ -409,17 +318,23 @@ Invoke when:
 - The user names one or more \`.md\` files and asks you to act on review comments / feedback / notes.
 - The user says "address the markdown collab comments" without naming files (operate workspace-wide).
 - The user references a specific comment thread or quote and asks you to apply / respond.
-- The user asks you to "watch for review batches" or to wait for the VS Code "Send to Claude" button (use the IPC long-poll pattern below).
+- The user asks you to "watch for review batches" or to wait for the VS Code "Send to Claude" button (use the channel watch loop below).
 
-## IPC watch loop (button-driven)
+## Channel watch loop (button-driven)
 
-The VS Code extension exposes a "Send to Claude" button on each Markdown preview's comments sidebar. When configured for IPC mode it enqueues the file path and unresolved-comment count via a localhost HTTP server. To wait for the next button click:
+The VS Code extension exposes a "Send to Claude" button on each Markdown preview's comments sidebar. When configured for channel mode it appends one JSON line per click to \`<workspace>/.markdown-collab/.events.jsonl\`. To watch for the next click:
 
-\`\`\`
-node ~/.claude/skills/vs-markdown-collab/mdc-wait.mjs --workspace <ws> --timeoutSec 300
-\`\`\`
+1. **Start a background tail** using the Bash tool with \`run_in_background: true\`:
+   \`\`\`
+   tail -n 0 -f <workspace>/.markdown-collab/.events.jsonl
+   \`\`\`
+   (Use \`-n 0\` so existing history isn't replayed; use the absolute workspace path so the tail survives \`cd\`.)
 
-The call blocks until the user clicks the button (or the timeout elapses). On success it prints a JSON payload \`{prompt, file, unresolvedCount, comments}\` to stdout; on timeout it prints \`{"status":"timeout"}\` so you can ask the user whether to keep waiting and re-invoke. After addressing the batch (using the regular Phase 1–6 workflow on \`payload.file\`), loop back to \`mdc-wait\` for the next batch.
+2. **Subscribe with the Monitor tool** on the returned background process id. Each appended line surfaces as a model notification — no polling, no Bash 600s ceiling, no re-invocation loop.
+
+3. **Per notification**, parse the JSON line as \`{prompt, file, unresolvedCount, comments, ts}\`. Address the batch on \`<workspace>/<file>\` per Phases 1–6 above, then return to the Monitor stream for the next event.
+
+4. **Stopping**: the user ends the session, or you exit the watch when they say "stop watching." Kill the background tail process when done so the file handle releases.
 
 Skip / abort if:
 - No \`.markdown-collab/\` directory exists in the workspace — there is nothing to act on. Tell the user.
@@ -559,11 +474,7 @@ export async function installClaudeSkill(
 }
 
 async function syncCliScript(homeDir: string): Promise<void> {
-  await syncScript(path.join(homeDir, CLI_SCRIPT_REL), CLI_SCRIPT_CONTENT);
-  await syncScript(path.join(homeDir, WAIT_SCRIPT_REL), WAIT_SCRIPT_CONTENT);
-}
-
-async function syncScript(target: string, content: string): Promise<void> {
+  const target = path.join(homeDir, CLI_SCRIPT_REL);
   let existing: string | null = null;
   try {
     existing = await fs.readFile(target, "utf8");
@@ -571,10 +482,9 @@ async function syncScript(target: string, content: string): Promise<void> {
     const err = e as NodeJS.ErrnoException;
     if (err.code !== "ENOENT") throw err;
   }
-  if (existing === content) return;
+  if (existing === CLI_SCRIPT_CONTENT) return;
   await fs.mkdir(path.dirname(target), { recursive: true });
-  await fs.writeFile(target, content, "utf8");
-  // Best-effort executable bit; ignore on platforms that don't honour it.
+  await fs.writeFile(target, CLI_SCRIPT_CONTENT, "utf8");
   try {
     await fs.chmod(target, 0o755);
   } catch {

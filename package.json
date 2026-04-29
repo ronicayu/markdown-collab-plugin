@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "publisher": "markdown-collab",
   "engines": {
     "vscode": "^1.80.0",
@@ -103,9 +103,9 @@
       "properties": {
         "markdownCollab.sendMode": {
           "type": "string",
-          "enum": ["ask", "terminal", "ipc", "clipboard"],
+          "enum": ["ask", "terminal", "channel", "clipboard"],
           "default": "ask",
-          "description": "How the 'Send to Claude' button delivers comments. 'terminal' types into a running Claude REPL, 'ipc' enqueues for a Claude `mdc-wait` watch loop, 'clipboard' copies the prompt for manual paste, 'ask' prompts on first use and remembers the choice per workspace."
+          "description": "How the 'Send to Claude' button delivers comments. 'terminal' types into a running Claude REPL, 'channel' appends to .markdown-collab/.events.jsonl for a Claude `tail -f` + Monitor watch loop, 'clipboard' copies the prompt for manual paste, 'ask' prompts each time."
         }
       }
     },

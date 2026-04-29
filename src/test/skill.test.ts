@@ -7,8 +7,6 @@ import {
   CLI_SCRIPT_REL,
   SKILL_CONTENT,
   SKILL_REL_PATH,
-  WAIT_SCRIPT_CONTENT,
-  WAIT_SCRIPT_REL,
   installClaudeSkill,
 } from "../skill";
 
@@ -109,23 +107,4 @@ describe("installClaudeSkill", () => {
     expect(cli).toBe(CLI_SCRIPT_CONTENT);
   });
 
-  it("writes mdc-wait.mjs alongside mdc.mjs on a fresh install", async () => {
-    await installClaudeSkill(tmpHome);
-    const waitPath = path.join(tmpHome, WAIT_SCRIPT_REL);
-    const contents = await fs.readFile(waitPath, "utf8");
-    expect(contents).toBe(WAIT_SCRIPT_CONTENT);
-    expect(contents.startsWith("#!/usr/bin/env node")).toBe(true);
-  });
-
-  it("rewrites stale mdc-wait.mjs even when SKILL.md is already-present", async () => {
-    const skillTarget = path.join(tmpHome, SKILL_REL_PATH);
-    await fs.mkdir(path.dirname(skillTarget), { recursive: true });
-    await fs.writeFile(skillTarget, SKILL_CONTENT, "utf8");
-    const waitTarget = path.join(tmpHome, WAIT_SCRIPT_REL);
-    await fs.writeFile(waitTarget, "#!/usr/bin/env node\n// stale\n", "utf8");
-    const result = await installClaudeSkill(tmpHome);
-    expect(result.action).toBe("already-present");
-    const wait = await fs.readFile(waitTarget, "utf8");
-    expect(wait).toBe(WAIT_SCRIPT_CONTENT);
-  });
 });

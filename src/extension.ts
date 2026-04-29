@@ -10,7 +10,7 @@ import { ReviewView, type ReviewNode } from "./reviewView";
 import { buildReviewPayload, type SendMode } from "./sendToClaude";
 import { SidecarWatcher } from "./sidecarWatcher";
 import { installClaudeSkill } from "./skill";
-import { IpcServer } from "./transports/ipcServer";
+import { EVENT_LOG_REL, EventLog } from "./transports/eventLog";
 import { sendViaTerminal, startClaudeTerminal } from "./transports/terminal";
 import { TerminalTracker } from "./transports/terminalTracker";
 import { runValidate } from "./validate";
@@ -66,15 +66,10 @@ export function activate(context: vscode.ExtensionContext): void {
   terminalTracker.activate(context.subscriptions);
   context.subscriptions.push(terminalTracker);
 
-  // Per-workspace IPC servers, lazily started on first "ipc" send for each
-  // folder. Cleaned up on extension deactivate.
-  const ipcServers = new Map<string, IpcServer>();
-  context.subscriptions.push({
-    dispose: () => {
-      for (const s of ipcServers.values()) void s.dispose();
-      ipcServers.clear();
-    },
-  });
+  // Per-workspace event logs, materialized lazily on first "channel" send
+  // for each folder. The log is plain append-only newline-delimited JSON;
+  // Claude reads it via `tail -f` + Monitor.
+  const eventLogs = new Map<string, EventLog>();
 
   context.subscriptions.push(
     vscode.commands.registerCommand("markdownCollab.installClaudeSkill", async () => {
@@ -175,7 +170,7 @@ export function activate(context: vscode.ExtensionContext): void {
           );
           return;
         }
-        await invokeSendAllToClaude(doc, output, terminalTracker, ipcServers);
+        await invokeSendAllToClaude(doc, output, terminalTracker, eventLogs);
       },
     ),
     vscode.commands.registerCommand(
@@ -392,7 +387,7 @@ async function invokeSendAllToClaude(
   doc: vscode.TextDocument,
   output: vscode.OutputChannel,
   tracker: TerminalTracker,
-  ipcServers: Map<string, IpcServer>,
+  eventLogs: Map<string, EventLog>,
 ): Promise<void> {
   const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
   if (!folder) {
@@ -476,27 +471,25 @@ async function invokeSendAllToClaude(
     return;
   }
 
-  if (mode === "ipc") {
+  if (mode === "channel") {
     const folderKey = folder.uri.fsPath;
-    let server = ipcServers.get(folderKey);
-    if (!server) {
-      server = new IpcServer(folderKey, output);
-      try {
-        await server.start();
-      } catch (e) {
-        output.appendLine(`IPC start failed: ${(e as Error).message}`);
-        void vscode.window.showErrorMessage(
-          `Could not start IPC server: ${(e as Error).message}`,
-        );
-        return;
-      }
-      ipcServers.set(folderKey, server);
+    let log = eventLogs.get(folderKey);
+    if (!log) {
+      log = new EventLog(folderKey);
+      eventLogs.set(folderKey, log);
     }
-    server.enqueue(payload);
-    const status = server.pollerActive
-      ? `Delivered to Claude (mdc-wait is listening).`
-      : `Queued — run \`node ~/.claude/skills/vs-markdown-collab/mdc-wait.mjs\` in Claude to pick it up.`;
-    void vscode.window.showInformationMessage(status);
+    try {
+      await log.append(payload);
+    } catch (e) {
+      output.appendLine(`Event log append failed: ${(e as Error).message}`);
+      void vscode.window.showErrorMessage(
+        `Could not write to event log: ${(e as Error).message}`,
+      );
+      return;
+    }
+    void vscode.window.showInformationMessage(
+      `Appended to ${EVENT_LOG_REL}. In Claude, run \`tail -f ${EVENT_LOG_REL}\` in background and Monitor it.`,
+    );
     return;
   }
 }
@@ -511,9 +504,9 @@ async function pickSendMode(
       mode: "terminal",
     },
     {
-      label: "Queue for `mdc-wait`",
-      description: "Use the IPC long-poll for a Claude watch loop",
-      mode: "ipc",
+      label: "Append to event log",
+      description: "For a Claude `tail -f` + Monitor watch loop",
+      mode: "channel",
     },
     {
       label: "Copy to clipboard",
