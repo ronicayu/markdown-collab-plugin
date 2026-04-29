@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.2 — 2026-04-29
+
+### Adaptive preview layout
+
+The preview's comments panel now becomes a slide-in drawer at narrow widths (≤900px) instead of stacking below the document. A **Comments (N)** button appears in the toolbar at narrow widths; clicking opens the drawer over the document. Click the backdrop, the X, or press Escape to close. At wide widths the panel stays pinned as before.
+
+This fixes a regression where users with the preview docked side-by-side with the editor couldn't see the comments at all without scrolling far below the document body.
+
 ## 0.11.1 — 2026-04-29
 
 ### Fixed: channel transport delivered nothing to Claude's Monitor

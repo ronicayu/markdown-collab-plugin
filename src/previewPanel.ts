@@ -228,7 +228,35 @@ html, body { margin: 0; padding: 0; }
 body { font-family: var(--vscode-font-family, -apple-system, sans-serif); color: var(--vscode-foreground); line-height: 1.6; display: flex; align-items: flex-start; }
 .mdc-main { flex: 1 1 auto; min-width: 0; padding: 1rem 2rem; max-width: 960px; }
 .mdc-sidebar { flex: 0 0 360px; position: sticky; top: 0; align-self: flex-start; max-height: 100vh; overflow-y: auto; border-left: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background, var(--vscode-editor-background)); padding: 0.75rem; box-sizing: border-box; }
-@media (max-width: 900px) { body { flex-direction: column; } .mdc-sidebar { flex: 1 0 auto; width: 100%; border-left: none; border-top: 1px solid var(--vscode-panel-border); position: static; max-height: none; } }
+.mdc-sidebar-close { display: none; }
+.mdc-backdrop { display: none; }
+.mdc-comments-toggle { display: none; }
+@media (max-width: 900px) {
+  .mdc-main { padding: 1rem; max-width: none; }
+  .mdc-sidebar {
+    position: fixed; top: 0; right: 0; bottom: 0;
+    width: min(360px, 90vw); height: 100vh; max-height: none;
+    flex: none; border-left: 1px solid var(--vscode-panel-border); border-top: none;
+    transform: translateX(100%); transition: transform 180ms ease;
+    z-index: 100; box-shadow: -2px 0 12px rgba(0, 0, 0, 0.35);
+  }
+  .mdc-sidebar.open { transform: translateX(0); }
+  .mdc-sidebar-close {
+    display: inline-block; float: right; background: transparent;
+    color: var(--vscode-foreground); border: none; cursor: pointer;
+    font-size: 1.1em; line-height: 1; padding: 0 0.25rem;
+  }
+  .mdc-sidebar-close:hover { background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.08)); border-radius: 3px; }
+  .mdc-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 99; opacity: 0; pointer-events: none; transition: opacity 180ms ease; }
+  .mdc-backdrop.open { display: block; opacity: 1; pointer-events: auto; }
+  .mdc-comments-toggle {
+    display: inline-flex; align-items: center; gap: 0.25rem;
+    padding: 0.25rem 0.6rem; cursor: pointer;
+    background: var(--vscode-button-background); color: var(--vscode-button-foreground);
+    border: none; border-radius: 2px; font-size: 0.85em;
+  }
+  .mdc-comments-toggle:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
+}
 code, pre { font-family: var(--vscode-editor-font-family, monospace); }
 pre { background: var(--vscode-textCodeBlock-background, #1e1e1e); padding: 0.75rem; overflow-x: auto; border-radius: 4px; }
 .mdc-anchor { background: rgba(255, 204, 0, 0.25); border-bottom: 2px solid rgba(255, 204, 0, 0.9); cursor: pointer; padding: 0 1px; transition: background 120ms ease; }
@@ -307,6 +335,7 @@ pre.mermaid svg { max-width: 100%; height: auto; }
   <div class="mdc-toolbar">
     <span class="mdc-status" id="mdcStatus">${payload.readOnly ? "Read-only: sidecar has a newer schema version." : "Select text to add a comment."}</span>
     <span class="mdc-spacer"></span>
+    <button class="mdc-comments-toggle" id="mdcCommentsToggle" title="Show comments panel" aria-label="Toggle comments panel">Comments</button>
     <button class="mdc-icon-btn" id="mdcRefresh" title="Refresh preview (re-read file and comments)" aria-label="Refresh">↻</button>
   </div>
   <div id="mdcContent">${body}</div>
@@ -320,7 +349,9 @@ pre.mermaid svg { max-width: 100%; height: auto; }
     </div>
   </div>
 </main>
+<div class="mdc-backdrop" id="mdcBackdrop"></div>
 <aside class="mdc-sidebar" id="mdcSidebar">
+  <button class="mdc-sidebar-close" id="mdcSidebarClose" title="Hide comments panel" aria-label="Close">✕</button>
   <h3>Comments</h3>
   <div class="mdc-send-row">
     <button id="mdcSendAll" disabled title="Send all unresolved comments to Claude">Send to Claude</button>
@@ -414,6 +445,12 @@ pre.mermaid svg { max-width: 100%; height: auto; }
       sendBtn.textContent = unresolvedTotal === 0
         ? "Send to Claude"
         : "Send " + unresolvedTotal + " to Claude";
+    }
+    const toggleBtn = document.getElementById("mdcCommentsToggle");
+    if(toggleBtn){
+      toggleBtn.textContent = unresolvedTotal > 0
+        ? "Comments (" + unresolvedTotal + ")"
+        : "Comments";
     }
     const filtered = all.filter(passesFilter);
     if(all.length === 0){
@@ -616,6 +653,28 @@ pre.mermaid svg { max-width: 100%; height: auto; }
       vscode.postMessage({type: "sendAllToClaude"});
     });
   }
+  const sidebarEl = document.getElementById("mdcSidebar");
+  const backdropEl = document.getElementById("mdcBackdrop");
+  const commentsToggleBtn = document.getElementById("mdcCommentsToggle");
+  const sidebarCloseBtn = document.getElementById("mdcSidebarClose");
+  function setDrawerOpen(open){
+    if(!sidebarEl || !backdropEl) return;
+    sidebarEl.classList.toggle("open", open);
+    backdropEl.classList.toggle("open", open);
+  }
+  if(commentsToggleBtn){
+    commentsToggleBtn.addEventListener("click", () => {
+      const next = !sidebarEl.classList.contains("open");
+      setDrawerOpen(next);
+    });
+  }
+  if(sidebarCloseBtn){ sidebarCloseBtn.addEventListener("click", () => setDrawerOpen(false)); }
+  if(backdropEl){ backdropEl.addEventListener("click", () => setDrawerOpen(false)); }
+  document.addEventListener("keydown", (ev) => {
+    if(ev.key === "Escape" && sidebarEl && sidebarEl.classList.contains("open")){
+      setDrawerOpen(false);
+    }
+  });
   const refreshBtn = document.getElementById("mdcRefresh");
   if(refreshBtn){
     refreshBtn.addEventListener("click", () => {
