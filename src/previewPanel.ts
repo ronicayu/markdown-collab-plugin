@@ -104,19 +104,24 @@ export class PreviewPanel {
         path.basename(doc.uri.fsPath),
       ),
     );
+    // Note: deliberately NOT disposing the panel on onDidCloseTextDocument.
+    // VS Code fires that event for transient close/reopen cycles (preview-mode
+    // tab cycling, encoding switches, memory unloading) — not just user-
+    // initiated tab closes. Auto-disposing here would yank the preview out
+    // mid-typing in the webview's compose box. The panel persists until the
+    // user closes it via the panel's own X; render() reads from disk, so
+    // it works even when the underlying doc is unloaded.
     this.disposables.push(
       docWatcher,
       docWatcher.onDidChange(() => void this.render()),
       docWatcher.onDidCreate(() => void this.render()),
+      docWatcher.onDidDelete(() => this.panel.dispose()),
       panel.webview.onDidReceiveMessage((msg) => this.handleMessage(msg)),
       vscode.workspace.onDidChangeTextDocument((e) => {
         if (e.document.uri.fsPath === doc.uri.fsPath) void this.render();
       }),
       vscode.workspace.onDidSaveTextDocument((d) => {
         if (d.uri.fsPath === doc.uri.fsPath) void this.render();
-      }),
-      vscode.workspace.onDidCloseTextDocument((d) => {
-        if (d.uri.fsPath === doc.uri.fsPath) this.panel.dispose();
       }),
     );
 

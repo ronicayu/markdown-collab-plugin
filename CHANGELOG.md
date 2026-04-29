@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.14.2 — 2026-04-29
+
+### Fixed: preview panel sometimes auto-closed mid-typing
+
+The preview panel listened to `onDidCloseTextDocument` on the source `.md` and disposed itself when fired. That event also fires for transient close/reopen cycles (preview-mode tab cycling, encoding switches, memory unloading) — not just user-initiated tab closes. The panel could vanish while the user was typing into the compose textarea inside the webview, since VS Code is free to recycle the underlying doc independently of the webview's focus.
+
+Auto-dispose on doc-close removed. The panel now persists until the user closes it explicitly via the tab's `✕`. `render()` already falls back to reading from disk when the buffer is unloaded, so the preview keeps working in that state. The file watcher's `onDidDelete` still disposes the panel when the underlying file actually disappears from disk (rename or delete).
+
 ## 0.14.1 — 2026-04-29
 
 ### Preview content now fills the available width
