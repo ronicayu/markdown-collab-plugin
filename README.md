@@ -5,9 +5,9 @@ A VS Code extension that lets you leave review comments on Markdown files in a f
 ## Workflow
 
 1. Claude Code (or you) writes a Markdown document.
-2. You highlight text in VS Code and add a review comment via the native Comments UI.
+2. You highlight text in VS Code and add a review comment via the native Comments UI or the preview sidebar.
 3. Comments persist to a JSON sidecar at `.markdown-collab/<path>/<file>.md.json`.
-4. You run `claude` and say _"address the review comments on docs/guide.md"_.
+4. Click **Send to Claude** in the preview sidebar (or run `claude` and say _"address the review comments on docs/guide.md"_).
 5. Claude Code reads the sidecar, edits the doc, and appends a reply to each comment explaining what it did.
 6. You review the replies (optionally push back with more replies), then mark the thread resolved.
 
@@ -30,7 +30,7 @@ code --install-extension markdown-collab-plugin-*.vsix
 
 ## One-time setup per machine
 
-After installing, run the command **"Markdown Collab: Install Claude Skill"** from the Command Palette. This copies a skill file to `~/.claude/skills/markdown-collab/SKILL.md`. Claude Code will discover the skill automatically.
+After installing, run the command **"Markdown Collab: Install Claude Skill"** from the Command Palette. This copies a skill file to `~/.claude/skills/vs-markdown-collab/SKILL.md` and a helper CLI alongside it. Claude Code will discover the skill automatically.
 
 ## One-time setup per workspace (optional)
 
@@ -38,13 +38,26 @@ For agents other than Claude Code (Cursor, Cline, etc.), run **"Markdown Collab:
 
 ## Commands
 
-| Command                                 | Purpose                                                         |
-| --------------------------------------- | --------------------------------------------------------------- |
-| `Markdown Collab: Install Claude Skill` | Write `~/.claude/skills/markdown-collab/SKILL.md`.              |
-| `Markdown Collab: Initialize AGENTS.md` | Append convention to workspace `AGENTS.md`.                     |
-| `Markdown Collab: Copy Claude Prompt`   | Copy a "address the comments on this file" prompt to clipboard. |
-| `Markdown Collab: Reload Comments`      | Re-read the active file's sidecar from disk.                    |
-| `Markdown Collab: Validate Sidecars`    | Scan the workspace for schema violations and would-be-orphans.  |
+| Command                                                  | Purpose                                                                      |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `Markdown Collab: Install Claude Skill`                  | Write `~/.claude/skills/vs-markdown-collab/SKILL.md` and bundled helper CLI. |
+| `Markdown Collab: Initialize AGENTS.md`                  | Append convention to workspace `AGENTS.md`.                                  |
+| `Markdown Collab: Copy Claude Prompt`                    | Copy a "address the comments on this file" prompt to clipboard.              |
+| `Markdown Collab: Send Unresolved Comments to Claude`    | Push the active file's unresolved comments to Claude Code (see below).       |
+| `Markdown Collab: Start Claude Review Terminal`          | Open a new integrated terminal and launch `claude`.                          |
+| `Markdown Collab: Reload Comments`                       | Re-read the active file's sidecar from disk.                                 |
+| `Markdown Collab: Validate Sidecars`                     | Scan the workspace for schema violations and would-be-orphans.               |
+
+## Send to Claude
+
+The preview sidebar has a **Send to Claude** button. It bundles every unresolved comment on the active file and delivers them via one of three transports, selectable with the `markdownCollab.sendMode` setting:
+
+- **`terminal`** — bracketed-paste the prompt into a running `claude` REPL in any open VS Code terminal. Detection ladder: terminals the extension spawned, then shell-integration evidence of `claude`, then name match `/claude/i`, then the active terminal (with confirmation toast). Falls back to spawning a new "Claude Review" terminal if none is found.
+- **`channel`** — append one JSON line per click to `<workspace>/.markdown-collab/.events.jsonl`. Claude tails the file in a background bash and subscribes via the `Monitor` tool, so each click surfaces as a model notification with no polling and no Bash 600s ceiling. The skill's "Channel watch loop" section walks Claude through the pattern.
+- **`clipboard`** — copies the prompt for manual paste.
+- **`ask`** (default) — quick-pick on each click.
+
+No MCP required for any transport.
 
 ## Storage layout
 
@@ -102,6 +115,5 @@ Workarounds:
 
 - Multi-user collaboration with author attribution.
 - Fuzzy anchor matching (exact + context + whitespace-normalized only; everything else → orphan).
-- Sidecar file-system watcher (reload-on-focus is the refresh mechanism).
 - Cross-file overview panel.
-- MCP server / CLI tool.
+- MCP server (the channel transport replaces it for push-style triggers).
