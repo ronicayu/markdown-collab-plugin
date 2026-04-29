@@ -170,9 +170,21 @@ export function activate(context: vscode.ExtensionContext): void {
           );
           return;
         }
-        await invokeSendAllToClaude(doc, output, terminalTracker, eventLogs);
+        await invokeSendAllToClaude(
+          doc,
+          output,
+          terminalTracker,
+          eventLogs,
+          context.workspaceState,
+        );
       },
     ),
+    vscode.commands.registerCommand("markdownCollab.resetSendMode", async () => {
+      await context.workspaceState.update(REMEMBERED_SEND_MODE_KEY, undefined);
+      void vscode.window.showInformationMessage(
+        "Markdown Collab: Send mode reset. Next click will prompt again.",
+      );
+    }),
     vscode.commands.registerCommand(
       "markdownCollab.reattachOrphan",
       async (arg1: unknown, arg2?: vscode.Uri) => {
@@ -383,11 +395,18 @@ async function invokeReattachOrphan(
   }
 }
 
+const REMEMBERED_SEND_MODE_KEY = "markdownCollab.rememberedSendMode";
+
+function isConcreteSendMode(v: unknown): v is Exclude<SendMode, "ask"> {
+  return v === "terminal" || v === "channel" || v === "clipboard";
+}
+
 async function invokeSendAllToClaude(
   doc: vscode.TextDocument,
   output: vscode.OutputChannel,
   tracker: TerminalTracker,
   eventLogs: Map<string, EventLog>,
+  workspaceState: vscode.Memento,
 ): Promise<void> {
   const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
   if (!folder) {
@@ -419,18 +438,30 @@ async function invokeSendAllToClaude(
 
   const config = vscode.workspace.getConfiguration("markdownCollab");
   let mode = config.get<SendMode>("sendMode", "ask");
+  let justRemembered = false;
   if (mode === "ask") {
-    const picked = await pickSendMode(payload.unresolvedCount);
-    if (!picked) return;
-    mode = picked;
+    const remembered = workspaceState.get<unknown>(REMEMBERED_SEND_MODE_KEY);
+    if (isConcreteSendMode(remembered)) {
+      mode = remembered;
+    } else {
+      const picked = await pickSendMode(payload.unresolvedCount);
+      if (!picked) return;
+      mode = picked;
+      await workspaceState.update(REMEMBERED_SEND_MODE_KEY, picked);
+      justRemembered = true;
+    }
   }
+
+  const rememberedSuffix = justRemembered
+    ? ' Run "Markdown Collab: Reset Send Mode" to change later.'
+    : "";
 
   if (mode === "clipboard") {
     await vscode.env.clipboard.writeText(payload.prompt);
     void vscode.window.showInformationMessage(
       `Prompt for ${payload.unresolvedCount} comment${
         payload.unresolvedCount === 1 ? "" : "s"
-      } copied — paste into Claude Code.`,
+      } copied — paste into Claude Code.${rememberedSuffix}`,
     );
     return;
   }
@@ -466,7 +497,7 @@ async function invokeSendAllToClaude(
     }
     if (!sendResult.ok) return;
     void vscode.window.showInformationMessage(
-      `Sent to "${sendResult.terminalName}".`,
+      `Sent to "${sendResult.terminalName}".${rememberedSuffix}`,
     );
     return;
   }
@@ -488,7 +519,7 @@ async function invokeSendAllToClaude(
       return;
     }
     void vscode.window.showInformationMessage(
-      `Appended to ${EVENT_LOG_REL}. In Claude, run \`tail -f ${EVENT_LOG_REL}\` in background and Monitor it.`,
+      `Appended to ${EVENT_LOG_REL}. In Claude, run \`tail -f ${EVENT_LOG_REL}\` in background and Monitor it.${rememberedSuffix}`,
     );
     return;
   }

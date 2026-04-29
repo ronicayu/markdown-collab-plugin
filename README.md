@@ -45,6 +45,7 @@ For agents other than Claude Code (Cursor, Cline, etc.), run **"Markdown Collab:
 | `Markdown Collab: Copy Claude Prompt`                    | Copy a "address the comments on this file" prompt to clipboard.              |
 | `Markdown Collab: Send Unresolved Comments to Claude`    | Push the active file's unresolved comments to Claude Code (see below).       |
 | `Markdown Collab: Start Claude Review Terminal`          | Open a new integrated terminal and launch `claude`.                          |
+| `Markdown Collab: Reset Send Mode`                       | Clear the remembered `ask` choice for the current workspace.                 |
 | `Markdown Collab: Reload Comments`                       | Re-read the active file's sidecar from disk.                                 |
 | `Markdown Collab: Validate Sidecars`                     | Scan the workspace for schema violations and would-be-orphans.               |
 
@@ -55,7 +56,7 @@ The preview sidebar has a **Send to Claude** button. It bundles every unresolved
 - **`terminal`** — bracketed-paste the prompt into a running `claude` REPL in any open VS Code terminal. Detection ladder: terminals the extension spawned, then shell-integration evidence of `claude`, then name match `/claude/i`, then the active terminal (with confirmation toast). Falls back to spawning a new "Claude Review" terminal if none is found.
 - **`channel`** — append one JSON line per click to `<workspace>/.markdown-collab/.events.jsonl`. Claude runs the bundled `mdc-tail.mjs` in a background bash and subscribes via the `Monitor` tool, so each click surfaces as a model notification with no polling and no Bash 600s ceiling. (Plain `tail -f` block-buffers when its stdout is a pipe — the bundled tailer flushes per line to fix that.) The skill's "Channel watch loop" section walks Claude through the pattern.
 - **`clipboard`** — copies the prompt for manual paste.
-- **`ask`** (default) — quick-pick on each click.
+- **`ask`** (default) — quick-pick on first click per workspace, then remembered. Run **Markdown Collab: Reset Send Mode** to clear the remembered choice.
 
 No MCP required for any transport.
 

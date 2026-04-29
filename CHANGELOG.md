@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.3 — 2026-04-29
+
+### Remember the Send to Claude mode after first pick
+
+When `markdownCollab.sendMode` is `ask` (default), the first quick-pick choice is now persisted to workspace state, so subsequent clicks send straight through without prompting again. The first-success toast names the new **Markdown Collab: Reset Send Mode** command for clearing the remembered choice. The settings UI now also exposes per-option `enumDescriptions` so each transport's behavior is visible at a glance.
+
 ## 0.11.2 — 2026-04-29
 
 ### Adaptive preview layout

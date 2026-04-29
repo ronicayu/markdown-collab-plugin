@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.11.2",
+  "version": "0.11.3",
   "publisher": "markdown-collab",
   "engines": {
     "vscode": "^1.80.0",
@@ -21,6 +21,7 @@
     "onCommand:markdownCollab.openPreview",
     "onCommand:markdownCollab.sendAllToClaude",
     "onCommand:markdownCollab.startClaudeTerminal",
+    "onCommand:markdownCollab.resetSendMode",
     "onView:markdownCollab.review"
   ],
   "main": "./out/extension.js",
@@ -96,6 +97,10 @@
       {
         "command": "markdownCollab.startClaudeTerminal",
         "title": "Markdown Collab: Start Claude Review Terminal"
+      },
+      {
+        "command": "markdownCollab.resetSendMode",
+        "title": "Markdown Collab: Reset Send Mode"
       }
     ],
     "configuration": {
@@ -104,8 +109,14 @@
         "markdownCollab.sendMode": {
           "type": "string",
           "enum": ["ask", "terminal", "channel", "clipboard"],
+          "enumDescriptions": [
+            "Prompt the first time per workspace, then remember the choice. Run 'Markdown Collab: Reset Send Mode' to clear the remembered choice.",
+            "Type the prompt into a running Claude REPL via bracketed paste. Falls back to spawning a 'Claude Review' terminal if none is detected.",
+            "Append one JSON line per click to .markdown-collab/.events.jsonl. Claude reads it via the bundled mdc-tail.mjs in a background bash + Monitor — no polling, no Bash 600s timeout.",
+            "Copy the prompt to the clipboard for manual paste into Claude."
+          ],
           "default": "ask",
-          "description": "How the 'Send to Claude' button delivers comments. 'terminal' types into a running Claude REPL, 'channel' appends to .markdown-collab/.events.jsonl for a Claude `tail -f` + Monitor watch loop, 'clipboard' copies the prompt for manual paste, 'ask' prompts each time."
+          "markdownDescription": "How the **Send to Claude** button delivers unresolved comments to Claude Code. No MCP required for any mode.\n\n- `ask` — quick-pick on first use per workspace; remembers the choice (run **Markdown Collab: Reset Send Mode** to clear).\n- `terminal` — bracketed-paste into a running `claude` REPL.\n- `channel` — append to `.markdown-collab/.events.jsonl` for a `tail` + `Monitor` watch loop.\n- `clipboard` — copy the prompt for manual paste."
         }
       }
     },
