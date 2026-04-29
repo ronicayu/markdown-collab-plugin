@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.1 — 2026-04-29
+
+### Preview content now fills the available width
+
+The preview's main content area was capped at `max-width: 960px`, leaving large empty gutters on wide monitors (especially with the comments sidebar pinned at 360px on the right). The cap is removed; the main column now grows to fill whatever the viewport offers minus the sidebar. Mermaid diagrams, tables, and wide code blocks no longer scroll horizontally on screens that have plenty of room.
+
 ## 0.14.0 — 2026-04-29
 
 ### Comments and replies render as Markdown in the preview sidebar

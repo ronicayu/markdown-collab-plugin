@@ -248,13 +248,13 @@ export class PreviewPanel {
 <style>
 html, body { margin: 0; padding: 0; }
 body { font-family: var(--vscode-font-family, -apple-system, sans-serif); color: var(--vscode-foreground); line-height: 1.6; display: flex; align-items: flex-start; }
-.mdc-main { flex: 1 1 auto; min-width: 0; padding: 1rem 2rem; max-width: 960px; }
+.mdc-main { flex: 1 1 auto; min-width: 0; padding: 1rem 2rem; }
 .mdc-sidebar { flex: 0 0 360px; position: sticky; top: 0; align-self: flex-start; max-height: 100vh; overflow-y: auto; border-left: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background, var(--vscode-editor-background)); padding: 0.75rem; box-sizing: border-box; }
 .mdc-sidebar-close { display: none; }
 .mdc-backdrop { display: none; }
 .mdc-comments-toggle { display: none; }
 @media (max-width: 900px) {
-  .mdc-main { padding: 1rem; max-width: none; }
+  .mdc-main { padding: 1rem; }
   .mdc-sidebar {
     position: fixed; top: 0; right: 0; bottom: 0;
     width: min(360px, 90vw); height: 100vh; max-height: none;
