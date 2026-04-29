@@ -43,6 +43,21 @@ jobs:
             exit 1
           fi
 
+      - name: Verify CHANGELOG.md has a section for this version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ ! -f CHANGELOG.md ]; then
+            echo "::error::CHANGELOG.md is missing — every release must document its changes."
+            exit 1
+          fi
+          if ! grep -qE "^## ${VERSION}( |\$)" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## ${VERSION}' section. Add a short description of what's in this release before tagging."
+            echo "::error::Expected a heading like:  ## ${VERSION} — $(date -u +%Y-%m-%d)"
+            exit 1
+          fi
+          echo "CHANGELOG entry for ${VERSION} found."
+
       - name: Package
         run: npx --yes @vscode/vsce package --out markdown-collab-plugin.vsix
 
