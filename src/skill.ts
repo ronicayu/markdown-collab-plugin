@@ -3,6 +3,7 @@ import * as path from "path";
 
 export const SKILL_REL_PATH = ".claude/skills/vs-markdown-collab/SKILL.md";
 export const CLI_SCRIPT_REL = ".claude/skills/vs-markdown-collab/mdc.mjs";
+export const TAIL_SCRIPT_REL = ".claude/skills/vs-markdown-collab/mdc-tail.mjs";
 
 export const CLI_SCRIPT_CONTENT = `#!/usr/bin/env node
 // Markdown Collab agent helper.
@@ -273,6 +274,132 @@ if (cmd === "validate") {
 fail("unknown command. supported: list | reply | delete | set-anchor | validate");
 `;
 
+export const TAIL_SCRIPT_CONTENT = `#!/usr/bin/env node
+// Markdown Collab event-log tailer for Claude Code's Monitor tool.
+//
+// Why a Node tailer instead of \`tail -f\`?
+//   When run as a background bash with stdout connected to a pipe (which is
+//   how Claude Code captures it), \`tail -f\` switches to block-buffered mode
+//   on most platforms — lines aren't visible to Monitor until ~4 KB
+//   accumulates. Node's process.stdout.write flushes per-call when stdout
+//   is a pipe, so each appended line surfaces immediately as a Monitor
+//   notification.
+//
+// Usage:
+//   node mdc-tail.mjs [--workspace <ws>] [--from-start]
+//
+// Default: streams ONLY new lines (history is skipped, matching \`tail -n 0\`).
+// Pass --from-start to replay all existing events first.
+
+import { readFileSync, statSync, watch, openSync, readSync, closeSync, existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+
+function fail(msg, code = 1) {
+  process.stderr.write(\`mdc-tail: \${msg}\\n\`);
+  process.exit(code);
+}
+
+function parseArgs(argv) {
+  const out = { workspace: null, fromStart: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--workspace") out.workspace = argv[++i];
+    else if (a === "--from-start") out.fromStart = true;
+  }
+  return out;
+}
+
+function findWorkspace(start) {
+  let cur = resolve(start);
+  while (true) {
+    if (existsSync(join(cur, ".markdown-collab"))) return cur;
+    const parent = dirname(cur);
+    if (parent === cur) return null;
+    cur = parent;
+  }
+}
+
+const args = parseArgs(process.argv.slice(2));
+const ws = args.workspace || process.env.MDC_WORKSPACE || findWorkspace(process.cwd());
+if (!ws) fail("could not locate a workspace with a .markdown-collab/ directory; pass --workspace <path>");
+
+const logPath = join(ws, ".markdown-collab", ".events.jsonl");
+
+// Seek position. When the file doesn't exist yet, start at 0 and wait for
+// the first append to materialize it; fs.watch on the parent dir handles
+// the create event.
+let pos = 0;
+try {
+  const st = statSync(logPath);
+  pos = args.fromStart ? 0 : st.size;
+} catch {
+  pos = 0;
+}
+
+let leftover = "";
+
+function drain() {
+  let st;
+  try {
+    st = statSync(logPath);
+  } catch {
+    return;
+  }
+  if (st.size < pos) {
+    // File was truncated or rotated. Restart at 0.
+    pos = 0;
+    leftover = "";
+  }
+  if (st.size === pos) return;
+  const fd = openSync(logPath, "r");
+  try {
+    const need = st.size - pos;
+    const buf = Buffer.alloc(need);
+    let read = 0;
+    while (read < need) {
+      const n = readSync(fd, buf, read, need - read, pos + read);
+      if (n === 0) break;
+      read += n;
+    }
+    pos += read;
+    leftover += buf.subarray(0, read).toString("utf8");
+    let nl;
+    while ((nl = leftover.indexOf("\\n")) >= 0) {
+      const line = leftover.slice(0, nl);
+      leftover = leftover.slice(nl + 1);
+      if (line.length > 0) process.stdout.write(line + "\\n");
+    }
+  } finally {
+    closeSync(fd);
+  }
+}
+
+drain();
+
+// Watch the file. fs.watch may fire 'rename' on some platforms when the
+// file is replaced; in that case we re-arm by polling.
+let watcher = null;
+function arm() {
+  try {
+    watcher = watch(logPath, { persistent: true }, () => drain());
+    watcher.on("error", () => {
+      if (watcher) watcher.close();
+      setTimeout(arm, 250);
+    });
+  } catch {
+    setTimeout(arm, 250);
+  }
+}
+arm();
+
+// Belt-and-suspenders polling — handles editors / FS layers that drop
+// inotify events. Cheap; runs every 500ms.
+setInterval(drain, 500).unref?.();
+
+// Keep the process alive forever.
+process.stdin.resume();
+`;
+
 export const SKILL_CONTENT = `---
 name: vs-markdown-collab
 description: Agentic workflow for addressing review comments on Markdown (.md) files in a Markdown Collab workspace (a workspace containing a .markdown-collab/ folder). TRIGGER when the user asks to address, resolve, respond to, incorporate, or act on review comments, notes, suggestions, or feedback on any Markdown document. Trigger phrases include "address the comments on foo.md", "apply the review feedback", "respond to the notes in README", "incorporate the suggestions", "fix the markdown collab comments", "work through the review on docs/spec.md".
@@ -324,17 +451,17 @@ Invoke when:
 
 The VS Code extension exposes a "Send to Claude" button on each Markdown preview's comments sidebar. When configured for channel mode it appends one JSON line per click to \`<workspace>/.markdown-collab/.events.jsonl\`. To watch for the next click:
 
-1. **Start a background tail** using the Bash tool with \`run_in_background: true\`:
+1. **Start the tailer in background** using the Bash tool with \`run_in_background: true\`:
    \`\`\`
-   tail -n 0 -f <workspace>/.markdown-collab/.events.jsonl
+   node ~/.claude/skills/vs-markdown-collab/mdc-tail.mjs --workspace <workspace>
    \`\`\`
-   (Use \`-n 0\` so existing history isn't replayed; use the absolute workspace path so the tail survives \`cd\`.)
+   Use the absolute workspace path. Do NOT use \`tail -f\` directly — when its stdout is a pipe (which it is for background bash), most platforms switch \`tail\` to block-buffered output and Monitor sees nothing until ~4 KB accumulates. \`mdc-tail.mjs\` flushes per line.
 
 2. **Subscribe with the Monitor tool** on the returned background process id. Each appended line surfaces as a model notification — no polling, no Bash 600s ceiling, no re-invocation loop.
 
 3. **Per notification**, parse the JSON line as \`{prompt, file, unresolvedCount, comments, ts}\`. Address the batch on \`<workspace>/<file>\` per Phases 1–6 above, then return to the Monitor stream for the next event.
 
-4. **Stopping**: the user ends the session, or you exit the watch when they say "stop watching." Kill the background tail process when done so the file handle releases.
+4. **Stopping**: the user ends the session, or you exit the watch when they say "stop watching." Kill the background tailer process when done.
 
 Skip / abort if:
 - No \`.markdown-collab/\` directory exists in the workspace — there is nothing to act on. Tell the user.
@@ -474,7 +601,11 @@ export async function installClaudeSkill(
 }
 
 async function syncCliScript(homeDir: string): Promise<void> {
-  const target = path.join(homeDir, CLI_SCRIPT_REL);
+  await syncScript(path.join(homeDir, CLI_SCRIPT_REL), CLI_SCRIPT_CONTENT);
+  await syncScript(path.join(homeDir, TAIL_SCRIPT_REL), TAIL_SCRIPT_CONTENT);
+}
+
+async function syncScript(target: string, content: string): Promise<void> {
   let existing: string | null = null;
   try {
     existing = await fs.readFile(target, "utf8");
@@ -482,9 +613,9 @@ async function syncCliScript(homeDir: string): Promise<void> {
     const err = e as NodeJS.ErrnoException;
     if (err.code !== "ENOENT") throw err;
   }
-  if (existing === CLI_SCRIPT_CONTENT) return;
+  if (existing === content) return;
   await fs.mkdir(path.dirname(target), { recursive: true });
-  await fs.writeFile(target, CLI_SCRIPT_CONTENT, "utf8");
+  await fs.writeFile(target, content, "utf8");
   try {
     await fs.chmod(target, 0o755);
   } catch {

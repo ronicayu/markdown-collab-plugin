@@ -53,7 +53,7 @@ For agents other than Claude Code (Cursor, Cline, etc.), run **"Markdown Collab:
 The preview sidebar has a **Send to Claude** button. It bundles every unresolved comment on the active file and delivers them via one of three transports, selectable with the `markdownCollab.sendMode` setting:
 
 - **`terminal`** — bracketed-paste the prompt into a running `claude` REPL in any open VS Code terminal. Detection ladder: terminals the extension spawned, then shell-integration evidence of `claude`, then name match `/claude/i`, then the active terminal (with confirmation toast). Falls back to spawning a new "Claude Review" terminal if none is found.
-- **`channel`** — append one JSON line per click to `<workspace>/.markdown-collab/.events.jsonl`. Claude tails the file in a background bash and subscribes via the `Monitor` tool, so each click surfaces as a model notification with no polling and no Bash 600s ceiling. The skill's "Channel watch loop" section walks Claude through the pattern.
+- **`channel`** — append one JSON line per click to `<workspace>/.markdown-collab/.events.jsonl`. Claude runs the bundled `mdc-tail.mjs` in a background bash and subscribes via the `Monitor` tool, so each click surfaces as a model notification with no polling and no Bash 600s ceiling. (Plain `tail -f` block-buffers when its stdout is a pipe — the bundled tailer flushes per line to fix that.) The skill's "Channel watch loop" section walks Claude through the pattern.
 - **`clipboard`** — copies the prompt for manual paste.
 - **`ask`** (default) — quick-pick on each click.
 

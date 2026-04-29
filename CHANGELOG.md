@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.11.1 — 2026-04-29
+
+### Fixed: channel transport delivered nothing to Claude's Monitor
+
+`tail -f` block-buffers its stdout when run as a background bash whose stdout is a pipe (which is how Claude Code captures it), so appended lines didn't surface to `Monitor` until ~4 KB accumulated. Reported by users who saw the JSONL file growing but Claude receiving no notifications.
+
+The skill installer now also writes `~/.claude/skills/vs-markdown-collab/mdc-tail.mjs` — a small Node tailer that:
+
+- Watches `.markdown-collab/.events.jsonl` via `fs.watch` plus a 500ms safety poll.
+- Flushes each appended line via `process.stdout.write` (per-call flush when stdout is a pipe).
+- Skips existing history by default (matches `tail -n 0`); `--from-start` replays.
+- Survives truncate/rotate by re-seeking to 0.
+
+The "Channel watch loop" section of SKILL.md now instructs Claude to invoke this tailer instead of `tail -f`.
+
 ## 0.11.0 — 2026-04-29
 
 ### Send to Claude — channel transport (replaces IPC long-poll)
