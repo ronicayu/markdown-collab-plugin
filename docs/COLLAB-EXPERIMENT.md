@@ -99,6 +99,15 @@ checkouts will *not* match unless you normalize that.
 
 ## Known gaps (deliberate, this is a spike)
 
+- **Review comments don't appear in the collab editor.** The
+  `CommentController` API used by the existing review feature attaches its
+  UI to a Monaco text editor; the collab editor is a webview with Milkdown
+  inside, so there's no Monaco surface to attach to. The `.md.json`
+  sidecar is untouched and anchors stay valid — reopening with the
+  standard Markdown editor brings the threads back. Workflow for now:
+  edit in the WYSIWYG, review in the standard editor.
+  Verified by `comments.test.ts`: opening with the collab editor neither
+  mutates the file nor invalidates anchors.
 - **No persistence in the relay.** If everyone disconnects, the in-memory
   `Y.Doc` is lost. The on-disk file is still authoritative; next time anyone
   opens the file, the first peer reseeds via `?init=`. Adding

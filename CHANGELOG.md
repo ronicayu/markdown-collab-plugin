@@ -2,6 +2,12 @@
 
 ## 0.16.0 — 2026-05-02 (trial)
 
+### Known gap: review comments in the collab editor
+
+The CommentController API used by the existing review feature attaches its UI (gutter icons, inline thread cards) to a Monaco text editor. The collab editor is a webview with Milkdown inside — there is no Monaco surface to attach to, so **review comments do not show up while a file is open in the collab editor**. Nothing on disk is harmed: the `.md.json` sidecar is untouched, anchors remain valid, and reopening the file with the standard Markdown editor brings the comment threads back. For now: edit collaboratively in the WYSIWYG editor, review/comment in the standard editor.
+
+Verified by integration test (`comments.test.ts`) that opening a file with an existing sidecar in the collab editor does not mutate the on-disk markdown and does not invalidate the comment anchors.
+
 ### Changed: collab editor is now WYSIWYG (Milkdown), not raw markdown
 
 The collaborative editor previously rendered the markdown source as a CodeMirror code editor — fine for engineers, but jarring for non-technical reviewers who expected to see *the rendered document* (headings actually look like headings, **bold** is bold, lists are lists). The editor is now Milkdown (ProseMirror under the hood) with the nord theme and the commonmark preset. Users type into a rendered document; markdown shortcuts auto-style as they type (e.g. typing `# ` becomes a heading). The on-disk file format is still plain commonmark — Milkdown's serializer round-trips the document on every save.
