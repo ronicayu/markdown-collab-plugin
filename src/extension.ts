@@ -246,25 +246,26 @@ export function activate(context: vscode.ExtensionContext): void {
 
   let collabServer: CollabServerHandle | null = null;
   const collabConfig = vscode.workspace.getConfiguration("markdownCollab");
+  const collabPort = collabConfig.get<number>("collab.port", 1234);
   if (collabConfig.get<boolean>("collab.startLocalServer", true)) {
     void (async () => {
       try {
-        collabServer = await startCollabServer(1234, (line) => output.appendLine(line));
+        collabServer = await startCollabServer(collabPort, (line) => output.appendLine(line));
       } catch (e) {
         const err = e as NodeJS.ErrnoException;
         if (err.code === "EADDRINUSE") {
           // Another process — almost certainly an earlier VSCode window
-          // running this extension — already owns port 1234. Probe it; if
+          // running this extension — already owns the port. Probe it; if
           // the response matches our relay's signature, log calmly.
           // Otherwise warn so the user can investigate the conflict.
-          const ours = await isOurRelay(1234);
+          const ours = await isOurRelay(collabPort);
           if (ours) {
             output.appendLine(
-              "Collab relay already running on ws://127.0.0.1:1234 (started by another VSCode window). Reusing it.",
+              `Collab relay already running on ws://127.0.0.1:${collabPort} (started by another VSCode window). Reusing it.`,
             );
           } else {
             output.appendLine(
-              "Port 1234 is in use but doesn't look like our relay. The collab editor will fail to connect; either free the port or set markdownCollab.collab.serverUrl to a different relay.",
+              `Port ${collabPort} is in use but doesn't look like our relay. The collab editor will fail to connect; either free the port or set markdownCollab.collab.port / serverUrl to a different relay.`,
             );
           }
         } else {

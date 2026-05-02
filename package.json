@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "publisher": "markdown-collab",
   "license": "MIT",
   "repository": {
@@ -152,12 +152,17 @@
         "markdownCollab.collab.serverUrl": {
           "type": "string",
           "default": "ws://localhost:1234",
-          "description": "y-websocket server URL for the collaborative editor. The extension can spawn a local server on activation; point at a remote URL to share with other machines."
+          "description": "y-websocket server URL the collaborative editor connects to. The extension can also spawn a local server on activation (see startLocalServer/port). Point this at a remote URL to share with other machines."
         },
         "markdownCollab.collab.startLocalServer": {
           "type": "boolean",
           "default": true,
-          "description": "Spawn a local y-websocket server on activation (port 1234)."
+          "description": "Spawn a local y-websocket server on activation (uses markdownCollab.collab.port)."
+        },
+        "markdownCollab.collab.port": {
+          "type": "number",
+          "default": 1234,
+          "description": "Port the local y-websocket server binds to. Change if 1234 is in use by another tool. The webview connects to markdownCollab.collab.serverUrl, so update both if you change this."
         },
         "markdownCollab.collab.userName": {
           "type": "string",
@@ -305,24 +310,31 @@
     ]
   },
   "scripts": {
-    "compile": "tsc -p . && tsc -p tsconfig.webview.json && npm run bundle:webview",
+    "compile": "tsc -p . && tsc -p tsconfig.webview.json && npm run bundle:webview && npm run copy:fixtures",
     "watch": "tsc -w -p .",
     "bundle:webview": "esbuild src/webview/client.ts --bundle --format=iife --outfile=out/webview/client.js --target=es2020 --platform=browser --minify --sourcemap=linked --legal-comments=none",
     "bundle:webview:watch": "npm run bundle:webview -- --watch",
+    "copy:fixtures": "node -e \"const fs=require('fs'),p=require('path');function cp(s,d){fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync(s,{withFileTypes:true})){const ss=p.join(s,f.name),dd=p.join(d,f.name);if(f.isDirectory())cp(ss,dd);else fs.copyFileSync(ss,dd);}}cp('src/test/integration/fixtures','out/test/integration/fixtures')\"",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:integration": "npm run compile && node ./out/test/integration/runTest.js"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.10.3",
     "@codemirror/lang-markdown": "^6.5.0",
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.41.1",
+    "@types/glob": "^8.1.0",
     "@types/markdown-it": "^14.1.2",
+    "@types/mocha": "^10.0.10",
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.80.0",
     "@types/ws": "^8.18.1",
+    "@vscode/test-electron": "^2.5.2",
     "codemirror": "^6.0.2",
     "esbuild": "^0.28.0",
+    "glob": "^13.0.6",
+    "mocha": "^11.7.5",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0",
     "y-codemirror.next": "^0.3.5",

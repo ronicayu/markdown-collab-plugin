@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.15.1 — 2026-05-02 (trial)
+
+### Fixed: collab editor sometimes rendered an empty document
+
+The webview created the CodeMirror EditorView synchronously after instantiating the WebsocketProvider, but the provider hadn't completed sync at that point — `ytext.toString()` returned `""` and `y-codemirror.next` did not always backfill the seed once the relay's update arrived. The editor now waits for either the `provider.sync` event or a 1.5s grace period (whichever comes first) and only then constructs the EditorView with the actual seeded content. If the relay is unreachable, the webview falls back to seeding `Y.Text` locally so the user always sees the file's contents.
+
+### Fixed: EADDRINUSE on the relay port crashed the extension host
+
+`new WebSocketServer({ server })` re-emits the underlying HTTP server's `error` event on the `wss` instance. We listened on the HTTP server (good — that path correctly rejected our `startCollabServer` promise) but not on `wss`, so the same `EADDRINUSE` bubbled up as an `uncaughtException` and tore down the extension host on the next reload. A no-op `wss.on('error', …)` swallow paired with the existing HTTP-server error handler restores the original "log and reuse the existing relay" behaviour.
+
+### Added: configurable relay port
+
+New setting `markdownCollab.collab.port` (default `1234`). Useful when port 1234 is already taken by an unrelated tool, or when running the integration tests alongside a developer's normal VSCode session.
+
+### Added: @vscode/test-electron integration test harness
+
+`npm run test:integration` boots a real downloaded VSCode (Electron) into the Extension Test Host, loads the extension against a fixture workspace, and runs five end-to-end tests covering: command/customEditor registration, relay-port HTTP signature probe, relay-side seed pipeline (using a test-only server introspection hook so we don't race the webview), webview-side post-sync content length (the regression guard for this version's empty-doc bug), and a relay-side multi-peer broadcast.
+
 ## 0.15.0 — 2026-05-02 (trial)
 
 ### Added: experimental real-time collaborative editor (CodeMirror 6 + Yjs)

@@ -59,7 +59,7 @@ function init(msg: InitMessage): void {
   ydoc = new Y.Doc();
   const ytext = ydoc.getText("doc");
 
-  // The server is the single source of truth for "first peer wins": it
+  // The relay is the single source of truth for "first peer wins": it
   // accepts an `init` query param the first time a room is created and
   // ignores it for every later connection. Doing the seed client-side is
   // racy when two peers connect simultaneously (both observe an empty doc,
@@ -75,40 +75,81 @@ function init(msg: InitMessage): void {
 
   const undoManager = new Y.UndoManager(ytext);
 
-  const state = EditorState.create({
-    doc: ytext.toString(),
-    extensions: [
-      lineNumbers(),
-      highlightActiveLine(),
-      history(),
-      keymap.of([...defaultKeymap, ...historyKeymap]),
-      markdown(),
-      EditorView.theme(
-        {
-          "&": { height: "100vh", fontSize: "14px" },
-          ".cm-scroller": { fontFamily: "var(--vscode-editor-font-family, monospace)" },
-        },
-        { dark: true },
-      ),
-      yCollab(ytext, provider.awareness, { undoManager }),
-    ],
-  });
+  // We only create the EditorView once we know what content to start with.
+  // y-codemirror.next assumes CodeMirror's doc is in sync with the Y.Text
+  // when the binding attaches — if we constructed the EditorView eagerly
+  // with an empty doc and the relay's sync arrived a moment later, the
+  // binding could mishandle the diff. Two paths into createEditor():
+  //   1. provider syncs with the relay → ytext has the room's authoritative
+  //      content → start CodeMirror from that.
+  //   2. provider can't reach the relay within 1.5s → we seed Y.Text
+  //      locally from msg.text → start CodeMirror with the same.
+  // Either way, the user sees the file content.
+  let editorCreated = false;
+  const createEditor = (): void => {
+    if (editorCreated) return;
+    editorCreated = true;
+    // Give the extension visibility into what the webview is actually
+    // about to show. Tests use this to catch the empty-document bug end
+    // to end (otherwise we can only verify the relay was seeded, not that
+    // the webview ever received the seed).
+    vscode.postMessage({
+      type: "ready-with-content",
+      length: ytext.length,
+      synced,
+    });
+    const state = EditorState.create({
+      doc: ytext.toString(),
+      extensions: [
+        lineNumbers(),
+        highlightActiveLine(),
+        history(),
+        keymap.of([...defaultKeymap, ...historyKeymap]),
+        markdown(),
+        EditorView.theme(
+          {
+            "&": { height: "100vh", fontSize: "14px" },
+            ".cm-scroller": { fontFamily: "var(--vscode-editor-font-family, monospace)" },
+          },
+          { dark: true },
+        ),
+        yCollab(ytext, provider!.awareness, { undoManager }),
+      ],
+    });
+    view = new EditorView({ state, parent: document.body });
 
-  view = new EditorView({ state, parent: document.body });
+    // Debounced extension-side persistence. CRDT sync is handled by the
+    // provider; this only keeps the on-disk TextDocument in step.
+    let saveTimer: ReturnType<typeof setTimeout> | null = null;
+    ytext.observe(() => {
+      if (suppressNextPost) {
+        suppressNextPost = false;
+        return;
+      }
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        vscode.postMessage({ type: "edit", text: ytext.toString() });
+      }, 250);
+    });
+  };
 
-  // Debounced extension-side persistence. CRDT sync is handled by the
-  // provider; this only keeps the on-disk TextDocument in step.
-  let saveTimer: ReturnType<typeof setTimeout> | null = null;
-  ytext.observe(() => {
-    if (suppressNextPost) {
-      suppressNextPost = false;
-      return;
-    }
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      vscode.postMessage({ type: "edit", text: ytext.toString() });
-    }, 250);
+  let synced = false;
+  provider.once("sync", (ok: boolean) => {
+    synced = ok;
+    createEditor();
   });
+  if (msg.text.length > 0) {
+    setTimeout(() => {
+      if (!synced && ytext.length === 0) {
+        ydoc!.transact(() => ytext.insert(0, msg.text), "local-fallback");
+      }
+      createEditor();
+    }, 1500);
+  } else {
+    // Empty file — show an empty editor immediately rather than gating on
+    // sync (a non-existent seed would never arrive).
+    createEditor();
+  }
 
   // Expose connection state in a corner badge for debugging.
   const badge = document.createElement("div");

@@ -21,7 +21,23 @@ interface ReadyMessage {
   type: "ready";
 }
 
-type ClientMessage = EditMessage | ReadyMessage;
+interface ReadyWithContentMessage {
+  type: "ready-with-content";
+  length: number;
+  synced: boolean;
+}
+
+type ClientMessage = EditMessage | ReadyMessage | ReadyWithContentMessage;
+
+// Test-only observability. The webview reports its post-init Y.Text length
+// (and whether the relay sync succeeded) via the `ready-with-content`
+// message. Tests can read this map to assert that the editor actually has
+// non-empty content for a given document — which catches the user-facing
+// "empty editor" bug that pure relay-side checks would miss.
+const lastReadyByUri = new Map<string, ReadyWithContentMessage>();
+export function _getLastReadyForTests(uri: vscode.Uri): ReadyWithContentMessage | undefined {
+  return lastReadyByUri.get(uri.toString());
+}
 
 export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
   static readonly viewType = VIEW_TYPE;
@@ -100,6 +116,11 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         void panel.webview.postMessage(payload);
       } else if (msg.type === "edit") {
         void applyEditFromWebview(msg.text);
+      } else if (msg.type === "ready-with-content") {
+        lastReadyByUri.set(document.uri.toString(), msg);
+        this.output.appendLine(
+          `CollabEditor: webview ready for ${document.uri.fsPath} — content length=${msg.length}, synced=${msg.synced}`,
+        );
       }
     });
 

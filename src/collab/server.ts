@@ -197,6 +197,13 @@ export function startCollabServer(
     });
     const wss = new WebSocketServer({ server: httpServer });
     wss.on("connection", onConnection);
+    // The `ws` package attaches its own error listener to the underlying
+    // server and re-emits the event on `wss`. Without a `wss.on('error')`
+    // sink, an EADDRINUSE during listen() surfaces as an uncaughtException
+    // even though `httpServer.once('error')` already rejected our promise.
+    wss.on("error", () => {
+      /* dispatched via httpServer.once('error') below */
+    });
 
     const onError = (err: Error): void => reject(err);
     httpServer.once("error", onError);
@@ -241,4 +248,18 @@ export function _resetRoomsForTests(): void {
     room.doc.destroy();
   }
   rooms.clear();
+}
+
+// Test-only introspection. Returns the current text in the room's Y.Doc
+// (or null if no such room exists). Lets integration tests verify that a
+// webview's seed pipeline actually populated the relay, without spinning
+// up a side-car WebsocketProvider that races the webview to be first peer.
+export function _getRoomTextForTests(name: string): string | null {
+  const room = rooms.get(name);
+  if (!room) return null;
+  return room.doc.getText("doc").toString();
+}
+
+export function _getRoomConnectionCountForTests(name: string): number {
+  return rooms.get(name)?.conns.size ?? 0;
 }

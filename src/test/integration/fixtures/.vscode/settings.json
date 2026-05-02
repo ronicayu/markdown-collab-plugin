@@ -1,0 +1,5 @@
+{
+  "markdownCollab.collab.port": 17234,
+  "markdownCollab.collab.serverUrl": "ws://127.0.0.1:17234",
+  "markdownCollab.collab.startLocalServer": true
+}

@@ -4,6 +4,9 @@ import * as path from "path";
 export default defineConfig({
   test: {
     include: ["src/test/**/*.test.ts"],
+    // Integration tests run inside a real VSCode Extension Host via
+    // @vscode/test-electron (npm run test:integration), not vitest.
+    exclude: ["src/test/integration/**", "node_modules/**"],
     environment: "node",
   },
   resolve: {
