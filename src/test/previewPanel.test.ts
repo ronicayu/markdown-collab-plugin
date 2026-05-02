@@ -226,6 +226,44 @@ describe("locateSelectionInSource", () => {
     expect(r).toBeNull();
   });
 
+  it("locates a selection that crosses a heading + paragraph boundary", () => {
+    // DOM Selection.toString() across <h1>Heading</h1><p>Body text</p>
+    // strips the leading `# ` and collapses the paragraph break into a
+    // single newline. Source still has `# ` and `\n\n`.
+    const source = "# Heading\n\nBody text continues here.\n";
+    const r = locateSelectionInSource(source, "Heading\nBody text");
+    expect(r).not.toBeNull();
+    if (r) {
+      const slice = source.slice(r.start, r.end);
+      expect(slice).toContain("Heading");
+      expect(slice).toContain("Body text");
+    }
+  });
+
+  it("locates a selection that spans two consecutive headings", () => {
+    const source = "# Header 1\n\n## Header 2\n\nbody here\n";
+    const r = locateSelectionInSource(source, "Header 1\nHeader 2\nbody");
+    expect(r).not.toBeNull();
+    if (r) {
+      const slice = source.slice(r.start, r.end);
+      expect(slice).toContain("Header 1");
+      expect(slice).toContain("Header 2");
+      expect(slice).toContain("body");
+    }
+  });
+
+  it("locates a selection that crosses a multi-line blockquote into a paragraph", () => {
+    const source = "> quoted text\n> more quote\n\nplain paragraph after.\n";
+    const r = locateSelectionInSource(source, "quoted text more quote\nplain paragraph");
+    expect(r).not.toBeNull();
+    if (r) {
+      const slice = source.slice(r.start, r.end);
+      expect(slice).toContain("quoted text");
+      expect(slice).toContain("more quote");
+      expect(slice).toContain("plain paragraph");
+    }
+  });
+
   it("doesn't tolerate-match a single-token selection (would over-trigger)", () => {
     // A single word never goes through the tolerant fallback — it would
     // match every occurrence anywhere in the doc.

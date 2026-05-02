@@ -1239,7 +1239,7 @@ export function locateSelectionInSource(
   // the needle, then accept only when the match is unique in source.
   const tokens = trimmed.split(/\s+/).filter((t) => t.length > 0);
   if (tokens.length < 2) return null;
-  const sep = /[\s|*_~`\-]+/.source;
+  const sep = /[\s|*_~`\-#>]+/.source;
   const pattern = tokens.map(escapeRegex).join(sep);
   const re = new RegExp(pattern, "g");
   let onlyMatch: { start: number; end: number } | null = null;

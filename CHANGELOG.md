@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.14.3 — 2026-05-02
+
+### Fixed: preview comments on selections that cross headings or blockquotes
+
+`locateSelectionInSource`'s tolerant-separator fallback let the regex bridge runs of whitespace plus a small set of markdown punctuation (`|`, `*`, `_`, `~`, `` ` ``, `-`) between the words of a selection, so that a DOM `Selection.toString()` — which strips markdown syntax — could still match the source. The class missed `#` and `>`, so selections that crossed an ATX heading marker (`# Header 1\n\n## Header 2`) or a multi-line blockquote (`> quoted\n> more`) failed to resolve and the comment couldn't be created.
+
+Separator class extended to `[\s|*_~`\-#>]+`. Both characters only carry block-syntax meaning at line start, so the broader class only bridges whitespace + leading-line markers between selected tokens — never inside a token. Three regression tests added: heading + paragraph, two consecutive headings + paragraph, multi-line blockquote into paragraph.
+
 ## 0.14.2 — 2026-04-29
 
 ### Fixed: preview panel sometimes auto-closed mid-typing
