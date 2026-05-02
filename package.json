@@ -39,7 +39,9 @@
     "onCommand:markdownCollab.sendAllToClaude",
     "onCommand:markdownCollab.startClaudeTerminal",
     "onCommand:markdownCollab.resetSendMode",
-    "onView:markdownCollab.review"
+    "onView:markdownCollab.review",
+    "onCommand:markdownCollab.openCollabEditor",
+    "onCustomEditor:markdownCollab.collabEditor"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -118,6 +120,11 @@
       {
         "command": "markdownCollab.resetSendMode",
         "title": "Markdown Collab: Reset Send Mode"
+      },
+      {
+        "command": "markdownCollab.openCollabEditor",
+        "title": "Markdown Collab: Open Collaborative Editor (experimental)",
+        "category": "Markdown Collab"
       }
     ],
     "configuration": {
@@ -125,7 +132,13 @@
       "properties": {
         "markdownCollab.sendMode": {
           "type": "string",
-          "enum": ["ask", "terminal", "channel", "mcp-channel", "clipboard"],
+          "enum": [
+            "ask",
+            "terminal",
+            "channel",
+            "mcp-channel",
+            "clipboard"
+          ],
           "enumDescriptions": [
             "Prompt the first time per workspace, then remember the choice. Run 'Markdown Collab: Reset Send Mode' to clear the remembered choice.",
             "Type the prompt into a running Claude REPL via bracketed paste. Falls back to spawning a 'Claude Review' terminal if none is detected.",
@@ -135,6 +148,21 @@
           ],
           "default": "ask",
           "markdownDescription": "How the **Send to Claude** button delivers unresolved comments to Claude Code.\n\n- `ask` — quick-pick on first use per workspace; remembers the choice (run **Markdown Collab: Reset Send Mode** to clear).\n- `terminal` — bracketed-paste into a running `claude` REPL. No MCP required.\n- `channel` — append to `.markdown-collab/.events.jsonl` for a `tail` + `Monitor` watch loop. No MCP required, but needs a streaming-tool harness.\n- `mcp-channel` — native MCP channel: events arrive as `<channel source=\"markdown-collab\">` tags. Requires Claude Code v2.1.80+, claude.ai login, and a one-time `.mcp.json` setup.\n- `clipboard` — copy the prompt for manual paste."
+        },
+        "markdownCollab.collab.serverUrl": {
+          "type": "string",
+          "default": "ws://localhost:1234",
+          "description": "y-websocket server URL for the collaborative editor. The extension can spawn a local server on activation; point at a remote URL to share with other machines."
+        },
+        "markdownCollab.collab.startLocalServer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Spawn a local y-websocket server on activation (port 1234)."
+        },
+        "markdownCollab.collab.userName": {
+          "type": "string",
+          "default": "",
+          "description": "Display name shown to other collaborators. Defaults to OS username."
         }
       }
     },
@@ -262,11 +290,25 @@
           "when": "markdownCollab.hasReview"
         }
       ]
-    }
+    },
+    "customEditors": [
+      {
+        "viewType": "markdownCollab.collabEditor",
+        "displayName": "Markdown Collab (real-time, experimental)",
+        "selector": [
+          {
+            "filenamePattern": "*.md"
+          }
+        ],
+        "priority": "option"
+      }
+    ]
   },
   "scripts": {
-    "compile": "tsc -p .",
+    "compile": "tsc -p . && tsc -p tsconfig.webview.json && npm run bundle:webview",
     "watch": "tsc -w -p .",
+    "bundle:webview": "esbuild src/webview/client.ts --bundle --format=iife --outfile=out/webview/client.js --target=es2020 --platform=browser --minify --sourcemap=linked --legal-comments=none",
+    "bundle:webview:watch": "npm run bundle:webview -- --watch",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -274,11 +316,23 @@
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.80.0",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.28.0",
     "typescript": "^5.4.0",
-    "vitest": "^1.6.0"
+    "vitest": "^1.6.0",
+    "ws": "^8.20.0"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.10.3",
+    "@codemirror/lang-markdown": "^6.5.0",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.41.1",
+    "codemirror": "^6.0.2",
     "markdown-it": "^14.1.1",
-    "mermaid": "^11.14.0"
+    "mermaid": "^11.14.0",
+    "y-codemirror.next": "^0.3.5",
+    "y-protocols": "^1.0.7",
+    "y-websocket": "^3.0.0",
+    "yjs": "^13.6.30"
   }
 }

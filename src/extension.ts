@@ -1,8 +1,11 @@
+import * as http from "http";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import { ensureAgentsSnippet } from "./agents";
 import { resolve as resolveAnchor } from "./anchor";
+import { CollabEditorProvider } from "./collab/collabEditorProvider";
+import { startCollabServer, type CollabServerHandle } from "./collab/server";
 import { MarkdownCollabController, extractAnchor } from "./commentController";
 import { OrphanView } from "./orphanView";
 import { PreviewPanel } from "./previewPanel";
@@ -236,6 +239,71 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
   );
 
+  // Experimental real-time collaborative editor: CodeMirror 6 + Yjs in a
+  // webview, talking to a local y-websocket relay. Opt-in per file via
+  // "Reopen with… → Markdown Collab (real-time, experimental)".
+  context.subscriptions.push(CollabEditorProvider.register(context, output));
+
+  let collabServer: CollabServerHandle | null = null;
+  const collabConfig = vscode.workspace.getConfiguration("markdownCollab");
+  if (collabConfig.get<boolean>("collab.startLocalServer", true)) {
+    void (async () => {
+      try {
+        collabServer = await startCollabServer(1234, (line) => output.appendLine(line));
+      } catch (e) {
+        const err = e as NodeJS.ErrnoException;
+        if (err.code === "EADDRINUSE") {
+          // Another process — almost certainly an earlier VSCode window
+          // running this extension — already owns port 1234. Probe it; if
+          // the response matches our relay's signature, log calmly.
+          // Otherwise warn so the user can investigate the conflict.
+          const ours = await isOurRelay(1234);
+          if (ours) {
+            output.appendLine(
+              "Collab relay already running on ws://127.0.0.1:1234 (started by another VSCode window). Reusing it.",
+            );
+          } else {
+            output.appendLine(
+              "Port 1234 is in use but doesn't look like our relay. The collab editor will fail to connect; either free the port or set markdownCollab.collab.serverUrl to a different relay.",
+            );
+          }
+        } else {
+          output.appendLine(
+            `Collab server failed to start: ${err.message}. Set markdownCollab.collab.startLocalServer=false and run a relay externally if needed.`,
+          );
+        }
+      }
+    })();
+  }
+  context.subscriptions.push({
+    dispose: () => {
+      if (collabServer) void collabServer.dispose();
+    },
+  });
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "markdownCollab.openCollabEditor",
+      async (arg?: vscode.Uri) => {
+        const uri =
+          arg instanceof vscode.Uri
+            ? arg
+            : vscode.window.activeTextEditor?.document.uri;
+        if (!uri) {
+          void vscode.window.showWarningMessage(
+            "Open a Markdown file first, then run this command.",
+          );
+          return;
+        }
+        await vscode.commands.executeCommand(
+          "vscode.openWith",
+          uri,
+          CollabEditorProvider.viewType,
+        );
+      },
+    ),
+  );
+
   // Any docs already open at activation must be dispatched explicitly —
   // `onDidOpenTextDocument` only fires for opens *after* registration.
   void controller.handleInitialDocs(vscode.workspace.textDocuments);
@@ -243,6 +311,31 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   /* disposables handle cleanup */
+}
+
+// Probe a localhost port to see whether the responder is our own relay.
+// We GET / and look for the signature string the server emits in
+// `src/collab/server.ts`. Anything else (or a non-HTTP listener) → false.
+function isOurRelay(port: number, timeoutMs = 500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = http.get(
+      { host: "127.0.0.1", port, path: "/", timeout: timeoutMs },
+      (res) => {
+        let body = "";
+        res.setEncoding("utf-8");
+        res.on("data", (chunk) => {
+          body += chunk;
+          if (body.length > 256) req.destroy();
+        });
+        res.on("end", () => resolve(body.includes("markdown-collab y-websocket relay")));
+      },
+    );
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
 }
 
 // -----------------------------------------------------------

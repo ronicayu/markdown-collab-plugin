@@ -15,5 +15,5 @@
     "resolveJsonModule": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "out", ".vscode-test"]
+  "exclude": ["node_modules", "out", ".vscode-test", "src/webview"]
 }
