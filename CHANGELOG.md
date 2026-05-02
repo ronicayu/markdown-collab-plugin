@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.17.0 — 2026-05-02 (trial)
+
+### Added: GFM tables, task lists, strikethrough in the collab editor
+
+The collab editor swapped `@milkdown/preset-commonmark` alone for `commonmark` + `@milkdown/preset-gfm`. Pipe-tables (`| col | col |`), task list checkboxes (`- [ ]` / `- [x]`), `~~strikethrough~~`, autolinks, and footnotes now render natively.
+
+### Added: comments side panel + add-comment from selection inside the collab editor
+
+Until now the collab editor had no way to see or create review threads — that was a documented gap, but a serious one. This release lands the missing UI:
+
+- A **comments sidebar** to the right of the WYSIWYG editor lists every thread in the file's `.md.json` sidecar with its anchor snippet, author, body, and replies. Clicking a comment scrolls the editor to its anchor and pulse-highlights the matching DOM node so reviewers can find the passage being discussed even after surrounding text has shifted.
+- An **"Add comment" affordance** appears next to the editor selection when a reviewer drags-selects 8+ non-whitespace characters. Pressing it opens an inline composer in the sidebar; saving builds an `Anchor` (selected text + 24 chars of surrounding markdown context on each side) and writes through the existing `addComment(...)` helper. The thread shows up immediately in this window's sidebar and in any other open editor's `CommentController` gutter (the file-system watcher picks the change up via the standard sidecar path).
+- The sidebar reloads automatically when the sidecar changes — whether the change came from the standard editor's gutter UI, a Claude-driven reply, or another collaborator. The collab editor and the standard editor are now backed by the same data with the same write/observe pipeline; you can use whichever surface you prefer for review.
+
+### Limitations / next steps
+
+- Replies and resolve/un-resolve from inside the collab editor are not yet available — for those, reopen the file in the standard editor's gutter UI (the data is the same). The sidebar shows replies read-only.
+- Anchor scroll uses a plain-text scan over the rendered ProseMirror doc; on documents with markup-heavy passages (long code blocks with raw HTML) the highlight may land on the surrounding block instead of the exact character range.
+- Inline highlighting of all anchored passages (instead of only on click) would need a ProseMirror Decoration plugin keyed to anchor positions; punted for the trial.
+
 ## 0.16.0 — 2026-05-02 (trial)
 
 ### Known gap: review comments in the collab editor

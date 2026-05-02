@@ -163,3 +163,67 @@ suite("Comments + collab editor interaction", () => {
     }
   });
 });
+
+import { addComment as addCommentToSidecar } from "../../../sidecar";
+
+suite("Collab editor → comments side panel", () => {
+  let mdPath: string;
+  let sidecarPathStr: string;
+  let baseText: string;
+
+  suiteSetup(async () => {
+    mdPath = fixturePath("collab-comments.md");
+    baseText = [
+      "# Collab + comments fixture",
+      "",
+      "Paragraph one — this longer phrase becomes the comment anchor target.",
+      "",
+      "Paragraph two — additional body content.",
+      "",
+    ].join("\n");
+    await fs.writeFile(mdPath, baseText, "utf-8");
+    const sp = sidecarPathFor(mdPath, workspaceRoot());
+    sidecarPathStr = sp!;
+  });
+
+  suiteTeardown(async () => {
+    await fs.rm(mdPath, { force: true });
+    await fs.rm(sidecarPathStr, { force: true });
+  });
+
+  test("opening collab editor with no sidecar shows zero comments via the side panel pipeline", async () => {
+    // Ensure no sidecar from a prior test is sitting on disk.
+    await fs.rm(sidecarPathStr, { force: true });
+    const uri = vscode.Uri.file(mdPath);
+    await vscode.commands.executeCommand("vscode.openWith", uri, "markdownCollab.collabEditor");
+    // The side panel reads its first comment list from the InitMessage;
+    // we can't peek into the webview DOM but the extension's init payload
+    // is built from loadSidecar(sidecar). With no sidecar on disk that
+    // returns null, so the list is empty. Sanity-check that loadSidecar
+    // agrees there's no sidecar.
+    const loaded = await loadSidecar(sidecarPathStr);
+    assert.strictEqual(loaded, null, "no sidecar expected at start");
+  });
+
+  test("a sidecar comment created externally is observable to the extension's reader", async () => {
+    // Add a comment via the same code path the side panel exercises on
+    // submit. This proves the sidecar load round-trip the side panel uses
+    // is symmetric with the writer.
+    const anchor = {
+      text: "this longer phrase becomes the comment anchor target",
+      contextBefore: "Paragraph one — ",
+      contextAfter: ".",
+    };
+    await addCommentToSidecar(sidecarPathStr, "collab-comments.md", {
+      anchor,
+      body: "added by integration test",
+      author: "user",
+      createdAt: new Date().toISOString(),
+    });
+    const loaded = await loadSidecar(sidecarPathStr);
+    assert.ok(loaded && loaded.mode === "ok", "sidecar should load after add");
+    assert.strictEqual(loaded.sidecar.comments.length, 1);
+    assert.strictEqual(loaded.sidecar.comments[0]!.body, "added by integration test");
+    assert.strictEqual(loaded.sidecar.comments[0]!.anchor.text, anchor.text);
+  });
+});

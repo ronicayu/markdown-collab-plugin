@@ -1,5 +1,4 @@
-/* Layout container around the Milkdown surface. Keeps the editor padded
-   away from the iframe edges and gives the badge an anchor. */
+/* Layout: editor on the left, comment sidebar on the right. */
 html, body {
   margin: 0;
   padding: 0;
@@ -12,20 +11,252 @@ body {
   overflow: hidden;
 }
 
-.milkdown-host {
+.mdc-layout {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  height: 100vh;
+}
+
+.mdc-editor-pane {
   height: 100vh;
   overflow: auto;
   padding: 16px 24px;
+  border-right: 1px solid var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
 }
 
-/* Soften the nord theme so it sits with the VSCode chrome. The theme ships
-   its own typography choices; we just adjust the page background and
-   ensure the editable region uses comfortable proportions. */
-.milkdown-host .milkdown {
+.mdc-editor-pane .milkdown {
   background: transparent;
   color: inherit;
   max-width: 880px;
   margin: 0 auto;
+}
+
+.mdc-sidebar {
+  height: 100vh;
+  overflow-y: auto;
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  color: var(--vscode-sideBar-foreground, inherit);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+}
+
+.mdc-sidebar-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
+}
+
+.mdc-sidebar-title {
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mdc-sidebar-subtitle {
+  margin-top: 2px;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.mdc-sidebar-empty {
+  padding: 16px;
+  font-size: 12px;
+  opacity: 0.7;
+  line-height: 1.5;
+}
+
+.mdc-sidebar-empty kbd {
+  background: var(--vscode-keybindingLabel-background, rgba(255, 255, 255, 0.1));
+  border: 1px solid var(--vscode-keybindingLabel-border, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.mdc-comment-list {
+  padding: 8px;
+}
+
+.mdc-comment {
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border-radius: 4px;
+  background: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.04));
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+
+.mdc-comment:hover {
+  background: var(--vscode-list-activeSelectionBackground, rgba(255, 255, 255, 0.08));
+}
+
+.mdc-comment--resolved {
+  opacity: 0.55;
+}
+
+.mdc-comment-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+
+.mdc-comment-author {
+  font-weight: 600;
+}
+
+.mdc-comment-meta {
+  opacity: 0.7;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mdc-comment-anchor {
+  font-size: 11px;
+  font-style: italic;
+  border-left: 2px solid var(--vscode-textBlockQuote-border, #555);
+  padding-left: 6px;
+  margin-bottom: 6px;
+  opacity: 0.85;
+}
+
+.mdc-comment-body {
+  white-space: pre-wrap;
+  line-height: 1.4;
+}
+
+.mdc-replies {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
+}
+
+.mdc-reply {
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.mdc-reply-author {
+  font-weight: 600;
+  margin-right: 6px;
+  opacity: 0.85;
+}
+
+/* Composer for new comments. Lives in a slot inside the sidebar header. */
+.mdc-composer-slot:empty {
+  display: none;
+}
+
+.mdc-composer {
+  padding: 12px;
+  background: var(--vscode-editor-background);
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
+}
+
+.mdc-composer-anchor {
+  font-size: 11px;
+  margin-bottom: 6px;
+  opacity: 0.8;
+  word-break: break-word;
+}
+
+.mdc-composer-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: 4px;
+  opacity: 0.75;
+}
+
+.mdc-composer-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--vscode-input-background, transparent);
+  color: var(--vscode-input-foreground, inherit);
+  border: 1px solid var(--vscode-input-border, rgba(255, 255, 255, 0.15));
+  border-radius: 3px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.mdc-composer-actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.mdc-composer-actions button {
+  font-family: inherit;
+  font-size: 12px;
+  border: none;
+  border-radius: 3px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.mdc-composer-cancel {
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, inherit);
+  border: 1px solid var(--vscode-button-border, rgba(255, 255, 255, 0.1)) !important;
+}
+
+.mdc-composer-submit {
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, white);
+}
+
+.mdc-composer-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Floating "Add comment" button anchored to the editor selection. */
+.mdc-add-comment-btn {
+  position: fixed;
+  z-index: 1000;
+  font-family: inherit;
+  font-size: 12px;
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, white);
+  border: none;
+  border-radius: 3px;
+  padding: 4px 10px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+/* Brief flash highlight when scrolling to a comment's anchor. */
+.mdc-flash {
+  animation: mdc-flash-bg 0.9s ease;
+}
+@keyframes mdc-flash-bg {
+  0% { background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 220, 0, 0.45)); }
+  100% { background-color: transparent; }
+}
+
+/* Toast notification (composer errors, etc.) */
+.mdc-toast {
+  position: fixed;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--vscode-notifications-background, #2d2d30);
+  color: var(--vscode-notifications-foreground, white);
+  border: 1px solid var(--vscode-notifications-border, rgba(255, 255, 255, 0.1));
+  padding: 8px 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 2000;
+}
+.mdc-toast--visible {
+  opacity: 1;
 }
 
 .collab-badge {

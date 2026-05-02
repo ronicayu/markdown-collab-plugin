@@ -1,8 +1,22 @@
 import * as crypto from "crypto";
 import * as os from "os";
+import * as path from "path";
 import * as vscode from "vscode";
+import { isAnchorTextValid } from "../anchor";
+import { addComment as addCommentToSidecar, loadSidecar, sidecarPathFor } from "../sidecar";
+import type { Anchor, Comment } from "../types";
 
 const VIEW_TYPE = "markdownCollab.collabEditor";
+
+interface CommentSummary {
+  id: string;
+  body: string;
+  author: string;
+  createdAt: string;
+  resolved: boolean;
+  anchor: { text: string; contextBefore: string; contextAfter: string };
+  replies: Array<{ author: string; body: string; createdAt: string }>;
+}
 
 interface InitPayload {
   type: "init";
@@ -10,6 +24,12 @@ interface InitPayload {
   room: string;
   serverUrl: string;
   user: { name: string; color: string };
+  comments: CommentSummary[];
+}
+
+interface SidecarChangedPayload {
+  type: "sidecar-changed";
+  comments: CommentSummary[];
 }
 
 interface EditMessage {
@@ -34,11 +54,18 @@ interface WebviewErrorMessage {
   message: string;
 }
 
+interface AddCommentMessage {
+  type: "add-comment";
+  anchor: { text: string; contextBefore: string; contextAfter: string };
+  body: string;
+}
+
 type ClientMessage =
   | EditMessage
   | ReadyMessage
   | ReadyWithContentMessage
-  | WebviewErrorMessage;
+  | WebviewErrorMessage
+  | AddCommentMessage;
 
 // Test-only observability. The webview reports its post-init content
 // length (and whether the relay sync succeeded) via the
@@ -96,6 +123,15 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     const room = computeRoom(document.uri);
     const user = { name: userName, color: pickColor(userName) };
 
+    const sidecarPath = this.computeSidecarPath(document.uri);
+
+    const readSidecarComments = async (): Promise<CommentSummary[]> => {
+      if (!sidecarPath) return [];
+      const loaded = await loadSidecar(sidecarPath);
+      if (!loaded) return [];
+      return loaded.sidecar.comments.map((c) => commentToSummary(c));
+    };
+
     // Track our own writes so the workspace.onDidChangeTextDocument handler
     // doesn't bounce them back as "external" updates and overwrite the
     // webview's Y.Text mid-edit.
@@ -125,14 +161,18 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       const msg = raw as ClientMessage | undefined;
       if (!msg || typeof msg !== "object") return;
       if (msg.type === "ready") {
-        const payload: InitPayload = {
-          type: "init",
-          text: document.getText(),
-          room,
-          serverUrl,
-          user,
-        };
-        void panel.webview.postMessage(payload);
+        void (async () => {
+          const comments = await readSidecarComments();
+          const payload: InitPayload = {
+            type: "init",
+            text: document.getText(),
+            room,
+            serverUrl,
+            user,
+            comments,
+          };
+          void panel.webview.postMessage(payload);
+        })();
       } else if (msg.type === "edit") {
         void applyEditFromWebview(msg.text);
       } else if (msg.type === "ready-with-content") {
@@ -148,6 +188,20 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         this.output.appendLine(
           `CollabEditor: webview error for ${document.uri.fsPath} (${msg.stage}): ${msg.message}`,
         );
+      } else if (msg.type === "add-comment") {
+        void (async () => {
+          const result = await this.handleAddComment(document, msg, sidecarPath);
+          void panel.webview.postMessage(result);
+          if (result.ok) {
+            // Re-push the latest sidecar so the sidebar refreshes
+            // immediately rather than waiting for the file watcher.
+            const comments = await readSidecarComments();
+            void panel.webview.postMessage({
+              type: "sidecar-changed",
+              comments,
+            });
+          }
+        })();
       }
     });
 
@@ -160,10 +214,96 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       });
     });
 
+    // Watch the sidecar file so the comment side panel stays fresh as
+    // reviewers add or resolve comments — including changes made via the
+    // standard editor's CommentController in another window. We use a
+    // plain workspace file watcher rather than tying into the existing
+    // SidecarWatcher because that one is owned by the comment controller
+    // and re-routing it would entangle two unrelated lifecycles.
+    let sidecarWatcher: vscode.FileSystemWatcher | undefined;
+    if (sidecarPath) {
+      const pattern = new vscode.RelativePattern(
+        path.dirname(sidecarPath),
+        path.basename(sidecarPath),
+      );
+      sidecarWatcher = vscode.workspace.createFileSystemWatcher(pattern);
+      const push = async (): Promise<void> => {
+        const comments = await readSidecarComments();
+        const payload: SidecarChangedPayload = {
+          type: "sidecar-changed",
+          comments,
+        };
+        void panel.webview.postMessage(payload);
+      };
+      sidecarWatcher.onDidChange(() => void push());
+      sidecarWatcher.onDidCreate(() => void push());
+      sidecarWatcher.onDidDelete(() => void push());
+    }
+
     panel.onDidDispose(() => {
       messageSub.dispose();
       docSub.dispose();
+      sidecarWatcher?.dispose();
     });
+  }
+
+  private computeSidecarPath(uri: vscode.Uri): string | null {
+    const folder = vscode.workspace.getWorkspaceFolder(uri);
+    if (!folder) return null;
+    return sidecarPathFor(uri.fsPath, folder.uri.fsPath);
+  }
+
+  private async handleAddComment(
+    document: vscode.TextDocument,
+    msg: AddCommentMessage,
+    sidecarPath: string | null,
+  ): Promise<{ type: "add-comment-result"; ok: boolean; error?: string }> {
+    if (!sidecarPath) {
+      return {
+        type: "add-comment-result",
+        ok: false,
+        error: "File is outside any workspace folder.",
+      };
+    }
+    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+    if (!folder) {
+      return {
+        type: "add-comment-result",
+        ok: false,
+        error: "File is outside any workspace folder.",
+      };
+    }
+    const anchor: Anchor = {
+      text: msg.anchor.text,
+      contextBefore: msg.anchor.contextBefore,
+      contextAfter: msg.anchor.contextAfter,
+    };
+    if (!isAnchorTextValid(anchor.text)) {
+      return {
+        type: "add-comment-result",
+        ok: false,
+        error: "Anchor text needs at least 8 non-whitespace characters.",
+      };
+    }
+    const mdRel = path.relative(folder.uri.fsPath, document.uri.fsPath);
+    try {
+      await addCommentToSidecar(sidecarPath, mdRel, {
+        anchor,
+        body: msg.body,
+        author: "user",
+        createdAt: new Date().toISOString(),
+      });
+      this.output.appendLine(
+        `CollabEditor: added comment on ${document.uri.fsPath} (anchor=${JSON.stringify(anchor.text.slice(0, 40))})`,
+      );
+      return { type: "add-comment-result", ok: true };
+    } catch (e) {
+      const message = (e as Error).message;
+      this.output.appendLine(
+        `CollabEditor: addComment failed for ${document.uri.fsPath}: ${message}`,
+      );
+      return { type: "add-comment-result", ok: false, error: message };
+    }
   }
 
   private renderHtml(webview: vscode.Webview): string {
@@ -202,6 +342,26 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
 </body>
 </html>`;
   }
+}
+
+function commentToSummary(c: Comment): CommentSummary {
+  return {
+    id: c.id,
+    body: c.body,
+    author: typeof c.author === "string" ? c.author : "user",
+    createdAt: c.createdAt,
+    resolved: c.resolved,
+    anchor: {
+      text: c.anchor.text,
+      contextBefore: c.anchor.contextBefore,
+      contextAfter: c.anchor.contextAfter,
+    },
+    replies: c.replies.map((r) => ({
+      author: typeof r.author === "string" ? r.author : "user",
+      body: r.body,
+      createdAt: r.createdAt,
+    })),
+  };
 }
 
 function computeRoom(uri: vscode.Uri): string {
