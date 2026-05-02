@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.16.0 — 2026-05-02 (trial)
+
+### Changed: collab editor is now WYSIWYG (Milkdown), not raw markdown
+
+The collaborative editor previously rendered the markdown source as a CodeMirror code editor — fine for engineers, but jarring for non-technical reviewers who expected to see *the rendered document* (headings actually look like headings, **bold** is bold, lists are lists). The editor is now Milkdown (ProseMirror under the hood) with the nord theme and the commonmark preset. Users type into a rendered document; markdown shortcuts auto-style as they type (e.g. typing `# ` becomes a heading). The on-disk file format is still plain commonmark — Milkdown's serializer round-trips the document on every save.
+
+Real-time collaboration runs through `@milkdown/plugin-collab` (which wraps `y-prosemirror`). Awareness, remote cursors, and convergence still go through the same `y-websocket` relay we shipped in 0.15.
+
+Trade-off: Milkdown's CRDT shape is `Y.XmlFragment("prosemirror")` — different from the old `Y.Text("doc")`. The server's pre-existing `?init=` text-seeding code path is now a no-op for the new editor; the first peer's Milkdown `applyTemplate` populates the room. There is a small race window if two peers connect within the same network round-trip (both could observe an empty doc and both apply the template), which would duplicate the seed. We accept this for the trial — opening the same file simultaneously on two machines is rare in practice; we'll add server-side ProseMirror seeding if it shows up.
+
+### Added: webview error reporting
+
+Failures inside the webview (Milkdown init errors, ProseMirror schema mismatches, missing CSS, etc.) now post a `webview-error` message back to the extension and surface in the **Markdown Collab** output channel. This made the bring-up of the new editor much faster to debug and is useful in production for triaging real-world issues.
+
 ## 0.15.1 — 2026-05-02 (trial)
 
 ### Fixed: collab editor sometimes rendered an empty document

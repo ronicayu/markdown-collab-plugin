@@ -1,28 +1,35 @@
-// Webview client: CodeMirror 6 + Yjs + y-codemirror.next.
+// WYSIWYG markdown editor inside a VSCode webview.
 //
-// Runs inside a VSCode webview iframe. Talks to the extension host via
-// postMessage for file persistence, and to a y-websocket server for
-// peer sync (multi-cursor, real-time edits).
+// Architecture:
+//   Milkdown (ProseMirror under the hood) provides the WYSIWYG surface —
+//   headers render as headers, **bold** renders as bold text, lists as
+//   lists, etc. The user never types or sees raw markdown.
+//
+//   Yjs collab is wired through @milkdown/plugin-collab → y-prosemirror,
+//   which uses Y.XmlFragment("prosemirror") (not Y.Text) as the CRDT.
 //
 // Lifecycle:
 //   1. Extension sends { type: 'init', text, room, serverUrl, user }.
-//   2. Webview spins up Yjs doc + WebsocketProvider + CodeMirror editor.
-//   3. If we are the first peer in the room, seed the Y.Text with `text`.
-//      Otherwise, the provider hands us the existing Y.Doc state.
-//   4. On every Yjs update we post a debounced { type: 'edit', text }
-//      back to the extension so the underlying TextDocument is kept fresh.
-//   5. Extension may push { type: 'externalChange', text } when the file
-//      changed on disk while no local edits were in flight; we replace the
-//      Y.Text contents in a transaction.
+//   2. Webview spins up Y.Doc + WebsocketProvider + Milkdown editor.
+//   3. After provider syncs (or 1.5s grace), bind the doc to Milkdown's
+//      collabService and applyTemplate(text). applyTemplate only seeds
+//      when the remote doc is still empty — second peers see the existing
+//      content untouched.
+//   4. Listener plugin posts a debounced { type: 'edit', markdown } back
+//      to the extension on every mutation so the on-disk file stays in
+//      step. Markdown is what we save — Milkdown's serializer round-trips
+//      the ProseMirror state to commonmark.
 
-import { markdown } from "@codemirror/lang-markdown";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { EditorState } from "@codemirror/state";
-import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
-import { yCollab } from "y-codemirror.next";
+import { Editor, defaultValueCtx, editorViewCtx, rootCtx, serializerCtx } from "@milkdown/core";
+import { commonmark } from "@milkdown/preset-commonmark";
+import { collab, collabServiceCtx } from "@milkdown/plugin-collab";
+import { listener, listenerCtx } from "@milkdown/plugin-listener";
+import { history } from "@milkdown/plugin-history";
+import { nord } from "@milkdown/theme-nord";
+import "@milkdown/theme-nord/style.css";
+import "./host.css";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
-import { encodeSeedText } from "../collab/seedEncoding";
 
 declare function acquireVsCodeApi(): {
   postMessage: (msg: unknown) => void;
@@ -47,116 +54,85 @@ type IncomingMessage = InitMessage | ExternalChangeMessage;
 
 const vscode = acquireVsCodeApi();
 
-let view: EditorView | null = null;
+let editor: Editor | null = null;
 let ydoc: Y.Doc | null = null;
 let provider: WebsocketProvider | null = null;
-// True while we are applying an external file change so the resulting Yjs
-// observe callback skips re-posting back to the extension (avoids a feedback
-// loop with vscode.workspace.onDidChangeTextDocument).
+// True while we are applying an external file change so the listener skips
+// re-posting back to the extension (avoids a feedback loop with
+// vscode.workspace.onDidChangeTextDocument).
 let suppressNextPost = false;
 
-function init(msg: InitMessage): void {
+async function init(msg: InitMessage): Promise<void> {
   ydoc = new Y.Doc();
-  const ytext = ydoc.getText("doc");
-
-  // The relay is the single source of truth for "first peer wins": it
-  // accepts an `init` query param the first time a room is created and
-  // ignores it for every later connection. Doing the seed client-side is
-  // racy when two peers connect simultaneously (both observe an empty doc,
-  // both insert, you get duplicated text).
-  const params: { [k: string]: string } = {};
-  if (msg.text.length > 0) params.init = encodeSeedText(msg.text);
   provider = new WebsocketProvider(msg.serverUrl, msg.room, ydoc, {
     connect: true,
-    params,
   });
-
   provider.awareness.setLocalStateField("user", msg.user);
 
-  const undoManager = new Y.UndoManager(ytext);
+  const root = document.body;
+  // Wrap the Milkdown surface in a fixed container so the nord theme's
+  // padding doesn't fight the iframe's edges.
+  const container = document.createElement("div");
+  container.className = "milkdown-host";
+  root.appendChild(container);
 
-  // We only create the EditorView once we know what content to start with.
-  // y-codemirror.next assumes CodeMirror's doc is in sync with the Y.Text
-  // when the binding attaches — if we constructed the EditorView eagerly
-  // with an empty doc and the relay's sync arrived a moment later, the
-  // binding could mishandle the diff. Two paths into createEditor():
-  //   1. provider syncs with the relay → ytext has the room's authoritative
-  //      content → start CodeMirror from that.
-  //   2. provider can't reach the relay within 1.5s → we seed Y.Text
-  //      locally from msg.text → start CodeMirror with the same.
-  // Either way, the user sees the file content.
-  let editorCreated = false;
-  const createEditor = (): void => {
-    if (editorCreated) return;
-    editorCreated = true;
-    // Give the extension visibility into what the webview is actually
-    // about to show. Tests use this to catch the empty-document bug end
-    // to end (otherwise we can only verify the relay was seeded, not that
-    // the webview ever received the seed).
-    vscode.postMessage({
-      type: "ready-with-content",
-      length: ytext.length,
-      synced,
-    });
-    const state = EditorState.create({
-      doc: ytext.toString(),
-      extensions: [
-        lineNumbers(),
-        highlightActiveLine(),
-        history(),
-        keymap.of([...defaultKeymap, ...historyKeymap]),
-        markdown(),
-        EditorView.theme(
-          {
-            "&": { height: "100vh", fontSize: "14px" },
-            ".cm-scroller": { fontFamily: "var(--vscode-editor-font-family, monospace)" },
-          },
-          { dark: true },
-        ),
-        yCollab(ytext, provider!.awareness, { undoManager }),
-      ],
-    });
-    view = new EditorView({ state, parent: document.body });
+  let lastSeenMarkdown = msg.text;
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
-    // Debounced extension-side persistence. CRDT sync is handled by the
-    // provider; this only keeps the on-disk TextDocument in step.
-    let saveTimer: ReturnType<typeof setTimeout> | null = null;
-    ytext.observe(() => {
-      if (suppressNextPost) {
-        suppressNextPost = false;
-        return;
-      }
-      if (saveTimer) clearTimeout(saveTimer);
-      saveTimer = setTimeout(() => {
-        vscode.postMessage({ type: "edit", text: ytext.toString() });
-      }, 250);
+  editor = await Editor.make()
+    .config((ctx) => {
+      ctx.set(rootCtx, container);
+      ctx.set(defaultValueCtx, msg.text);
+      ctx.get(listenerCtx).markdownUpdated((_ctx, markdown, prevMarkdown) => {
+        if (suppressNextPost) {
+          suppressNextPost = false;
+          return;
+        }
+        if (markdown === prevMarkdown) return;
+        lastSeenMarkdown = markdown;
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => {
+          vscode.postMessage({ type: "edit", text: markdown });
+        }, 250);
+      });
+    })
+    .config(nord)
+    .use(commonmark)
+    .use(history)
+    .use(listener)
+    .use(collab)
+    .create();
+
+  // Wire collab. The pattern is: bind the Y.Doc + awareness, then either
+  // apply the template (we are the first peer — populate from msg.text) or
+  // connect immediately (we joined an existing session — accept what the
+  // relay hands us). applyTemplate's default condition is "remote doc is
+  // an empty document", so it's a no-op for late joiners.
+  const startCollab = (synced: boolean): void => {
+    if (!editor) return;
+    editor.action((ctx) => {
+      const collabService = ctx.get(collabServiceCtx);
+      collabService
+        .bindDoc(ydoc!)
+        .setAwareness(provider!.awareness)
+        .applyTemplate(msg.text)
+        .connect();
     });
+    reportReady(synced);
   };
 
-  let synced = false;
-  provider.once("sync", (ok: boolean) => {
-    synced = ok;
-    createEditor();
-  });
-  if (msg.text.length > 0) {
-    setTimeout(() => {
-      if (!synced && ytext.length === 0) {
-        ydoc!.transact(() => ytext.insert(0, msg.text), "local-fallback");
-      }
-      createEditor();
-    }, 1500);
-  } else {
-    // Empty file — show an empty editor immediately rather than gating on
-    // sync (a non-existent seed would never arrive).
-    createEditor();
-  }
+  let started = false;
+  const startOnce = (synced: boolean): void => {
+    if (started) return;
+    started = true;
+    startCollab(synced);
+  };
+  provider.once("sync", (synced: boolean) => startOnce(synced));
+  setTimeout(() => startOnce(false), 1500);
 
-  // Expose connection state in a corner badge for debugging.
+  // Connection-state badge.
   const badge = document.createElement("div");
-  badge.style.cssText =
-    "position:fixed;bottom:6px;right:8px;font:11px var(--vscode-font-family);" +
-    "padding:2px 6px;border-radius:3px;background:var(--vscode-badge-background);" +
-    "color:var(--vscode-badge-foreground);opacity:0.7;pointer-events:none;z-index:1000";
+  badge.className = "collab-badge";
   document.body.appendChild(badge);
   const refreshBadge = (): void => {
     const peers = provider ? provider.awareness.getStates().size : 0;
@@ -166,27 +142,65 @@ function init(msg: InitMessage): void {
   refreshBadge();
   provider.on("status", refreshBadge);
   provider.awareness.on("change", refreshBadge);
+
+  // Touch lastSeenMarkdown so noUnusedLocals doesn't fire — we keep the
+  // ref so applyExternalChange can compare and skip no-op writes.
+  void lastSeenMarkdown;
+}
+
+function reportReady(synced: boolean): void {
+  if (!editor) return;
+  let length = 0;
+  let error: string | undefined;
+  try {
+    editor.action((ctx) => {
+      const serializer = ctx.get(serializerCtx);
+      const view = ctx.get(editorViewCtx);
+      length = serializer(view.state.doc).length;
+    });
+  } catch (e) {
+    error = (e as Error)?.message ?? String(e);
+  }
+  vscode.postMessage({ type: "ready-with-content", length, synced, error });
 }
 
 function applyExternalChange(text: string): void {
-  if (!ydoc || !view) return;
-  const ytext = ydoc.getText("doc");
-  if (ytext.toString() === text) return;
+  if (!editor) return;
   suppressNextPost = true;
-  ydoc.transact(() => {
-    ytext.delete(0, ytext.length);
-    ytext.insert(0, text);
-  }, "external");
+  // Re-seed the editor's content. The collab plugin sees this as a local
+  // change and broadcasts it through the relay to other peers, which is
+  // the right behaviour: external file edits should propagate.
+  editor.action((ctx) => {
+    ctx.set(defaultValueCtx, text);
+  });
+  // applyTemplate with `true` condition forces the replacement to take
+  // effect even when the doc is non-empty.
+  editor.action((ctx) => {
+    const collabService = ctx.get(collabServiceCtx);
+    collabService.applyTemplate(text, () => true);
+  });
 }
+
+function postError(stage: string, err: unknown): void {
+  const message = err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err);
+  vscode.postMessage({ type: "webview-error", stage, message });
+}
+
+window.addEventListener("error", (e) => postError("uncaught", e.error ?? e.message));
+window.addEventListener("unhandledrejection", (e) => postError("unhandled-rejection", e.reason));
 
 window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
   const msg = e.data;
   if (!msg || typeof msg !== "object") return;
   if (msg.type === "init") {
-    if (view) return;
-    init(msg);
+    if (editor) return;
+    init(msg).catch((err) => postError("init", err));
   } else if (msg.type === "externalChange") {
-    applyExternalChange(msg.text);
+    try {
+      applyExternalChange(msg.text);
+    } catch (err) {
+      postError("externalChange", err);
+    }
   }
 });
 

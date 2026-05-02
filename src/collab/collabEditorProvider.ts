@@ -25,18 +25,37 @@ interface ReadyWithContentMessage {
   type: "ready-with-content";
   length: number;
   synced: boolean;
+  error?: string;
 }
 
-type ClientMessage = EditMessage | ReadyMessage | ReadyWithContentMessage;
+interface WebviewErrorMessage {
+  type: "webview-error";
+  stage: string;
+  message: string;
+}
 
-// Test-only observability. The webview reports its post-init Y.Text length
-// (and whether the relay sync succeeded) via the `ready-with-content`
-// message. Tests can read this map to assert that the editor actually has
-// non-empty content for a given document — which catches the user-facing
-// "empty editor" bug that pure relay-side checks would miss.
+type ClientMessage =
+  | EditMessage
+  | ReadyMessage
+  | ReadyWithContentMessage
+  | WebviewErrorMessage;
+
+// Test-only observability. The webview reports its post-init content
+// length (and whether the relay sync succeeded) via the
+// `ready-with-content` message. Tests can read this map to assert that
+// the editor actually has non-empty content for a given document — which
+// catches the user-facing "empty editor" bug that pure relay-side checks
+// would miss.
 const lastReadyByUri = new Map<string, ReadyWithContentMessage>();
 export function _getLastReadyForTests(uri: vscode.Uri): ReadyWithContentMessage | undefined {
   return lastReadyByUri.get(uri.toString());
+}
+
+const lastWebviewErrorByUri = new Map<string, WebviewErrorMessage>();
+export function _getLastWebviewErrorForTests(
+  uri: vscode.Uri,
+): WebviewErrorMessage | undefined {
+  return lastWebviewErrorByUri.get(uri.toString());
 }
 
 export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
@@ -119,7 +138,15 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       } else if (msg.type === "ready-with-content") {
         lastReadyByUri.set(document.uri.toString(), msg);
         this.output.appendLine(
-          `CollabEditor: webview ready for ${document.uri.fsPath} — content length=${msg.length}, synced=${msg.synced}`,
+          `CollabEditor: webview ready for ${document.uri.fsPath} — content length=${msg.length}, synced=${msg.synced}${msg.error ? `, error=${msg.error}` : ""}`,
+        );
+      } else if (msg.type === "webview-error") {
+        // Surface webview-side failures (Milkdown init errors, ProseMirror
+        // schema mismatches, etc.) into the extension's output channel so
+        // they're visible without opening the webview devtools.
+        lastWebviewErrorByUri.set(document.uri.toString(), msg);
+        this.output.appendLine(
+          `CollabEditor: webview error for ${document.uri.fsPath} (${msg.stage}): ${msg.message}`,
         );
       }
     });
@@ -143,12 +170,20 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     const scriptUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.extensionUri, "out", "webview", "client.js"),
     );
+    const styleUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, "out", "webview", "client.css"),
+    );
     const nonce = crypto.randomBytes(16).toString("base64");
     const csp = [
       `default-src 'none'`,
+      // Milkdown / ProseMirror inject some inline `style` attributes
+      // (e.g. for cursors). Allow them via 'unsafe-inline' under
+      // style-src; this is the same posture the existing preview panel
+      // uses for markdown-it rendered HTML.
       `style-src ${webview.cspSource} 'unsafe-inline'`,
       `script-src 'nonce-${nonce}'`,
       `font-src ${webview.cspSource}`,
+      `img-src ${webview.cspSource} data: https:`,
       // y-websocket needs ws:// to localhost or wherever the user pointed
       // markdownCollab.collab.serverUrl. Allow any ws/wss target — the user
       // controls the URL via settings.
@@ -160,10 +195,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
-<style>
-  html, body { margin: 0; padding: 0; height: 100%; background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); }
-  body { overflow: hidden; }
-</style>
+<link rel="stylesheet" href="${styleUri}">
 </head>
 <body>
 <script nonce="${nonce}" src="${scriptUri}"></script>

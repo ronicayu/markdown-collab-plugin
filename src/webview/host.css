@@ -1,0 +1,43 @@
+/* Layout container around the Milkdown surface. Keeps the editor padded
+   away from the iframe edges and gives the badge an anchor. */
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-font-family);
+}
+body {
+  overflow: hidden;
+}
+
+.milkdown-host {
+  height: 100vh;
+  overflow: auto;
+  padding: 16px 24px;
+}
+
+/* Soften the nord theme so it sits with the VSCode chrome. The theme ships
+   its own typography choices; we just adjust the page background and
+   ensure the editable region uses comfortable proportions. */
+.milkdown-host .milkdown {
+  background: transparent;
+  color: inherit;
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+.collab-badge {
+  position: fixed;
+  bottom: 6px;
+  right: 8px;
+  font: 11px var(--vscode-font-family);
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  opacity: 0.7;
+  pointer-events: none;
+  z-index: 1000;
+}
