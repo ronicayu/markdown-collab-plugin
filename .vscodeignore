@@ -15,7 +15,13 @@ node_modules/**
 !node_modules/uc.micro/**
 !node_modules/mermaid/package.json
 !node_modules/mermaid/dist/mermaid.min.js
+!node_modules/yjs/**
+!node_modules/y-protocols/**
+!node_modules/lib0/**
+!node_modules/isomorphic.js/**
+!node_modules/ws/**
 tsconfig.json
+tsconfig.webview.json
 vitest.config.ts
 .gitignore
 .github/**

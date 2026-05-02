@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.15.0 — 2026-05-02 (trial)
+
+### Added: experimental real-time collaborative editor (CodeMirror 6 + Yjs)
+
+Opt-in `CustomTextEditor` for `.md` files (priority `option`, so the default Markdown editor and the existing comment / preview UI are unchanged). Open via **Reopen Editor With… → Markdown Collab (real-time, experimental)** or the new `markdownCollab.openCollabEditor` command.
+
+- CodeMirror 6 + `y-codemirror.next` running inside a webview, bundled with esbuild (~592 KB minified).
+- A minimal `y-websocket`-compatible relay (HTTP + WebSocket + `y-protocols`) is embedded in the extension and started on activation at `ws://127.0.0.1:1234`. Multi-window collisions are detected: if port 1234 is already serving our relay (HTTP probe matches our signature), the new window reuses it.
+- Server-side seeding via `?init=<base64>` query param. The single-process relay accepts the first connection's seed text and ignores every later one — no first-peer race.
+- Awareness propagates remote cursors and user-name/color between peers.
+- New settings: `markdownCollab.collab.serverUrl`, `markdownCollab.collab.startLocalServer`, `markdownCollab.collab.userName`.
+
+Known gaps in this trial: relay state lives in memory only (on-disk file is the persistent source of truth); review comments are not yet synced through Yjs (they still flow through the existing `.md.json` sidecar); opening the same file in *both* the Monaco editor and the collab editor at once will fight over edits — pick one.
+
+13 new tests cover the relay sync, room isolation, seeding (incl. UTF-8), awareness, HTTP probe contract, and base64 round-trips.
+
 ## 0.14.3 — 2026-05-02
 
 ### Fixed: preview comments on selections that cross headings or blockquotes
