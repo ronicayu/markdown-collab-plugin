@@ -81,6 +81,105 @@ export function stripInlineMarkup(md: string): StripResult {
       continue;
     }
 
+    // Escape sequences: `\X` for any non-newline X. PM strips the
+    // backslash and renders X. Apply this before any other char
+    // handler so escaped markup chars (`\*`, `\[`, `\|`) don't
+    // accidentally trigger their respective strippers.
+    if (ch === "\\" && i + 1 < len && md[i + 1] !== "\n" && md[i + 1] !== "\r") {
+      push(md[i + 1]!, i + 1);
+      i += 2;
+      continue;
+    }
+
+    // Reference link definition line: `[label]: <url> ["title"]` at
+    // line start contributes nothing to textContent. Skip the whole
+    // line (including the trailing newline).
+    if (lineStart && isReferenceDefAt(md, i)) {
+      while (i < len && md[i] !== "\n" && md[i] !== "\r") i++;
+      continue;
+    }
+
+    // GFM table cell separator: a `|` between cells contributes
+    // nothing to textContent (cells are concatenated as siblings).
+    // We strip ALL `|` chars when not preceded by a backslash —
+    // table-cell pipes outside of tables are rare in markdown
+    // documents, and a literal `|` would be `\|` anyway.
+    if (ch === "|" && md[i - 1] !== "\\") {
+      i++;
+      continue;
+    }
+
+    // Fenced code block opener (``` or ~~~ at line start). PM stores
+    // the body as a code_block node whose textContent is the raw body
+    // (no fences, no language tag). We skip the opening fence line
+    // (including the language tag), keep the body lines exactly,
+    // and skip the closing fence line.
+    if (lineStart) {
+      const fence = readFenceAt(md, i);
+      if (fence) {
+        // Skip the opening fence line entirely.
+        let j = i;
+        while (j < len && md[j] !== "\n" && md[j] !== "\r") j++;
+        i = j;
+        if (md[i] === "\n" || md[i] === "\r") i++;
+        // Emit body lines verbatim until the closing fence.
+        while (i < len) {
+          // Detect closing fence: 3+ of the same char on a line, optionally indented.
+          let k = i;
+          while (k < len && (md[k] === " " || md[k] === "\t")) k++;
+          let runChar: string | null = null;
+          let runLen = 0;
+          while (k < len && (md[k] === fence.char)) {
+            runChar = md[k]!;
+            runLen++;
+            k++;
+          }
+          // After the fence run only whitespace + newline are allowed.
+          let onlyWsAfter = true;
+          let lineEnd = k;
+          while (lineEnd < len && md[lineEnd] !== "\n" && md[lineEnd] !== "\r") {
+            if (md[lineEnd] !== " " && md[lineEnd] !== "\t") {
+              onlyWsAfter = false;
+              break;
+            }
+            lineEnd++;
+          }
+          if (runChar === fence.char && runLen >= fence.len && onlyWsAfter) {
+            // Closing fence — skip to end of line.
+            i = lineEnd;
+            if (md[i] === "\n" || md[i] === "\r") i++;
+            lineStart = true;
+            break;
+          }
+          // Body line — emit chars until end of line (push through map),
+          // skip the newline.
+          while (i < len && md[i] !== "\n" && md[i] !== "\r") {
+            push(md[i]!, i);
+            i++;
+          }
+          if (md[i] === "\n" || md[i] === "\r") i++;
+        }
+        continue;
+      }
+    }
+
+    // Setext heading underline (line of only `=` or `-`, length >= 3,
+    // following a non-blank line). We're already at line start; the
+    // underline is consumed wholesale because PM consumes it as part
+    // of the heading node.
+    if (lineStart && isSetextUnderlineAt(md, i)) {
+      while (i < len && md[i] !== "\n" && md[i] !== "\r") i++;
+      continue;
+    }
+
+    // Horizontal rule (line of only `-`, `*`, or `_` with optional
+    // spaces between them, 3+ markers). PM emits an `<hr>` node which
+    // contributes nothing to textContent.
+    if (lineStart && isHorizontalRuleAt(md, i)) {
+      while (i < len && md[i] !== "\n" && md[i] !== "\r") i++;
+      continue;
+    }
+
     // At line start, eat block-level markdown markers. We loop because
     // a single line can carry several (e.g. `> > - text` for nested
     // blockquote + list).
@@ -120,6 +219,17 @@ export function stripInlineMarkup(md: string): StripResult {
         if ((c === "-" || c === "*" || c === "+") && md[i + 1] === " ") {
           i += 2;
           advanced = true;
+          // Task-list checkbox `[ ]` or `[x]` (case-insensitive) +
+          // space immediately after a list bullet. PM stores this as
+          // an attribute on the list_item, not as text content.
+          if (
+            md[i] === "[" &&
+            (md[i + 1] === " " || md[i + 1] === "x" || md[i + 1] === "X") &&
+            md[i + 2] === "]" &&
+            md[i + 3] === " "
+          ) {
+            i += 4;
+          }
           continue;
         }
         // Ordered list marker: digits followed by `.` or `)` and space.
@@ -135,6 +245,29 @@ export function stripInlineMarkup(md: string): StripResult {
       }
       lineStart = false;
       if (i >= len) continue;
+      // If the line-start handlers landed us on a newline (e.g.
+      // `> \n` — blockquote prefix on an otherwise-empty line) we
+      // MUST restart the outer-loop iteration so the newline check at
+      // the top fires again. Otherwise we'd fall through to inline
+      // handling and end up pushing the newline as a literal char.
+      if (md[i] === "\n" || md[i] === "\r") continue;
+      // After consuming line-start block markers, check whether the
+      // *remaining* line is a GFM table separator row (e.g. inside a
+      // blockquote: `> |---|---|---|` — the `> ` was just stripped,
+      // so we're now sitting at `|---|---|---|`). PM's table parser
+      // ignores separator rows entirely; the stripper must too,
+      // otherwise we'd push every `-` of the dashes literally.
+      if (isTableSeparatorRowAt(md, i)) {
+        while (i < len && md[i] !== "\n" && md[i] !== "\r") i++;
+        continue;
+      }
+      // The line-start handlers may have left us on a `|` that opens a
+      // table data row inside a blockquote (e.g. `> | Term | Meaning |`).
+      // The top-of-iteration `|` strip already fired for *this*
+      // iteration before line-start ran, so we need to re-check it
+      // here too — restart the loop so the strip + everything else
+      // runs cleanly against the post-line-start position.
+      if (md[i] === "|" && md[i - 1] !== "\\") continue;
       ch = md[i]!;
     }
 
@@ -155,6 +288,14 @@ export function stripInlineMarkup(md: string): StripResult {
       if (close) {
         emitLabelStripped(md, i + 1, close.labelEnd, push);
         i = close.parenEnd + 1;
+        continue;
+      }
+      // Reference-style link: `[label][ref]` or `[label][]`. Emit the
+      // label (between the first `[` and `]`) and skip the rest.
+      const refClose = matchReferenceLinkBrackets(md, i);
+      if (refClose) {
+        emitLabelStripped(md, i + 1, refClose.labelEnd, push);
+        i = refClose.refCloseEnd + 1;
         continue;
       }
     }
@@ -207,6 +348,154 @@ export function stripInlineMarkup(md: string): StripResult {
   // sentinel
   map.push(len);
   return { stripped: stripped.join(""), map };
+}
+
+// Find the matching `]` and `[refid]` brackets for a reference-style
+// link starting at `[label][ref]` or `[label][]`. Returns the position
+// of the inner `]` (label end) and the position of the closing `]` of
+// the ref bracket.
+function matchReferenceLinkBrackets(
+  md: string,
+  openIdx: number,
+): { labelEnd: number; refCloseEnd: number } | null {
+  let depth = 1;
+  let j = openIdx + 1;
+  while (j < md.length && depth > 0) {
+    const c = md[j];
+    if (c === "[") depth++;
+    else if (c === "]") {
+      depth--;
+      if (depth === 0) break;
+    } else if (c === "\\") {
+      j++;
+    }
+    j++;
+  }
+  if (depth !== 0) return null;
+  const labelEnd = j;
+  if (md[labelEnd + 1] !== "[") return null;
+  // Find matching `]` of the ref bracket.
+  let k = labelEnd + 2;
+  while (k < md.length && md[k] !== "]" && md[k] !== "\n") k++;
+  if (md[k] !== "]") return null;
+  return { labelEnd, refCloseEnd: k };
+}
+
+// Detect a reference-link definition line at md[i]: `[label]: url ...`
+// where url is a URL-like token.
+function isReferenceDefAt(md: string, i: number): boolean {
+  if (md[i] !== "[") return false;
+  // Find closing `]`.
+  let j = i + 1;
+  while (j < md.length && md[j] !== "]" && md[j] !== "\n") j++;
+  if (md[j] !== "]" || md[j + 1] !== ":") return false;
+  // Skip whitespace, expect a non-empty URL token.
+  let k = j + 2;
+  while (k < md.length && (md[k] === " " || md[k] === "\t")) k++;
+  if (k >= md.length || md[k] === "\n") return false;
+  return true;
+}
+
+// Detect a fenced-code-block opener at md[i]: line begins with 3+
+// backticks or 3+ tildes, optionally indented. Returns the fence char
+// and length so the caller can find the matching close.
+function readFenceAt(md: string, i: number): { char: string; len: number } | null {
+  // Allow up to 3 leading spaces.
+  let j = i;
+  let indent = 0;
+  while (j < md.length && md[j] === " " && indent < 3) {
+    j++;
+    indent++;
+  }
+  const ch = md[j];
+  if (ch !== "`" && ch !== "~") return null;
+  let n = 0;
+  while (j < md.length && md[j] === ch) {
+    n++;
+    j++;
+  }
+  if (n < 3) return null;
+  return { char: ch, len: n };
+}
+
+// Detect a Setext-style heading underline at md[i]: a line of only `=`
+// or `-` (length >= 3), optionally with trailing whitespace.
+function isSetextUnderlineAt(md: string, i: number): boolean {
+  let end = i;
+  while (end < md.length && md[end] !== "\n" && md[end] !== "\r") end++;
+  if (end - i < 3) return false;
+  // Skip leading spaces.
+  let j = i;
+  while (j < end && md[j] === " ") j++;
+  const c = md[j];
+  if (c !== "=" && c !== "-") return false;
+  let n = 0;
+  while (j < end && md[j] === c) {
+    j++;
+    n++;
+  }
+  if (n < 3) return false;
+  // Trailing whitespace only.
+  while (j < end) {
+    if (md[j] !== " " && md[j] !== "\t") return false;
+    j++;
+  }
+  return true;
+}
+
+// Detect a horizontal-rule line at md[i]: 3+ of `-`, `*`, or `_`
+// (all the same char), optionally interleaved with spaces. Examples:
+//   ---
+//   * * *
+//   _____
+function isHorizontalRuleAt(md: string, i: number): boolean {
+  let end = i;
+  while (end < md.length && md[end] !== "\n" && md[end] !== "\r") end++;
+  if (end - i < 3) return false;
+  // Find the first non-whitespace char to determine the marker.
+  let j = i;
+  while (j < end && md[j] === " ") j++;
+  const marker = md[j];
+  if (marker !== "-" && marker !== "*" && marker !== "_") return false;
+  let count = 0;
+  for (let k = i; k < end; k++) {
+    const c = md[k];
+    if (c === marker) count++;
+    else if (c !== " " && c !== "\t") return false;
+  }
+  return count >= 3;
+}
+
+// Detect whether the line starting at md[i] is a GFM table separator
+// row: contents are only `|`, `-`, `:`, and whitespace, with at least
+// three consecutive `-` somewhere. Examples:
+//   |---|---|---|
+//   | --- | :---: | ---: |
+//   |:--:|:---|---:|
+function isTableSeparatorRowAt(md: string, i: number): boolean {
+  // Find the line's end.
+  let end = i;
+  while (end < md.length && md[end] !== "\n" && md[end] !== "\r") end++;
+  if (end - i < 3) return false;
+  let dashRun = 0;
+  let maxDashRun = 0;
+  let sawAnyContent = false;
+  for (let j = i; j < end; j++) {
+    const c = md[j]!;
+    if (c === "-") {
+      dashRun++;
+      if (dashRun > maxDashRun) maxDashRun = dashRun;
+      sawAnyContent = true;
+    } else {
+      dashRun = 0;
+      if (c === "|" || c === ":" || c === " " || c === "\t") {
+        sawAnyContent = sawAnyContent || c === "|" || c === ":";
+      } else {
+        return false; // any other char rules it out
+      }
+    }
+  }
+  return sawAnyContent && maxDashRun >= 3;
 }
 
 // Emit the chars of a link label (the part between `[` and `]`) into the

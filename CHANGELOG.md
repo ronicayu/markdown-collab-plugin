@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.19.4 — 2026-05-03 (trial)
+
+### Fixed: highlight alignment for tables, blockquoted tables, fenced code, HR, Setext, references, escapes, task lists
+
+User test with a real document containing a blockquote-wrapped GFM table (the TradeNet flow map fixture) showed highlights still drifting after v0.19.3. Brainstormed every other markdown shape that PM's `doc.textContent` strips but the inline-only stripper kept; tested each explicitly; fixed the mismatches.
+
+Concretely the stripper now also strips / handles:
+
+- **GFM table cells** — `|` cell separators dropped (PM concatenates cells without separator).
+- **GFM table separator rows** — `|---|---|---|` drop entirely (PM consumes as schema).
+- **Tables nested inside blockquotes** — the `|` strip and separator-row check re-fire after the line-start `> ` is consumed.
+- **Fenced code blocks** — `\`\`\`lang … \`\`\`` and `~~~ … ~~~` opener/closer lines drop, body preserved.
+- **Setext heading underlines** — `=====` and `-----` lines drop.
+- **Horizontal rules** — `---`, `***`, `___` (with optional spaces between markers) drop.
+- **Reference-style links** — `[label][ref]` strips to `label`.
+- **Link reference definitions** — `[ref]: http://x.com` lines drop.
+- **Escape sequences** — `\*`, `\[`, `\\` strip the backslash, keep the next char.
+- **Task list checkboxes** — `- [ ]` and `- [x]` strip the `[ ]`/`[x]` after the bullet.
+- **Empty-blockquote-line edge case** — `> \n` no longer falls through to push the newline as text.
+
+Two new test files (~26 tests):
+- `userFixtureAlignment.test.ts` reproduces the user's exact reported document with blockquoted tables; asserts every realistic anchor resolves cleanly and the stripped output contains zero `|`, `\n`, or `---` leftovers.
+- `alignmentShapes.test.ts` enumerates every other markdown shape (HR / Setext / fenced / indented / reference link / reference def / escape / task list / nested blockquote / mixed) with an explicit "stripped output equals X" assertion. One test = one shape = one regression guard.
+
+### Test surface
+
+- Total: **41 integration + 441 unit = 482 passing** (+26 new alignment tests, no regressions).
+
 ## 0.19.3 — 2026-05-03 (trial)
 
 ### Fixed: anchor highlights landed on the wrong text in real documents
