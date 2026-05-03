@@ -100,12 +100,25 @@ export function stripInlineMarkup(md: string): StripResult {
     }
 
     // GFM table cell separator: a `|` between cells contributes
-    // nothing to textContent (cells are concatenated as siblings).
-    // We strip ALL `|` chars when not preceded by a backslash —
-    // table-cell pipes outside of tables are rare in markdown
-    // documents, and a literal `|` would be `\|` anyway.
+    // nothing to textContent (cells are concatenated as siblings),
+    // AND PM's table parser trims each cell's leading/trailing
+    // whitespace. We mirror both: drop the `|` itself, drop any
+    // following horizontal whitespace, and pop any trailing
+    // horizontal whitespace we already pushed (the previous cell's
+    // padding). Without the trim every table row contributes 2N+
+    // extra chars to the stripped string and the downstream PM-
+    // position mapper lands the highlight further down the doc by
+    // the accumulated drift.
     if (ch === "|" && md[i - 1] !== "\\") {
+      while (
+        stripped.length > 0 &&
+        (stripped[stripped.length - 1] === " " || stripped[stripped.length - 1] === "\t")
+      ) {
+        stripped.pop();
+        map.pop();
+      }
       i++;
+      while (i < len && (md[i] === " " || md[i] === "\t")) i++;
       continue;
     }
 

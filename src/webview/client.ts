@@ -153,6 +153,24 @@ let collapseToggleEl: HTMLButtonElement | null = null;
 
 let cachedMarkdown = "";
 
+// Selection captured at mousedown on the Add-Comment button(s). The
+// click handler that opens the composer reads from here first, falling
+// back to the editor's current selection. Without this, some Milkdown
+// plugin paths blur the editor on mousedown — between mousedown
+// (preventDefault) and click, the PM selection could already be
+// collapsed, so the FIRST click on Add-Comment opened an empty-
+// selection toast and the user had to click TWICE to land on the
+// composer. Capturing on mousedown sidesteps the race entirely.
+let pendingSelection: { from: number; to: number } | null = null;
+function captureCurrentSelection(): void {
+  if (!editor) return;
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    const sel = view.state.selection;
+    if (!sel.empty) pendingSelection = { from: sel.from, to: sel.to };
+  });
+}
+
 const HIGHLIGHT_PLUGIN_KEY = new PluginKey("mdc-anchor-highlight");
 
 async function init(msg: InitMessage): Promise<void> {
@@ -466,7 +484,17 @@ function attachToolbarHandlers(): void {
   // Toolbar buttons
   for (const btn of Array.from(sidebarEl.querySelectorAll<HTMLButtonElement>(".mdc-sidebar-toolbar [data-action]"))) {
     const action = btn.dataset.action;
-    btn.addEventListener("mousedown", (e) => e.preventDefault());
+    btn.addEventListener("mousedown", (e) => {
+      // preventDefault on mousedown stops the click from blurring the
+      // editor (which would clear the PM selection before our click
+      // handler runs). We ALSO snapshot the selection here as a
+      // belt-and-suspenders measure — some Milkdown plugin paths slip
+      // past the preventDefault and cause the SECOND click symptom
+      // (first click sees an empty selection and toasts; user clicks
+      // again with the still-collapsed selection and… still nothing).
+      e.preventDefault();
+      if (action === "add-comment") captureCurrentSelection();
+    });
     btn.addEventListener("click", (e) => {
       if (btn.disabled) return;
       if (action === "send-to-claude") {
@@ -880,7 +908,10 @@ function installAddCommentAffordance(): void {
     }
   });
 
-  button.addEventListener("mousedown", (e) => e.preventDefault());
+  button.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    captureCurrentSelection();
+  });
   button.addEventListener("click", () => {
     button.style.display = "none";
     openComposerForCurrentSelection();
@@ -892,14 +923,23 @@ function openComposerForCurrentSelection(): void {
   let anchor: import("../types").Anchor | null = null;
   let displayText = "";
   let failureReason = "";
+  // Prefer the mousedown-captured selection if present — see
+  // captureCurrentSelection's comment for why. Fall back to the
+  // editor's current selection otherwise (keyboard shortcut path).
+  const captured = pendingSelection;
+  pendingSelection = null;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     const serializer = ctx.get(serializerCtx);
-    const sel = view.state.selection;
-    if (sel.empty) {
+    const live = view.state.selection;
+    const useCaptured = captured && (live.empty || captured.from !== live.from || captured.to !== live.to);
+    const selFrom = useCaptured ? captured!.from : live.from;
+    const selTo = useCaptured ? captured!.to : live.to;
+    if (selFrom === selTo) {
       failureReason = "No text is selected. Highlight some text in the editor first.";
       return;
     }
+    const sel = { from: selFrom, to: selTo, empty: false };
     const renderedText = view.state.doc.textContent;
     let renderedSelStart = -1;
     let renderedSelEnd = -1;
