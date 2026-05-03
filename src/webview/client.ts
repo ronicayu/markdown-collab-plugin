@@ -26,7 +26,7 @@ import { Plugin, PluginKey } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
-import { buildAnchorFromSelection } from "../collab/anchorExtractor";
+import { buildAnchorWithDebug } from "../collab/anchorExtractor";
 
 declare function acquireVsCodeApi(): {
   postMessage: (msg: unknown) => void;
@@ -584,13 +584,34 @@ function openComposerForCurrentSelection(): void {
     });
     if (renderedSelStart < 0 || renderedSelEnd < 0) return;
     const md = serializer(view.state.doc);
-    anchor = buildAnchorFromSelection(renderedText, renderedSelStart, renderedSelEnd, md);
+    const result = buildAnchorWithDebug(renderedText, renderedSelStart, renderedSelEnd, md);
+    anchor = result.anchor;
     displayText = renderedText.slice(renderedSelStart, renderedSelEnd).trim();
+    if (!anchor) {
+      // Surface the diagnostic in the extension's output channel so
+      // we (and the user) can see WHY a selection in production isn't
+      // anchoring. The composer also toasts a shorter version below.
+      vscode.postMessage({
+        type: "webview-error",
+        stage: "add-comment-extract",
+        message: JSON.stringify({
+          renderedLen: renderedText.length,
+          mdLen: md.length,
+          renderedSel: [renderedSelStart, renderedSelEnd],
+          renderedSample: renderedText.slice(
+            Math.max(0, renderedSelStart - 20),
+            Math.min(renderedText.length, renderedSelEnd + 20),
+          ),
+          mdSample: md.slice(0, Math.min(md.length, 200)),
+          ...result.debug,
+        }),
+      });
+    }
   });
 
   if (!anchor) {
     showToast(
-      "Selection is too short or couldn't be located in the source. Try selecting at least 8 characters of contiguous text.",
+      `Couldn't anchor this selection (logged to "Markdown Collab" output channel). Try selecting plain text without crossing markup.`,
     );
     return;
   }

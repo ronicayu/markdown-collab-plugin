@@ -191,49 +191,104 @@ function matchLinkBrackets(
   return { labelEnd, parenEnd: k };
 }
 
+export interface BuildResult {
+  anchor: Anchor | null;
+  // Diagnostic info surfaced to the webview so we can see WHY a
+  // selection failed to anchor in production. Set on null returns.
+  debug: {
+    selectedTrimmed: string;
+    selectedNonWs: number;
+    strippedHits: number;
+    chosenStrategy:
+      | "strip-and-map"
+      | "rendered-fallback"
+      | "plain-fallback"
+      | "rejected-too-short"
+      | "rejected-not-found";
+  };
+}
+
 export function buildAnchorFromSelection(
   renderedText: string,
   selStart: number,
   selEnd: number,
   markdownSource: string,
 ): Anchor | null {
-  if (selStart < 0 || selEnd <= selStart) return null;
-  const selected = renderedText.slice(selStart, selEnd).trim();
-  if (nonWsLength(selected) < MIN_ANCHOR_NON_WS_CHARS) return null;
+  return buildAnchorWithDebug(renderedText, selStart, selEnd, markdownSource).anchor;
+}
 
-  const { stripped, map } = stripInlineMarkup(markdownSource);
-
-  // Find every occurrence of `selected` in the stripped source, then
-  // pick the one that best aligns with the user's selection position
-  // in the rendered editor. We use the same Nth-occurrence heuristic
-  // as before — the order of occurrences in stripped(markdown) almost
-  // always matches the order in the editor's rendered text.
-  const occurrencesInStripped = findAll(stripped, selected);
-  if (occurrencesInStripped.length === 0) {
-    return null;
+export function buildAnchorWithDebug(
+  renderedText: string,
+  selStart: number,
+  selEnd: number,
+  markdownSource: string,
+): BuildResult {
+  const debug: BuildResult["debug"] = {
+    selectedTrimmed: "",
+    selectedNonWs: 0,
+    strippedHits: 0,
+    chosenStrategy: "rejected-too-short",
+  };
+  if (selStart < 0 || selEnd <= selStart) {
+    return { anchor: null, debug };
   }
-  const renderedBefore = renderedText.slice(0, selStart);
-  const occurrenceIndex = countOccurrences(renderedBefore, selected);
-  const pickedStripped =
-    occurrencesInStripped[Math.min(occurrenceIndex, occurrencesInStripped.length - 1)]!;
+  const selected = renderedText.slice(selStart, selEnd).trim();
+  debug.selectedTrimmed = selected;
+  debug.selectedNonWs = nonWsLength(selected);
+  if (debug.selectedNonWs < MIN_ANCHOR_NON_WS_CHARS) {
+    debug.chosenStrategy = "rejected-too-short";
+    return { anchor: null, debug };
+  }
 
-  // Map stripped → markdown positions.
-  // mdEnd = (md pos of the last selected stripped char) + 1, NOT
-  // map[lastIdx + 1]. The latter equals "where the *next* char lives in
-  // markdown" — and when the next char sits past a stripped run, that
-  // pointer leaps over the run, sweeping closing markup chars (`]`,
-  // `(url)`, etc.) into the anchor text. Using map[last]+1 keeps the
-  // anchor exactly at the end of the user's selection in markdown.
-  const mdStart = map[pickedStripped]!;
-  const lastIdx = pickedStripped + selected.length - 1;
-  const mdEnd = map[lastIdx]! + 1;
-  const text = markdownSource.slice(mdStart, mdEnd);
-  const contextBefore = markdownSource.slice(
-    Math.max(0, mdStart - ANCHOR_CONTEXT_LEN),
-    mdStart,
-  );
-  const contextAfter = markdownSource.slice(mdEnd, mdEnd + ANCHOR_CONTEXT_LEN);
-  return { text, contextBefore, contextAfter };
+  // Strategy 1 — strip markdown markup with a position map and locate
+  // the rendered selection in the stripped string.
+  {
+    const { stripped, map } = stripInlineMarkup(markdownSource);
+    const occurrencesInStripped = findAll(stripped, selected);
+    debug.strippedHits = occurrencesInStripped.length;
+    if (occurrencesInStripped.length > 0) {
+      const renderedBefore = renderedText.slice(0, selStart);
+      const occurrenceIndex = countOccurrences(renderedBefore, selected);
+      const pickedStripped =
+        occurrencesInStripped[Math.min(occurrenceIndex, occurrencesInStripped.length - 1)]!;
+      const mdStart = map[pickedStripped]!;
+      const lastIdx = pickedStripped + selected.length - 1;
+      const mdEnd = map[lastIdx]! + 1;
+      const text = markdownSource.slice(mdStart, mdEnd);
+      const contextBefore = markdownSource.slice(
+        Math.max(0, mdStart - ANCHOR_CONTEXT_LEN),
+        mdStart,
+      );
+      const contextAfter = markdownSource.slice(mdEnd, mdEnd + ANCHOR_CONTEXT_LEN);
+      debug.chosenStrategy = "strip-and-map";
+      return { anchor: { text, contextBefore, contextAfter }, debug };
+    }
+  }
+
+  // Strategy 2 — fallback: store the rendered selection AS-IS with
+  // rendered surrounding text as context. The existing `anchor.resolve`
+  // helper has whitespace-normalisation and tolerant-separator
+  // fallbacks that can sometimes still locate this in the markdown
+  // source even though our strip approach didn't.
+  {
+    const renderedBefore = renderedText.slice(
+      Math.max(0, selStart - ANCHOR_CONTEXT_LEN),
+      selStart,
+    );
+    const renderedAfter = renderedText.slice(
+      selEnd,
+      Math.min(renderedText.length, selEnd + ANCHOR_CONTEXT_LEN),
+    );
+    debug.chosenStrategy = "rendered-fallback";
+    return {
+      anchor: {
+        text: selected,
+        contextBefore: renderedBefore,
+        contextAfter: renderedAfter,
+      },
+      debug,
+    };
+  }
 }
 
 function findAll(haystack: string, needle: string): number[] {

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.18.6 — 2026-05-03 (trial)
+
+### Added: rendered-text fallback strategy + diagnostic logging when anchor extraction can't lock on
+
+User report after 0.18.5: "I got the same issue." That suggests Milkdown's actual rendering of complex link / inline-code combinations differs from what the unit-test fixtures assume — the extractor's strip-and-map can fail to align in production for shapes I haven't seen. To make the editor *always* let you create a comment and to give us visibility into when alignment fails:
+
+- `buildAnchorWithDebug` now tries two strategies in sequence: (1) the precise strip-and-map; (2) a rendered-text fallback that stores the selection's plain text plus rendered context. Strategy 2 always returns *something* for selections ≥ 8 non-whitespace chars, so the comment is created even when the precise strategy can't lock on. The existing `anchor.resolve` helper has whitespace + tolerant-separator fallbacks of its own, so a Strategy-2 anchor can still resolve later if the surrounding markdown is reasonably stable.
+- When Strategy 1 falls through, the webview posts a `webview-error` with the rendered-text sample, markdown sample, and selection range. This shows up in the **Markdown Collab** output channel and lets us see exactly what Milkdown rendered vs what's in the source — without which I can't guess the failure mode from headless tests.
+
 ## 0.18.5 — 2026-05-03 (trial)
 
 ### Fixed: anchor extraction on inline-code link labels (the user's exact repro)
