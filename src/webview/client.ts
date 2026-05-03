@@ -355,24 +355,43 @@ function attachCommentHandlers(): void {
         if (action === "reply") openReplyComposer(card, id);
         else if (action === "resolve")
           vscode.postMessage({ type: "toggle-resolve-comment", commentId: id });
-        else if (action === "delete") {
-          if (confirmDeletion()) {
-            vscode.postMessage({ type: "delete-comment", commentId: id });
-          }
-        }
+        else if (action === "delete") openDeleteConfirm(card, id);
       });
     }
   }
 }
 
-function confirmDeletion(): boolean {
-  // window.confirm is available in webviews. We fall back to a single
-  // toast acknowledgement if for some reason it returns falsy without
-  // user interaction (some embeddings mock confirm() to false).
-  // eslint-disable-next-line no-alert
-  return window.confirm(
-    "Delete this comment thread? Replies are deleted with it. This cannot be undone.",
-  );
+function openDeleteConfirm(card: HTMLElement, commentId: string): void {
+  // VSCode webviews run in a sandboxed iframe where the native
+  // window.confirm() dialog is blocked silently — calling it returned
+  // false without ever showing UI, so an earlier "click delete → confirm
+  // → post message" flow always took the cancel branch and the comment
+  // was never deleted. Use an inline two-button affordance instead.
+  const slot = card.querySelector<HTMLElement>(".mdc-reply-slot");
+  if (!slot) return;
+  if (slot.querySelector(".mdc-delete-confirm")) {
+    slot.innerHTML = "";
+    return;
+  }
+  slot.innerHTML = `
+    <div class="mdc-delete-confirm" role="alertdialog" aria-label="Confirm delete">
+      <div class="mdc-delete-confirm-text">Delete this thread? Replies are deleted with it.</div>
+      <div class="mdc-delete-confirm-actions">
+        <button type="button" class="mdc-delete-confirm-cancel">Cancel</button>
+        <button type="button" class="mdc-delete-confirm-confirm">Delete</button>
+      </div>
+    </div>
+  `;
+  const cancel = slot.querySelector<HTMLButtonElement>(".mdc-delete-confirm-cancel")!;
+  const confirm = slot.querySelector<HTMLButtonElement>(".mdc-delete-confirm-confirm")!;
+  cancel.addEventListener("click", () => {
+    slot.innerHTML = "";
+  });
+  confirm.addEventListener("click", () => {
+    confirm.disabled = true;
+    confirm.textContent = "Deleting…";
+    vscode.postMessage({ type: "delete-comment", commentId });
+  });
 }
 
 function openReplyComposer(card: HTMLElement, commentId: string): void {

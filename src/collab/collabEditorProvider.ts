@@ -12,6 +12,7 @@ import {
   sidecarPathFor,
 } from "../sidecar";
 import type { Anchor, Comment } from "../types";
+import { classifyLink } from "./linkRouter";
 import { isExternalLinkSafe } from "./urlAllowlist";
 
 const VIEW_TYPE = "markdownCollab.collabEditor";
@@ -252,7 +253,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
           if (result.ok) await pushSidecar();
         })();
       } else if (msg.type === "open-link") {
-        void this.handleOpenLink(msg, panel);
+        void this.handleOpenLink(msg, panel, document);
       } else if (msg.type === "invoke-command") {
         void this.handleInvokeCommand(msg, document);
       }
@@ -318,91 +319,154 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     msg: ReplyCommentMessage,
     sidecarPath: string | null,
   ): Promise<{ type: "reply-comment-result"; ok: boolean; commentId: string; error?: string }> {
-    if (!sidecarPath) {
-      return { type: "reply-comment-result", ok: false, commentId: msg.commentId, error: "no sidecar path (file outside workspace?)" };
-    }
-    if (!msg.body || !msg.body.trim()) {
-      return { type: "reply-comment-result", ok: false, commentId: msg.commentId, error: "reply body is empty" };
-    }
-    try {
-      await addReplyToSidecar(sidecarPath, msg.commentId, {
-        body: msg.body,
-        author: "user",
-        createdAt: new Date().toISOString(),
-      });
-      return { type: "reply-comment-result", ok: true, commentId: msg.commentId };
-    } catch (e) {
-      return { type: "reply-comment-result", ok: false, commentId: msg.commentId, error: (e as Error).message };
-    }
+    return CollabEditorProvider.runReplyComment(sidecarPath, msg.commentId, msg.body);
   }
 
   private async handleToggleResolve(
     msg: ToggleResolveCommentMessage,
     sidecarPath: string | null,
   ): Promise<{ type: "toggle-resolve-result"; ok: boolean; commentId: string; resolved?: boolean; error?: string }> {
-    if (!sidecarPath) {
-      return { type: "toggle-resolve-result", ok: false, commentId: msg.commentId, error: "no sidecar path" };
-    }
-    try {
-      const loaded = await loadSidecar(sidecarPath);
-      if (!loaded) return { type: "toggle-resolve-result", ok: false, commentId: msg.commentId, error: "sidecar not found" };
-      const existing = loaded.sidecar.comments.find((c) => c.id === msg.commentId);
-      if (!existing) {
-        return { type: "toggle-resolve-result", ok: false, commentId: msg.commentId, error: "comment not found" };
-      }
-      const next = !existing.resolved;
-      await setResolvedInSidecar(sidecarPath, msg.commentId, next);
-      return { type: "toggle-resolve-result", ok: true, commentId: msg.commentId, resolved: next };
-    } catch (e) {
-      return { type: "toggle-resolve-result", ok: false, commentId: msg.commentId, error: (e as Error).message };
-    }
+    return CollabEditorProvider.runToggleResolve(sidecarPath, msg.commentId);
   }
 
   private async handleDeleteComment(
     msg: DeleteCommentMessage,
     sidecarPath: string | null,
   ): Promise<{ type: "delete-comment-result"; ok: boolean; commentId: string; error?: string }> {
+    return CollabEditorProvider.runDeleteComment(sidecarPath, msg.commentId);
+  }
+
+  // Static helpers — same logic as the message handlers above, but with
+  // no `vscode.WebviewPanel` / `vscode.TextDocument` dependency so tests
+  // can drive them directly. Each returns the exact payload that gets
+  // postMessage'd back to the webview, so tests can assert both the
+  // sidecar mutation AND the response shape the webview will see.
+
+  static async runReplyComment(
+    sidecarPath: string | null,
+    commentId: string,
+    body: string,
+  ): Promise<{ type: "reply-comment-result"; ok: boolean; commentId: string; error?: string }> {
     if (!sidecarPath) {
-      return { type: "delete-comment-result", ok: false, commentId: msg.commentId, error: "no sidecar path" };
+      return { type: "reply-comment-result", ok: false, commentId, error: "no sidecar path (file outside workspace?)" };
+    }
+    if (!body || !body.trim()) {
+      return { type: "reply-comment-result", ok: false, commentId, error: "reply body is empty" };
     }
     try {
-      await deleteCommentFromSidecar(sidecarPath, msg.commentId);
-      return { type: "delete-comment-result", ok: true, commentId: msg.commentId };
+      await addReplyToSidecar(sidecarPath, commentId, {
+        body,
+        author: "user",
+        createdAt: new Date().toISOString(),
+      });
+      return { type: "reply-comment-result", ok: true, commentId };
     } catch (e) {
-      return { type: "delete-comment-result", ok: false, commentId: msg.commentId, error: (e as Error).message };
+      return { type: "reply-comment-result", ok: false, commentId, error: (e as Error).message };
+    }
+  }
+
+  static async runToggleResolve(
+    sidecarPath: string | null,
+    commentId: string,
+  ): Promise<{ type: "toggle-resolve-result"; ok: boolean; commentId: string; resolved?: boolean; error?: string }> {
+    if (!sidecarPath) {
+      return { type: "toggle-resolve-result", ok: false, commentId, error: "no sidecar path" };
+    }
+    try {
+      const loaded = await loadSidecar(sidecarPath);
+      if (!loaded) return { type: "toggle-resolve-result", ok: false, commentId, error: "sidecar not found" };
+      const existing = loaded.sidecar.comments.find((c) => c.id === commentId);
+      if (!existing) {
+        return { type: "toggle-resolve-result", ok: false, commentId, error: "comment not found" };
+      }
+      const next = !existing.resolved;
+      await setResolvedInSidecar(sidecarPath, commentId, next);
+      return { type: "toggle-resolve-result", ok: true, commentId, resolved: next };
+    } catch (e) {
+      return { type: "toggle-resolve-result", ok: false, commentId, error: (e as Error).message };
+    }
+  }
+
+  static async runDeleteComment(
+    sidecarPath: string | null,
+    commentId: string,
+  ): Promise<{ type: "delete-comment-result"; ok: boolean; commentId: string; error?: string }> {
+    if (!sidecarPath) {
+      return { type: "delete-comment-result", ok: false, commentId, error: "no sidecar path" };
+    }
+    try {
+      const removed = await deleteCommentFromSidecar(sidecarPath, commentId);
+      if (!removed) {
+        return { type: "delete-comment-result", ok: false, commentId, error: "comment id not found" };
+      }
+      return { type: "delete-comment-result", ok: true, commentId };
+    } catch (e) {
+      return { type: "delete-comment-result", ok: false, commentId, error: (e as Error).message };
     }
   }
 
   private async handleOpenLink(
     msg: OpenLinkMessage,
     panel: vscode.WebviewPanel,
+    document: vscode.TextDocument,
   ): Promise<void> {
-    if (!isExternalLinkSafe(msg.href)) {
-      this.output.appendLine(
-        `CollabEditor: refused to open unsafe link ${JSON.stringify(msg.href)}`,
-      );
+    const roots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    const decision = classifyLink(msg.href, document.uri.fsPath, roots);
+    const post = (
+      ok: boolean,
+      reason?: string,
+    ): void => {
       void panel.webview.postMessage({
         type: "open-link-result",
-        ok: false,
+        ok,
         href: msg.href,
-        reason: "unsupported scheme — only http(s) and mailto are allowed",
+        reason,
       });
+    };
+
+    if (decision.kind === "blocked") {
+      this.output.appendLine(
+        `CollabEditor: refused to open link ${JSON.stringify(msg.href)} — ${decision.reason}`,
+      );
+      post(false, decision.reason);
       return;
     }
+    if (decision.kind === "fragment") {
+      // Anchor scrolling within the current doc isn't wired yet — log
+      // and tell the webview so it can choose to no-op silently.
+      post(false, `fragment '${decision.id}' navigation not implemented`);
+      return;
+    }
+    if (decision.kind === "external") {
+      // Defence-in-depth: the classifier already vetted the scheme but
+      // re-validate with the dedicated allowlist before handing the URL
+      // to vscode.env.openExternal.
+      if (!isExternalLinkSafe(msg.href)) {
+        this.output.appendLine(
+          `CollabEditor: external link failed allowlist re-check ${JSON.stringify(msg.href)}`,
+        );
+        post(false, "external link rejected by allowlist");
+        return;
+      }
+      try {
+        const opened = await vscode.env.openExternal(vscode.Uri.parse(msg.href));
+        post(opened);
+      } catch (e) {
+        post(false, (e as Error).message);
+      }
+      return;
+    }
+    // workspace
     try {
-      const opened = await vscode.env.openExternal(vscode.Uri.parse(msg.href));
-      void panel.webview.postMessage({
-        type: "open-link-result",
-        ok: opened,
-        href: msg.href,
-      });
+      const targetUri = vscode.Uri.file(decision.targetFsPath);
+      // vscode.open respects the user's editor associations, so a .md
+      // target opens with whatever the user picked as their default
+      // (the standard markdown editor unless they've made our collab
+      // editor the default).
+      await vscode.commands.executeCommand("vscode.open", targetUri);
+      post(true);
     } catch (e) {
-      void panel.webview.postMessage({
-        type: "open-link-result",
-        ok: false,
-        href: msg.href,
-        reason: (e as Error).message,
-      });
+      post(false, (e as Error).message);
     }
   }
 

@@ -368,6 +368,45 @@ body {
   border-color: transparent !important;
 }
 
+/* Inline delete-confirmation panel inside a comment card. We use this in
+   place of window.confirm() because VSCode webviews silently block the
+   native dialog. */
+.mdc-delete-confirm {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--vscode-inputValidation-warningBackground, rgba(255, 200, 0, 0.08));
+  border: 1px solid var(--vscode-inputValidation-warningBorder, rgba(255, 200, 0, 0.3));
+}
+.mdc-delete-confirm-text {
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.mdc-delete-confirm-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.mdc-delete-confirm-actions button {
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--vscode-input-border, rgba(255, 255, 255, 0.15));
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.mdc-delete-confirm-confirm {
+  background: var(--vscode-errorForeground, #d04848) !important;
+  color: var(--vscode-button-foreground, white) !important;
+  border-color: transparent !important;
+}
+.mdc-delete-confirm-confirm:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* Mermaid rendering */
 .mdc-mermaid {
   margin: 1em 0;

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.18.1 — 2026-05-03 (trial)
+
+### Fixed: deleting a comment did nothing
+
+The delete button called `window.confirm()` and only posted the delete message if the user pressed OK. VSCode webviews run in a sandboxed iframe where the native `confirm()` dialog is silently blocked — it never displays UI and returns false — so the cancel branch always fired and the comment never went away. Replaced with an inline two-button confirmation panel that appears in the comment card itself.
+
+Also strengthened the message handlers themselves: `runDeleteComment` now distinguishes "comment id not found" from "I/O failure" so the toast surfaces the actual reason. Eight new unit/integration tests directly call `runReplyComment` / `runToggleResolve` / `runDeleteComment` and assert both the sidecar mutation *and* the response payload — guarding against regressions where the webview UI silently masks a broken extension-side handler.
+
+### Added: links to other documents in the repo work
+
+A click on a relative-path link (`./other.md`, `../README.md`, `path/to/spec.md`) or a workspace-root-relative link (`/docs/api.md`) now opens the target file via `vscode.open`. URLs are routed through a new `linkRouter` module that classifies each href as `external` / `workspace` / `fragment` / `blocked`. Path traversal (`../../../etc/passwd`) is blocked by verifying the resolved path stays inside one of the workspace folders. Multi-folder workspaces pick the folder that contains the source document; loose docs (outside any workspace folder) refuse `/`-rooted links rather than guess.
+
+15 new unit tests in `linkRouter.test.ts` cover relative / parent / bareword / root-relative / fragment-only / fragment-on-workspace-link / control-chars / percent-encoding / multi-root / escape-blocked / external-allowlist parity.
+
+`#fragment`-only links are classified as `fragment` but currently no-op — within-document anchor scrolling is on the next-iteration list.
+
+### Test surface
+
+- Total: **39 integration + 264 unit = 303 passing**.
+- New: 8 handler tests, 15 linkRouter tests.
+
 ## 0.18.0 — 2026-05-03 (trial)
 
 ### Added: Mermaid diagrams render inline in the WYSIWYG editor
