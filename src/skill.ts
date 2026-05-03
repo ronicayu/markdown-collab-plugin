@@ -718,10 +718,11 @@ Procedure after editing any \`.md\` file in such a workspace:
 1. Compute the sidecar path: \`<workspace-root>/.markdown-collab/<rel-path-to-md>.json\`. If it does not exist, you are done — there are no anchors to maintain.
 2. Run \`mdc.mjs validate <sidecar>\` to surface any anchor whose stored \`text\` no longer occurs (or no longer occurs uniquely) in the new \`.md\` content.
 3. For each anchor flagged as broken or ambiguous:
-   - If the passage was **rewritten** — the same idea is still there in different words — update the anchor with \`mdc.mjs set-anchor\` to a verbatim substring of the new wording. Use the same Phase 3 step 2 rules below: ≥ 8 non-whitespace chars, must occur exactly once in the new file, plus surrounding context for disambiguation.
+   - If the passage was **rewritten** — the same idea is still there in different words — update the anchor SURGICALLY with the **Edit** tool. **Do NOT use \`mdc.mjs set-anchor\` and do NOT rewrite the whole sidecar JSON.** Locate the offending comment's \`"anchor": { ... }\` object inside the sidecar file by its \`"id"\` and replace ONLY the three string fields (\`text\`, \`contextBefore\`, \`contextAfter\`). Concretely: read the sidecar with the Read tool, find the unique \`"text": "<old anchor text>"\` line plus its sibling \`contextBefore\` / \`contextAfter\` lines, then issue separate Edit calls — one per field — with old\\_string set to the literal current line and new\\_string to the new value. Preserve indentation, quoting, trailing commas, and the surrounding JSON structure exactly.
+   - The new \`text\` must be a verbatim substring of the new \`.md\` content, ≥ 8 non-whitespace chars, and must occur exactly once after applying. Verify with a grep before committing the Edit.
    - If the passage was **deleted** — the comment's target is gone — leave the anchor untouched. The comment will surface as an orphan in the editor; the human resolves or deletes it.
    - If you are uncertain whether the passage was rewritten or deleted, leave the anchor untouched. Re-anchoring to nearby unrelated text creates a misleading link to content the comment was never about.
-4. Do NOT change \`comment.body\`, \`comment.replies\`, \`comment.resolved\`, or any other field while doing this maintenance pass — only \`anchor\` updates are permitted, and only when the criterion in step 3 is met.
+4. Do NOT change \`comment.body\`, \`comment.replies\`, \`comment.resolved\`, or any other field while doing this maintenance pass — only the three \`anchor.*\` strings of comments whose target was rewritten, and only via the Edit tool. The full-rewrite path (\`mdc.mjs set-anchor\`) is a churn-prone fallback only — it touches the whole file and races with concurrent writers (the webview, the standard editor) that may also be holding the sidecar open.
 
 This applies in addition to the comment-driven workflow below; do not skip it just because no review batch was active.
 
@@ -803,16 +804,20 @@ For each entry, in order:
 
 2. **Update the anchor** ONLY when you rewrote the anchored passage in place. If you DELETED the anchored passage (the comment said "remove this", "drop this section", "cut", etc.), leave the anchor untouched — the comment will correctly surface as an orphan in the UI, and the human can then resolve or delete it. Never re-anchor a deleted comment to neighbouring text; that produces a misleading link to content the comment was never about.
 
-   When you DID rewrite the passage, run:
-   \`\`\`
-   node ~/.claude/skills/vs-markdown-collab/mdc.mjs set-anchor <sidecar> <id> \\
-     --text "<verbatim substring of the new passage, ≥ 8 non-whitespace chars>" \\
-     --before "<up to 40 chars immediately before>" \\
-     --after  "<up to 40 chars immediately after>"
-   \`\`\`
-   The new \`text\` must quote the new wording of the same idea, not an unrelated nearby sentence. Verify the new anchor occurs exactly once in the new file before you set it.
+   When you DID rewrite the passage: update the anchor SURGICALLY using the **Edit** tool — not \`mdc.mjs set-anchor\`, which rewrites the entire sidecar file and races with concurrent writers (the webview, the standard editor's CommentController). Steps:
+   1. Read the sidecar JSON.
+   2. Locate the comment by its \`"id"\`.
+   3. Issue a separate Edit call for each of the three anchor strings (\`text\`, \`contextBefore\`, \`contextAfter\`) — \`old_string\` = the literal current line (including indentation, quoting, and trailing comma), \`new_string\` = the same shape with the new value.
+   4. Preserve the surrounding JSON structure exactly. Do not reformat, re-key, or change ordering.
+
+   Constraints on the new anchor:
+   - \`text\` must be a verbatim substring of the new passage, ≥ 8 non-whitespace chars.
+   - \`text\` must occur exactly once in the new file (use grep to verify before committing the Edit).
+   - \`text\` must quote the new wording of the same idea, not an unrelated nearby sentence.
 
    If you cannot honestly say the new anchor points to a rewritten version of the same idea, leave the anchor untouched and let the comment orphan.
+
+   The CLI fallback \`mdc.mjs set-anchor\` is permitted only when the Edit-based approach is blocked (e.g. a one-shot batch script with no Edit tool available). Default to Edit.
 
 3. **Append your reply:**
    \`\`\`

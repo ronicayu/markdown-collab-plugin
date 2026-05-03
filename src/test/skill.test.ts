@@ -39,6 +39,22 @@ describe("SKILL_CONTENT instructions", () => {
     expect(SKILL_CONTENT).toContain("leave the anchor untouched");
     expect(SKILL_CONTENT).toContain("misleading link to content the comment was never about");
   });
+
+  it("instructs surgical Edit-tool anchor updates rather than full sidecar rewrite", () => {
+    // Regression guard: the user explicitly asked that anchor updates
+    // be surgical via the Edit tool, NOT full-file rewrites via
+    // `mdc.mjs set-anchor`. The CLI path remains documented as a
+    // last-resort fallback only — concurrent writers (webview,
+    // standard editor's CommentController) hold the sidecar open and
+    // a full rewrite races with them.
+    expect(SKILL_CONTENT).toContain("update the anchor SURGICALLY with the **Edit** tool");
+    expect(SKILL_CONTENT).toContain("Do NOT use `mdc.mjs set-anchor` and do NOT rewrite the whole sidecar JSON");
+    expect(SKILL_CONTENT).toContain("Preserve indentation, quoting, trailing commas");
+    // CLI path must still be MENTIONED (as a fallback) so the legacy
+    // assertion above keeps passing, but the wording must frame it as
+    // a fallback, not the primary path.
+    expect(SKILL_CONTENT).toContain("churn-prone fallback");
+  });
 });
 
 describe("SKILL_REL_PATH", () => {

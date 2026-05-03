@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.20.3 — 2026-05-02 (trial)
+
+### Changed: anchor updates must be SURGICAL via the Edit tool, not full sidecar rewrites
+
+0.20.2 told Claude to maintain anchors after every `.md` edit, but it pointed at `mdc.mjs set-anchor` as the update mechanism. That CLI rewrites the entire sidecar JSON on every change, which:
+
+- Races with concurrent writers — the collab webview and the standard editor's `CommentController` may also be holding the sidecar open and writing back. A full-file rewrite stomps their pending edits.
+- Causes large, churn-y diffs even when only one anchor's three string fields changed.
+
+Updated both the "Anchor maintenance applies on EVERY .md edit" section and the Phase 3 in-comment workflow to instruct surgical Edit-tool updates instead:
+
+1. Read the sidecar.
+2. Locate the offending comment's `"anchor": { ... }` object by `"id"`.
+3. Issue separate Edit calls — one per field (`text`, `contextBefore`, `contextAfter`) — each replacing only the literal current line.
+4. Preserve indentation, quoting, trailing commas, surrounding JSON structure exactly.
+
+The CLI path (`mdc.mjs set-anchor`) is now framed as a churn-prone fallback, permitted only when the Edit-based approach is blocked (e.g. a one-shot batch script with no Edit tool available).
+
+A new unit test in `skill.test.ts` locks the surgical-Edit phrasing in so a future content edit can't silently regress to the full-rewrite path.
+
+### Test surface
+
+- 41 integration + 452 unit = **493 passing** (+1 skill instruction guard).
+
 ## 0.20.2 — 2026-05-03 (trial)
 
 ### Added: Claude skill instruction for anchor maintenance on every `.md` edit
