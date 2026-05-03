@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.20.2 — 2026-05-03 (trial)
+
+### Added: Claude skill instruction for anchor maintenance on every `.md` edit
+
+Existing skill content already covered "when addressing review comments, update anchors of rewritten passages." But the same rule applies when Claude edits a `.md` file for any other reason — refactoring a section, fixing a typo, rewording a sentence the user pointed at in chat — any of those can break a comment's anchor.
+
+Added a new top-level section to `SKILL.md` (`Anchor maintenance applies on EVERY .md edit, not just comment-driven ones`) that tells Claude to:
+1. Compute the sidecar path after any `.md` edit in a workspace with `.markdown-collab/`.
+2. Run `mdc.mjs validate <sidecar>` to surface broken or ambiguous anchors.
+3. For each flagged anchor: if the passage was rewritten, update via `mdc.mjs set-anchor` to a verbatim substring of the new wording; if deleted, leave it untouched (the comment orphans, the human resolves it).
+4. Touch only `anchor` — never `body`, `replies`, `resolved`, or any other field during this maintenance pass.
+
+The orphan-on-deletion rule is preserved alongside (re-anchoring to nearby unrelated text creates misleading links).
+
+Two new unit tests in `skill.test.ts` lock the instruction text in so a future content edit can't accidentally drop it.
+
+### Test surface
+
+- 41 integration + 451 unit = **492 passing** (+2 skill instruction guards).
+
 ## 0.20.1 — 2026-05-03 (trial)
 
 ### Fixed: floating "+ Add comment" button still required two clicks

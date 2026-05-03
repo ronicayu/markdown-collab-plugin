@@ -20,6 +20,27 @@ afterEach(async () => {
   await fs.rm(tmpHome, { recursive: true, force: true });
 });
 
+describe("SKILL_CONTENT instructions", () => {
+  it("instructs the agent to maintain anchors after ANY .md edit, not just comment-driven ones", () => {
+    // Regression guard for the user-requested instruction added so the
+    // skill explicitly tells Claude: when you edit any .md file in a
+    // workspace that has a .markdown-collab/ sidecar dir, after the
+    // edit reconcile the sidecar's anchors to match the new content.
+    expect(SKILL_CONTENT).toContain("Anchor maintenance applies on EVERY");
+    expect(SKILL_CONTENT).toContain("for any reason, not only when addressing review comments");
+    expect(SKILL_CONTENT).toContain("mdc.mjs validate <sidecar>");
+    expect(SKILL_CONTENT).toContain("mdc.mjs set-anchor");
+  });
+
+  it("preserves the orphan-on-deletion rule alongside the new instruction", () => {
+    // The new section must NOT override the existing rule that a
+    // deleted passage's comment is left to orphan, never re-anchored
+    // to nearby unrelated text.
+    expect(SKILL_CONTENT).toContain("leave the anchor untouched");
+    expect(SKILL_CONTENT).toContain("misleading link to content the comment was never about");
+  });
+});
+
 describe("SKILL_REL_PATH", () => {
   it("points to the vs-markdown-collab skill under .claude/skills", () => {
     expect(SKILL_REL_PATH).toBe(".claude/skills/vs-markdown-collab/SKILL.md");

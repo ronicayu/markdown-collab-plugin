@@ -709,6 +709,22 @@ Invoke when:
 - The user references a specific comment thread or quote and asks you to apply / respond.
 - The user asks you to "watch for review batches" or to wait for the VS Code "Send to Claude" button (use the channel watch loop or MCP channel mode below).
 
+## Anchor maintenance applies on EVERY \`.md\` edit, not just comment-driven ones
+
+Whenever you modify a \`.md\` file in a workspace that has a \`.markdown-collab/\` directory — for any reason, not only when addressing review comments — you MUST also reconcile the file's sidecar after the edit. Reword a sentence the user pointed at in chat, refactor a section heading, fix a typo: any of these can break an existing comment's anchor.
+
+Procedure after editing any \`.md\` file in such a workspace:
+
+1. Compute the sidecar path: \`<workspace-root>/.markdown-collab/<rel-path-to-md>.json\`. If it does not exist, you are done — there are no anchors to maintain.
+2. Run \`mdc.mjs validate <sidecar>\` to surface any anchor whose stored \`text\` no longer occurs (or no longer occurs uniquely) in the new \`.md\` content.
+3. For each anchor flagged as broken or ambiguous:
+   - If the passage was **rewritten** — the same idea is still there in different words — update the anchor with \`mdc.mjs set-anchor\` to a verbatim substring of the new wording. Use the same Phase 3 step 2 rules below: ≥ 8 non-whitespace chars, must occur exactly once in the new file, plus surrounding context for disambiguation.
+   - If the passage was **deleted** — the comment's target is gone — leave the anchor untouched. The comment will surface as an orphan in the editor; the human resolves or deletes it.
+   - If you are uncertain whether the passage was rewritten or deleted, leave the anchor untouched. Re-anchoring to nearby unrelated text creates a misleading link to content the comment was never about.
+4. Do NOT change \`comment.body\`, \`comment.replies\`, \`comment.resolved\`, or any other field while doing this maintenance pass — only \`anchor\` updates are permitted, and only when the criterion in step 3 is met.
+
+This applies in addition to the comment-driven workflow below; do not skip it just because no review batch was active.
+
 ## MCP channel mode (preferred when supported)
 
 Claude Code v2.1.80+ supports first-party MCP channels: events arrive natively as \`<channel source="markdown-collab" file="..." count="N" id="evt_…">\` tags in your context with no streaming-tool dependency.
