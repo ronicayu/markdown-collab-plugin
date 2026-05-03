@@ -33,7 +33,7 @@ function nonWsLength(s: string): number {
   return n;
 }
 
-interface StripResult {
+export interface StripResult {
   stripped: string;
   // map[i] = position in the *original* markdown that produced
   // stripped[i]. map.length === stripped.length + 1 (sentinel end).
@@ -52,7 +52,7 @@ interface StripResult {
  * because it sits at line start and the selection rarely starts on
  * those characters.
  */
-function stripInlineMarkup(md: string): StripResult {
+export function stripInlineMarkup(md: string): StripResult {
   const stripped: string[] = [];
   const map: number[] = [];
   let i = 0;

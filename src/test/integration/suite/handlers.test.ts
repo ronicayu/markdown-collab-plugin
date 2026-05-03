@@ -88,7 +88,49 @@ suite("CollabEditorProvider message handlers (direct)", () => {
   });
 
   // -------------------------------------------------------------------
-  // reply
+  // author propagation
+  // -------------------------------------------------------------------
+  test("reply: stores the author argument the webview sends, not a hardcoded 'user'", async () => {
+    const created = await addCommentToSidecar(sidecarPath, fileRel, {
+      anchor: { text: "the anchor target string for the handler tests", contextBefore: "", contextAfter: "" },
+      body: "host for author test",
+      author: "user",
+      createdAt: "2026-05-03T00:00:30.000Z",
+    });
+    const result = await CollabEditorProvider.runReplyComment(
+      sidecarPath,
+      created.id,
+      "from Alice",
+      "Alice",
+    );
+    assert.strictEqual(result.ok, true);
+    const loaded = (await loadSidecar(sidecarPath))!.sidecar;
+    const c = loaded.comments.find((x) => x.id === created.id)!;
+    const lastReply = c.replies[c.replies.length - 1]!;
+    assert.strictEqual(lastReply.author, "Alice");
+    assert.strictEqual(lastReply.body, "from Alice");
+  });
+
+  test("reply: falls back to a non-empty author when none is provided", async () => {
+    const created = await addCommentToSidecar(sidecarPath, fileRel, {
+      anchor: { text: "the anchor target string for the handler tests", contextBefore: "", contextAfter: "" },
+      body: "host for author fallback",
+      author: "user",
+      createdAt: "2026-05-03T00:00:31.000Z",
+    });
+    const result = await CollabEditorProvider.runReplyComment(sidecarPath, created.id, "no-author");
+    assert.strictEqual(result.ok, true);
+    const loaded = (await loadSidecar(sidecarPath))!.sidecar;
+    const c = loaded.comments.find((x) => x.id === created.id)!;
+    const lastReply = c.replies[c.replies.length - 1]!;
+    // Fallback resolves to OS username or "user" — never empty, never the
+    // literal string "undefined".
+    assert.ok(lastReply.author && lastReply.author.length > 0);
+    assert.notStrictEqual(lastReply.author, "undefined");
+  });
+
+  // -------------------------------------------------------------------
+  // reply (general)
   // -------------------------------------------------------------------
   test("reply: appends to the comment's replies", async () => {
     const created = await addCommentToSidecar(sidecarPath, fileRel, {

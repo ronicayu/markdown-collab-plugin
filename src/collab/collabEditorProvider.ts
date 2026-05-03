@@ -67,12 +67,15 @@ interface AddCommentMessage {
   type: "add-comment";
   anchor: { text: string; contextBefore: string; contextAfter: string };
   body: string;
+  /** Author name from the webview (defaults to extension's userName setting). */
+  author?: string;
 }
 
 interface ReplyCommentMessage {
   type: "reply-comment";
   commentId: string;
   body: string;
+  author?: string;
 }
 
 interface ToggleResolveCommentMessage {
@@ -236,7 +239,12 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         })();
       } else if (msg.type === "reply-comment") {
         void (async () => {
-          const result = await this.handleReplyComment(msg, sidecarPath);
+          const result = await CollabEditorProvider.runReplyComment(
+            sidecarPath,
+            msg.commentId,
+            msg.body,
+            msg.author,
+          );
           void panel.webview.postMessage(result);
           if (result.ok) await pushSidecar();
         })();
@@ -315,13 +323,6 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     return sidecarPathFor(uri.fsPath, folder.uri.fsPath);
   }
 
-  private async handleReplyComment(
-    msg: ReplyCommentMessage,
-    sidecarPath: string | null,
-  ): Promise<{ type: "reply-comment-result"; ok: boolean; commentId: string; error?: string }> {
-    return CollabEditorProvider.runReplyComment(sidecarPath, msg.commentId, msg.body);
-  }
-
   private async handleToggleResolve(
     msg: ToggleResolveCommentMessage,
     sidecarPath: string | null,
@@ -346,6 +347,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     sidecarPath: string | null,
     commentId: string,
     body: string,
+    author?: string,
   ): Promise<{ type: "reply-comment-result"; ok: boolean; commentId: string; error?: string }> {
     if (!sidecarPath) {
       return { type: "reply-comment-result", ok: false, commentId, error: "no sidecar path (file outside workspace?)" };
@@ -359,7 +361,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         commentId,
         {
           body,
-          author: "user",
+          author: (author && author.trim()) || resolveAuthorFromConfig(),
           createdAt: new Date().toISOString(),
         },
         { trackSelfWrite: false },
@@ -548,6 +550,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       };
     }
     const mdRel = path.relative(folder.uri.fsPath, document.uri.fsPath);
+    const author = (msg.author && msg.author.trim()) || resolveAuthorFromConfig();
     try {
       await addCommentToSidecar(
         sidecarPath,
@@ -555,7 +558,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         {
           anchor,
           body: msg.body,
-          author: "user",
+          author,
           createdAt: new Date().toISOString(),
         },
         { trackSelfWrite: false },
@@ -609,6 +612,16 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
 </body>
 </html>`;
   }
+}
+
+// Resolve the author name for new comments / replies when the webview
+// didn't send one (back-compat / programmatic callers). Prefers the
+// user's configured display name; falls back to the OS user.
+function resolveAuthorFromConfig(): string {
+  const config = vscode.workspace.getConfiguration("markdownCollab");
+  const configured = (config.get<string>("collab.userName", "") || "").trim();
+  if (configured) return configured;
+  return os.userInfo().username || "user";
 }
 
 function commentToSummary(c: Comment): CommentSummary {

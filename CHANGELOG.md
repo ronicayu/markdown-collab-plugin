@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.19.0 — 2026-05-03 (trial)
+
+### UX redesign of the collab editor
+
+A senior-UX-designer review of v0.18.7 surfaced 10 prioritised issues plus the user's own request for **highlighted commented passages + bidirectional click navigation**. This release lands all of them.
+
+#### P0 — correctness / data-integrity
+
+- **Real author names on add + reply.** The webview now sends `author` from `markdownCollab.collab.userName` (or the OS user as fallback). The extension's `add-comment` / `reply-comment` paths use it instead of the hardcoded `"user"` literal — threads are now distinguishable in multi-user reviews. Two new integration tests guard the propagation + the fallback.
+- **Per-reply timestamps.** New `relativeTime.ts` formatter (`just now` / `5m` / `3h` / `2d` / absolute `Aug 12`) is rendered next to every comment + reply author. 7 new unit tests.
+- **Connection-status banner.** Replaced the 0.7-opacity 11px corner badge with a prominent header banner (yellow "Reconnecting…" / red "Offline — your edits aren't syncing"). The corner badge is gone — the banner is unmissable.
+
+#### P1 — high-impact polish
+
+- **"Add comment" promoted, Claude actions demoted.** "Add comment" is the labelled primary button; "Copy prompt" + "Send to Claude" moved into a "…" overflow menu. Importance now matches the user's mental model.
+- **Filter resolved + collapsible sidebar.** The "X open · Y total" subtitle became a clickable chip — toggles "show only open". Sidebar can be collapsed via a toggle button (auto-shown at narrow widths).
+- **Editor follows the VSCode theme.** Nord's hardcoded dark blues are now overridden by `--vscode-editor-*` / `--vscode-textCodeBlock-*` tokens. Works on Light / High Contrast themes.
+- **Empty-state + rejection toast made actionable.** Empty state shows the keyboard shortcut prominently and explains the gutter-sync. Rejection toast says concrete cause (e.g. "Selection is too short. Pick at least 8 characters of contiguous text.") rather than the unhelpful "avoid markup".
+- **Anchor highlights + bidirectional navigation (and the user-requested feature).** New `anchorLocator.ts` module + ProseMirror Decoration plugin paint a soft yellow highlight on every commented passage. Click a highlight → sidebar scrolls to that comment, the card flashes. Click a card's anchor preview → editor scrolls to the highlight, which pulses. The locator uses the existing tolerant resolver instead of `indexOf`, so anchors that appear multiple times in the doc resolve to the right occurrence. 6 new unit tests.
+- **Responsive layout.** Below 720px: sidebar becomes a slide-in drawer with a toggle button. Below 480px: drawer takes the full width. The previous hardcoded `1fr 320px` collapsed the editor to ~30px in side-pane workflows.
+
+#### P2 — polish
+
+- **Social presence.** Avatar stack of named peers (colored initials, Yjs awareness `user.color`) in the sidebar header. Remote cursors get a name flag that uses the same color.
+
+### Test surface
+
+- 14 new unit tests (relativeTime: 7, anchorLocator: 6, anchorExtractor stripped export: 1).
+- 2 new integration tests for the author propagation path.
+- Total: **41 integration + 294 unit = 335 passing**.
+
 ## 0.18.7 — 2026-05-03 (trial)
 
 ### Fixed: comments added in the collab webview didn't show up in VSCode's gutter

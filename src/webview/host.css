@@ -1,29 +1,74 @@
-/* Layout: editor on the left, comment sidebar on the right. */
+/* ===========================================================
+   Markdown Collab webview — UX redesign (v0.19.0)
+   =========================================================== */
+
+:root {
+  /* A small spacing scale we apply consistently. */
+  --mdc-space-1: 4px;
+  --mdc-space-2: 8px;
+  --mdc-space-3: 12px;
+  --mdc-space-4: 16px;
+  --mdc-space-5: 24px;
+  --mdc-radius: 4px;
+  --mdc-sidebar-width: 360px;
+}
+
 html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  background: var(--vscode-editor-background);
-  color: var(--vscode-editor-foreground);
-  font-family: var(--vscode-font-family);
+  background: var(--vscode-editor-background, #1e1e1e);
+  color: var(--vscode-editor-foreground, #d4d4d4);
+  font-family: var(--vscode-font-family, system-ui, -apple-system, sans-serif);
+  font-size: 13px;
 }
-body {
-  overflow: hidden;
+body { overflow: hidden; }
+
+/* Override Nord theme colors to follow VSCode tokens — the nord theme
+   ships its own dark palette which fights light themes. */
+.milkdown.editor {
+  background: var(--vscode-editor-background) !important;
+  color: var(--vscode-editor-foreground) !important;
 }
+.milkdown a {
+  color: var(--vscode-textLink-foreground, #4e9eff) !important;
+}
+.milkdown blockquote {
+  border-left-color: var(--vscode-textBlockQuote-border, #555) !important;
+  color: var(--vscode-textBlockQuote-foreground, inherit) !important;
+}
+.milkdown code,
+.milkdown pre {
+  background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.12)) !important;
+  color: var(--vscode-editor-foreground) !important;
+}
+.milkdown table th,
+.milkdown table td {
+  border-color: var(--vscode-panel-border, rgba(127, 127, 127, 0.3)) !important;
+}
+
+/* ===========================================================
+   Layout
+   =========================================================== */
 
 .mdc-layout {
   display: grid;
-  grid-template-columns: 1fr 320px;
+  grid-template-columns: 1fr var(--mdc-sidebar-width);
   height: 100vh;
+}
+.mdc-layout--collapsed {
+  grid-template-columns: 1fr 0;
+}
+.mdc-layout--collapsed .mdc-sidebar {
+  display: none;
 }
 
 .mdc-editor-pane {
   height: 100vh;
   overflow: auto;
-  padding: 16px 24px;
-  border-right: 1px solid var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
+  padding: var(--mdc-space-4) var(--mdc-space-5);
+  border-right: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
 }
-
 .mdc-editor-pane .milkdown {
   background: transparent;
   color: inherit;
@@ -36,240 +81,132 @@ body {
   overflow-y: auto;
   background: var(--vscode-sideBar-background, var(--vscode-editor-background));
   color: var(--vscode-sideBar-foreground, inherit);
-  font-size: 13px;
   display: flex;
   flex-direction: column;
 }
 
-.mdc-sidebar-header {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
+.mdc-sidebar-toggle {
+  position: fixed;
+  top: var(--mdc-space-2);
+  right: calc(var(--mdc-sidebar-width) + var(--mdc-space-2));
+  z-index: 999;
+  display: none;
+  background: var(--vscode-button-secondaryBackground, rgba(127, 127, 127, 0.18));
+  color: var(--vscode-button-secondaryForeground, inherit);
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.25));
+  border-radius: var(--mdc-radius);
+  padding: 4px 6px;
+  cursor: pointer;
+}
+.mdc-layout--collapsed .mdc-sidebar-toggle {
+  right: var(--mdc-space-2);
+}
+.mdc-sidebar-toggle:hover {
+  background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.1));
 }
 
+/* ===========================================================
+   Connection banner
+   =========================================================== */
+
+.mdc-banner {
+  padding: 6px var(--mdc-space-3);
+  font-size: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
+}
+.mdc-banner--warn {
+  background: var(--vscode-inputValidation-warningBackground, rgba(255, 200, 0, 0.18));
+  color: var(--vscode-inputValidation-warningForeground, var(--vscode-editor-foreground));
+  border-bottom-color: var(--vscode-inputValidation-warningBorder, rgba(255, 200, 0, 0.4));
+}
+.mdc-banner--err {
+  background: var(--vscode-inputValidation-errorBackground, rgba(220, 60, 60, 0.18));
+  color: var(--vscode-inputValidation-errorForeground, var(--vscode-editor-foreground));
+  border-bottom-color: var(--vscode-inputValidation-errorBorder, rgba(220, 60, 60, 0.4));
+}
+
+/* ===========================================================
+   Sidebar header (title, filter chip, peer stack, toolbar)
+   =========================================================== */
+
+.mdc-sidebar-header {
+  padding: var(--mdc-space-3) var(--mdc-space-4);
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
+}
+.mdc-sidebar-header-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mdc-space-2);
+  align-items: center;
+  justify-content: space-between;
+}
+.mdc-sidebar-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .mdc-sidebar-title {
   font-weight: 600;
   font-size: 13px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  color: var(--vscode-sideBarTitle-foreground, var(--vscode-foreground));
 }
-
-.mdc-sidebar-subtitle {
-  margin-top: 2px;
+.mdc-filter-chip {
+  align-self: flex-start;
+  font: inherit;
   font-size: 11px;
-  opacity: 0.7;
-}
-
-.mdc-sidebar-empty {
-  padding: 16px;
-  font-size: 12px;
-  opacity: 0.7;
-  line-height: 1.5;
-}
-
-.mdc-sidebar-empty kbd {
-  background: var(--vscode-keybindingLabel-background, rgba(255, 255, 255, 0.1));
-  border: 1px solid var(--vscode-keybindingLabel-border, transparent);
-  padding: 1px 4px;
-  border-radius: 3px;
-  font-size: 11px;
-}
-
-.mdc-comment-list {
-  padding: 8px;
-}
-
-.mdc-comment {
-  padding: 10px 12px;
-  margin-bottom: 8px;
-  border-radius: 4px;
-  background: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+  background: transparent;
+  color: var(--vscode-foreground, inherit);
+  padding: 2px 8px;
+  border-radius: 999px;
   cursor: pointer;
-  transition: background-color 0.12s ease;
-}
-
-.mdc-comment:hover {
-  background: var(--vscode-list-activeSelectionBackground, rgba(255, 255, 255, 0.08));
-}
-
-.mdc-comment--resolved {
-  opacity: 0.55;
-}
-
-.mdc-comment-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 4px;
-  font-size: 11px;
-}
-
-.mdc-comment-author {
-  font-weight: 600;
-}
-
-.mdc-comment-meta {
-  opacity: 0.7;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.mdc-comment-anchor {
-  font-size: 11px;
-  font-style: italic;
-  border-left: 2px solid var(--vscode-textBlockQuote-border, #555);
-  padding-left: 6px;
-  margin-bottom: 6px;
   opacity: 0.85;
 }
-
-.mdc-comment-body {
-  white-space: pre-wrap;
-  line-height: 1.4;
+.mdc-filter-chip:hover { opacity: 1; }
+.mdc-filter-chip--active {
+  background: var(--vscode-badge-background, rgba(127, 127, 127, 0.3));
+  color: var(--vscode-badge-foreground, var(--vscode-foreground));
+  border-color: transparent;
 }
 
-.mdc-replies {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
+.mdc-peer-stack {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  margin-right: var(--mdc-space-2);
 }
-
-.mdc-reply {
-  font-size: 12px;
-  margin-bottom: 4px;
-}
-
-.mdc-reply-author {
+.mdc-peer-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
   font-weight: 600;
-  margin-right: 6px;
-  opacity: 0.85;
+  color: white;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+  border: 2px solid var(--vscode-sideBar-background, var(--vscode-editor-background));
+  margin-left: -6px;
 }
-
-/* Composer for new comments. Lives in a slot inside the sidebar header. */
-.mdc-composer-slot:empty {
-  display: none;
-}
-
-.mdc-composer {
-  padding: 12px;
-  background: var(--vscode-editor-background);
-  border-bottom: 1px solid var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
-}
-
-.mdc-composer-anchor {
-  font-size: 11px;
-  margin-bottom: 6px;
-  opacity: 0.8;
-  word-break: break-word;
-}
-
-.mdc-composer-label {
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-right: 4px;
-  opacity: 0.75;
-}
-
-.mdc-composer-input {
-  width: 100%;
-  box-sizing: border-box;
-  background: var(--vscode-input-background, transparent);
-  color: var(--vscode-input-foreground, inherit);
-  border: 1px solid var(--vscode-input-border, rgba(255, 255, 255, 0.15));
-  border-radius: 3px;
-  padding: 6px 8px;
-  font-family: inherit;
-  font-size: 13px;
-  resize: vertical;
-}
-
-.mdc-composer-actions {
-  margin-top: 8px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-.mdc-composer-actions button {
-  font-family: inherit;
-  font-size: 12px;
-  border: none;
-  border-radius: 3px;
-  padding: 4px 10px;
-  cursor: pointer;
-}
-
-.mdc-composer-cancel {
-  background: var(--vscode-button-secondaryBackground, transparent);
-  color: var(--vscode-button-secondaryForeground, inherit);
-  border: 1px solid var(--vscode-button-border, rgba(255, 255, 255, 0.1)) !important;
-}
-
-.mdc-composer-submit {
-  background: var(--vscode-button-background, #0e639c);
-  color: var(--vscode-button-foreground, white);
-}
-
-.mdc-composer-submit:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-/* Floating "Add comment" button anchored to the editor selection. */
-.mdc-add-comment-btn {
-  position: fixed;
-  z-index: 1000;
-  font-family: inherit;
-  font-size: 12px;
-  background: var(--vscode-button-background, #0e639c);
-  color: var(--vscode-button-foreground, white);
-  border: none;
-  border-radius: 3px;
-  padding: 4px 10px;
-  cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
-}
-
-/* Brief flash highlight when scrolling to a comment's anchor. */
-.mdc-flash {
-  animation: mdc-flash-bg 0.9s ease;
-}
-@keyframes mdc-flash-bg {
-  0% { background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 220, 0, 0.45)); }
-  100% { background-color: transparent; }
-}
-
-/* Toast notification (composer errors, etc.) */
-.mdc-toast {
-  position: fixed;
-  bottom: 30px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--vscode-notifications-background, #2d2d30);
-  color: var(--vscode-notifications-foreground, white);
-  border: 1px solid var(--vscode-notifications-border, rgba(255, 255, 255, 0.1));
-  padding: 8px 14px;
-  border-radius: 4px;
-  font-size: 12px;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-  z-index: 2000;
-}
-.mdc-toast--visible {
-  opacity: 1;
-}
-
-/* Comment toolbar / actions */
-.mdc-sidebar-header-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
+.mdc-peer-dot:first-child { margin-left: 0; }
+.mdc-peer-dot--more {
+  background: var(--vscode-badge-background, #555) !important;
+  color: var(--vscode-badge-foreground, white) !important;
+  text-shadow: none;
+  font-size: 9px;
 }
 
 .mdc-sidebar-toolbar {
   display: flex;
-  gap: 4px;
+  gap: var(--mdc-space-1);
+  align-items: center;
+  flex: 0 0 auto;
 }
 
 .mdc-icon-btn {
@@ -278,121 +215,318 @@ body {
   gap: 4px;
   background: transparent;
   color: inherit;
-  border: 1px solid var(--vscode-input-border, rgba(255, 255, 255, 0.15));
-  border-radius: 3px;
-  padding: 3px 8px;
-  font-family: inherit;
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+  border-radius: var(--mdc-radius);
+  padding: 4px 8px;
+  font: inherit;
   font-size: 12px;
   cursor: pointer;
   line-height: 1;
 }
 .mdc-icon-btn:hover {
-  background: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.06));
+  background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.1));
 }
 .mdc-icon-btn:disabled {
   opacity: 0.45;
   cursor: default;
 }
-.mdc-icon-btn--accent {
+.mdc-icon-btn--primary {
   background: var(--vscode-button-background, #0e639c);
   color: var(--vscode-button-foreground, white);
   border-color: transparent;
+  font-weight: 500;
 }
-.mdc-icon-btn--accent:hover {
+.mdc-icon-btn--primary:hover {
   background: var(--vscode-button-hoverBackground, #1177bb);
 }
 .mdc-icon-btn--small {
-  padding: 2px 5px;
+  padding: 3px 5px;
   font-size: 11px;
 }
-.mdc-icon-btn--danger {
+.mdc-icon-btn--danger:hover {
+  background: var(--vscode-inputValidation-errorBackground, rgba(220, 60, 60, 0.18));
   color: var(--vscode-errorForeground, #f48771);
 }
-.mdc-icon-btn-label {
+
+/* Overflow popup */
+.mdc-overflow-menu {
+  position: relative;
+}
+.mdc-overflow-popup {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  min-width: 180px;
+  background: var(--vscode-menu-background, var(--vscode-editor-background));
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border, rgba(127, 127, 127, 0.3)));
+  border-radius: var(--mdc-radius);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  z-index: 100;
+  padding: 4px 0;
+}
+.mdc-overflow-popup[hidden] { display: none; }
+.mdc-overflow-popup button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--mdc-space-2);
+  padding: 6px var(--mdc-space-3);
+  background: transparent;
+  color: inherit;
+  border: 0;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.mdc-overflow-popup button:hover {
+  background: var(--vscode-menu-selectionBackground, var(--vscode-list-activeSelectionBackground, rgba(127, 127, 127, 0.18)));
+  color: var(--vscode-menu-selectionForeground, var(--vscode-list-activeSelectionForeground, inherit));
+}
+.mdc-overflow-popup button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ===========================================================
+   Empty state
+   =========================================================== */
+
+.mdc-sidebar-empty {
+  padding: var(--mdc-space-4);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.mdc-sidebar-empty-title {
+  font-weight: 600;
+  margin-bottom: var(--mdc-space-2);
+  font-size: 13px;
+}
+.mdc-sidebar-empty-body { opacity: 0.85; }
+.mdc-sidebar-empty ul {
+  padding-left: var(--mdc-space-4);
+  margin: var(--mdc-space-2) 0;
+}
+.mdc-sidebar-empty li { margin-bottom: 4px; }
+.mdc-kbd {
+  display: inline-block;
+  background: var(--vscode-keybindingLabel-background, rgba(127, 127, 127, 0.15));
+  color: var(--vscode-keybindingLabel-foreground, inherit);
+  border: 1px solid var(--vscode-keybindingLabel-border, transparent);
+  border-bottom-width: 2px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: var(--vscode-editor-font-family, monospace);
   font-size: 11px;
+}
+
+/* ===========================================================
+   Comment list + cards
+   =========================================================== */
+
+.mdc-comment-list {
+  padding: var(--mdc-space-2);
+}
+.mdc-comment {
+  padding: var(--mdc-space-3);
+  margin-bottom: var(--mdc-space-2);
+  border-radius: var(--mdc-radius);
+  background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.05));
+  border: 1px solid transparent;
+  transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+.mdc-comment:hover {
+  border-color: var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+}
+.mdc-comment--resolved { opacity: 0.6; }
+.mdc-comment--flash {
+  animation: mdc-card-flash 1.2s ease;
+}
+@keyframes mdc-card-flash {
+  0% { background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 220, 0, 0.45)); }
+  100% { background-color: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.05)); }
 }
 
 .mdc-comment-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: var(--mdc-space-2);
+  margin-bottom: var(--mdc-space-2);
 }
 .mdc-comment-meta-left {
   display: flex;
-  gap: 6px;
+  gap: var(--mdc-space-2);
   align-items: baseline;
+  min-width: 0;
+}
+.mdc-comment-author {
+  font-weight: 600;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mdc-comment-time,
+.mdc-reply-time {
+  font-size: 11px;
+  opacity: 0.7;
+  white-space: nowrap;
 }
 .mdc-comment-actions {
   display: flex;
-  gap: 2px;
+  gap: var(--mdc-space-1);
+  opacity: 0.6;
+  transition: opacity 0.12s ease;
+}
+.mdc-comment:hover .mdc-comment-actions,
+.mdc-comment:focus-within .mdc-comment-actions { opacity: 1; }
+
+/* Anchor preview (inside the card) is now an explicit button — clicking
+   it scrolls the editor to the anchor. Visual cue: small arrow-style
+   left border + hover highlight. */
+.mdc-comment-anchor {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-size: 12px;
+  font-style: italic;
+  border: 0;
+  border-left: 3px solid var(--vscode-textBlockQuote-border, #555);
+  padding: 4px 0 4px var(--mdc-space-2);
+  margin-bottom: var(--mdc-space-2);
+  background: transparent;
+  color: inherit;
+  opacity: 0.85;
+  cursor: pointer;
+  border-radius: 0 var(--mdc-radius) var(--mdc-radius) 0;
+}
+.mdc-comment-anchor:hover {
+  background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.1));
+  opacity: 1;
 }
 
-/* Inline reply composer inside a comment card */
-.mdc-reply-composer {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
+.mdc-comment-body {
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
+
+.mdc-replies {
+  margin-top: var(--mdc-space-2);
+  padding-top: var(--mdc-space-2);
+  border-top: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.18));
+}
+.mdc-reply { margin-bottom: var(--mdc-space-2); }
+.mdc-reply:last-child { margin-bottom: 0; }
+.mdc-reply-meta {
+  display: flex;
+  gap: var(--mdc-space-2);
+  align-items: baseline;
+  margin-bottom: 2px;
+}
+.mdc-reply-author { font-weight: 600; font-size: 12px; }
+.mdc-reply-body { font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
+
+/* ===========================================================
+   Composer (new comment + reply + delete-confirm)
+   =========================================================== */
+
+.mdc-composer-slot:empty { display: none; }
+.mdc-composer {
+  padding: var(--mdc-space-3);
+  background: var(--vscode-editor-background);
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.25));
+}
+.mdc-composer-anchor {
+  font-size: 12px;
+  margin-bottom: var(--mdc-space-2);
+  word-break: break-word;
+  background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.06));
+  padding: 6px 8px;
+  border-radius: var(--mdc-radius);
+  border-left: 3px solid var(--vscode-textBlockQuote-border, #555);
+}
+.mdc-composer-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+  margin-right: var(--mdc-space-1);
+  opacity: 0.75;
+}
+.mdc-composer-input,
 .mdc-reply-input {
   width: 100%;
   box-sizing: border-box;
   background: var(--vscode-input-background, transparent);
   color: var(--vscode-input-foreground, inherit);
-  border: 1px solid var(--vscode-input-border, rgba(255, 255, 255, 0.15));
-  border-radius: 3px;
-  padding: 4px 6px;
-  font-family: inherit;
-  font-size: 12px;
+  border: 1px solid var(--vscode-input-border, rgba(127, 127, 127, 0.3));
+  border-radius: var(--mdc-radius);
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
   resize: vertical;
 }
+.mdc-composer-input:focus,
+.mdc-reply-input:focus {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 0;
+}
+.mdc-composer-actions,
 .mdc-reply-actions {
-  margin-top: 4px;
+  margin-top: var(--mdc-space-2);
   display: flex;
-  gap: 4px;
+  gap: var(--mdc-space-1);
   justify-content: flex-end;
 }
+.mdc-composer-actions button,
 .mdc-reply-actions button {
   font: inherit;
-  font-size: 11px;
-  padding: 3px 8px;
-  border-radius: 3px;
+  font-size: 12px;
+  border-radius: var(--mdc-radius);
+  padding: 4px 10px;
   cursor: pointer;
-  border: 1px solid var(--vscode-input-border, rgba(255, 255, 255, 0.15));
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
   background: var(--vscode-button-secondaryBackground, transparent);
   color: var(--vscode-button-secondaryForeground, inherit);
 }
+.mdc-composer-submit,
 .mdc-reply-submit {
   background: var(--vscode-button-background, #0e639c) !important;
   color: var(--vscode-button-foreground, white) !important;
   border-color: transparent !important;
 }
+.mdc-composer-submit:disabled,
+.mdc-reply-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 
-/* Inline delete-confirmation panel inside a comment card. We use this in
-   place of window.confirm() because VSCode webviews silently block the
-   native dialog. */
+.mdc-reply-composer {
+  margin-top: var(--mdc-space-2);
+  padding-top: var(--mdc-space-2);
+  border-top: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
+}
+
 .mdc-delete-confirm {
-  margin-top: 8px;
-  padding: 8px 10px;
-  border-radius: 4px;
-  background: var(--vscode-inputValidation-warningBackground, rgba(255, 200, 0, 0.08));
+  margin-top: var(--mdc-space-2);
+  padding: var(--mdc-space-2) var(--mdc-space-3);
+  border-radius: var(--mdc-radius);
+  background: var(--vscode-inputValidation-warningBackground, rgba(255, 200, 0, 0.1));
   border: 1px solid var(--vscode-inputValidation-warningBorder, rgba(255, 200, 0, 0.3));
 }
-.mdc-delete-confirm-text {
-  font-size: 12px;
-  margin-bottom: 6px;
-}
+.mdc-delete-confirm-text { font-size: 12px; margin-bottom: 6px; }
 .mdc-delete-confirm-actions {
   display: flex;
-  gap: 6px;
+  gap: var(--mdc-space-1);
   justify-content: flex-end;
 }
 .mdc-delete-confirm-actions button {
-  font: inherit;
-  font-size: 11px;
-  padding: 3px 8px;
-  border-radius: 3px;
-  border: 1px solid var(--vscode-input-border, rgba(255, 255, 255, 0.15));
+  font: inherit; font-size: 11px;
+  padding: 4px 10px;
+  border-radius: var(--mdc-radius);
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -402,17 +536,104 @@ body {
   color: var(--vscode-button-foreground, white) !important;
   border-color: transparent !important;
 }
-.mdc-delete-confirm-confirm:disabled {
-  opacity: 0.6;
-  cursor: default;
+.mdc-delete-confirm-confirm:disabled { opacity: 0.6; cursor: default; }
+
+/* ===========================================================
+   Floating add-comment button + toast
+   =========================================================== */
+
+.mdc-add-comment-btn {
+  position: fixed;
+  z-index: 1000;
+  font: inherit;
+  font-size: 12px;
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, white);
+  border: none;
+  border-radius: var(--mdc-radius);
+  padding: 4px 10px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+.mdc-add-comment-btn:hover {
+  background: var(--vscode-button-hoverBackground, #1177bb);
 }
 
-/* Mermaid rendering */
+.mdc-toast {
+  position: fixed;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--vscode-notifications-background, #2d2d30);
+  color: var(--vscode-notifications-foreground, white);
+  border: 1px solid var(--vscode-notifications-border, rgba(127, 127, 127, 0.25));
+  padding: 8px 14px;
+  border-radius: var(--mdc-radius);
+  font-size: 12px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 2000;
+  max-width: 80%;
+  text-align: center;
+}
+.mdc-toast--visible { opacity: 1; }
+
+/* ===========================================================
+   Anchor highlighting in editor + remote-cursor styling
+   =========================================================== */
+
+.mdc-anchor-highlight {
+  background: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 220, 0, 0.25));
+  border-bottom: 1px solid var(--vscode-editorInfo-foreground, rgba(0, 150, 255, 0.6));
+  cursor: pointer;
+  padding: 0 1px;
+  border-radius: 2px;
+  transition: background 0.12s ease;
+}
+.mdc-anchor-highlight:hover {
+  background: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 220, 0, 0.45));
+}
+.mdc-anchor-highlight--pulse {
+  animation: mdc-anchor-pulse 1s ease;
+}
+@keyframes mdc-anchor-pulse {
+  0% { background: var(--vscode-editor-findMatchBackground, rgba(255, 180, 0, 0.7)); }
+  100% { background: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 220, 0, 0.25)); }
+}
+
+/* y-prosemirror remote cursors. The yCollab plugin renders a vertical
+   bar with the user's color and a label tag — give the label a
+   readable background using the same color. */
+.ProseMirror .ProseMirror-yjs-cursor {
+  position: relative;
+  border-left: 2px solid;
+  margin-left: -1px;
+  margin-right: -1px;
+}
+.ProseMirror .ProseMirror-yjs-cursor > div {
+  position: absolute;
+  top: -1.4em;
+  left: -1px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: white;
+  padding: 1px 4px;
+  border-radius: 2px;
+  user-select: none;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+}
+
+/* ===========================================================
+   Mermaid widget
+   =========================================================== */
+
 .mdc-mermaid {
   margin: 1em 0;
-  background: var(--vscode-textBlockQuote-background, rgba(255, 255, 255, 0.04));
-  padding: 12px;
-  border-radius: 4px;
+  background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.06));
+  padding: var(--mdc-space-3);
+  border-radius: var(--mdc-radius);
 }
 .mdc-mermaid__render {
   display: flex;
@@ -422,30 +643,37 @@ body {
   max-width: 100%;
   height: auto;
 }
-.mdc-mermaid__src {
-  display: none;
-  margin: 0;
-  padding: 8px;
-  background: var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.2));
-  font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 12px;
-  white-space: pre-wrap;
-}
 .mdc-mermaid__error {
   color: var(--vscode-errorForeground, #f48771);
   font-size: 12px;
 }
 
-.collab-badge {
-  position: fixed;
-  bottom: 6px;
-  right: 8px;
-  font: 11px var(--vscode-font-family);
-  padding: 2px 6px;
-  border-radius: 3px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
-  opacity: 0.7;
-  pointer-events: none;
-  z-index: 1000;
+/* ===========================================================
+   Responsive — drawer below 720px, full overlay below 480px
+   =========================================================== */
+
+@media (max-width: 720px) {
+  :root { --mdc-sidebar-width: 320px; }
+  .mdc-layout {
+    grid-template-columns: 1fr 0;
+  }
+  .mdc-sidebar {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: var(--mdc-sidebar-width);
+    z-index: 50;
+    box-shadow: -4px 0 18px rgba(0, 0, 0, 0.25);
+    transform: translateX(0);
+    transition: transform 0.18s ease;
+  }
+  .mdc-layout--collapsed .mdc-sidebar {
+    display: flex;
+    transform: translateX(100%);
+  }
+  .mdc-sidebar-toggle { display: inline-flex; }
+}
+@media (max-width: 480px) {
+  :root { --mdc-sidebar-width: 100vw; }
 }
