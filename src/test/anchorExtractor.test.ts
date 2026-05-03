@@ -206,6 +206,76 @@ describe("buildAnchorFromSelection", () => {
     }
   });
 
+  // ----- The user's literal pasted text from v0.18.4 follow-up -----
+
+  describe("user's exact text repro", () => {
+    const markdown =
+      "> **Reliability caveat:** DRS and DDS documents describe intended behaviour at time of writing, not necessarily what was implemented. **Source code is the primary source of truth.** See [`[CORRECTIONS.md](http://CORRECTIONS.md)`](../../[CORRECTIONS.md](http://CORRECTIONS.md)) for confirmed corrections. Deprecated/obsolete items referenced below.";
+
+    // What Milkdown most likely renders inside the editor: the
+    // blockquote-marker and the bold-emphasis stars are removed, but
+    // the inline-code label of the outer link is preserved verbatim
+    // (code spans render their content literally), so the link's
+    // visible text reads `[CORRECTIONS.md](http://CORRECTIONS.md)`
+    // styled as code.
+    const renderedWithBrackets =
+      "Reliability caveat: DRS and DDS documents describe intended behaviour at time of writing, not necessarily what was implemented. Source code is the primary source of truth. See [CORRECTIONS.md](http://CORRECTIONS.md) for confirmed corrections. Deprecated/obsolete items referenced below.";
+
+    it("the sentence containing the link can be anchored with brackets visible", () => {
+      // User selects "See [CORRECTIONS.md](http://CORRECTIONS.md) for confirmed corrections."
+      const sel = "See [CORRECTIONS.md](http://CORRECTIONS.md) for confirmed corrections.";
+      const start = renderedWithBrackets.indexOf(sel);
+      expect(start).toBeGreaterThanOrEqual(0);
+      const end = start + sel.length;
+      let anchor: ReturnType<typeof buildAnchorFromSelection>;
+      expect(() => {
+        anchor = buildAnchorFromSelection(renderedWithBrackets, start, end, markdown);
+      }).not.toThrow();
+      expect(anchor!).not.toBeNull();
+      const resolved = resolve(markdown, anchor!);
+      expect(resolved).not.toBeNull();
+      // Anchor text must include the markdown source for that sentence,
+      // including the link markup.
+      expect(anchor!.text).toContain("See [`[CORRECTIONS.md]");
+      expect(anchor!.text).toContain("for confirmed corrections.");
+    });
+
+    it("a partial selection inside the link's code label still produces an anchor", () => {
+      // User selects only "[CORRECTIONS.md](http://CORRECTIONS.md)" — the entire
+      // visible code label of the outer link.
+      const sel = "[CORRECTIONS.md](http://CORRECTIONS.md)";
+      const start = renderedWithBrackets.indexOf(sel);
+      expect(start).toBeGreaterThanOrEqual(0);
+      const end = start + sel.length;
+      expect(() => buildAnchorFromSelection(renderedWithBrackets, start, end, markdown)).not.toThrow();
+    });
+
+    it("selecting `corrections. Deprecated` (straddles after the link) anchors cleanly", () => {
+      const sel = "corrections. Deprecated";
+      const start = renderedWithBrackets.indexOf(sel);
+      expect(start).toBeGreaterThanOrEqual(0);
+      const end = start + sel.length;
+      const anchor = buildAnchorFromSelection(renderedWithBrackets, start, end, markdown);
+      expect(anchor).not.toBeNull();
+      const resolved = resolve(markdown, anchor!);
+      expect(resolved).not.toBeNull();
+    });
+
+    it("selecting from `See` through `corrections.` (across the link) anchors cleanly", () => {
+      const sel = "See [CORRECTIONS.md](http://CORRECTIONS.md) for confirmed corrections.";
+      const start = renderedWithBrackets.indexOf(sel);
+      const end = start + sel.length;
+      const anchor = buildAnchorFromSelection(renderedWithBrackets, start, end, markdown);
+      expect(anchor).not.toBeNull();
+      const resolved = resolve(markdown, anchor!);
+      expect(resolved).not.toBeNull();
+      // Must locate the sentence inside the original markdown.
+      expect(markdown.slice(resolved!.start, resolved!.end)).toContain(
+        "for confirmed corrections.",
+      );
+    });
+  });
+
   it("anchors a phrase that appears multiple times by picking the right occurrence", () => {
     const rendered = "lorem ipsum lorem ipsum lorem ipsum end";
     const markdown = rendered;

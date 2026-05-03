@@ -73,12 +73,7 @@ function stripInlineMarkup(md: string): StripResult {
       // image — try to find matching closing `)` of the URL
       const close = matchLinkBrackets(md, i + 1);
       if (close) {
-        // emit alt text characters
-        const labelStart = i + 2; // after `![`
-        const labelEnd = close.labelEnd; // index of `]`
-        for (let j = labelStart; j < labelEnd; j++) {
-          push(md[j]!, j);
-        }
+        emitLabelStripped(md, i + 2, close.labelEnd, push);
         i = close.parenEnd + 1;
         continue;
       }
@@ -86,11 +81,7 @@ function stripInlineMarkup(md: string): StripResult {
     if (ch === "[") {
       const close = matchLinkBrackets(md, i);
       if (close) {
-        const labelStart = i + 1;
-        const labelEnd = close.labelEnd;
-        for (let j = labelStart; j < labelEnd; j++) {
-          push(md[j]!, j);
-        }
+        emitLabelStripped(md, i + 1, close.labelEnd, push);
         i = close.parenEnd + 1;
         continue;
       }
@@ -137,6 +128,28 @@ function stripInlineMarkup(md: string): StripResult {
   // sentinel
   map.push(len);
   return { stripped: stripped.join(""), map };
+}
+
+// Emit the chars of a link label (the part between `[` and `]`) into the
+// stripped output, also stripping inline-code wrappers and emphasis
+// markers WITHIN the label. Without this, link labels styled as inline
+// code — e.g. `` [`X.md`](url) `` — would push the literal backticks
+// into the stripped string, which the rendered editor text does not
+// contain. The mismatch makes the user's selection un-locatable.
+function emitLabelStripped(
+  md: string,
+  labelStart: number,
+  labelEnd: number,
+  push: (ch: string, originIdx: number) => void,
+): void {
+  for (let j = labelStart; j < labelEnd; j++) {
+    const c = md[j]!;
+    // Skip inline-code/emphasis wrapper chars within the label. We use
+    // a coarse skip rather than full pair-matching because labels are
+    // short and the rendered text won't contain these markers either.
+    if (c === "`" || c === "*" || c === "_" || c === "~") continue;
+    push(c, j);
+  }
 }
 
 function matchLinkBrackets(

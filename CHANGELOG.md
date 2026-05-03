@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.18.5 — 2026-05-03 (trial)
+
+### Fixed: anchor extraction on inline-code link labels (the user's exact repro)
+
+The user's exact reported markdown — `See [\`[CORRECTIONS.md](http://CORRECTIONS.md)\`](../../[CORRECTIONS.md](http://CORRECTIONS.md)) for confirmed corrections.` — has a link whose label is inline code containing more markdown. Selecting the surrounding sentence and clicking "Add comment" silently produced no anchor, so nothing happened.
+
+Root cause: the inline-markup stripper preserved backticks **inside link labels** (it only stripped backticks at the top level). Milkdown's renderer drops them, so the rendered editor text and the stripped markdown text disagreed on every char from the first backtick onward — every selection that crossed the link's label failed alignment and returned `null`.
+
+Fix: a new `emitLabelStripped` helper handles link-label content separately, dropping inline-code wrappers (` ` `, `*`, `_`, `~`) so the stripped string matches what the editor displays.
+
+Reproduced the exact failing markdown in 4 new unit tests covering: full-sentence selection across the link, partial selection inside the inline-code label, selection straddling after the link, and a sentence-spanning case.
+
+### Test surface
+
+- 16 anchor-extractor tests (+4 for the user's exact repro).
+- Total: **39 integration + 280 unit = 319 passing**.
+
 ## 0.18.4 — 2026-05-03 (trial)
 
 ### Fixed: reliable ways to add a comment when the floating button doesn't appear
