@@ -151,21 +151,40 @@ let collapseToggleEl: HTMLButtonElement | null = null;
 
 let cachedMarkdown = "";
 
-// Selection captured at mousedown on the Add-Comment button(s). The
-// click handler that opens the composer reads from here first, falling
-// back to the editor's current selection. Without this, some Milkdown
-// plugin paths blur the editor on mousedown — between mousedown
-// (preventDefault) and click, the PM selection could already be
-// collapsed, so the FIRST click on Add-Comment opened an empty-
-// selection toast and the user had to click TWICE to land on the
-// composer. Capturing on mousedown sidesteps the race entirely.
+// Selection-tracking for the Add-Comment buttons. The composer reads
+// from `live → pendingSelection → lastNonEmptySelection` in that order.
+//
+// Why three layers:
+//   - `live`: the editor's current selection at composer-open time. The
+//     happy path.
+//   - `pendingSelection`: snapshot taken on the button's `mousedown`
+//     so `preventDefault` failure (some Milkdown plugin paths) doesn't
+//     lose the user's intent.
+//   - `lastNonEmptySelection`: continuously kept in sync with the PM
+//     state via `updateLastNonEmptySelection` below. Required because
+//     the FLOATING button (position: fixed, outside the editor's DOM
+//     subtree) can blur the editor *before* its own mousedown fires —
+//     so even `pendingSelection` ends up empty. The lastNonEmpty
+//     cache holds whatever the user last meaningfully selected and is
+//     the final fallback that fixes the "double-click required" bug.
 let pendingSelection: { from: number; to: number } | null = null;
+let lastNonEmptySelection: { from: number; to: number } | null = null;
+
 function captureCurrentSelection(): void {
   if (!editor) return;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     const sel = view.state.selection;
     if (!sel.empty) pendingSelection = { from: sel.from, to: sel.to };
+  });
+}
+
+function updateLastNonEmptySelection(): void {
+  if (!editor) return;
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    const sel = view.state.selection;
+    if (!sel.empty) lastNonEmptySelection = { from: sel.from, to: sel.to };
   });
 }
 
@@ -985,11 +1004,20 @@ function installAddCommentAffordance(): void {
     }
   };
 
-  document.addEventListener("selectionchange", () => setTimeout(updateButton, 0));
-  document.addEventListener("mouseup", () => setTimeout(updateButton, 0));
+  // Refresh the floating button's position AND keep
+  // lastNonEmptySelection in lock-step with PM's state. Both run on
+  // every selection-affecting event so the composer can always reach
+  // for "the last non-empty selection the user made", regardless of
+  // any focus/blur weirdness between PM and the floating button.
+  const refresh = (): void => {
+    updateLastNonEmptySelection();
+    updateButton();
+  };
+  document.addEventListener("selectionchange", () => setTimeout(refresh, 0));
+  document.addEventListener("mouseup", () => setTimeout(refresh, 0));
   document.addEventListener("keyup", (e) => {
     if (e.shiftKey || ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) {
-      setTimeout(updateButton, 0);
+      setTimeout(refresh, 0);
     }
   });
 
@@ -1008,18 +1036,36 @@ function openComposerForCurrentSelection(): void {
   let anchor: import("../types").Anchor | null = null;
   let displayText = "";
   let failureReason = "";
-  // Prefer the mousedown-captured selection if present — see
-  // captureCurrentSelection's comment for why. Fall back to the
-  // editor's current selection otherwise (keyboard shortcut path).
+  // Three-layer selection lookup — see the comment block on
+  // pendingSelection / lastNonEmptySelection for why. Order:
+  //   1. live (PM's current selection at composer-open time)
+  //   2. pendingSelection (mousedown snapshot — close to live)
+  //   3. lastNonEmptySelection (the most recent non-empty user
+  //      selection, kept in sync via updateLastNonEmptySelection)
+  // The third layer is what fixes the "had to double-click the
+  // floating button" bug.
   const captured = pendingSelection;
   pendingSelection = null;
+  const recent = lastNonEmptySelection;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     const serializer = ctx.get(serializerCtx);
     const live = view.state.selection;
-    const useCaptured = captured && (live.empty || captured.from !== live.from || captured.to !== live.to);
-    const selFrom = useCaptured ? captured!.from : live.from;
-    const selTo = useCaptured ? captured!.to : live.to;
+    let selFrom: number;
+    let selTo: number;
+    if (!live.empty) {
+      selFrom = live.from;
+      selTo = live.to;
+    } else if (captured) {
+      selFrom = captured.from;
+      selTo = captured.to;
+    } else if (recent) {
+      selFrom = recent.from;
+      selTo = recent.to;
+    } else {
+      failureReason = "No text is selected. Highlight some text in the editor first.";
+      return;
+    }
     if (selFrom === selTo) {
       failureReason = "No text is selected. Highlight some text in the editor first.";
       return;

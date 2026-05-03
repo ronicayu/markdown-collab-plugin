@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.20.1 — 2026-05-03 (trial)
+
+### Fixed: floating "+ Add comment" button still required two clicks
+
+The mousedown-snapshot fix from 0.19.5 covered the sidebar-header button but not reliably the *floating* button. Floating button is `position: fixed` and lives outside the editor's DOM subtree; in some cases the editor blurs *before* the button's own `mousedown` fires, so even the snapshot came back empty.
+
+Fix: track a `lastNonEmptySelection` continuously via the existing `selectionchange / mouseup / keyup` listeners. The composer now consults selection in this order:
+
+1. PM's live selection at composer-open time
+2. The mousedown-captured pendingSelection (close-to-live)
+3. The continuously-tracked lastNonEmptySelection (the most recent meaningful selection — the new fallback that closes the floating-button race)
+
+This makes the floating button's first click reliably open the composer with the user's selection, regardless of any focus/blur reordering between PM and the floating button.
+
+### Test surface
+
+- 41 integration + 449 unit = **490 still passing**.
+
 ## 0.20.0 — 2026-05-03 (trial)
 
 ### Removed: dependency on the hand-rolled markdown stripper for both anchor write and read
