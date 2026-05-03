@@ -84,4 +84,83 @@ describe("mdRangeToRenderedRange", () => {
     const r = mdRangeToRenderedRange(7, 20, positionMap);
     expect(r).toBeNull();
   });
+
+  it("translates a range that starts at md position 0", () => {
+    const md = "abcdefghij";
+    const r = mdRangeToRenderedRange(0, 5, strip(md));
+    expect(r).toEqual({ start: 0, end: 5 });
+  });
+
+  it("translates a range that ends at md.length", () => {
+    const md = "abcdefghij";
+    const r = mdRangeToRenderedRange(5, md.length, strip(md));
+    expect(r).toEqual({ start: 5, end: 10 });
+  });
+
+  it("returns null when mdEnd === mdStart (zero-length range)", () => {
+    const md = "abcdef";
+    expect(mdRangeToRenderedRange(2, 2, strip(md))).toBeNull();
+  });
+
+  it("returns null for an empty source", () => {
+    expect(mdRangeToRenderedRange(0, 0, strip(""))).toBeNull();
+  });
+
+  it("translates correctly across multiple stripped runs back-to-back", () => {
+    const md = "x **A** *B* z";
+    const positionMap = strip(md);
+    // stripped = "x A B z"
+    expect(positionMap.stripped).toBe("x A B z");
+    // Range covering "A B" → stripped positions 2..5
+    // Reverse to md positions: A is at md 4, B is at md 9
+    // Range covering A-to-B in md = [4, 10) (just past 'B' at md 9)
+    const r = mdRangeToRenderedRange(4, 10, positionMap);
+    expect(r).not.toBeNull();
+    expect(positionMap.stripped.slice(r!.start, r!.end)).toBe("A B");
+  });
+});
+
+describe("locateAnchorInRendered — additional scenarios", () => {
+  it("locates an anchor immediately at the start of the doc", () => {
+    const md = "Foo bar baz, this is the second sentence.";
+    const r = locateAnchorInRendered(
+      { text: "Foo bar baz", contextBefore: "", contextAfter: "," },
+      md,
+      strip(md),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.start).toBe(0);
+  });
+
+  it("locates an anchor at the very end of the doc", () => {
+    const md = "Beginning, then the final clause string here";
+    const r = locateAnchorInRendered(
+      { text: "the final clause string here", contextBefore: "then ", contextAfter: "" },
+      md,
+      strip(md),
+    );
+    expect(r).not.toBeNull();
+    expect(md.slice(r!.start, r!.end)).toBe("the final clause string here");
+  });
+
+  it("locates an anchor inside a heading (block-level prefix is preserved)", () => {
+    const md = "# Heading title that is long enough\n\nBody.";
+    const r = locateAnchorInRendered(
+      { text: "Heading title that is long", contextBefore: "# ", contextAfter: " enough" },
+      md,
+      strip(md),
+    );
+    expect(r).not.toBeNull();
+    expect(md.slice(r!.start, r!.end)).toBe("Heading title that is long");
+  });
+
+  it("returns null when the anchor text doesn't appear at all", () => {
+    const md = "Some unrelated content.";
+    const r = locateAnchorInRendered(
+      { text: "definitely not in there", contextBefore: "", contextAfter: "" },
+      md,
+      strip(md),
+    );
+    expect(r).toBeNull();
+  });
 });

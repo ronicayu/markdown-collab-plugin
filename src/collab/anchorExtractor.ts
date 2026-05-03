@@ -105,13 +105,20 @@ export function stripInlineMarkup(md: string): StripResult {
     if (ch === "*" || ch === "_" || ch === "~" || ch === "`") {
       // Detect doubled marker (**, __, ~~) first.
       if (md[i + 1] === ch) {
-        // Look for matching `chch` later in the same paragraph.
         const close = md.indexOf(ch + ch, i + 2);
         if (close > 0 && close - (i + 2) < 200) {
           for (let j = i + 2; j < close; j++) push(md[j]!, j);
           i = close + 2;
           continue;
         }
+        // Doubled marker with no matching close — push both literal.
+        // CRITICAL: do NOT fall through to the single-marker branch,
+        // which would happily match the second `*` of the unclosed
+        // pair as the close and strip them both.
+        push(ch, i);
+        push(ch, i + 1);
+        i += 2;
+        continue;
       }
       // Single marker.
       const close = md.indexOf(ch, i + 1);

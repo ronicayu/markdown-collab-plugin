@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.19.2 — 2026-05-03 (trial)
+
+### Fixed: unclosed `**` was silently eaten by the inline stripper
+
+Found by exhaustive branch coverage: when a markdown source contains an unclosed bold marker like `a **b c`, the stripper's doubled-marker branch failed to find a matching `**` close → fell through to the single-marker branch → which happily matched the second `*` of the unclosed pair as a "close" → produced `a b c` instead of leaving the literal text alone. That misalignment cascaded into wrong anchor positions and wrong highlights for any selection in such a document.
+
+Fix: when the doubled-marker branch can't find a matching close, push both literal `*` chars and bail — never fall through to the single-marker branch.
+
+### Added: exhaustive branch coverage across the highlight chain
+
+74 new unit tests:
+
+- **`stripInlineMarkup.test.ts` (new, 27 tests)** — direct tests for plain text / link / image / autolink / each emphasis variant / nested markup / unclosed brackets / unclosed paren / unclosed `*` / unclosed `**` / unicode in plain + link labels / position-map invariants / escape characters in labels.
+- **`pmPositionMapper.test.ts` (+7, now 16 total)** — early-exit branch verification, non-text node interleaving, inverted ranges, empty docs, full-doc highlight, range crossing non-text nodes.
+- **`anchorLocator.test.ts` (+9, now 15 total)** — range starting at md 0, ending at md.length, zero-length, empty source, multiple back-to-back stripped runs, anchor at start of doc, anchor at end of doc, anchor inside heading, unresolvable anchor.
+- **`anchorExtractor.test.ts` (+7, now 23 total)** — inverted/zero/negative selections, threshold boundary at exactly 7 vs 8 non-WS chars, leading/trailing whitespace, autolink selection, post-image selection.
+- **`relativeTime.test.ts` (+8, now 15 total)** — exact boundary at every unit threshold (30s / 1m / 1h / 1d / 7d), numeric epoch input, default-now arg, December-spanning year boundary.
+- **`urlAllowlist.test.ts` (+8, now 16 total)** — TAB / lone CR rejection, port+query+fragment, ftp/ssh/git+https rejected, scheme case-insensitivity for all allowed schemes, URLs with spaces.
+- **`linkRouter.test.ts` (+8, now 23 total)** — multi-segment fragment, bare `#`, query string off workspace path, query+fragment combo, malformed percent-encoding, deep parent traversal staying inside workspace, Windows-style `C:/` rejected, data: URI rejected.
+
+### Test surface
+
+- Total: **41 integration + 377 unit = 418 passing** (+74 unit tests).
+
 ## 0.19.1 — 2026-05-03 (trial)
 
 ### Fixed: anchor highlights painted on the wrong text

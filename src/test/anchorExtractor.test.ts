@@ -276,6 +276,62 @@ describe("buildAnchorFromSelection", () => {
     });
   });
 
+  // ----- additional branch coverage -----
+
+  it("returns null when selStart >= selEnd (zero or inverted selection)", () => {
+    const md = "abc def ghi jkl mno pqr stu vwx";
+    expect(buildAnchorFromSelection(md, 5, 5, md)).toBeNull();
+    expect(buildAnchorFromSelection(md, 10, 5, md)).toBeNull();
+  });
+
+  it("returns null when selStart is negative", () => {
+    const md = "abc def ghi jkl mno pqr stu vwx";
+    expect(buildAnchorFromSelection(md, -1, 5, md)).toBeNull();
+  });
+
+  it("rejects selections that are exactly 7 non-whitespace chars (just under threshold)", () => {
+    const md = "before abc defg after";
+    // "abc defg" = 7 non-WS chars, length 8 incl. space.
+    const start = md.indexOf("abc defg");
+    const r = buildAnchorFromSelection(md, start, start + 8, md);
+    expect(r).toBeNull();
+  });
+
+  it("accepts selections at exactly 8 non-whitespace chars", () => {
+    const md = "before abcdefgh after";
+    const start = md.indexOf("abcdefgh");
+    const r = buildAnchorFromSelection(md, start, start + 8, md);
+    expect(r).not.toBeNull();
+  });
+
+  it("ignores leading/trailing whitespace when measuring the anchor length", () => {
+    const md = "padding   abc defgh   padding";
+    // Selection includes surrounding spaces; trim still gives "abc defgh" (9 non-WS chars).
+    const start = md.indexOf("   abc defgh   ");
+    const r = buildAnchorFromSelection(md, start, start + 15, md);
+    expect(r).not.toBeNull();
+  });
+
+  it("anchors text inside an autolink", () => {
+    const md = "Visit <http://example.com/long-path> please";
+    const rendered = "Visit http://example.com/long-path please";
+    const sel = "http://example.com";
+    const start = rendered.indexOf(sel);
+    const end = start + sel.length;
+    const r = buildAnchorFromSelection(rendered, start, end, md);
+    expect(r).not.toBeNull();
+  });
+
+  it("anchors text that follows an image", () => {
+    const md = "![alt text long](http://x.com/p.png) Following text here.";
+    const rendered = "alt text long Following text here.";
+    const sel = "Following text here";
+    const start = rendered.indexOf(sel);
+    const end = start + sel.length;
+    const r = buildAnchorFromSelection(rendered, start, end, md);
+    expect(r).not.toBeNull();
+  });
+
   it("anchors a phrase that appears multiple times by picking the right occurrence", () => {
     const rendered = "lorem ipsum lorem ipsum lorem ipsum end";
     const markdown = rendered;

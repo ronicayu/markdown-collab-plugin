@@ -138,4 +138,102 @@ describe("renderedRangeToPmRange", () => {
     const offset = fakeDoc([{ isText: true, nodeSize: 4, pos: 5 }]);
     expect(renderedRangeToPmRange(offset, 100, 200)).toBeNull();
   });
+
+  // ---- early-exit branches ----
+
+  it("stops walking once both from and to are resolved (early exit branch)", () => {
+    let visits = 0;
+    const doc: DocLike = {
+      descendants(cb) {
+        // Three text nodes; the range fits entirely in the first.
+        // The mapper should NOT visit nodes 2 and 3.
+        const nodes: FakeNode[] = [
+          { isText: true, nodeSize: 10, pos: 1 },
+          { isText: true, nodeSize: 5, pos: 13 },
+          { isText: true, nodeSize: 4, pos: 20 },
+        ];
+        for (const n of nodes) {
+          visits++;
+          const r = cb(n, n.pos);
+          if (r === false) return;
+        }
+      },
+    };
+    const r = renderedRangeToPmRange(doc, 1, 6);
+    expect(r).toEqual({ from: 2, to: 7 });
+    // After the first node both `from` and `to` are set; the early-exit
+    // guard fires on the SECOND callback (return false), so we visited
+    // 2 nodes total, not 1 — the guard runs at the *start* of the
+    // callback, not after each node's update.
+    expect(visits).toBe(2);
+  });
+
+  it("ignores non-text nodes between text nodes (the inter-node-token case)", () => {
+    // Mark-wrappers in PM appear as non-text nodes in descendants
+    // *between* two text nodes. The mapper should skip them when
+    // counting rendered offsets but still recurse to find their text
+    // children. We model that by having a non-text node between the
+    // text ones; descendants is responsible for emitting them in doc
+    // order — the mapper doesn't recurse, it relies on the supplied
+    // walk order.
+    const nodes: FakeNode[] = [
+      { isText: true, nodeSize: 6, pos: 1 },
+      { isText: false, nodeSize: 1, pos: 7 } as FakeNode, // e.g. a hardbreak
+      { isText: true, nodeSize: 5, pos: 8 },
+    ];
+    const doc = fakeDoc(nodes);
+    // textContent over text nodes only = "Hello world" (6 + 5 = 11 chars).
+    const r = renderedRangeToPmRange(doc, 6, 11);
+    // renderedStart=6 is the LEFT EDGE of the second text node — strict
+    // upper for `from` says first node's right edge does NOT match;
+    // second node matches at offset 0 → pos 8 + 0 = 8.
+    expect(r).toEqual({ from: 8, to: 13 });
+  });
+
+  // ---- inverted / degenerate ----
+
+  it("returns null when from > to and we never find both", () => {
+    // Force descendants to emit a single text node whose range can
+    // satisfy `from` but never `to` (because to < from).
+    const r = renderedRangeToPmRange(onePara, 8, 3);
+    expect(r).toBeNull();
+  });
+
+  it("returns null on a doc with no text nodes at all", () => {
+    const empty: DocLike = {
+      descendants() {
+        // emit nothing
+      },
+    };
+    expect(renderedRangeToPmRange(empty, 0, 5)).toBeNull();
+  });
+
+  it("returns null when renderedStart equals renderedEnd (zero-width range is rejected)", () => {
+    expect(renderedRangeToPmRange(onePara, 5, 5)).toBeNull();
+  });
+
+  it("handles a range that exactly equals the textContent length (full-doc highlight)", () => {
+    // For onePara: textContent length = 11. Full range [0, 11].
+    expect(renderedRangeToPmRange(onePara, 0, 11)).toEqual({ from: 1, to: 12 });
+  });
+
+  it("handles a range that crosses non-text nodes between two text nodes", () => {
+    // Same as the inter-node-token test above but verifying that the
+    // renderedStart sitting INSIDE the second text node still maps
+    // correctly past the non-text intermediate node.
+    const doc = fakeDoc([
+      { isText: true, nodeSize: 4, pos: 1 } as FakeNode,
+      { isText: false, nodeSize: 1, pos: 5 } as FakeNode,
+      { isText: true, nodeSize: 4, pos: 6 } as FakeNode,
+    ]);
+    // textContent = "abcdefgh" (4 + 4). Range "cdef" → [2, 6).
+    const r = renderedRangeToPmRange(doc, 2, 6);
+    expect(r).not.toBeNull();
+    // from inside first text: pos 1 + 2 = 3
+    // to: renderedEnd=6 sits at right edge of first text? nodeRenderedEnd=4
+    // for first node — 6 > 4 so doesn't match first. Second node nodeRenderedStart=4,
+    // nodeRenderedEnd=8. renderedEnd=6 in (4, 8] → to = 6 + (6-4) = 8.
+    expect(r!.from).toBe(3);
+    expect(r!.to).toBe(8);
+  });
 });

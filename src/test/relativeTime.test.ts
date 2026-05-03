@@ -40,4 +40,43 @@ describe("formatRelativeTime", () => {
     const iso = new Date(NOW - 5 * 3_600_000).toISOString();
     expect(formatRelativeTime(iso, NOW)).toBe("5h");
   });
+
+  // ---- boundary cases at each unit threshold ----
+
+  it("at exactly 30 seconds, returns 30s (no longer 'just now')", () => {
+    expect(formatRelativeTime(NOW - 30_000, NOW)).toBe("30s");
+  });
+
+  it("at exactly 1 minute, returns 1m (no longer Ns)", () => {
+    expect(formatRelativeTime(NOW - 60_000, NOW)).toBe("1m");
+  });
+
+  it("at exactly 1 hour, returns 1h (no longer Nm)", () => {
+    expect(formatRelativeTime(NOW - 3_600_000, NOW)).toBe("1h");
+  });
+
+  it("at exactly 1 day, returns 1d (no longer Nh)", () => {
+    expect(formatRelativeTime(NOW - 86_400_000, NOW)).toBe("1d");
+  });
+
+  it("at exactly 7 days, switches to absolute date (no longer Nd)", () => {
+    expect(formatRelativeTime(NOW - 7 * 86_400_000, NOW)).toBe("Apr 26");
+  });
+
+  // ---- input shape ----
+
+  it("accepts numeric epoch ms input", () => {
+    expect(formatRelativeTime(NOW - 5 * 60_000, NOW)).toBe("5m");
+  });
+
+  it("falls back to Date.now() when no second arg is provided", () => {
+    // Use a very-recent timestamp to land in the just-now branch.
+    expect(formatRelativeTime(Date.now() - 1000)).toBe("just now");
+  });
+
+  it("uses December correctly (last month of the year)", () => {
+    const dec = Date.parse("2026-12-15T00:00:00.000Z");
+    const jan = Date.parse("2027-01-05T00:00:00.000Z");
+    expect(formatRelativeTime(dec, jan)).toBe("Dec 15, 2026");
+  });
 });

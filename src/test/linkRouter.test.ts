@@ -114,4 +114,64 @@ describe("classifyLink", () => {
       expect(r.targetFsPath).toBe(path.join(wsB, "api.md"));
     }
   });
+
+  // ---- additional branch coverage ----
+
+  it("blocks the special data:text/html URI (XSS attack vector)", () => {
+    const r = classifyLink("data:text/html,<script>alert(1)</script>", CUR, [WS]);
+    expect(r.kind).toBe("blocked");
+  });
+
+  it("preserves a multi-segment fragment", () => {
+    const r = classifyLink("#a-b-c-deeply-nested-anchor-name", CUR, [WS]);
+    expect(r.kind).toBe("fragment");
+    if (r.kind === "fragment") expect(r.id).toBe("a-b-c-deeply-nested-anchor-name");
+  });
+
+  it("returns fragment with empty id for a bare '#'", () => {
+    const r = classifyLink("#", CUR, [WS]);
+    expect(r.kind).toBe("fragment");
+    if (r.kind === "fragment") expect(r.id).toBe("");
+  });
+
+  it("strips a query string off a workspace path", () => {
+    const r = classifyLink("./other.md?v=1", CUR, [WS]);
+    expect(r.kind).toBe("workspace");
+    if (r.kind === "workspace") {
+      expect(r.targetFsPath).toBe(path.join(WS, "docs", "other.md"));
+    }
+  });
+
+  it("returns fragment alongside workspace path when both are present", () => {
+    const r = classifyLink("./other.md?v=1#section", CUR, [WS]);
+    expect(r.kind).toBe("workspace");
+    if (r.kind === "workspace") {
+      expect(r.targetFsPath).toBe(path.join(WS, "docs", "other.md"));
+      expect(r.fragment).toBe("section");
+    }
+  });
+
+  it("blocks malformed percent-encoded paths", () => {
+    const r = classifyLink("./bad%ZZ.md", CUR, [WS]);
+    // Browser tolerates malformed % but our decoder rejects.
+    expect(r.kind).toBe("blocked");
+  });
+
+  it("nested deeply via parent traversal but staying inside workspace is allowed", () => {
+    const deepCur = "/Users/me/repo/a/b/c/d/file.md";
+    const r = classifyLink("../../../api.md", deepCur, ["/Users/me/repo"]);
+    expect(r.kind).toBe("workspace");
+    if (r.kind === "workspace") {
+      expect(r.targetFsPath).toBe(path.join("/Users/me/repo", "a", "api.md"));
+    }
+  });
+
+  it("rejects an absolute path with a protocol-like prefix that isn't actually a scheme (e.g. 'C:/foo')", () => {
+    // On Windows-style paths, "C:/foo" looks scheme-y to URL parsing.
+    // RFC 3986 scheme requires alpha first then alphanum/+/-/. — so
+    // "C" is a 1-char scheme. URL.parse accepts. We block any
+    // scheme not in the allowlist.
+    const r = classifyLink("C:/foo/bar.md", CUR, [WS]);
+    expect(r.kind).toBe("blocked");
+  });
 });
