@@ -57,6 +57,13 @@ export function stripInlineMarkup(md: string): StripResult {
   const map: number[] = [];
   let i = 0;
   const len = md.length;
+  // Tracks whether the *next* non-skipped char will be at the start of
+  // a logical line. ProseMirror's `doc.textContent` doesn't include
+  // newlines OR line-start block markup (heading hashes, list bullets,
+  // blockquote `>`s, indentation), so we strip them here too — without
+  // this the stripped string is longer than what the editor renders
+  // and every position past the first list/heading drifts forward.
+  let lineStart = true;
 
   const push = (ch: string, originIdx: number): void => {
     map.push(originIdx);
@@ -64,7 +71,72 @@ export function stripInlineMarkup(md: string): StripResult {
   };
 
   while (i < len) {
-    const ch = md[i]!;
+    let ch = md[i]!;
+
+    // Newlines: skipped entirely. PM's textContent has none — sibling
+    // blocks are concatenated without separators.
+    if (ch === "\n" || ch === "\r") {
+      i++;
+      lineStart = true;
+      continue;
+    }
+
+    // At line start, eat block-level markdown markers. We loop because
+    // a single line can carry several (e.g. `> > - text` for nested
+    // blockquote + list).
+    if (lineStart) {
+      let advanced = true;
+      while (advanced) {
+        advanced = false;
+        // Leading horizontal whitespace (indentation).
+        while (i < len && (md[i] === " " || md[i] === "\t")) {
+          i++;
+          advanced = true;
+        }
+        if (i >= len) break;
+        const c = md[i]!;
+        // ATX heading: `#`, `##`, `###` … `######` followed by space.
+        if (c === "#") {
+          let j = i;
+          let hashes = 0;
+          while (j < len && md[j] === "#" && hashes < 6) {
+            j++;
+            hashes++;
+          }
+          if (md[j] === " " || md[j] === "\t") {
+            i = j + 1;
+            advanced = true;
+            continue;
+          }
+        }
+        // Blockquote prefix: `>` optionally followed by space.
+        if (c === ">") {
+          i++;
+          if (md[i] === " ") i++;
+          advanced = true;
+          continue;
+        }
+        // Unordered list marker: `- `, `* `, `+ `.
+        if ((c === "-" || c === "*" || c === "+") && md[i + 1] === " ") {
+          i += 2;
+          advanced = true;
+          continue;
+        }
+        // Ordered list marker: digits followed by `.` or `)` and space.
+        if (c >= "0" && c <= "9") {
+          let j = i;
+          while (j < len && md[j]! >= "0" && md[j]! <= "9") j++;
+          if ((md[j] === "." || md[j] === ")") && md[j + 1] === " ") {
+            i = j + 2;
+            advanced = true;
+            continue;
+          }
+        }
+      }
+      lineStart = false;
+      if (i >= len) continue;
+      ch = md[i]!;
+    }
 
     // Link: `[label](url)` or `[label][ref]` — emit `label` and skip
     // the wrapper. Image variant `![alt](url)` is treated similarly:

@@ -143,15 +143,19 @@ describe("locateAnchorInRendered — additional scenarios", () => {
     expect(md.slice(r!.start, r!.end)).toBe("the final clause string here");
   });
 
-  it("locates an anchor inside a heading (block-level prefix is preserved)", () => {
+  it("locates an anchor inside a heading (block-level prefix is stripped)", () => {
     const md = "# Heading title that is long enough\n\nBody.";
+    const positionMap = strip(md);
     const r = locateAnchorInRendered(
       { text: "Heading title that is long", contextBefore: "# ", contextAfter: " enough" },
       md,
-      strip(md),
+      positionMap,
     );
     expect(r).not.toBeNull();
-    expect(md.slice(r!.start, r!.end)).toBe("Heading title that is long");
+    // Returned offsets are in *rendered/stripped* space — the heading
+    // prefix `# ` is stripped, so the rendered text starts directly at
+    // "Heading title…".
+    expect(positionMap.stripped.slice(r!.start, r!.end)).toBe("Heading title that is long");
   });
 
   it("returns null when the anchor text doesn't appear at all", () => {

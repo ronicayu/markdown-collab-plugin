@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.19.3 — 2026-05-03 (trial)
+
+### Fixed: anchor highlights landed on the wrong text in real documents
+
+User reported (with screenshot) that comments anchored on the "Reliability caveat:" paragraph were highlighting text in the list items below it: a comment on "Deprecated/obsolete items referenced below" appeared on "eprecated (2026-04-02)", a comment on "DRS and DDS documents describe…" landed inside "ments describe intended behaviour…, not necessarily…".
+
+Root cause: `stripInlineMarkup` only stripped *inline* markdown (links, emphasis, code). It left **block-level** markdown — newlines, list bullets `- `, heading hashes `# `, blockquote `>`, indentation — in the stripped string. PM's `doc.textContent` contains *none* of those. So the stripped string was longer than what the editor actually displays, and every position past the first list/heading drifted forward by however many block-markup characters preceded it. The downstream `mdRangeToRenderedRange → renderedRangeToPmRange` pipeline then produced PM positions further down the doc than intended.
+
+Fix: extended `stripInlineMarkup` with a line-start state machine that swallows newlines, ATX heading hashes, blockquote prefixes, unordered/ordered list markers, and leading whitespace. The resulting stripped string now equals what `view.state.doc.textContent` produces.
+
+New `highlightAlignment.test.ts` reproduces the user's exact scenario (heading + list + paragraph + list) and asserts both anchors resolve to the correct rendered ranges. The previous test that verified "block-level prefix is preserved" was reversed (it was documenting the bug, not the desired behaviour).
+
+### Test surface
+
+- 1 new test file (`highlightAlignment.test.ts`, 4 tests).
+- 1 existing test updated to match the corrected behaviour.
+- Total: **41 integration + 381 unit = 422 passing**.
+
 ## 0.19.2 — 2026-05-03 (trial)
 
 ### Fixed: unclosed `**` was silently eaten by the inline stripper
