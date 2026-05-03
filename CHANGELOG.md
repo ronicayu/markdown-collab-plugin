@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.20.0 — 2026-05-03 (trial)
+
+### Removed: dependency on the hand-rolled markdown stripper for both anchor write and read
+
+The hand-rolled `stripInlineMarkup` was the single source of every alignment bug we hit (table padding, fenced code, Setext, references, escapes, tasks, blockquoted tables, …). It was an ad-hoc reimplementation of a CommonMark + GFM parser via a state machine — every markdown feature it didn't know about produced wrong anchor positions. Approach: stop reimplementing the parser; use Milkdown's authoritative serializer + the live PM doc instead.
+
+**Read side (highlight rendering):** `buildAnchorDecorations` now resolves anchors against the live `doc.textContent` (what the editor actually displays), not against the markdown source via the stripper. The new `locateAnchorInLiveText` helper:
+
+1. Strips inline markup from the *short* anchor strings only (`anchor.text` + context) to bridge the markdown→rendered gap.
+2. Searches `doc.textContent` for the cleaned anchor.
+3. Disambiguates by stripped context.
+4. Converts the rendered offset directly to PM positions via the existing `pmPositionMapper`.
+
+The whole `mdRangeToRenderedRange` step is gone from the hot path. Highlights paint where the user expects regardless of what block-level markdown sits between paragraphs.
+
+**Write side (anchor extraction):** `openComposerForCurrentSelection` now uses Milkdown's own serializer + ProseMirror's `doc.cut(from, to)` to compute the exact markdown for the selection — no mapping through the stripper at all:
+
+```ts
+const fullMd = serializer(view.state.doc);
+const sliceMd = serializer(view.state.doc.cut(selFrom, selTo)).trim();
+// anchor.text IS the markdown slice — guaranteed to be what's on disk
+// (modulo Milkdown's normalisation, which is the same on every save).
+```
+
+The slice's position in `fullMd` is found by Nth-occurrence-near-the-known-pm-pos, which uses `doc.cut(0, selFrom)` to compute an approximate markdown offset for disambiguation when the selection's text appears multiple times.
+
+**Backstop kept:** the existing tolerant `resolve()` in `anchor.ts` still handles whitespace + tolerant-separator matching for the `mdc.mjs` Claude side and the standard editor's `CommentController`. So even when Milkdown's serializer normalises the source slightly differently from what's on disk (e.g. `*italic*` → `_italic_`, table padding reflowed), Claude can still locate the passage.
+
+### Things that may still drift in extreme cases (documented)
+
+- Files authored externally with markdown conventions Milkdown's serializer rewrites — `anchor.text` from a partial slice will be Milkdown's normalised form, not the source's literal bytes. The standard editor's tolerant resolver bridges most of this; outright failure surfaces as an orphaned-comment indicator.
+- Selections that cut mid-block in unusual schema may include surrounding markers via `doc.cut`. Still likely to resolve, but the stored anchor.text may be slightly larger than what the user selected.
+
+### Test surface
+
+- All 449 unit tests still passing — the read/write rewrite removed bug surface without breaking any existing assertion. The hand-rolled stripper module (`stripInlineMarkup`) is still exercised by 27 tests because it's now used only on small anchor strings, which is the case it handles best.
+- 41 integration tests still passing.
+- Total: **41 integration + 449 unit = 490 passing**.
+
+## 0.19.5 — 2026-05-03 (trial)
+
+(Stop-gap release before the 0.20.0 rewrite.) Strip table cell padding from the `|`-stripping path so PM's table-cell-trim behaviour matches; capture editor selection on `mousedown` so the Add-Comment button no longer requires two clicks (Milkdown plugin paths could blur the editor between mousedown and click). 8 new unit tests in `tableCellPadding.test.ts`.
+
 ## 0.19.4 — 2026-05-03 (trial)
 
 ### Fixed: highlight alignment for tables, blockquoted tables, fenced code, HR, Setext, references, escapes, task lists

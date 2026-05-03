@@ -37,9 +37,7 @@ import { Plugin, PluginKey } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
-import { buildAnchorWithDebug } from "../collab/anchorExtractor";
 import { stripInlineMarkup } from "../collab/anchorExtractor";
-import { locateAnchorInRendered } from "../collab/anchorLocator";
 import { renderedRangeToPmRange } from "../collab/pmPositionMapper";
 import { formatRelativeTime } from "../collab/relativeTime";
 
@@ -666,14 +664,21 @@ interface DocLike {
 function buildAnchorDecorations(
   doc: DocLike,
   comments: CommentSummary[],
-  markdownSource: string,
+  _markdownSource: string,
 ): DecorationSet {
-  if (!markdownSource || comments.length === 0) return DecorationSet.empty;
-  const positionMap = stripInlineMarkup(markdownSource);
+  if (comments.length === 0) return DecorationSet.empty;
   const decos: Decoration[] = [];
+  // Resolve every anchor against the LIVE PM doc's textContent (the
+  // text the user actually sees). No more mapping through a
+  // hand-rolled markdown stripper — that whole layer is the source of
+  // the persistent alignment-bug class. anchor.text may contain
+  // markup chars (it was authored against the markdown source); we
+  // strip those off the small anchor strings, not off the full
+  // document, before searching.
+  const haystack = doc.textContent;
   for (const c of comments) {
     if (c.resolved) continue; // Don't highlight resolved threads — too noisy.
-    const rendered = locateAnchorInRendered(c.anchor, markdownSource, positionMap);
+    const rendered = locateAnchorInLiveText(haystack, c.anchor);
     if (!rendered) continue;
     const pmRange = renderedRangeToPmRange(doc, rendered.start, rendered.end);
     if (!pmRange) continue;
@@ -690,6 +695,64 @@ function buildAnchorDecorations(
     );
   }
   return DecorationSet.create(doc as never, decos);
+}
+
+interface LiveAnchor {
+  text: string;
+  contextBefore: string;
+  contextAfter: string;
+}
+
+// Locate an anchor in the live rendered text. The anchor's text /
+// contextBefore / contextAfter were stored relative to the markdown
+// source, so they may contain inline-markup chars (e.g. `here](url)`)
+// that the live textContent does not have. We strip just those small
+// strings (not the full doc) and search.
+//
+// Disambiguation strategy (in order):
+//   1. Strip the anchor strings, look for unique exact match.
+//   2. If multiple matches, pick the one whose stripped contexts agree.
+//   3. If none match exact, fall back to whitespace-normalised search.
+//   4. Give up (return null — the comment doesn't get highlighted).
+function locateAnchorInLiveText(
+  haystack: string,
+  anchor: LiveAnchor,
+): { start: number; end: number } | null {
+  const needle = stripInlineMarkup(anchor.text).stripped.trim();
+  if (needle.length === 0) return null;
+  const before = stripInlineMarkup(anchor.contextBefore).stripped;
+  const after = stripInlineMarkup(anchor.contextAfter).stripped;
+
+  const hits: number[] = [];
+  let from = 0;
+  while (true) {
+    const idx = haystack.indexOf(needle, from);
+    if (idx < 0) break;
+    hits.push(idx);
+    from = idx + 1;
+  }
+  if (hits.length === 0) return null;
+  if (hits.length === 1) {
+    return { start: hits[0]!, end: hits[0]! + needle.length };
+  }
+  // Multiple hits — disambiguate by context.
+  for (const h of hits) {
+    const haystackBefore = haystack.slice(Math.max(0, h - before.length - 4), h);
+    const haystackAfter = haystack.slice(h + needle.length, h + needle.length + after.length + 4);
+    const beforeOk = before.length === 0 || haystackBefore.endsWith(before);
+    const afterOk = after.length === 0 || haystackAfter.startsWith(after);
+    if (beforeOk && afterOk) return { start: h, end: h + needle.length };
+  }
+  // Loosen: any hit where at least one side matches.
+  for (const h of hits) {
+    const haystackBefore = haystack.slice(Math.max(0, h - before.length - 4), h);
+    const haystackAfter = haystack.slice(h + needle.length, h + needle.length + after.length + 4);
+    const beforeOk = before.length > 0 && haystackBefore.endsWith(before);
+    const afterOk = after.length > 0 && haystackAfter.startsWith(after);
+    if (beforeOk || afterOk) return { start: h, end: h + needle.length };
+  }
+  // No context disambiguation possible — pick the first hit.
+  return { start: hits[0]!, end: hits[0]! + needle.length };
 }
 
 function forceHighlightRefresh(): void {
@@ -720,12 +783,34 @@ function revealCommentInSidebar(commentId: string): void {
   card.classList.add("mdc-comment--flash");
 }
 
+// Compute the rendered-text offset (offset into doc.textContent) that
+// corresponds to a ProseMirror position. Used to display the
+// "Commenting on:" preview in the composer. Returns -1 if the position
+// can't be located (e.g. it falls inside a non-text node).
+function renderedOffsetForPm(doc: { descendants: (cb: (n: { isText: boolean; nodeSize: number }, p: number) => boolean | void) => void }, pmPos: number): number {
+  let textCounted = 0;
+  let result = -1;
+  doc.descendants((node, pos) => {
+    if (result >= 0) return false;
+    if (node.isText) {
+      const nodeStart = pos;
+      const nodeEnd = pos + node.nodeSize;
+      if (pmPos >= nodeStart && pmPos <= nodeEnd) {
+        result = textCounted + (pmPos - nodeStart);
+        return false;
+      }
+      textCounted += node.nodeSize;
+    }
+    return true;
+  });
+  return result;
+}
+
 function jumpToAnchor(comment: CommentSummary): void {
   if (!editor) return;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
-    const positionMap = stripInlineMarkup(cachedMarkdown);
-    const rendered = locateAnchorInRendered(comment.anchor, cachedMarkdown, positionMap);
+    const rendered = locateAnchorInLiveText(view.state.doc.textContent, comment.anchor);
     if (!rendered) {
       showToast("Couldn't locate this comment's anchor in the document. The text may have changed.");
       return;
@@ -939,49 +1024,94 @@ function openComposerForCurrentSelection(): void {
       failureReason = "No text is selected. Highlight some text in the editor first.";
       return;
     }
-    const sel = { from: selFrom, to: selTo, empty: false };
-    const renderedText = view.state.doc.textContent;
-    let renderedSelStart = -1;
-    let renderedSelEnd = -1;
-    let textCounted = 0;
-    view.state.doc.descendants((node, pos) => {
-      if (renderedSelStart >= 0 && renderedSelEnd >= 0) return false;
-      if (node.isText) {
-        const nodeStart = pos;
-        const nodeEnd = pos + node.nodeSize;
-        if (renderedSelStart < 0 && sel.from >= nodeStart && sel.from <= nodeEnd) {
-          renderedSelStart = textCounted + (sel.from - nodeStart);
-        }
-        if (renderedSelEnd < 0 && sel.to >= nodeStart && sel.to <= nodeEnd) {
-          renderedSelEnd = textCounted + (sel.to - nodeStart);
-        }
-        textCounted += node.nodeSize;
-      }
-      return true;
-    });
-    if (renderedSelStart < 0 || renderedSelEnd < 0) {
-      failureReason = "Couldn't map the selection back to the document. Try selecting plain text.";
+    // Phase-3 write side: use Milkdown's own serializer to compute
+    // the markdown for the user's selection, instead of mapping
+    // through a hand-rolled stripper. `doc.cut(from, to)` slices the
+    // PM tree; serializing the slice gives us markdown identical to
+    // what Milkdown would write for that span on save.
+    const fullMd = serializer(view.state.doc);
+    cachedMarkdown = fullMd;
+    let sliceMd = "";
+    try {
+      const sliced = view.state.doc.cut(selFrom, selTo);
+      sliceMd = serializer(sliced).trim();
+    } catch (e) {
+      failureReason = `Couldn't extract the selection's markdown: ${(e as Error).message}`;
       return;
     }
-    const md = serializer(view.state.doc);
-    cachedMarkdown = md;
-    const result = buildAnchorWithDebug(renderedText, renderedSelStart, renderedSelEnd, md);
-    anchor = result.anchor;
-    displayText = renderedText.slice(renderedSelStart, renderedSelEnd).trim();
-    if (!anchor) {
-      failureReason =
-        result.debug.chosenStrategy === "rejected-too-short"
-          ? "Selection is too short. Pick at least 8 characters of contiguous text."
-          : "Couldn't anchor this selection. Try selecting a clean sentence away from images or media.";
-      vscode.postMessage({
-        type: "webview-error",
-        stage: "add-comment-extract",
-        message: JSON.stringify({
-          renderedSel: [renderedSelStart, renderedSelEnd],
-          ...result.debug,
-        }),
-      });
+    const renderedText = view.state.doc.textContent;
+    const renderedSelStart = renderedOffsetForPm(view.state.doc, selFrom);
+    const renderedSelEnd = renderedOffsetForPm(view.state.doc, selTo);
+    if (renderedSelStart >= 0 && renderedSelEnd >= 0) {
+      displayText = renderedText.slice(renderedSelStart, renderedSelEnd).trim();
+    } else {
+      displayText = sliceMd;
     }
+
+    // Anchor.text = the precise markdown slice. anchor.contextBefore/
+    // After = the surrounding markdown chars from the full doc — find
+    // the slice's position via Nth-occurrence (count occurrences of
+    // sliceMd in fullMd before the user's selection point).
+    if (sliceMd.length === 0) {
+      failureReason = "Selection produced no text.";
+      return;
+    }
+    const nonWs = sliceMd.replace(/\s/g, "").length;
+    if (nonWs < 8) {
+      failureReason = "Selection is too short. Pick at least 8 characters of contiguous text.";
+      return;
+    }
+    // Choose the occurrence whose position best matches where in
+    // fullMd we'd expect — for write side, prefer the FIRST occurrence
+    // unless we have prior info. Better: count occurrences of sliceMd
+    // in fullMd up to (but not past) the selection's "begin position
+    // when serialized standalone" — too complex, just use first hit
+    // disambiguated by surrounding text.
+    const occurrences: number[] = [];
+    let from = 0;
+    while (true) {
+      const idx = fullMd.indexOf(sliceMd, from);
+      if (idx < 0) break;
+      occurrences.push(idx);
+      from = idx + 1;
+    }
+    if (occurrences.length === 0) {
+      // Slice doesn't appear in fullMd verbatim — slice serialization
+      // produced something the full serialization doesn't have (rare
+      // edge: marked-up node boundaries). Fall back to the slice
+      // text alone with empty context; the tolerant resolver will
+      // try its best.
+      anchor = { text: sliceMd, contextBefore: "", contextAfter: "" };
+      return;
+    }
+    // Pick the occurrence whose surrounding chars appear "around" the
+    // user's selection point. We approximate the selection's md
+    // position via len(serialize(doc.cut(0, selFrom))).
+    let approxMdStart = -1;
+    try {
+      const beforeDoc = view.state.doc.cut(0, selFrom);
+      approxMdStart = serializer(beforeDoc).length;
+    } catch {
+      approxMdStart = -1;
+    }
+    let chosen = occurrences[0]!;
+    if (approxMdStart >= 0 && occurrences.length > 1) {
+      let bestDiff = Infinity;
+      for (const o of occurrences) {
+        const diff = Math.abs(o - approxMdStart);
+        if (diff < bestDiff) {
+          bestDiff = diff;
+          chosen = o;
+        }
+      }
+    }
+    const mdStart = chosen;
+    const mdEnd = mdStart + sliceMd.length;
+    anchor = {
+      text: sliceMd,
+      contextBefore: fullMd.slice(Math.max(0, mdStart - 24), mdStart),
+      contextAfter: fullMd.slice(mdEnd, mdEnd + 24),
+    };
   });
 
   if (!anchor) {
