@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.18.7 — 2026-05-03 (trial)
+
+### Fixed: comments added in the collab webview didn't show up in VSCode's gutter
+
+You're right that the gutter UI is VSCode's own `CommentController` reading from the `.md.json` sidecar — same data the collab webview writes. The wiring was: collab webview → `addComment` → `saveSidecar` → file written. The gutter should refresh via the sidecar file watcher.
+
+But `saveSidecar` always recorded the just-written content's hash in a `selfWriteHashes` set so the standard editor's `SidecarWatcher` could ignore echoes of *its own* writes. The collab editor uses the same `saveSidecar` path → its writes also got hash-tracked → the standard editor's watcher saw the file event, hashed the content, found a match in `selfWriteHashes`, decided "this is just an echo of something I wrote myself", and skipped the reload. The gutter never refreshed.
+
+Fix: `saveSidecar` now takes an `{ trackSelfWrite?: boolean }` option (default `true` for backward compat). The collab editor's `add` / `reply` / `toggle-resolve` / `delete` handlers all pass `trackSelfWrite: false`, so writes from that subsystem are correctly seen as external by the standard-editor watcher and the gutter reloads. New regression test in `sidecar.test.ts` asserts `wasSelfWrite` returns `false` after a `saveSidecar(..., { trackSelfWrite: false })` call.
+
+### Test surface
+
+- 1 new unit test (`sidecar.test.ts`).
+- Total: **39 integration + 281 unit = 320 passing**.
+
 ## 0.18.6 — 2026-05-03 (trial)
 
 ### Added: rendered-text fallback strategy + diagnostic logging when anchor extraction can't lock on

@@ -205,21 +205,42 @@ export function __resetSelfWriteTokens(): void {
   selfWriteHashes.clear();
 }
 
-export async function saveSidecar(sidecarPath: string, sidecar: Sidecar): Promise<void> {
+export interface SaveSidecarOptions {
+  /**
+   * When `true` (default) the content hash is recorded in
+   * `selfWriteHashes`, so the SidecarWatcher consumed by the standard
+   * editor's CommentController treats the resulting file event as an
+   * echo and skips reload. Pass `false` from subsystems that write the
+   * sidecar but are NOT the CommentController itself — e.g. the collab
+   * webview's "add / reply / resolve / delete" handlers — so the
+   * controller actually reloads and the new state shows up in the
+   * standard editor's gutter.
+   */
+  trackSelfWrite?: boolean;
+}
+
+export async function saveSidecar(
+  sidecarPath: string,
+  sidecar: Sidecar,
+  options: SaveSidecarOptions = {},
+): Promise<void> {
   const dir = path.dirname(sidecarPath);
   await fs.mkdir(dir, { recursive: true });
   const tmpPath = `${sidecarPath}.tmp.${crypto.randomBytes(8).toString("hex")}`;
   const serialized = JSON.stringify(sidecar, null, 2);
   await fs.writeFile(tmpPath, serialized, "utf8");
-  // Register the content hash just before the rename so the watcher event —
-  // which can fire as early as the rename returns — finds it. We expire the
-  // token after a short window so a genuine external write with coincidentally
-  // identical bytes isn't suppressed indefinitely.
-  const hash = hashContents(serialized);
-  selfWriteHashes.add(hash);
-  setTimeout(() => {
-    selfWriteHashes.delete(hash);
-  }, SELF_WRITE_TTL_MS).unref?.();
+  if (options.trackSelfWrite !== false) {
+    // Register the content hash just before the rename so the watcher
+    // event — which can fire as early as the rename returns — finds it.
+    // We expire the token after a short window so a genuine external
+    // write with coincidentally identical bytes isn't suppressed
+    // indefinitely.
+    const hash = hashContents(serialized);
+    selfWriteHashes.add(hash);
+    setTimeout(() => {
+      selfWriteHashes.delete(hash);
+    }, SELF_WRITE_TTL_MS).unref?.();
+  }
   try {
     await fs.rename(tmpPath, sidecarPath);
   } catch (e) {
@@ -309,6 +330,7 @@ export async function addComment(
   sidecarPath: string,
   mdRelPath: string,
   data: { anchor: Anchor; body: string; author: Author; createdAt: string },
+  options: SaveSidecarOptions = {},
 ): Promise<Comment> {
   return enqueue(sidecarPath, async () => {
     const sidecar = await loadForMutation(sidecarPath, { file: mdRelPath });
@@ -323,7 +345,7 @@ export async function addComment(
       replies: [],
     };
     sidecar.comments.push(comment);
-    await saveSidecar(sidecarPath, sidecar);
+    await saveSidecar(sidecarPath, sidecar, options);
     return comment;
   });
 }
@@ -332,13 +354,14 @@ export async function addReply(
   sidecarPath: string,
   commentId: string,
   reply: Reply,
+  options: SaveSidecarOptions = {},
 ): Promise<Comment> {
   return enqueue(sidecarPath, async () => {
     const sidecar = await loadForMutation(sidecarPath);
     const comment = sidecar.comments.find((c) => c.id === commentId);
     if (!comment) throw new Error(`Comment ${commentId} not found in ${sidecarPath}`);
     comment.replies.push(reply);
-    await saveSidecar(sidecarPath, sidecar);
+    await saveSidecar(sidecarPath, sidecar, options);
     return comment;
   });
 }
@@ -347,13 +370,14 @@ export async function setResolved(
   sidecarPath: string,
   commentId: string,
   resolved: boolean,
+  options: SaveSidecarOptions = {},
 ): Promise<void> {
   return enqueue(sidecarPath, async () => {
     const sidecar = await loadForMutation(sidecarPath);
     const comment = sidecar.comments.find((c) => c.id === commentId);
     if (!comment) throw new Error(`Comment ${commentId} not found in ${sidecarPath}`);
     comment.resolved = resolved;
-    await saveSidecar(sidecarPath, sidecar);
+    await saveSidecar(sidecarPath, sidecar, options);
   });
 }
 
@@ -394,13 +418,14 @@ export async function editReplyBody(
 export async function deleteComment(
   sidecarPath: string,
   commentId: string,
+  options: SaveSidecarOptions = {},
 ): Promise<boolean> {
   return enqueue(sidecarPath, async () => {
     const sidecar = await loadForMutation(sidecarPath);
     const before = sidecar.comments.length;
     sidecar.comments = sidecar.comments.filter((c) => c.id !== commentId);
     if (sidecar.comments.length === before) return false;
-    await saveSidecar(sidecarPath, sidecar);
+    await saveSidecar(sidecarPath, sidecar, options);
     return true;
   });
 }

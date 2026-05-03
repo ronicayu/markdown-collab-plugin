@@ -484,6 +484,19 @@ describe("wasSelfWrite / self-write hash tokens", () => {
     expect(await wasSelfWrite(target)).toBe(true);
   });
 
+  it("returns FALSE when saveSidecar is called with trackSelfWrite=false (collab editor path)", async () => {
+    // Regression guard: the collab editor's add/reply/resolve/delete
+    // handlers pass trackSelfWrite=false because they need the standard
+    // editor's CommentController to actually reload after the write.
+    // Without the opt-out the controller's SidecarWatcher treats the
+    // write as an echo and skips reload — symptom users see is "I added
+    // a comment in the collab editor but it doesn't show up in VS
+    // Code's gutter".
+    const target = path.join(tmpDir, "no-track.md.json");
+    await saveSidecar(target, validSidecar(), { trackSelfWrite: false });
+    expect(await wasSelfWrite(target)).toBe(false);
+  });
+
   it("consumes the token on match — a second call returns false", async () => {
     const target = path.join(tmpDir, "self2.md.json");
     await saveSidecar(target, validSidecar());

@@ -354,11 +354,16 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       return { type: "reply-comment-result", ok: false, commentId, error: "reply body is empty" };
     }
     try {
-      await addReplyToSidecar(sidecarPath, commentId, {
-        body,
-        author: "user",
-        createdAt: new Date().toISOString(),
-      });
+      await addReplyToSidecar(
+        sidecarPath,
+        commentId,
+        {
+          body,
+          author: "user",
+          createdAt: new Date().toISOString(),
+        },
+        { trackSelfWrite: false },
+      );
       return { type: "reply-comment-result", ok: true, commentId };
     } catch (e) {
       return { type: "reply-comment-result", ok: false, commentId, error: (e as Error).message };
@@ -380,7 +385,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         return { type: "toggle-resolve-result", ok: false, commentId, error: "comment not found" };
       }
       const next = !existing.resolved;
-      await setResolvedInSidecar(sidecarPath, commentId, next);
+      await setResolvedInSidecar(sidecarPath, commentId, next, { trackSelfWrite: false });
       return { type: "toggle-resolve-result", ok: true, commentId, resolved: next };
     } catch (e) {
       return { type: "toggle-resolve-result", ok: false, commentId, error: (e as Error).message };
@@ -395,7 +400,9 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       return { type: "delete-comment-result", ok: false, commentId, error: "no sidecar path" };
     }
     try {
-      const removed = await deleteCommentFromSidecar(sidecarPath, commentId);
+      const removed = await deleteCommentFromSidecar(sidecarPath, commentId, {
+        trackSelfWrite: false,
+      });
       if (!removed) {
         return { type: "delete-comment-result", ok: false, commentId, error: "comment id not found" };
       }
@@ -542,12 +549,17 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     }
     const mdRel = path.relative(folder.uri.fsPath, document.uri.fsPath);
     try {
-      await addCommentToSidecar(sidecarPath, mdRel, {
-        anchor,
-        body: msg.body,
-        author: "user",
-        createdAt: new Date().toISOString(),
-      });
+      await addCommentToSidecar(
+        sidecarPath,
+        mdRel,
+        {
+          anchor,
+          body: msg.body,
+          author: "user",
+          createdAt: new Date().toISOString(),
+        },
+        { trackSelfWrite: false },
+      );
       this.output.appendLine(
         `CollabEditor: added comment on ${document.uri.fsPath} (anchor=${JSON.stringify(anchor.text.slice(0, 40))})`,
       );
