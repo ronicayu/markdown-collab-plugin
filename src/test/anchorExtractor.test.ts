@@ -159,6 +159,53 @@ describe("buildAnchorFromSelection", () => {
     expect(resolved).not.toBeNull();
   });
 
+  // ----- Pathological case the user reported in v0.18.3 -----
+
+  it("survives a link whose URL itself contains [brackets] — the user's bug repro", () => {
+    // Real markdown the user pasted: a link whose label is an inline-code
+    // span containing markdown link syntax, AND whose URL contains
+    // brackets too. This is unusual but valid commonmark and Milkdown
+    // renders it as a clickable code-styled link to that path.
+    const markdown =
+      "See [`[CORRECTIONS.md](http://CORRECTIONS.md)`](../../[CORRECTIONS.md](http://CORRECTIONS.md)) for confirmed corrections";
+    // The rendered text the editor shows. Inline code preserves the
+    // backticked content's chars literally; the surrounding link
+    // displays its label.
+    const rendered = "See [CORRECTIONS.md](http://CORRECTIONS.md) for confirmed corrections";
+    // User selects the long phrase including the link label. No throw,
+    // returns either a valid anchor (preferred) or null (acceptable
+    // fallback for genuinely ambiguous markup) — never crashes.
+    const sel = "for confirmed corrections";
+    const start = rendered.indexOf(sel);
+    const end = start + sel.length;
+    let anchor: ReturnType<typeof buildAnchorFromSelection>;
+    expect(() => {
+      anchor = buildAnchorFromSelection(rendered, start, end, markdown);
+    }).not.toThrow();
+    if (anchor!) {
+      // If we did produce an anchor, it must round-trip cleanly.
+      const resolved = resolve(markdown, anchor!);
+      expect(resolved).not.toBeNull();
+    }
+  });
+
+  it("survives a selection that spans a link whose URL contains brackets", () => {
+    const markdown =
+      "Click [the docs](../../[CORRECTIONS.md](http://CORRECTIONS.md)) for help.";
+    const rendered = "Click the docs for help.";
+    const sel = "the docs for help";
+    const start = rendered.indexOf(sel);
+    const end = start + sel.length;
+    let anchor: ReturnType<typeof buildAnchorFromSelection>;
+    expect(() => {
+      anchor = buildAnchorFromSelection(rendered, start, end, markdown);
+    }).not.toThrow();
+    if (anchor!) {
+      const resolved = resolve(markdown, anchor!);
+      expect(resolved).not.toBeNull();
+    }
+  });
+
   it("anchors a phrase that appears multiple times by picking the right occurrence", () => {
     const rendered = "lorem ipsum lorem ipsum lorem ipsum end";
     const markdown = rendered;

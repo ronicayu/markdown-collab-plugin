@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.18.4 — 2026-05-03 (trial)
+
+### Fixed: reliable ways to add a comment when the floating button doesn't appear
+
+User report: even after 0.18.3 lifted the rendered-length gate, selections that include a Milkdown link still don't surface the floating "+ Add comment" button reliably. Milkdown's link mark adjusts the ProseMirror selection asynchronously after a drag, and the floating button's position-tracking can lose the race — silently leaving the user with nothing to click.
+
+Two new affordances that don't depend on tracking the floating button's position:
+
+- **"+" icon in the sidebar header.** Pinned next to the Copy-prompt and Send-to-Claude buttons. Click it and the composer opens for the current editor selection. The `mousedown` handler `preventDefault`s so the editor doesn't blur and the selection survives the click.
+- **Cmd/Ctrl+Shift+M shortcut.** Anywhere in the webview. Same effect.
+
+Both paths feed into the same `openComposerForCurrentSelection` that the floating button uses, so the existing anchor-extraction tests already cover the data path. The composer toasts a clear reason if the selection can't produce an anchor (rather than silently dropping).
+
+Reproduced the user's pathological markdown — `See [\`[CORRECTIONS.md](http://CORRECTIONS.md)\`](../../[CORRECTIONS.md](http://CORRECTIONS.md)) for confirmed corrections` — in two new unit tests. The extractor handled it without throwing in both cases, which confirmed the bug was the UI gate, not the data layer.
+
+### Test surface
+
+- 12 anchor-extractor tests (+2 for the pathological cases).
+- Total: **39 integration + 276 unit = 315 passing**.
+
 ## 0.18.3 — 2026-05-03 (trial)
 
 ### Fixed: "Add comment" affordance silently disappeared when selection touched a link

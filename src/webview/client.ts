@@ -235,6 +235,9 @@ function renderSidebar(): void {
           <div class="mdc-sidebar-subtitle">${unresolved} open · ${total} total</div>
         </div>
         <div class="mdc-sidebar-toolbar">
+          <button type="button" class="mdc-icon-btn" data-action="add-comment" title="Add a comment on the current editor selection (Cmd/Ctrl+Shift+M)" aria-label="Add comment on selection">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 1.5v5h5v1H8v5H7v-5H2v-1h5v-5h1z"/></svg>
+          </button>
           <button type="button" class="mdc-icon-btn" data-action="copy-prompt" title="Copy 'address unresolved comments' prompt to clipboard" aria-label="Copy Claude prompt">
             <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M4 1.5h7a1 1 0 0 1 1 1V12h-1V2.5H4v-1zM2 4.5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4.5zm1 0V14h7V4.5H3z"/></svg>
           </button>
@@ -322,12 +325,18 @@ function attachToolbarHandlers(): void {
   if (!sidebarEl) return;
   for (const btn of Array.from(sidebarEl.querySelectorAll<HTMLButtonElement>(".mdc-sidebar-toolbar [data-action]"))) {
     const action = btn.dataset.action;
+    // Pre-empt the editor blur that a normal click would cause —
+    // mousedown captures the click without taking focus away from the
+    // editor selection. Critical for "Add comment on selection".
+    btn.addEventListener("mousedown", (e) => e.preventDefault());
     btn.addEventListener("click", () => {
       if (btn.disabled) return;
       if (action === "send-to-claude") {
         vscode.postMessage({ type: "invoke-command", command: "send-to-claude" });
       } else if (action === "copy-prompt") {
         vscode.postMessage({ type: "invoke-command", command: "copy-prompt" });
+      } else if (action === "add-comment") {
+        openComposerForCurrentSelection();
       }
     });
   }
@@ -860,6 +869,20 @@ function cssEscape(value: string): string {
   }
   return value.replace(/[^\w-]/g, (c) => `\\${c}`);
 }
+
+// Cmd/Ctrl+Shift+M = open the composer for the current editor selection.
+// This is the reliable fallback when the floating "Add comment" button
+// fails to position itself (e.g. Milkdown's link-mark interactions can
+// adjust the PM selection asynchronously after a drag, so the button
+// may be hidden when the user expects it).
+document.addEventListener("keydown", (e) => {
+  const isCmdOrCtrl = e.metaKey || e.ctrlKey;
+  if (isCmdOrCtrl && e.shiftKey && (e.key === "m" || e.key === "M")) {
+    e.preventDefault();
+    e.stopPropagation();
+    openComposerForCurrentSelection();
+  }
+});
 
 // Intercept any click on a link inside the editor pane or the sidebar
 // and route it through the extension so vscode.env.openExternal handles
