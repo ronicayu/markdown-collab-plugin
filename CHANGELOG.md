@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.18.0 — 2026-05-03 (trial)
+
+### Added: Mermaid diagrams render inline in the WYSIWYG editor
+
+Fenced \`\`\`mermaid blocks now render their SVG above the source. Implemented as a ProseMirror Decoration (widget side: -1) instead of a code-block node-view replacement — the original editable code block stays untouched, mermaid blocks just grow a sibling rendered SVG that updates whenever the source changes. Mermaid is bundled into the webview client (3.5 MB minified — the bulk of the ~3.5 MB total bundle is mermaid + d3 + dagre); it loads lazily on first use via dynamic import.
+
+A Devil's Advocate iteration caught a regression: an early node-view-based attempt broke editing of *all* code blocks (no \`contentDOM\` exposed → ProseMirror treated every \`\`\`lang block as atomic). Switched to the decoration approach and re-ran the integration suite to confirm no regression.
+
+### Added: clickable links
+
+Links inside the editor (Milkdown rendered \`<a>\`) and inside the comments sidebar are now click-handled — the webview posts them to the extension which opens via \`vscode.env.openExternal\`. The extension validates the URL against an allowlist of \`http:\`, \`https:\`, and \`mailto:\` schemes (8 unit tests in \`urlAllowlist.test.ts\` cover \`javascript:\`, \`file:\`, \`data:\`, \`vscode-webview:\`, embedded control characters, and unhappy inputs). Anything outside the allowlist is rejected with a toast.
+
+### Added: per-comment Reply / Resolve / Delete actions
+
+Each comment card in the sidebar grew a top-right action row:
+
+- **Reply** — toggles an inline composer scoped to that thread; submitting calls the existing \`addReply\` sidecar helper.
+- **Resolve / Unresolve** — flips the comment's \`resolved\` flag via \`setResolved\`. The icon swaps between a checkmark (open → resolve) and a circle (resolved → unresolve).
+- **Delete** — pops a \`window.confirm\` dialog; on accept calls \`deleteComment\`. The whole thread (including replies) goes away.
+
+All three actions write through the *same* sidecar helpers the standard editor's CommentController uses, so changes flow back to gutter UI in other windows. The sidebar refreshes automatically via the existing sidecar file watcher.
+
+### Added: top-right toolbar — Copy prompt + Send to Claude
+
+A two-button toolbar on the sidebar header:
+
+- **Copy prompt** (clipboard icon) — copies \`Use the markdown-collab skill to address the unresolved review comments on <file>.\` to the clipboard.
+- **Send to Claude** (paper-plane icon) — invokes the existing \`markdownCollab.sendAllToClaude\` command, which honours the user's configured \`markdownCollab.sendMode\` (terminal / channel / mcp-channel / clipboard / ask). Disabled when there are no unresolved comments.
+
+### Test surface
+
+- 8 new unit tests for the URL allowlist (\`urlAllowlist.test.ts\`).
+- 6 new integration tests in \`commentActions.test.ts\` covering reply / resolve / delete round-trip, the copy-prompt + send-to-claude paths, and a mermaid fixture smoke check.
+- Total: 31 integration tests + 249 unit tests = **280 passing**.
+
 ## 0.17.0 — 2026-05-02 (trial)
 
 ### Added: GFM tables, task lists, strikethrough in the collab editor

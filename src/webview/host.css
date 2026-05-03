@@ -259,6 +259,144 @@ body {
   opacity: 1;
 }
 
+/* Comment toolbar / actions */
+.mdc-sidebar-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.mdc-sidebar-toolbar {
+  display: flex;
+  gap: 4px;
+}
+
+.mdc-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  color: inherit;
+  border: 1px solid var(--vscode-input-border, rgba(255, 255, 255, 0.15));
+  border-radius: 3px;
+  padding: 3px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  line-height: 1;
+}
+.mdc-icon-btn:hover {
+  background: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.06));
+}
+.mdc-icon-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.mdc-icon-btn--accent {
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, white);
+  border-color: transparent;
+}
+.mdc-icon-btn--accent:hover {
+  background: var(--vscode-button-hoverBackground, #1177bb);
+}
+.mdc-icon-btn--small {
+  padding: 2px 5px;
+  font-size: 11px;
+}
+.mdc-icon-btn--danger {
+  color: var(--vscode-errorForeground, #f48771);
+}
+.mdc-icon-btn-label {
+  font-size: 11px;
+}
+
+.mdc-comment-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.mdc-comment-meta-left {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.mdc-comment-actions {
+  display: flex;
+  gap: 2px;
+}
+
+/* Inline reply composer inside a comment card */
+.mdc-reply-composer {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
+}
+.mdc-reply-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--vscode-input-background, transparent);
+  color: var(--vscode-input-foreground, inherit);
+  border: 1px solid var(--vscode-input-border, rgba(255, 255, 255, 0.15));
+  border-radius: 3px;
+  padding: 4px 6px;
+  font-family: inherit;
+  font-size: 12px;
+  resize: vertical;
+}
+.mdc-reply-actions {
+  margin-top: 4px;
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+.mdc-reply-actions button {
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  border: 1px solid var(--vscode-input-border, rgba(255, 255, 255, 0.15));
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, inherit);
+}
+.mdc-reply-submit {
+  background: var(--vscode-button-background, #0e639c) !important;
+  color: var(--vscode-button-foreground, white) !important;
+  border-color: transparent !important;
+}
+
+/* Mermaid rendering */
+.mdc-mermaid {
+  margin: 1em 0;
+  background: var(--vscode-textBlockQuote-background, rgba(255, 255, 255, 0.04));
+  padding: 12px;
+  border-radius: 4px;
+}
+.mdc-mermaid__render {
+  display: flex;
+  justify-content: center;
+}
+.mdc-mermaid__render svg {
+  max-width: 100%;
+  height: auto;
+}
+.mdc-mermaid__src {
+  display: none;
+  margin: 0;
+  padding: 8px;
+  background: var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.2));
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.mdc-mermaid__error {
+  color: var(--vscode-errorForeground, #f48771);
+  font-size: 12px;
+}
+
 .collab-badge {
   position: fixed;
   bottom: 6px;

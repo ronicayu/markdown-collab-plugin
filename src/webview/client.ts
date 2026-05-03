@@ -13,7 +13,7 @@
 //     contextBefore + contextAfter) from the current markdown serialization
 //     and posts add-comment back to the extension, which writes the sidecar.
 
-import { Editor, defaultValueCtx, editorViewCtx, rootCtx, serializerCtx } from "@milkdown/core";
+import { Editor, defaultValueCtx, editorViewCtx, prosePluginsCtx, rootCtx, serializerCtx } from "@milkdown/core";
 import { commonmark } from "@milkdown/preset-commonmark";
 import { gfm } from "@milkdown/preset-gfm";
 import { collab, collabServiceCtx } from "@milkdown/plugin-collab";
@@ -22,6 +22,8 @@ import { history } from "@milkdown/plugin-history";
 import { nord } from "@milkdown/theme-nord";
 import "@milkdown/theme-nord/style.css";
 import "./host.css";
+import { Plugin, PluginKey } from "prosemirror-state";
+import { Decoration, DecorationSet } from "prosemirror-view";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
 
@@ -66,11 +68,44 @@ interface AddCommentResultMessage {
   error?: string;
 }
 
+interface ReplyCommentResultMessage {
+  type: "reply-comment-result";
+  ok: boolean;
+  commentId: string;
+  error?: string;
+}
+
+interface ToggleResolveResultMessage {
+  type: "toggle-resolve-result";
+  ok: boolean;
+  commentId: string;
+  resolved?: boolean;
+  error?: string;
+}
+
+interface DeleteCommentResultMessage {
+  type: "delete-comment-result";
+  ok: boolean;
+  commentId: string;
+  error?: string;
+}
+
+interface OpenLinkResultMessage {
+  type: "open-link-result";
+  ok: boolean;
+  href: string;
+  reason?: string;
+}
+
 type IncomingMessage =
   | InitMessage
   | ExternalChangeMessage
   | SidecarChangedMessage
-  | AddCommentResultMessage;
+  | AddCommentResultMessage
+  | ReplyCommentResultMessage
+  | ToggleResolveResultMessage
+  | DeleteCommentResultMessage
+  | OpenLinkResultMessage;
 
 const vscode = acquireVsCodeApi();
 
@@ -115,6 +150,9 @@ async function init(msg: InitMessage): Promise<void> {
           vscode.postMessage({ type: "edit", text: markdown });
         }, 250);
       });
+    })
+    .config((ctx) => {
+      ctx.update(prosePluginsCtx, (prev) => prev.concat(makeMermaidPlugin()));
     })
     .config(nord)
     .use(commonmark)
@@ -188,11 +226,25 @@ function renderSidebar(): void {
   if (!sidebarEl) return;
   const total = sidebarState.comments.length;
   const unresolved = sidebarState.comments.filter((c) => !c.resolved).length;
+  const sendDisabled = unresolved === 0 ? "disabled" : "";
 
   const header = `
     <div class="mdc-sidebar-header">
-      <div class="mdc-sidebar-title">Comments</div>
-      <div class="mdc-sidebar-subtitle">${unresolved} open · ${total} total</div>
+      <div class="mdc-sidebar-header-row">
+        <div class="mdc-sidebar-titles">
+          <div class="mdc-sidebar-title">Comments</div>
+          <div class="mdc-sidebar-subtitle">${unresolved} open · ${total} total</div>
+        </div>
+        <div class="mdc-sidebar-toolbar">
+          <button type="button" class="mdc-icon-btn" data-action="copy-prompt" title="Copy 'address unresolved comments' prompt to clipboard" aria-label="Copy Claude prompt">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M4 1.5h7a1 1 0 0 1 1 1V12h-1V2.5H4v-1zM2 4.5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4.5zm1 0V14h7V4.5H3z"/></svg>
+          </button>
+          <button type="button" class="mdc-icon-btn mdc-icon-btn--accent" data-action="send-to-claude" title="Send unresolved comments to Claude Code" aria-label="Send to Claude" ${sendDisabled}>
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M1.7 14.3 14.4 8 1.7 1.7v4.7L10 8l-8.3 1.6v4.7z"/></svg>
+            <span class="mdc-icon-btn-label">Send to Claude</span>
+          </button>
+        </div>
+      </div>
     </div>
   `;
 
@@ -211,39 +263,152 @@ function renderSidebar(): void {
 
   sidebarEl.innerHTML = header + composerSlot + `<div class="mdc-comment-list">${body}</div>`;
   composerEl = sidebarEl.querySelector(".mdc-composer-slot");
-  attachCommentClickHandlers();
+  attachToolbarHandlers();
+  attachCommentHandlers();
 }
 
 function renderCommentCard(c: CommentSummary): string {
   const anchorText = escapeHtml(c.anchor.text.length > 80 ? c.anchor.text.slice(0, 77) + "…" : c.anchor.text);
+  const bodyHtml = renderBodyWithLinks(c.body);
   const replies = c.replies
     .map(
       (r) =>
-        `<div class="mdc-reply"><span class="mdc-reply-author">${escapeHtml(r.author)}</span><span class="mdc-reply-body">${escapeHtml(r.body)}</span></div>`,
+        `<div class="mdc-reply"><span class="mdc-reply-author">${escapeHtml(r.author)}</span><span class="mdc-reply-body">${renderBodyWithLinks(r.body)}</span></div>`,
     )
     .join("");
+  const resolveTitle = c.resolved ? "Mark as unresolved" : "Mark as resolved";
+  const resolveIcon = c.resolved
+    ? `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M2 8a6 6 0 1 1 12 0A6 6 0 0 1 2 8zm6-5a5 5 0 1 0 0 10A5 5 0 0 0 8 3z"/></svg>`
+    : `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M13.5 4 6 11.5 2.5 8l1-1L6 9.5 12.5 3z"/></svg>`;
   return `
     <article class="mdc-comment ${c.resolved ? "mdc-comment--resolved" : ""}" data-id="${escapeHtml(c.id)}">
       <header class="mdc-comment-header">
-        <span class="mdc-comment-author">${escapeHtml(c.author)}</span>
-        <span class="mdc-comment-meta">${c.resolved ? "resolved" : "open"}</span>
+        <div class="mdc-comment-meta-left">
+          <span class="mdc-comment-author">${escapeHtml(c.author)}</span>
+          <span class="mdc-comment-meta">${c.resolved ? "resolved" : "open"}</span>
+        </div>
+        <div class="mdc-comment-actions">
+          <button type="button" class="mdc-icon-btn mdc-icon-btn--small" data-comment-action="reply" title="Reply" aria-label="Reply">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M8 2.5 5 5.5l3 3v-2c2 0 3.5 1 4 3 .2-3.4-2-5-4-5v-2z"/></svg>
+          </button>
+          <button type="button" class="mdc-icon-btn mdc-icon-btn--small" data-comment-action="resolve" title="${resolveTitle}" aria-label="${resolveTitle}">
+            ${resolveIcon}
+          </button>
+          <button type="button" class="mdc-icon-btn mdc-icon-btn--small mdc-icon-btn--danger" data-comment-action="delete" title="Delete this thread" aria-label="Delete">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M5.5 2v1H2v1h1l1 9.5a1 1 0 0 0 1 .9h6a1 1 0 0 0 1-.9L13 4h1V3h-3.5V2h-5zM6 5h1v7H6V5zm3 0h1v7H9V5z"/></svg>
+          </button>
+        </div>
       </header>
       <div class="mdc-comment-anchor" title="Click to scroll to the anchor in the editor">${anchorText}</div>
-      <div class="mdc-comment-body">${escapeHtml(c.body)}</div>
+      <div class="mdc-comment-body">${bodyHtml}</div>
       ${replies ? `<div class="mdc-replies">${replies}</div>` : ""}
+      <div class="mdc-reply-slot"></div>
     </article>
   `;
 }
 
-function attachCommentClickHandlers(): void {
+function renderBodyWithLinks(body: string): string {
+  // Linkify bare http(s) URLs and mailto: addresses inside the comment
+  // body. We escape first so the text is safe, then post-process the
+  // escaped result to wrap matched URLs in anchor tags. Matching against
+  // the escaped text is fine because URLs only contain ASCII chars.
+  const escaped = escapeHtml(body);
+  return escaped.replace(
+    /(https?:\/\/[^\s<>"]+)|(mailto:[^\s<>"]+@[^\s<>"]+)/g,
+    (match) => `<a href="${match}" data-mdc-link="1">${match}</a>`,
+  );
+}
+
+function attachToolbarHandlers(): void {
+  if (!sidebarEl) return;
+  for (const btn of Array.from(sidebarEl.querySelectorAll<HTMLButtonElement>(".mdc-sidebar-toolbar [data-action]"))) {
+    const action = btn.dataset.action;
+    btn.addEventListener("click", () => {
+      if (btn.disabled) return;
+      if (action === "send-to-claude") {
+        vscode.postMessage({ type: "invoke-command", command: "send-to-claude" });
+      } else if (action === "copy-prompt") {
+        vscode.postMessage({ type: "invoke-command", command: "copy-prompt" });
+      }
+    });
+  }
+}
+
+function attachCommentHandlers(): void {
   if (!sidebarEl) return;
   for (const card of Array.from(sidebarEl.querySelectorAll<HTMLElement>(".mdc-comment"))) {
-    card.addEventListener("click", () => {
-      const id = card.dataset.id;
+    const id = card.dataset.id;
+    if (!id) continue;
+    // Click on the card body (not the action buttons) → scroll to anchor.
+    card.addEventListener("click", (e) => {
+      const target = e.target as HTMLElement;
+      if (target.closest(".mdc-comment-actions")) return;
+      if (target.closest(".mdc-reply-slot")) return;
+      if (target.tagName === "A") return;
       const comment = sidebarState.comments.find((c) => c.id === id);
       if (comment) scrollToAnchor(comment.anchor.text);
     });
+    for (const btn of Array.from(card.querySelectorAll<HTMLButtonElement>("[data-comment-action]"))) {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const action = btn.dataset.commentAction;
+        if (action === "reply") openReplyComposer(card, id);
+        else if (action === "resolve")
+          vscode.postMessage({ type: "toggle-resolve-comment", commentId: id });
+        else if (action === "delete") {
+          if (confirmDeletion()) {
+            vscode.postMessage({ type: "delete-comment", commentId: id });
+          }
+        }
+      });
+    }
   }
+}
+
+function confirmDeletion(): boolean {
+  // window.confirm is available in webviews. We fall back to a single
+  // toast acknowledgement if for some reason it returns falsy without
+  // user interaction (some embeddings mock confirm() to false).
+  // eslint-disable-next-line no-alert
+  return window.confirm(
+    "Delete this comment thread? Replies are deleted with it. This cannot be undone.",
+  );
+}
+
+function openReplyComposer(card: HTMLElement, commentId: string): void {
+  const slot = card.querySelector<HTMLElement>(".mdc-reply-slot");
+  if (!slot) return;
+  if (slot.querySelector(".mdc-reply-composer")) {
+    // Toggle off — second click closes the composer.
+    slot.innerHTML = "";
+    return;
+  }
+  slot.innerHTML = `
+    <div class="mdc-reply-composer">
+      <textarea class="mdc-reply-input" rows="2" placeholder="Reply…"></textarea>
+      <div class="mdc-reply-actions">
+        <button type="button" class="mdc-reply-cancel">Cancel</button>
+        <button type="button" class="mdc-reply-submit">Send reply</button>
+      </div>
+    </div>
+  `;
+  const textarea = slot.querySelector<HTMLTextAreaElement>(".mdc-reply-input")!;
+  const cancel = slot.querySelector<HTMLButtonElement>(".mdc-reply-cancel")!;
+  const submit = slot.querySelector<HTMLButtonElement>(".mdc-reply-submit")!;
+  textarea.focus();
+  cancel.addEventListener("click", () => {
+    slot.innerHTML = "";
+  });
+  submit.addEventListener("click", () => {
+    const body = textarea.value.trim();
+    if (!body) {
+      textarea.focus();
+      return;
+    }
+    submit.disabled = true;
+    submit.textContent = "Sending…";
+    vscode.postMessage({ type: "reply-comment", commentId, body });
+  });
 }
 
 function scrollToAnchor(text: string): void {
@@ -421,6 +586,127 @@ function showToast(text: string): void {
   toastTimer = setTimeout(() => toast?.classList.remove("mdc-toast--visible"), 3500);
 }
 
+interface MermaidApi {
+  initialize: (cfg: Record<string, unknown>) => void;
+  render: (id: string, src: string) => Promise<{ svg: string }>;
+}
+
+// Lazy mermaid loader. Mermaid (with d3, dagre, etc.) weighs several MB,
+// so we only load it the first time a fenced ```mermaid block actually
+// renders — most documents never need it.
+let mermaidPromise: Promise<MermaidApi> | null = null;
+function loadMermaid(): Promise<MermaidApi> {
+  if (!mermaidPromise) {
+    mermaidPromise = import("mermaid").then((mod) => {
+      const candidate = (mod as { default?: unknown }).default ?? mod;
+      const api = candidate as MermaidApi;
+      try {
+        api.initialize({ startOnLoad: false, securityLevel: "strict", theme: "dark" });
+      } catch {
+        /* initialize is idempotent in newer versions; defensive try */
+      }
+      return api;
+    });
+  }
+  return mermaidPromise;
+}
+
+let mermaidIdCounter = 0;
+
+const mermaidPluginKey = new PluginKey("mdc-mermaid");
+
+interface MermaidEntry {
+  src: string;
+  status: "pending" | "ready" | "error";
+  svg?: string;
+  error?: string;
+}
+const mermaidCache = new Map<string, MermaidEntry>();
+
+function makeMermaidPlugin(): Plugin {
+  return new Plugin({
+    key: mermaidPluginKey,
+    state: {
+      init: (_cfg, state) => buildMermaidDecorations(state.doc),
+      apply: (tr, oldDecos) => {
+        if (!tr.docChanged) return oldDecos.map(tr.mapping, tr.doc);
+        return buildMermaidDecorations(tr.doc);
+      },
+    },
+    props: {
+      decorations(state) {
+        return mermaidPluginKey.getState(state) as DecorationSet | undefined;
+      },
+    },
+  });
+}
+
+function buildMermaidDecorations(doc: { descendants: (cb: (node: { type: { name: string }; attrs: Record<string, unknown>; textContent: string }, pos: number) => boolean | void) => void }): DecorationSet {
+  const decos: Decoration[] = [];
+  doc.descendants((node, pos) => {
+    if (node.type.name !== "code_block") return true;
+    const lang = (node.attrs as { language?: string }).language;
+    if (lang !== "mermaid") return true;
+    const src = node.textContent;
+    decos.push(
+      Decoration.widget(pos, () => makeMermaidWidget(src), {
+        // Place the SVG widget *before* the code block so the original
+        // editable code-block renders untouched below it.
+        side: -1,
+        ignoreSelection: true,
+        key: `mermaid-${pos}-${src.length}`,
+      }),
+    );
+    return true;
+  });
+  return DecorationSet.create(doc as never, decos);
+}
+
+function makeMermaidWidget(src: string): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "mdc-mermaid";
+  const target = document.createElement("div");
+  target.className = "mdc-mermaid__render";
+  wrap.appendChild(target);
+
+  if (!src.trim()) {
+    target.innerHTML = "<em>(empty mermaid block)</em>";
+    return wrap;
+  }
+
+  const cached = mermaidCache.get(src);
+  if (cached) {
+    if (cached.status === "ready") target.innerHTML = cached.svg ?? "";
+    else if (cached.status === "error") {
+      target.innerHTML = `<div class="mdc-mermaid__error">${escapeHtml(cached.error ?? "render failed")}</div>`;
+    } else {
+      target.textContent = "Rendering mermaid…";
+    }
+  } else {
+    mermaidCache.set(src, { src, status: "pending" });
+    target.textContent = "Rendering mermaid…";
+    void loadMermaid()
+      .then(async (mermaid) => {
+        const id = `mdc-mermaid-${++mermaidIdCounter}`;
+        try {
+          const { svg } = await mermaid.render(id, src);
+          mermaidCache.set(src, { src, status: "ready", svg });
+          target.innerHTML = svg;
+        } catch (e) {
+          const message = (e as Error).message;
+          mermaidCache.set(src, { src, status: "error", error: message });
+          target.innerHTML = `<div class="mdc-mermaid__error">Mermaid render failed: ${escapeHtml(message)}</div>`;
+        }
+      })
+      .catch((e) => {
+        const message = (e as Error).message;
+        mermaidCache.set(src, { src, status: "error", error: message });
+        target.innerHTML = `<div class="mdc-mermaid__error">Failed to load mermaid: ${escapeHtml(message)}</div>`;
+      });
+  }
+  return wrap;
+}
+
 function reportReady(synced: boolean): void {
   if (!editor) return;
   let length = 0;
@@ -493,7 +779,52 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
       }
       showToast(`Could not save comment: ${msg.error ?? "unknown error"}`);
     }
+  } else if (msg.type === "reply-comment-result") {
+    if (msg.ok) {
+      showToast("Reply sent.");
+    } else {
+      // Re-enable the submit button if the composer is still open.
+      const submit = document.querySelector<HTMLButtonElement>(`.mdc-comment[data-id="${cssEscape(msg.commentId)}"] .mdc-reply-submit`);
+      if (submit) {
+        submit.disabled = false;
+        submit.textContent = "Send reply";
+      }
+      showToast(`Reply failed: ${msg.error ?? "unknown error"}`);
+    }
+  } else if (msg.type === "toggle-resolve-result") {
+    if (!msg.ok) showToast(`Resolve failed: ${msg.error ?? "unknown error"}`);
+    // The sidecar-changed broadcast that follows on success refreshes
+    // the card's visual state, so no further UI work needed here.
+  } else if (msg.type === "delete-comment-result") {
+    if (!msg.ok) showToast(`Delete failed: ${msg.error ?? "unknown error"}`);
+  } else if (msg.type === "open-link-result") {
+    if (!msg.ok) showToast(`Could not open link: ${msg.reason ?? msg.href}`);
   }
+});
+
+// Best-effort CSS.escape polyfill — needed for the comment-id selector
+// above. Modern webview Chromiums ship CSS.escape natively, but guard
+// for older hosts so we never throw on a synthetic comment id.
+function cssEscape(value: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+  return value.replace(/[^\w-]/g, (c) => `\\${c}`);
+}
+
+// Intercept any click on a link inside the editor pane or the sidebar
+// and route it through the extension so vscode.env.openExternal handles
+// the open with the proper trust prompt + scheme allowlist.
+document.addEventListener("click", (e) => {
+  const target = (e.target as HTMLElement | null)?.closest("a[href]");
+  if (!target) return;
+  // Skip links that sit inside the composer's anchor preview etc.
+  if (target.closest(".mdc-composer")) return;
+  const href = (target as HTMLAnchorElement).getAttribute("href") || "";
+  if (!href) return;
+  e.preventDefault();
+  e.stopPropagation();
+  vscode.postMessage({ type: "open-link", href });
 });
 
 vscode.postMessage({ type: "ready" });

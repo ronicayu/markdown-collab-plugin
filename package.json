@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "publisher": "markdown-collab",
   "license": "MIT",
   "repository": {

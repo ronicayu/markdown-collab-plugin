@@ -3,8 +3,16 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import { isAnchorTextValid } from "../anchor";
-import { addComment as addCommentToSidecar, loadSidecar, sidecarPathFor } from "../sidecar";
+import {
+  addComment as addCommentToSidecar,
+  addReply as addReplyToSidecar,
+  deleteComment as deleteCommentFromSidecar,
+  loadSidecar,
+  setResolved as setResolvedInSidecar,
+  sidecarPathFor,
+} from "../sidecar";
 import type { Anchor, Comment } from "../types";
+import { isExternalLinkSafe } from "./urlAllowlist";
 
 const VIEW_TYPE = "markdownCollab.collabEditor";
 
@@ -60,12 +68,43 @@ interface AddCommentMessage {
   body: string;
 }
 
+interface ReplyCommentMessage {
+  type: "reply-comment";
+  commentId: string;
+  body: string;
+}
+
+interface ToggleResolveCommentMessage {
+  type: "toggle-resolve-comment";
+  commentId: string;
+}
+
+interface DeleteCommentMessage {
+  type: "delete-comment";
+  commentId: string;
+}
+
+interface OpenLinkMessage {
+  type: "open-link";
+  href: string;
+}
+
+interface InvokeCommandMessage {
+  type: "invoke-command";
+  command: "send-to-claude" | "copy-prompt";
+}
+
 type ClientMessage =
   | EditMessage
   | ReadyMessage
   | ReadyWithContentMessage
   | WebviewErrorMessage
-  | AddCommentMessage;
+  | AddCommentMessage
+  | ReplyCommentMessage
+  | ToggleResolveCommentMessage
+  | DeleteCommentMessage
+  | OpenLinkMessage
+  | InvokeCommandMessage;
 
 // Test-only observability. The webview reports its post-init content
 // length (and whether the relay sync succeeded) via the
@@ -192,18 +231,40 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         void (async () => {
           const result = await this.handleAddComment(document, msg, sidecarPath);
           void panel.webview.postMessage(result);
-          if (result.ok) {
-            // Re-push the latest sidecar so the sidebar refreshes
-            // immediately rather than waiting for the file watcher.
-            const comments = await readSidecarComments();
-            void panel.webview.postMessage({
-              type: "sidecar-changed",
-              comments,
-            });
-          }
+          if (result.ok) await pushSidecar();
         })();
+      } else if (msg.type === "reply-comment") {
+        void (async () => {
+          const result = await this.handleReplyComment(msg, sidecarPath);
+          void panel.webview.postMessage(result);
+          if (result.ok) await pushSidecar();
+        })();
+      } else if (msg.type === "toggle-resolve-comment") {
+        void (async () => {
+          const result = await this.handleToggleResolve(msg, sidecarPath);
+          void panel.webview.postMessage(result);
+          if (result.ok) await pushSidecar();
+        })();
+      } else if (msg.type === "delete-comment") {
+        void (async () => {
+          const result = await this.handleDeleteComment(msg, sidecarPath);
+          void panel.webview.postMessage(result);
+          if (result.ok) await pushSidecar();
+        })();
+      } else if (msg.type === "open-link") {
+        void this.handleOpenLink(msg, panel);
+      } else if (msg.type === "invoke-command") {
+        void this.handleInvokeCommand(msg, document);
       }
     });
+
+    const pushSidecar = async (): Promise<void> => {
+      const comments = await readSidecarComments();
+      void panel.webview.postMessage({
+        type: "sidecar-changed",
+        comments,
+      } satisfies SidecarChangedPayload);
+    };
 
     const docSub = vscode.workspace.onDidChangeTextDocument((e) => {
       if (e.document.uri.toString() !== document.uri.toString()) return;
@@ -251,6 +312,136 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     const folder = vscode.workspace.getWorkspaceFolder(uri);
     if (!folder) return null;
     return sidecarPathFor(uri.fsPath, folder.uri.fsPath);
+  }
+
+  private async handleReplyComment(
+    msg: ReplyCommentMessage,
+    sidecarPath: string | null,
+  ): Promise<{ type: "reply-comment-result"; ok: boolean; commentId: string; error?: string }> {
+    if (!sidecarPath) {
+      return { type: "reply-comment-result", ok: false, commentId: msg.commentId, error: "no sidecar path (file outside workspace?)" };
+    }
+    if (!msg.body || !msg.body.trim()) {
+      return { type: "reply-comment-result", ok: false, commentId: msg.commentId, error: "reply body is empty" };
+    }
+    try {
+      await addReplyToSidecar(sidecarPath, msg.commentId, {
+        body: msg.body,
+        author: "user",
+        createdAt: new Date().toISOString(),
+      });
+      return { type: "reply-comment-result", ok: true, commentId: msg.commentId };
+    } catch (e) {
+      return { type: "reply-comment-result", ok: false, commentId: msg.commentId, error: (e as Error).message };
+    }
+  }
+
+  private async handleToggleResolve(
+    msg: ToggleResolveCommentMessage,
+    sidecarPath: string | null,
+  ): Promise<{ type: "toggle-resolve-result"; ok: boolean; commentId: string; resolved?: boolean; error?: string }> {
+    if (!sidecarPath) {
+      return { type: "toggle-resolve-result", ok: false, commentId: msg.commentId, error: "no sidecar path" };
+    }
+    try {
+      const loaded = await loadSidecar(sidecarPath);
+      if (!loaded) return { type: "toggle-resolve-result", ok: false, commentId: msg.commentId, error: "sidecar not found" };
+      const existing = loaded.sidecar.comments.find((c) => c.id === msg.commentId);
+      if (!existing) {
+        return { type: "toggle-resolve-result", ok: false, commentId: msg.commentId, error: "comment not found" };
+      }
+      const next = !existing.resolved;
+      await setResolvedInSidecar(sidecarPath, msg.commentId, next);
+      return { type: "toggle-resolve-result", ok: true, commentId: msg.commentId, resolved: next };
+    } catch (e) {
+      return { type: "toggle-resolve-result", ok: false, commentId: msg.commentId, error: (e as Error).message };
+    }
+  }
+
+  private async handleDeleteComment(
+    msg: DeleteCommentMessage,
+    sidecarPath: string | null,
+  ): Promise<{ type: "delete-comment-result"; ok: boolean; commentId: string; error?: string }> {
+    if (!sidecarPath) {
+      return { type: "delete-comment-result", ok: false, commentId: msg.commentId, error: "no sidecar path" };
+    }
+    try {
+      await deleteCommentFromSidecar(sidecarPath, msg.commentId);
+      return { type: "delete-comment-result", ok: true, commentId: msg.commentId };
+    } catch (e) {
+      return { type: "delete-comment-result", ok: false, commentId: msg.commentId, error: (e as Error).message };
+    }
+  }
+
+  private async handleOpenLink(
+    msg: OpenLinkMessage,
+    panel: vscode.WebviewPanel,
+  ): Promise<void> {
+    if (!isExternalLinkSafe(msg.href)) {
+      this.output.appendLine(
+        `CollabEditor: refused to open unsafe link ${JSON.stringify(msg.href)}`,
+      );
+      void panel.webview.postMessage({
+        type: "open-link-result",
+        ok: false,
+        href: msg.href,
+        reason: "unsupported scheme — only http(s) and mailto are allowed",
+      });
+      return;
+    }
+    try {
+      const opened = await vscode.env.openExternal(vscode.Uri.parse(msg.href));
+      void panel.webview.postMessage({
+        type: "open-link-result",
+        ok: opened,
+        href: msg.href,
+      });
+    } catch (e) {
+      void panel.webview.postMessage({
+        type: "open-link-result",
+        ok: false,
+        href: msg.href,
+        reason: (e as Error).message,
+      });
+    }
+  }
+
+  private async handleInvokeCommand(
+    msg: InvokeCommandMessage,
+    document: vscode.TextDocument,
+  ): Promise<void> {
+    if (msg.command === "send-to-claude") {
+      try {
+        await vscode.commands.executeCommand("markdownCollab.sendAllToClaude", document.uri);
+      } catch (e) {
+        this.output.appendLine(
+          `CollabEditor: sendAllToClaude failed: ${(e as Error).message}`,
+        );
+      }
+    } else if (msg.command === "copy-prompt") {
+      try {
+        // The existing copyClaudePrompt command operates on the active
+        // editor; ours isn't a TextEditor so we can't rely on that path.
+        // Mimic its payload directly.
+        const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+        if (!folder) {
+          void vscode.window.showWarningMessage(
+            "Markdown file is outside any workspace folder.",
+          );
+          return;
+        }
+        const rel = path.relative(folder.uri.fsPath, document.uri.fsPath);
+        const prompt = `Use the markdown-collab skill to address the unresolved review comments on ${rel}.`;
+        await vscode.env.clipboard.writeText(prompt);
+        void vscode.window.showInformationMessage(
+          "Prompt copied — paste into Claude Code.",
+        );
+      } catch (e) {
+        this.output.appendLine(
+          `CollabEditor: copy-prompt failed: ${(e as Error).message}`,
+        );
+      }
+    }
   }
 
   private async handleAddComment(
