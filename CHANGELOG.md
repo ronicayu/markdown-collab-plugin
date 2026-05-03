@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.18.3 — 2026-05-03 (trial)
+
+### Fixed: "Add comment" affordance silently disappeared when selection touched a link
+
+Two webview UI gates conspired to make the "+ Add comment" button never appear (and the composer never open) for selections that crossed a markdown link:
+
+1. **Floating button gated on rendered length.** The button only showed if `doc.textBetween(sel.from, sel.to)` had ≥8 non-whitespace chars. For a selection covering just a link's bracketed label like `[foo](url)`, the rendered text is "foo" — three chars — so the gate filtered the button out, even though the underlying anchor extractor was perfectly capable of building a valid anchor for it.
+2. **Link click interceptor cancelled drag-select.** The global `click` handler on `a[href]` always called `preventDefault` + `stopPropagation` — so when a user finished a drag-select with the mouseup landing on a link, the editor blurred and the selection was cleared before the floating button could be positioned.
+
+Fixes:
+- The button now shows for *any* non-empty selection. The composer enforces the 8-char minimum and toasts a clear reason if it can't build an anchor.
+- Added `mouseup` and `keyup` (Shift/arrow keys) as redundant triggers for the button-position update — `selectionchange` alone wasn't always firing after Milkdown's link-mark selection adjustments.
+- The link-click interceptor now skips its open-link route when there's a non-empty DOM selection (`window.getSelection().toString().trim().length > 0`), so finishing a drag on a link no longer cancels the selection.
+
+Also caught (and fixed) a related anchor-extractor edge case: `mdEnd` was using `map[selectedLen]` which, when the next stripped char sat past a stripped run, leaped over closing markup chars and pulled them into the anchor text. Switched to `map[selectedLen-1]+1` so the anchor stays exactly at the user's selection boundary.
+
+5 new unit tests in `anchorExtractor.test.ts` cover: link-only selection, selection extending out of a link into surrounding text, paragraph-wrapping selection containing one link, selection across two separate links, selection across bold + link wrappers.
+
+### Test surface
+
+- Total: **39 integration + 274 unit = 313 passing**.
+
 ## 0.18.2 — 2026-05-03 (trial)
 
 ### Fixed: comment anchor was wrong when the selection contained a link

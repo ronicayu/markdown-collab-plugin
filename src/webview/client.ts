@@ -120,7 +120,6 @@ let sidebarEl: HTMLElement | null = null;
 let composerEl: HTMLElement | null = null;
 let editorContainer: HTMLElement | null = null;
 
-const MIN_ANCHOR_NON_WS_CHARS = 8;
 
 async function init(msg: InitMessage): Promise<void> {
   ydoc = new Y.Doc();
@@ -490,10 +489,18 @@ function installAddCommentAffordance(): void {
       const view = ctx.get(editorViewCtx);
       const sel = view.state.selection;
       if (sel.empty) return;
-      const text = view.state.doc.textBetween(sel.from, sel.to, "\n").trim();
-      if (text.replace(/\s/g, "").length < MIN_ANCHOR_NON_WS_CHARS) return;
-      const c = view.coordsAtPos(sel.to);
-      coords = { top: c.top, left: c.right };
+      // Show the button for ANY non-empty selection. The composer
+      // enforces the 8-non-whitespace-char minimum and toasts a clear
+      // reason if it can't build an anchor — gating the button on
+      // rendered length silently hid the affordance for selections
+      // that crossed a link node where doc.textBetween returns just
+      // the visible label (often <8 chars).
+      try {
+        const c = view.coordsAtPos(sel.to);
+        coords = { top: c.top, left: c.right };
+      } catch {
+        /* coordsAtPos can throw at boundary positions — leave hidden */
+      }
     });
     const c = coords as ButtonCoords | null;
     if (c) {
@@ -508,9 +515,21 @@ function installAddCommentAffordance(): void {
   // Watch selection changes via ProseMirror's view dispatch — but that hook
   // requires plugin wiring. The selectionchange event on the document fires
   // for both editor and DOM selections, so it covers caret moves caused by
-  // mouse clicks and keyboard navigation alike.
+  // mouse clicks and keyboard navigation alike. We also listen on mouseup
+  // and keyup as belt-and-suspenders triggers — Milkdown's link node sometimes
+  // adjusts the PM selection asynchronously after a drag ends, and
+  // selectionchange may already have fired against the pre-adjustment
+  // selection.
   document.addEventListener("selectionchange", () => {
     setTimeout(updateButton, 0);
+  });
+  document.addEventListener("mouseup", () => {
+    setTimeout(updateButton, 0);
+  });
+  document.addEventListener("keyup", (e) => {
+    if (e.shiftKey || e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "Home" || e.key === "End") {
+      setTimeout(updateButton, 0);
+    }
   });
 
   button.addEventListener("mousedown", (e) => {
@@ -850,6 +869,12 @@ document.addEventListener("click", (e) => {
   if (!target) return;
   // Skip links that sit inside the composer's anchor preview etc.
   if (target.closest(".mdc-composer")) return;
+  // If the user just finished a drag-select that ended over a link,
+  // the click event fires but we should let the editor keep the
+  // selection rather than open the link — otherwise the "Add comment"
+  // affordance flashes and disappears as the editor blurs.
+  const sel = window.getSelection();
+  if (sel && sel.toString().trim().length > 0) return;
   const href = (target as HTMLAnchorElement).getAttribute("href") || "";
   if (!href) return;
   e.preventDefault();

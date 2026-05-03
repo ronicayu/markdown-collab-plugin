@@ -205,8 +205,15 @@ export function buildAnchorFromSelection(
     occurrencesInStripped[Math.min(occurrenceIndex, occurrencesInStripped.length - 1)]!;
 
   // Map stripped → markdown positions.
+  // mdEnd = (md pos of the last selected stripped char) + 1, NOT
+  // map[lastIdx + 1]. The latter equals "where the *next* char lives in
+  // markdown" — and when the next char sits past a stripped run, that
+  // pointer leaps over the run, sweeping closing markup chars (`]`,
+  // `(url)`, etc.) into the anchor text. Using map[last]+1 keeps the
+  // anchor exactly at the end of the user's selection in markdown.
   const mdStart = map[pickedStripped]!;
-  const mdEnd = map[pickedStripped + selected.length]!;
+  const lastIdx = pickedStripped + selected.length - 1;
+  const mdEnd = map[lastIdx]! + 1;
   const text = markdownSource.slice(mdStart, mdEnd);
   const contextBefore = markdownSource.slice(
     Math.max(0, mdStart - ANCHOR_CONTEXT_LEN),

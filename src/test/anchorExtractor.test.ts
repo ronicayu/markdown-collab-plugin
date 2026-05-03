@@ -83,6 +83,82 @@ describe("buildAnchorFromSelection", () => {
     expect(anchor!.text).toBe("Click [here](http://example.com) for more details");
   });
 
+  // ----- Coverage for the "selection contains a link" user-reported bug -----
+
+  it("link-only selection returns an anchor when the rendered link text is long enough", () => {
+    // Rendered: "Read the documentation now."
+    // User drag-selects the link text "the documentation".
+    const rendered = "Read the documentation now.";
+    const markdown = "Read [the documentation](http://example.com/docs) now.";
+    const sel = "the documentation";
+    const start = rendered.indexOf(sel);
+    const end = start + sel.length;
+    const anchor = buildAnchorFromSelection(rendered, start, end, markdown);
+    expect(anchor).not.toBeNull();
+    const resolved = resolve(markdown, anchor!);
+    expect(resolved).not.toBeNull();
+    // Stored anchor text should land on the bracketed label (no markup
+    // crossed because the selection didn't extend past the closing `]`).
+    expect(markdown.slice(resolved!.start, resolved!.end)).toBe("the documentation");
+  });
+
+  it("selection that extends from inside the link out into surrounding text", () => {
+    const rendered = "Read the documentation now please.";
+    const markdown = "Read [the documentation](http://example.com/docs) now please.";
+    const sel = "documentation now please";
+    const start = rendered.indexOf(sel);
+    const end = start + sel.length;
+    const anchor = buildAnchorFromSelection(rendered, start, end, markdown);
+    expect(anchor).not.toBeNull();
+    expect(anchor!.text).toContain("](http://example.com/docs)");
+    const resolved = resolve(markdown, anchor!);
+    expect(resolved).not.toBeNull();
+  });
+
+  it("selection that wraps an entire paragraph containing one link", () => {
+    const rendered = "Here is a paragraph with one link to read for more.";
+    const markdown = "Here is a paragraph with one [link](http://example.com) to read for more.";
+    const start = 0;
+    const end = rendered.length;
+    const anchor = buildAnchorFromSelection(rendered, start, end, markdown);
+    expect(anchor).not.toBeNull();
+    expect(anchor!.text).toBe(markdown);
+    const resolved = resolve(markdown, anchor!);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.start).toBe(0);
+    expect(resolved!.end).toBe(markdown.length);
+  });
+
+  it("selection inside a paragraph with TWO links", () => {
+    const rendered = "Read the docs first then the changelog later.";
+    const markdown = "Read [the docs](http://x.com/docs) first then [the changelog](http://x.com/log) later.";
+    // Select from "docs" through "changelog later"
+    const sel = "docs first then the changelog later";
+    const start = rendered.indexOf(sel);
+    const end = start + sel.length;
+    const anchor = buildAnchorFromSelection(rendered, start, end, markdown);
+    expect(anchor).not.toBeNull();
+    const resolved = resolve(markdown, anchor!);
+    expect(resolved).not.toBeNull();
+    // The resolved range should encompass both link bodies.
+    const text = markdown.slice(resolved!.start, resolved!.end);
+    expect(text).toContain("(http://x.com/docs)");
+    expect(text).toContain("(http://x.com/log)");
+  });
+
+  it("selection between text bold + link wrapper", () => {
+    // **important** appears once; link appears once. Selection spans both.
+    const rendered = "An important link here please.";
+    const markdown = "An **important** [link](http://x.com) here please.";
+    const sel = "important link here";
+    const start = rendered.indexOf(sel);
+    const end = start + sel.length;
+    const anchor = buildAnchorFromSelection(rendered, start, end, markdown);
+    expect(anchor).not.toBeNull();
+    const resolved = resolve(markdown, anchor!);
+    expect(resolved).not.toBeNull();
+  });
+
   it("anchors a phrase that appears multiple times by picking the right occurrence", () => {
     const rendered = "lorem ipsum lorem ipsum lorem ipsum end";
     const markdown = rendered;
