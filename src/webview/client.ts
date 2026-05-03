@@ -26,6 +26,7 @@ import { Plugin, PluginKey } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
+import { buildAnchorFromSelection } from "../collab/anchorExtractor";
 
 declare function acquireVsCodeApi(): {
   postMessage: (msg: unknown) => void;
@@ -119,7 +120,6 @@ let sidebarEl: HTMLElement | null = null;
 let composerEl: HTMLElement | null = null;
 let editorContainer: HTMLElement | null = null;
 
-const ANCHOR_CONTEXT_LEN = 24;
 const MIN_ANCHOR_NON_WS_CHARS = 8;
 
 async function init(msg: InitMessage): Promise<void> {
@@ -526,41 +526,52 @@ function installAddCommentAffordance(): void {
 
 function openComposerForCurrentSelection(): void {
   if (!editor || !composerEl) return;
-  let anchorText = "";
-  let contextBefore = "";
-  let contextAfter = "";
-  let markdownAtCapture = "";
+  let anchor: import("../types").Anchor | null = null;
+  let displayText = "";
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     const serializer = ctx.get(serializerCtx);
     const sel = view.state.selection;
     if (sel.empty) return;
-    anchorText = view.state.doc.textBetween(sel.from, sel.to, "\n").trim();
-    markdownAtCapture = serializer(view.state.doc);
-    const idx = markdownAtCapture.indexOf(anchorText);
-    if (idx < 0) {
-      // The selected plain text doesn't appear verbatim in the markdown
-      // (e.g. selection straddled markup chars). Fall back to using the
-      // selection text alone as the anchor with no context.
-      contextBefore = "";
-      contextAfter = "";
-      return;
-    }
-    contextBefore = markdownAtCapture.slice(Math.max(0, idx - ANCHOR_CONTEXT_LEN), idx);
-    contextAfter = markdownAtCapture.slice(
-      idx + anchorText.length,
-      idx + anchorText.length + ANCHOR_CONTEXT_LEN,
-    );
+    const renderedText = view.state.doc.textContent;
+    // Map ProseMirror selection (PM positions) to rendered offsets by
+    // walking the doc and counting text characters.
+    let renderedSelStart = -1;
+    let renderedSelEnd = -1;
+    let textCounted = 0;
+    view.state.doc.descendants((node, pos) => {
+      if (renderedSelStart >= 0 && renderedSelEnd >= 0) return false;
+      if (node.isText) {
+        const nodeStart = pos;
+        const nodeEnd = pos + node.nodeSize;
+        if (renderedSelStart < 0 && sel.from >= nodeStart && sel.from <= nodeEnd) {
+          renderedSelStart = textCounted + (sel.from - nodeStart);
+        }
+        if (renderedSelEnd < 0 && sel.to >= nodeStart && sel.to <= nodeEnd) {
+          renderedSelEnd = textCounted + (sel.to - nodeStart);
+        }
+        textCounted += node.nodeSize;
+      }
+      return true;
+    });
+    if (renderedSelStart < 0 || renderedSelEnd < 0) return;
+    const md = serializer(view.state.doc);
+    anchor = buildAnchorFromSelection(renderedText, renderedSelStart, renderedSelEnd, md);
+    displayText = renderedText.slice(renderedSelStart, renderedSelEnd).trim();
   });
 
-  if (anchorText.replace(/\s/g, "").length < MIN_ANCHOR_NON_WS_CHARS) {
-    showToast("Selection is too short to anchor a comment (need at least 8 non-whitespace characters).");
+  if (!anchor) {
+    showToast(
+      "Selection is too short or couldn't be located in the source. Try selecting at least 8 characters of contiguous text.",
+    );
     return;
   }
+  // Type narrowing: anchor is non-null past this point.
+  const finalAnchor: import("../types").Anchor = anchor;
 
   composerEl.innerHTML = `
     <div class="mdc-composer">
-      <div class="mdc-composer-anchor"><span class="mdc-composer-label">Commenting on:</span> ${escapeHtml(anchorText.slice(0, 120))}${anchorText.length > 120 ? "…" : ""}</div>
+      <div class="mdc-composer-anchor"><span class="mdc-composer-label">Commenting on:</span> ${escapeHtml(displayText.slice(0, 120))}${displayText.length > 120 ? "…" : ""}</div>
       <textarea class="mdc-composer-input" placeholder="Write a comment…" rows="3"></textarea>
       <div class="mdc-composer-actions">
         <button type="button" class="mdc-composer-cancel">Cancel</button>
@@ -585,7 +596,7 @@ function openComposerForCurrentSelection(): void {
     submitBtn.textContent = "Saving…";
     vscode.postMessage({
       type: "add-comment",
-      anchor: { text: anchorText, contextBefore, contextAfter },
+      anchor: finalAnchor,
       body,
     });
   });

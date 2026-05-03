@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.18.2 — 2026-05-03 (trial)
+
+### Fixed: comment anchor was wrong when the selection contained a link
+
+Reproduced under TDD: an earlier extractor used `markdownSource.indexOf(selectedText)` which always returns the first occurrence. Two failure modes followed:
+1. **Bare-then-bracketed duplicates.** A doc like `I am here. Click [here](url) for more details.` rendered as `I am here. Click here for more details.`. Selecting the link label `here` selected `here` in rendered text — `indexOf` found the FIRST occurrence (the bare one earlier) and silently anchored the comment there.
+2. **Selection straddling markup.** Selecting `here in the docs` across a link boundary in `[here](url) in the docs` produced an anchor whose `text` field never appeared verbatim in the markdown source — the resolver returned null and the comment showed as orphaned.
+
+Fix: a new `anchorExtractor` module strips inline markdown (link `[label](url)` → `label`, image `![alt](url)` → `alt`, autolinks, `**`, `*`, `_`, `~~`, `` ` ``) while recording a position map back into the original source. The webview maps the ProseMirror selection to rendered offsets, finds the corresponding span in the stripped string (using an Nth-occurrence rule so duplicates within the doc are resolved by selection position rather than by document order), then translates back to markdown positions. Anchor `text` is the literal markdown slice between those positions — including any markup chars the selection crossed — so `anchor.resolve` round-trips cleanly to the same passage.
+
+5 new unit tests in `anchorExtractor.test.ts` cover: too-short selection, plain selection, selection that crosses a link, link-vs-bare disambiguation, multi-occurrence Nth-pick.
+
+### Test surface
+
+- Total: **39 integration + 269 unit = 308 passing**.
+
 ## 0.18.1 — 2026-05-03 (trial)
 
 ### Fixed: deleting a comment did nothing
