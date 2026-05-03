@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.19.1 — 2026-05-03 (trial)
+
+### Fixed: anchor highlights painted on the wrong text
+
+User report after 0.19.0: highlights covered the wrong characters. Reproduced in 9 unit tests against synthetic ProseMirror docs.
+
+Root cause: the rendered-offset → PM-position mapper used `<= nodeRenderedEnd` for **both** `from` and `to`. When the rendered start sat exactly at a text-node boundary (e.g. start of "world" inside `Hello <strong>world</strong>` at offset 6), `from` was set to the position right after the previous text node — which lives **inside** the inter-node markup token (`<strong>` open at PM pos 7), not at the start of the next text node (PM pos 8). PM rendered the decoration shifted left, covering the markup boundary instead of the intended text.
+
+Fix: extracted the mapper into `pmPositionMapper.ts` and corrected the boundary rules — `from` uses **strict** upper bound (a renderedStart equal to a text node's right edge belongs to the NEXT text node), `to` uses **inclusive** upper bound (so end-of-doc anchors still match). 9 new unit tests cover single-node, two-node-straddling, mark-boundary, paragraph-spanning, and out-of-range cases — including the boundary case that produced the bug.
+
+### Test surface
+
+- 9 new unit tests (`pmPositionMapper.test.ts`).
+- Total: **41 integration + 303 unit = 344 passing**.
+
 ## 0.19.0 — 2026-05-03 (trial)
 
 ### UX redesign of the collab editor

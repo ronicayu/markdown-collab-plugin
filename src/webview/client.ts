@@ -40,6 +40,7 @@ import * as Y from "yjs";
 import { buildAnchorWithDebug } from "../collab/anchorExtractor";
 import { stripInlineMarkup } from "../collab/anchorExtractor";
 import { locateAnchorInRendered } from "../collab/anchorLocator";
+import { renderedRangeToPmRange } from "../collab/pmPositionMapper";
 import { formatRelativeTime } from "../collab/relativeTime";
 
 declare function acquireVsCodeApi(): {
@@ -663,33 +664,6 @@ function buildAnchorDecorations(
   return DecorationSet.create(doc as never, decos);
 }
 
-function renderedRangeToPmRange(
-  doc: DocLike,
-  renderedStart: number,
-  renderedEnd: number,
-): { from: number; to: number } | null {
-  let textCounted = 0;
-  let from = -1;
-  let to = -1;
-  doc.descendants((node, pos) => {
-    if (from >= 0 && to >= 0) return false;
-    if (node.isText) {
-      const nodeRenderedStart = textCounted;
-      const nodeRenderedEnd = textCounted + node.nodeSize;
-      if (from < 0 && renderedStart >= nodeRenderedStart && renderedStart <= nodeRenderedEnd) {
-        from = pos + (renderedStart - nodeRenderedStart);
-      }
-      if (to < 0 && renderedEnd >= nodeRenderedStart && renderedEnd <= nodeRenderedEnd) {
-        to = pos + (renderedEnd - nodeRenderedStart);
-      }
-      textCounted += node.nodeSize;
-    }
-    return true;
-  });
-  if (from < 0 || to < 0 || to <= from) return null;
-  return { from, to };
-}
-
 function forceHighlightRefresh(): void {
   if (!editor) return;
   editor.action((ctx) => {
@@ -728,7 +702,11 @@ function jumpToAnchor(comment: CommentSummary): void {
       showToast("Couldn't locate this comment's anchor in the document. The text may have changed.");
       return;
     }
-    const pmRange = renderedRangeToPmRange(view.state.doc, rendered.start, rendered.end);
+    const pmRange = renderedRangeToPmRange(
+      view.state.doc as unknown as Parameters<typeof renderedRangeToPmRange>[0],
+      rendered.start,
+      rendered.end,
+    );
     if (!pmRange) return;
     try {
       const dom = view.domAtPos(pmRange.from).node as Element | null;
