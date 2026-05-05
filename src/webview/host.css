@@ -90,7 +90,9 @@ body { overflow: hidden; }
   top: var(--mdc-space-2);
   right: calc(var(--mdc-sidebar-width) + var(--mdc-space-2));
   z-index: 999;
-  display: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: var(--vscode-button-secondaryBackground, rgba(127, 127, 127, 0.18));
   color: var(--vscode-button-secondaryForeground, inherit);
   border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.25));
@@ -672,7 +674,6 @@ body { overflow: hidden; }
     display: flex;
     transform: translateX(100%);
   }
-  .mdc-sidebar-toggle { display: inline-flex; }
 }
 @media (max-width: 480px) {
   :root { --mdc-sidebar-width: 100vw; }

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.20.5 — 2026-05-05 (trial)
+
+### Fixed: floating Add-Comment button still required two clicks in some cases
+
+0.20.1 added `lastNonEmptySelection` as a fallback for when the floating button's mousedown fired after PM had already lost its selection. The fallback was refreshed via `selectionchange` / `mouseup` / `keyup` listeners scheduled with `setTimeout(0)`. A fast click on the floating button — fired in the same tick as the user's text-selection mouseup — could beat the deferred refresh, leaving all three selection layers (live, pendingSelection, lastNonEmptySelection) empty on the first click.
+
+Closed the race by snapshotting PM's selection synchronously on `pointerdown` capture-phase at the window level, before any focus shift can clear it. The floating button's own mousedown now also calls `updateLastNonEmptySelection()` directly as belt-and-suspenders.
+
+### Added: collapse / expand the comments sidebar
+
+The collapse-toggle button used to be hidden on wide screens (only revealed by a media query for narrow widths), so users had no way to hide the sidebar in the common editor layout. The toggle is now always visible — pinned just outside the sidebar's left edge. Clicking it slides the sidebar out and lets the editor reclaim the column; clicking it again brings the sidebar back. The button's icon flips direction (`›` when expanded, `‹` when collapsed) and `aria-expanded` / `aria-label` update accordingly.
+
 ## 0.20.4 — 2026-05-05 (trial)
 
 ### Fixed: selecting text inside a table cell snapped to the whole cell

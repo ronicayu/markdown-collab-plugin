@@ -307,14 +307,9 @@ function buildLayout(): void {
   editorContainer.className = "mdc-editor-pane";
   layoutEl.appendChild(editorContainer);
 
-  // Sidebar toggle (visible on narrow widths via CSS).
   collapseToggleEl = document.createElement("button");
   collapseToggleEl.type = "button";
   collapseToggleEl.className = "mdc-sidebar-toggle";
-  collapseToggleEl.title = "Toggle comments sidebar";
-  collapseToggleEl.setAttribute("aria-label", "Toggle comments sidebar");
-  collapseToggleEl.innerHTML =
-    '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M3 3h10v1H3V3zm0 4h7v1H3V7zm0 4h10v1H3v-1z"/></svg>';
   collapseToggleEl.addEventListener("click", () => {
     sidebarState.collapsed = !sidebarState.collapsed;
     syncCollapsedClass();
@@ -325,11 +320,24 @@ function buildLayout(): void {
   sidebarEl.className = "mdc-sidebar";
   sidebarEl.setAttribute("aria-label", "Review comments");
   layoutEl.appendChild(sidebarEl);
+
+  syncCollapsedClass();
 }
 
 function syncCollapsedClass(): void {
   if (!layoutEl) return;
   layoutEl.classList.toggle("mdc-layout--collapsed", sidebarState.collapsed);
+  if (collapseToggleEl) {
+    const collapsed = sidebarState.collapsed;
+    const label = collapsed ? "Show comments" : "Hide comments";
+    collapseToggleEl.title = label;
+    collapseToggleEl.setAttribute("aria-label", label);
+    collapseToggleEl.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    const arrow = collapsed
+      ? '<path d="M10.5 3L5 8l5.5 5 .9-.95L6.85 8l4.55-4.05z"/>'
+      : '<path d="M5.5 3L11 8l-5.5 5-.9-.95L9.15 8 4.6 3.95z"/>';
+    collapseToggleEl.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">${arrow}</svg>`;
+  }
 }
 
 function renderSidebar(): void {
@@ -1059,10 +1067,18 @@ function installAddCommentAffordance(): void {
       setTimeout(refresh, 0);
     }
   });
+  // Belt-and-suspenders for the floating button: capture-phase pointerdown
+  // anywhere snapshots PM's selection BEFORE any focus shift or
+  // setTimeout-0 refresh can run. Closes the race where a fast click on
+  // the button beats the prior selectionchange's deferred refresh.
+  window.addEventListener("pointerdown", () => {
+    updateLastNonEmptySelection();
+  }, true);
 
   button.addEventListener("mousedown", (e) => {
     e.preventDefault();
     captureCurrentSelection();
+    updateLastNonEmptySelection();
   });
   button.addEventListener("click", () => {
     button.style.display = "none";
