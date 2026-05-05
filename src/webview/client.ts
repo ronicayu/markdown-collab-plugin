@@ -33,7 +33,8 @@ import { history } from "@milkdown/plugin-history";
 import { nord } from "@milkdown/theme-nord";
 import "@milkdown/theme-nord/style.css";
 import "./host.css";
-import { Plugin, PluginKey } from "prosemirror-state";
+import { Plugin, PluginKey, TextSelection } from "prosemirror-state";
+import { CellSelection } from "@milkdown/prose/tables";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
@@ -208,7 +209,11 @@ async function init(msg: InitMessage): Promise<void> {
       ctx.set(rootCtx, editorContainer!);
       ctx.set(defaultValueCtx, msg.text);
       ctx.update(prosePluginsCtx, (prev) =>
-        prev.concat([makeMermaidPlugin(), makeAnchorHighlightPlugin()]),
+        prev.concat([
+          makeFlattenCellSelectionPlugin(),
+          makeMermaidPlugin(),
+          makeAnchorHighlightPlugin(),
+        ]),
       );
       ctx.get(listenerCtx).markdownUpdated((_ctx, markdown, prevMarkdown) => {
         if (suppressNextPost) {
@@ -904,6 +909,40 @@ function makeMermaidPlugin(): Plugin {
       decorations(state) {
         return mermaidPluginKey.getState(state) as DecorationSet | undefined;
       },
+    },
+  });
+}
+
+// Milkdown's GFM preset wires `prosemirror-tables`' `tableEditing`
+// plugin, which promotes any drag that touches a cell boundary into a
+// `CellSelection` covering the whole cell(s). For commenting, that
+// snap-to-cell behaviour is wrong: the user wants to highlight a
+// substring of a cell, not the cell itself. We can't disable the
+// promotion (it's hardcoded inside the table-editing plugin's mousedown
+// handler), so instead we run `appendTransaction` after every state
+// update and, whenever the resulting selection is a `CellSelection`,
+// rewrite it to a plain `TextSelection` covering only the visible text
+// of the selected cell range. The user sees a normal text-range
+// highlight; the comment anchor records the actual text they meant.
+function makeFlattenCellSelectionPlugin(): Plugin {
+  return new Plugin({
+    appendTransaction(_trs, _oldState, newState) {
+      const sel = newState.selection;
+      if (!(sel instanceof CellSelection)) return null;
+      const $a = sel.$anchorCell;
+      const $h = sel.$headCell;
+      const lo = $a.pos <= $h.pos ? $a : $h;
+      const hi = $a.pos <= $h.pos ? $h : $a;
+      const loCell = lo.nodeAfter;
+      const hiCell = hi.nodeAfter;
+      if (!loCell || !hiCell) return null;
+      // Inner text positions: skip past the cell open token (+1) and stop
+      // before the cell close token (nodeSize - 1, since outer +1 was
+      // already paid).
+      const from = lo.pos + 1;
+      const to = hi.pos + hiCell.nodeSize - 1;
+      if (from >= to) return null;
+      return newState.tr.setSelection(TextSelection.create(newState.doc, from, to));
     },
   });
 }

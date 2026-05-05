@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.20.4 — 2026-05-05 (trial)
+
+### Fixed: selecting text inside a table cell snapped to the whole cell
+
+Milkdown's GFM preset wires `prosemirror-tables`' `tableEditing` plugin, which promotes any drag that touches a cell boundary into a `CellSelection` covering the whole cell(s). For commenting that snap-to-cell behaviour is wrong: the user wants to highlight a substring of a cell, not the cell itself.
+
+The promotion is hardcoded in the table-editing plugin's mousedown handler and can't be turned off via options. Added a tiny `appendTransaction` plugin that runs after every state update — whenever the resulting selection is a `CellSelection`, it is rewritten to a plain `TextSelection` covering only the visible text of the selected cell range. The user sees a normal text-range highlight; the comment anchor records the actual text they meant.
+
+The flattener handles single-cell drags and multi-cell drags symmetrically, and is a no-op for any non-table selection.
+
 ## 0.20.3 — 2026-05-02 (trial)
 
 ### Changed: anchor updates must be SURGICAL via the Edit tool, not full sidecar rewrites
