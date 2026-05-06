@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.21.1 — 2026-05-06 (trial)
+
+### Added: live-host integration test for the drawio round-trip
+
+A new integration test (`Collab editor integration › inline drawio link triggers a successful drawio-read round-trip`) opens a fixture markdown with a paragraph-only `.drawio` link in a real VS Code Extension Host, waits for the webview to fire the `drawio-read` message, and asserts the extension's response carries the file's `<mxGraphModel>` content with no webview-error along the way. The test host can't see into the webview's iframe so the SVG rendering itself is still verified visually, but the wiring most likely to break — link detection, message protocol, file resolver, file reader — is now pinned by automation.
+
+To support the test, `CollabEditorProvider` exposes `_getDrawioReadHistoryForTests` and records every `drawio-read-result` it sends, mirroring the existing `_getLastReadyForTests` test-observability hook.
+
+42 integration + 486 unit = 528 passing.
+
 ## 0.21.0 — 2026-05-06 (trial)
 
 ### Added: inline drawio diagram viewer

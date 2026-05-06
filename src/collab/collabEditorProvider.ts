@@ -146,6 +146,11 @@ export function _getLastWebviewErrorForTests(
   return lastWebviewErrorByUri.get(uri.toString());
 }
 
+const drawioReadHistoryByUri = new Map<string, DrawioReadResult[]>();
+export function _getDrawioReadHistoryForTests(uri: vscode.Uri): DrawioReadResult[] {
+  return drawioReadHistoryByUri.get(uri.toString()) ?? [];
+}
+
 export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
   static readonly viewType = VIEW_TYPE;
 
@@ -285,6 +290,9 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       } else if (msg.type === "drawio-read") {
         void (async () => {
           const result = await this.handleDrawioRead(msg, document);
+          const history = drawioReadHistoryByUri.get(document.uri.toString()) ?? [];
+          history.push(result);
+          drawioReadHistoryByUri.set(document.uri.toString(), history);
           void panel.webview.postMessage(result);
         })();
       }

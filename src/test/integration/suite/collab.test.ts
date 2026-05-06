@@ -31,6 +31,7 @@ import {
   _getRoomTextForTests,
 } from "../../../collab/server";
 import {
+  _getDrawioReadHistoryForTests,
   _getLastReadyForTests,
   _getLastWebviewErrorForTests,
 } from "../../../collab/collabEditorProvider";
@@ -177,6 +178,38 @@ suite("Collab editor integration", () => {
     );
     const ready = _getLastReadyForTests(uri)!;
     assert.ok(ready.length > 100, `editor content too short: ${ready.length}`);
+  });
+
+  test("inline drawio link triggers a successful drawio-read round-trip", async () => {
+    // The drawio fixture has a single paragraph-only `.drawio` link. When
+    // the collab editor renders it, makeDrawioPlugin posts a
+    // `drawio-read` message; CollabEditorProvider resolves the path and
+    // streams the file content back. We can't see the rendered SVG from
+    // the test host (it lives inside the webview's iframe), but we CAN
+    // verify the message round-trip succeeded with the file's actual
+    // contents — which is the wiring most likely to break.
+    const uri = vscode.Uri.file(fixturePath("with-drawio.md"));
+    await vscode.commands.executeCommand("vscode.openWith", uri, VIEW_TYPE);
+
+    await waitFor(
+      () => {
+        const err = _getLastWebviewErrorForTests(uri);
+        if (err) throw new Error(`webview error in ${err.stage}: ${err.message}`);
+        const history = _getDrawioReadHistoryForTests(uri);
+        return history.some((r) => r.ok && (r.content ?? "").includes("<mxfile"));
+      },
+      10000,
+      `drawio-read never resolved successfully (history=${JSON.stringify(_getDrawioReadHistoryForTests(uri))})`,
+    );
+
+    const history = _getDrawioReadHistoryForTests(uri);
+    const ok = history.find((r) => r.ok);
+    assert.ok(ok, "no successful drawio-read result");
+    assert.ok(
+      (ok.content ?? "").includes("<mxGraphModel"),
+      "drawio file content did not include <mxGraphModel>",
+    );
+    assert.strictEqual(ok.href, "diagrams/flow.drawio");
   });
 
   test("typing on the relay propagates to a fresh peer", async () => {
