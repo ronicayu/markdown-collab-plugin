@@ -12,6 +12,7 @@ import {
   sidecarPathFor,
 } from "../sidecar";
 import type { Anchor, Comment } from "../types";
+import { resolveDrawioHref } from "./drawioFileResolver";
 import { classifyLink } from "./linkRouter";
 import { isExternalLinkSafe } from "./urlAllowlist";
 
@@ -98,6 +99,22 @@ interface InvokeCommandMessage {
   command: "send-to-claude" | "copy-prompt";
 }
 
+interface DrawioReadMessage {
+  type: "drawio-read";
+  /** Stable id minted by the webview so it can correlate the response. */
+  requestId: string;
+  href: string;
+}
+
+export interface DrawioReadResult {
+  type: "drawio-read-result";
+  requestId: string;
+  href: string;
+  ok: boolean;
+  content?: string;
+  error?: string;
+}
+
 type ClientMessage =
   | EditMessage
   | ReadyMessage
@@ -108,7 +125,8 @@ type ClientMessage =
   | ToggleResolveCommentMessage
   | DeleteCommentMessage
   | OpenLinkMessage
-  | InvokeCommandMessage;
+  | InvokeCommandMessage
+  | DrawioReadMessage;
 
 // Test-only observability. The webview reports its post-init content
 // length (and whether the relay sync succeeded) via the
@@ -264,6 +282,11 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         void this.handleOpenLink(msg, panel, document);
       } else if (msg.type === "invoke-command") {
         void this.handleInvokeCommand(msg, document);
+      } else if (msg.type === "drawio-read") {
+        void (async () => {
+          const result = await this.handleDrawioRead(msg, document);
+          void panel.webview.postMessage(result);
+        })();
       }
     });
 
@@ -517,6 +540,73 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     }
   }
 
+  private async handleDrawioRead(
+    msg: DrawioReadMessage,
+    document: vscode.TextDocument,
+  ): Promise<DrawioReadResult> {
+    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+    return CollabEditorProvider.runDrawioRead(
+      msg.requestId,
+      msg.href,
+      document.uri.fsPath,
+      folder?.uri.fsPath ?? null,
+      async (absPath) => {
+        const buf = await vscode.workspace.fs.readFile(vscode.Uri.file(absPath));
+        return Buffer.from(buf).toString("utf8");
+      },
+      (line) => this.output.appendLine(line),
+    );
+  }
+
+  static async runDrawioRead(
+    requestId: string,
+    href: string,
+    documentPath: string,
+    workspaceRoot: string | null,
+    readFile: (absPath: string) => Promise<string>,
+    appendLog: (line: string) => void = () => {},
+  ): Promise<DrawioReadResult> {
+    if (!workspaceRoot) {
+      return {
+        type: "drawio-read-result",
+        requestId,
+        href,
+        ok: false,
+        error: "Markdown file is outside any workspace folder.",
+      };
+    }
+    const resolved = resolveDrawioHref(href, documentPath, workspaceRoot);
+    if (!resolved.ok) {
+      return {
+        type: "drawio-read-result",
+        requestId,
+        href,
+        ok: false,
+        error: drawioRejectReasonMessage(resolved.reason),
+      };
+    }
+    try {
+      const content = await readFile(resolved.absolutePath);
+      return {
+        type: "drawio-read-result",
+        requestId,
+        href,
+        ok: true,
+        content,
+      };
+    } catch (e) {
+      const message = (e as Error).message ?? "Unknown read error";
+      appendLog(`CollabEditor: drawio-read failed for ${resolved.absolutePath}: ${message}`);
+      return {
+        type: "drawio-read-result",
+        requestId,
+        href,
+        ok: false,
+        error: `Could not read ${href}: ${message}`,
+      };
+    }
+  }
+
   private async handleAddComment(
     document: vscode.TextDocument,
     msg: AddCommentMessage,
@@ -649,6 +739,21 @@ function computeRoom(uri: vscode.Uri): string {
   // to peers but still uniquely identifies the document. Anyone with the
   // same absolute path on the same y-websocket server joins the same room.
   return crypto.createHash("sha1").update(uri.fsPath).digest("hex").slice(0, 16);
+}
+
+function drawioRejectReasonMessage(
+  reason: "empty-href" | "absolute-not-allowed" | "outside-workspace" | "wrong-extension",
+): string {
+  switch (reason) {
+    case "empty-href":
+      return "Drawio link is empty.";
+    case "absolute-not-allowed":
+      return "Drawio link must be a workspace-relative path (no http:, file:, or absolute paths).";
+    case "outside-workspace":
+      return "Drawio link points outside the workspace.";
+    case "wrong-extension":
+      return "Drawio link must end in .drawio, .drawio.xml, or .xml.";
+  }
 }
 
 function pickColor(name: string): string {

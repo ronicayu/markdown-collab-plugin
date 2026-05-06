@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.21.0 — 2026-05-06 (trial)
+
+### Added: inline drawio diagram viewer
+
+The collaborative editor now renders `.drawio` files inline when they are linked from a markdown document. A paragraph whose only content is a link with a `.drawio`, `.drawio.xml`, or `.xml` href is promoted to a block widget that decodes the file and renders it as an SVG below the link. Links mixed with other text keep their normal click behaviour, so the feature only fires for the dedicated diagram-link convention.
+
+Architecture:
+
+- **Resolver** (`src/collab/drawioFileResolver.ts`): turns a webview-supplied href into an absolute filesystem path with three hard rejects — schemes (`http:`, `file:`, `javascript:`), absolute paths, and `..`-traversal that escapes the workspace root. The webview is never trusted to read arbitrary host files.
+- **Decoder** (`src/collab/drawioDecoder.ts`): handles every shape drawio writes: bare `<mxGraphModel>`, uncompressed `<mxfile><diagram>...</diagram></mxfile>`, and the compressed form (base64 + raw deflate + URI encoding). The decoder is a pure module so its format handling can be unit-tested without the renderer.
+- **Renderer** (`src/webview/drawioRenderer.ts`): lazy-loads `mxgraph`, decodes the model into an offscreen graph, then lifts the rendered SVG out, tightens its `viewBox` to the graph bounds, and returns a detached `SVGSVGElement` ready for re-attachment.
+- **PM plugin** (`makeDrawioPlugin` in `src/webview/client.ts`): walks the doc, detects diagram-only paragraphs, and emits a widget decoration. The widget posts a `drawio-read` message via the existing extension bus, then paints when the matching `drawio-read-result` arrives. A per-href cache shares a single fetch + render across every PM transaction.
+- **Extension handler** (`runDrawioRead` in `CollabEditorProvider`): resolves the href, reads the file via `vscode.workspace.fs`, returns the content (or a friendly error). Pulled out as a static helper so it can be unit-tested with an injected reader, no VS Code mocks required.
+
+The viewer is fully self-contained — no network calls, no iframes — at the cost of ~800KB of additional minified JS in the webview bundle for `mxgraph` + `pako`.
+
+Tests: 34 new unit tests covering resolver rejects, decoder formats, and handler error paths. 486 passing total.
+
 ## 0.20.5 — 2026-05-05 (trial)
 
 ### Fixed: floating Add-Comment button still required two clicks in some cases

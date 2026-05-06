@@ -651,6 +651,35 @@ body { overflow: hidden; }
 }
 
 /* ===========================================================
+   Drawio inline viewer
+   =========================================================== */
+
+.mdc-drawio {
+  margin: 1em 0;
+  padding: var(--mdc-space-3);
+  background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.06));
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
+  border-radius: var(--mdc-radius);
+}
+.mdc-drawio__render {
+  display: flex;
+  justify-content: center;
+  min-height: 1.5em;
+  color: var(--vscode-descriptionForeground, rgba(127, 127, 127, 0.8));
+  font-size: 12px;
+}
+.mdc-drawio__render svg {
+  max-width: 100%;
+  height: auto;
+  background: var(--vscode-editor-background, transparent);
+}
+.mdc-drawio__error {
+  color: var(--vscode-errorForeground, #f48771);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+/* ===========================================================
    Responsive — drawer below 720px, full overlay below 480px
    =========================================================== */
 

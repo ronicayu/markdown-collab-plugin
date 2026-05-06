@@ -112,6 +112,15 @@ interface OpenLinkResultMessage {
   reason?: string;
 }
 
+interface DrawioReadResultMessage {
+  type: "drawio-read-result";
+  requestId: string;
+  href: string;
+  ok: boolean;
+  content?: string;
+  error?: string;
+}
+
 type IncomingMessage =
   | InitMessage
   | ExternalChangeMessage
@@ -120,7 +129,8 @@ type IncomingMessage =
   | ReplyCommentResultMessage
   | ToggleResolveResultMessage
   | DeleteCommentResultMessage
-  | OpenLinkResultMessage;
+  | OpenLinkResultMessage
+  | DrawioReadResultMessage;
 
 const vscode = acquireVsCodeApi();
 
@@ -212,6 +222,7 @@ async function init(msg: InitMessage): Promise<void> {
         prev.concat([
           makeFlattenCellSelectionPlugin(),
           makeMermaidPlugin(),
+          makeDrawioPlugin(),
           makeAnchorHighlightPlugin(),
         ]),
       );
@@ -921,6 +932,209 @@ function makeMermaidPlugin(): Plugin {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Drawio inline viewer
+// ---------------------------------------------------------------------------
+//
+// Detection: a paragraph whose only inline content is a single link
+// whose href ends in `.drawio` / `.drawio.xml` / `.xml`. That mirrors
+// the "image-only paragraph promotes to block" convention markdown
+// renderers already follow. Links mixed with other text keep their
+// regular click behavior; only the dedicated diagram link gets the
+// inline-render treatment.
+//
+// Loading: file content is owned by the extension. The widget posts
+// `drawio-read` with a request id, then completes when the matching
+// `drawio-read-result` arrives. A per-href cache avoids re-requesting
+// on every PM transaction (every keystroke triggers a re-render of
+// decorations).
+
+const drawioPluginKey = new PluginKey("mdc-drawio");
+
+interface DrawioCacheEntry {
+  href: string;
+  status: "pending" | "ready" | "error";
+  svg?: SVGSVGElement;
+  error?: string;
+  // Re-render hooks: each rendered widget registers itself so the
+  // entry can paint once content/error arrives. The set is cleared
+  // when the entry resolves but lazy widget creation can still find
+  // the cached value via status.
+  listeners: Set<() => void>;
+}
+
+const drawioCache = new Map<string, DrawioCacheEntry>();
+let drawioRequestCounter = 0;
+const drawioPendingRequests = new Map<string, string>();
+
+function isDrawioHrefForWidget(href: string): boolean {
+  const cleaned = (href || "").trim().toLowerCase().split("#")[0]!.split("?")[0]!;
+  if (!cleaned) return false;
+  // Reject schemes — only workspace-relative paths are eligible. The
+  // extension-side resolver enforces the same rule, but rejecting here
+  // avoids the round-trip for obviously-out-of-scope hrefs.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(cleaned)) return false;
+  return cleaned.endsWith(".drawio") || cleaned.endsWith(".drawio.xml") || cleaned.endsWith(".xml");
+}
+
+interface PmNode {
+  type: { name: string };
+  isText?: boolean;
+  childCount?: number;
+  child?: (i: number) => PmNode;
+  marks?: Array<{ type: { name: string }; attrs: Record<string, unknown> }>;
+  text?: string;
+  textContent?: string;
+}
+
+// Returns the drawio href if the paragraph node is "diagram-only" — a
+// single link mark on a single text node, whitespace-padding allowed.
+function paragraphDrawioHref(paragraph: PmNode): string | null {
+  if (paragraph.type.name !== "paragraph") return null;
+  const childCount = paragraph.childCount ?? 0;
+  // A diagram-only paragraph is a single text node carrying a link
+  // mark. PM may split text into multiple nodes if marks change, but a
+  // single-link paragraph has exactly one child.
+  if (childCount !== 1) return null;
+  const child = paragraph.child?.(0);
+  if (!child || !child.isText) return null;
+  const linkMark = (child.marks ?? []).find((m) => m.type.name === "link");
+  if (!linkMark) return null;
+  const href = String(linkMark.attrs.href ?? "");
+  if (!isDrawioHrefForWidget(href)) return null;
+  // The visible text can be any caption — we don't constrain it. But
+  // if the user wrote `[label] (file.drawio)` (extra space after `]`),
+  // PM still parses it as a link; we accept that too.
+  return href;
+}
+
+function buildDrawioDecorations(doc: DocLike): DecorationSet {
+  const decos: Decoration[] = [];
+  doc.descendants((node, pos) => {
+    const href = paragraphDrawioHref(node as unknown as PmNode);
+    if (!href) return true;
+    decos.push(
+      Decoration.widget(pos, () => makeDrawioWidget(href), {
+        side: 1,
+        ignoreSelection: true,
+        key: `drawio-${pos}-${href}`,
+      }),
+    );
+    return false;
+  });
+  return DecorationSet.create(doc as never, decos);
+}
+
+function makeDrawioWidget(href: string): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "mdc-drawio";
+  wrap.setAttribute("data-href", href);
+  const target = document.createElement("div");
+  target.className = "mdc-drawio__render";
+  wrap.appendChild(target);
+
+  const paint = (): void => {
+    const entry = drawioCache.get(href);
+    if (!entry) {
+      target.textContent = "Loading diagram…";
+      return;
+    }
+    if (entry.status === "pending") {
+      target.textContent = "Loading diagram…";
+      return;
+    }
+    if (entry.status === "error") {
+      target.innerHTML = `<div class="mdc-drawio__error">${escapeHtml(entry.error ?? "Could not render diagram.")}</div>`;
+      return;
+    }
+    if (entry.status === "ready" && entry.svg) {
+      target.innerHTML = "";
+      target.appendChild(entry.svg.cloneNode(true) as SVGSVGElement);
+    }
+  };
+
+  const existing = drawioCache.get(href);
+  if (existing) {
+    existing.listeners.add(paint);
+    paint();
+  } else {
+    requestDrawio(href, paint);
+    paint();
+  }
+
+  return wrap;
+}
+
+function requestDrawio(href: string, repaint: () => void): void {
+  const entry: DrawioCacheEntry = {
+    href,
+    status: "pending",
+    listeners: new Set([repaint]),
+  };
+  drawioCache.set(href, entry);
+  const requestId = `drawio-${++drawioRequestCounter}`;
+  drawioPendingRequests.set(requestId, href);
+  vscode.postMessage({ type: "drawio-read", requestId, href });
+}
+
+function handleDrawioReadResult(msg: DrawioReadResultMessage): void {
+  drawioPendingRequests.delete(msg.requestId);
+  const entry = drawioCache.get(msg.href);
+  if (!entry) return;
+
+  if (!msg.ok || typeof msg.content !== "string") {
+    entry.status = "error";
+    entry.error = msg.error ?? "Could not load diagram.";
+    flushDrawioListeners(entry);
+    return;
+  }
+
+  void (async () => {
+    try {
+      const { renderDrawioToSvg } = await import("./drawioRenderer");
+      const result = await renderDrawioToSvg(msg.content!);
+      if (result.ok) {
+        entry.status = "ready";
+        entry.svg = result.svg;
+      } else {
+        entry.status = "error";
+        entry.error = result.message;
+      }
+    } catch (e) {
+      entry.status = "error";
+      entry.error = (e as Error).message;
+    }
+    flushDrawioListeners(entry);
+  })();
+}
+
+function flushDrawioListeners(entry: DrawioCacheEntry): void {
+  for (const fn of entry.listeners) {
+    try {
+      fn();
+    } catch (e) {
+      postError("drawio-paint", e);
+    }
+  }
+  entry.listeners.clear();
+}
+
+function makeDrawioPlugin(): Plugin {
+  return new Plugin({
+    key: drawioPluginKey,
+    state: {
+      init: (_cfg, state) => buildDrawioDecorations(state.doc),
+      apply: (tr, oldDecos) =>
+        tr.docChanged ? buildDrawioDecorations(tr.doc) : oldDecos.map(tr.mapping, tr.doc),
+    },
+    props: {
+      decorations(state) {
+        return drawioPluginKey.getState(state) as DecorationSet | undefined;
+      },
+    },
+  });
+}
+
 // Milkdown's GFM preset wires `prosemirror-tables`' `tableEditing`
 // plugin, which promotes any drag that touches a cell boundary into a
 // `CellSelection` covering the whole cell(s). For commenting, that
@@ -1416,6 +1630,8 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     if (!msg.ok) showToast(`Delete failed: ${msg.error ?? "unknown error"}`);
   } else if (msg.type === "open-link-result") {
     if (!msg.ok) showToast(`Could not open link: ${msg.reason ?? msg.href}`);
+  } else if (msg.type === "drawio-read-result") {
+    handleDrawioReadResult(msg);
   }
 });
 
