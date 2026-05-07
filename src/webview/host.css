@@ -72,8 +72,8 @@ body { overflow: hidden; }
 .mdc-editor-pane .milkdown {
   background: transparent;
   color: inherit;
-  max-width: 880px;
-  margin: 0 auto;
+  max-width: none;
+  width: 100%;
 }
 
 .mdc-sidebar {

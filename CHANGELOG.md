@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.21.2 — 2026-05-07 (trial)
+
+### Changed: editor pane is full-width
+
+The Milkdown editor was previously capped at `max-width: 880px` with `margin: 0 auto`, which left empty gutters on either side on wide displays. Removed the cap so the editor fills the entire `.mdc-editor-pane` column. The comments sidebar still has its own fixed width and the responsive media queries are unaffected.
+
 ## 0.21.1 — 2026-05-06 (trial)
 
 ### Added: live-host integration test for the drawio round-trip
