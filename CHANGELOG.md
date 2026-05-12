@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.22.1 — 2026-05-12 (trial)
+
+### Fixed: inline-comments view persists mutations to disk
+
+The 0.22.0 inline-comments view applied every CRUD action via
+`WorkspaceEdit`, which mutates the in-memory `TextDocument` and marks
+it dirty but does not save. A reviewer who added a comment, closed the
+file without Cmd+S, and reopened it would lose the comment.
+
+The panel now calls `document.save()` after every successful
+`applyEdit`. If the save fails (read-only file, save participant
+veto), the comment is still in the buffer and a warning surfaces; the
+mutation is not silently dropped.
+
+The sidecar-based system was unaffected — it writes JSON directly to
+disk — so this only fixes the new inline-comments view.
+
 ## 0.22.0 — 2026-05-12 (trial)
 
 ### Added: experimental "inline comments" view — comments live inside the .md file

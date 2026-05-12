@@ -304,6 +304,25 @@ export class InlineCommentsPanel {
       const ok = await vscode.workspace.applyEdit(edit);
       if (!ok) {
         void vscode.window.showErrorMessage("Inline comments: edit failed to apply.");
+        return;
+      }
+      // The inline-comments format treats the .md file as the source of
+      // truth. Mutations from this panel are review actions (add / reply /
+      // resolve / delete) — the user expects them to persist immediately,
+      // not sit in an unsaved buffer. Save right after every successful
+      // apply. If the user has other pending edits in the text editor,
+      // those flush with this save too — same as a manual Cmd+S would do.
+      try {
+        const saved = await this.doc.save();
+        if (!saved) {
+          void vscode.window.showWarningMessage(
+            "Inline comments: comment applied but the file could not be saved.",
+          );
+        }
+      } catch (e) {
+        void vscode.window.showWarningMessage(
+          `Inline comments: comment applied but save failed: ${(e as Error).message}`,
+        );
       }
     } finally {
       this.pendingApply = false;
