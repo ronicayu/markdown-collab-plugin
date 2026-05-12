@@ -59,7 +59,6 @@ html, body {
 }
 
 #preview {
-  max-width: 760px;
   font-size: 14px;
 }
 #preview h1, #preview h2, #preview h3 { line-height: 1.25; }

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.23.1 — 2026-05-12 (trial)
+
+### Changed: inline-comments preview pane is full-width
+
+Removed the `max-width: 760px` cap on `#preview` so the markdown
+preview fills its column on wide displays. The threads sidebar still
+has its own fixed width and the responsive media query at 900px is
+unaffected. Mirrors the 0.21.2 change to the collab editor pane.
+
 ## 0.23.0 — 2026-05-12 (trial)
 
 ### Added: "Send to Claude" in the inline-comments view
