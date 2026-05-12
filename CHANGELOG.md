@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.23.2 — 2026-05-12 (trial)
+
+### Changed: Send-to-Claude prompt asks AI to *reply*, not resolve
+
+In 0.23.0 the inline-comments Send-to-Claude prompt told Claude to
+mark addressed threads `"status":"resolved"`. That's the human
+reviewer's call, not the AI's — the reviewer needs to read Claude's
+response and decide whether the fix actually addresses the concern.
+
+The prompt now instructs Claude to *reply* to each thread instead:
+append a new `{"id":"cN","parent":"<last-live-comment>","author":
+"claude","ts":"<ISO-8601>","body":"<response>"}` object to the
+thread's `comments` array on its `<!--mc:t ...-->` line, keeping
+`"status":"open"`. The prompt now also tells Claude exactly which
+`parent` id to use for each thread (the last live comment's id), so
+the reply chain stays linear.
+
+Two new tests pin the new contract — that the prompt does not contain
+`"status":"resolved"` and that the `parent="..."` hint references the
+correct last-comment id.
+
 ## 0.23.1 — 2026-05-12 (trial)
 
 ### Changed: inline-comments preview pane is full-width

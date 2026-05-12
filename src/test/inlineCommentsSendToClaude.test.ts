@@ -55,9 +55,30 @@ describe("inlineComments/sendToClaude - buildPrompt", () => {
     expect(prompt).toContain("docs/foo.md");
     expect(prompt).toContain("<!--mc:a:ID-->");
     expect(prompt).toContain("<!--mc:threads:begin-->");
-    expect(prompt).toContain('"status":"resolved"');
     expect(prompt).toContain("fix?");
     expect(prompt).toContain("world");
+  });
+
+  it("instructs the AI to reply, not resolve", () => {
+    const src = addThread("Hello world.", 6, 11, { author: "r", body: "fix?", ts: TS }).source;
+    const prompt = _internal.buildPrompt("docs/foo.md", [parseFirst(src)]);
+    expect(prompt.toLowerCase()).toContain("reply");
+    expect(prompt).toContain('Do NOT mark threads resolved');
+    // Must not tell the AI to change status to resolved.
+    expect(prompt).not.toContain('"status":"resolved"');
+  });
+
+  it("tells the AI which parent id to reply to (last live comment in each thread)", () => {
+    let src = addThread("Hello world.", 6, 11, { author: "r", body: "fix?", ts: TS }).source;
+    src = replaceThread(src, parseFirst(src).id, {
+      ...parseFirst(src),
+      comments: [
+        ...parseFirst(src).comments,
+        { id: "c2", parent: "c1", author: "a", ts: TS, body: "I disagree" },
+      ],
+    });
+    const prompt = _internal.buildPrompt("docs/foo.md", [parseFirst(src)]);
+    expect(prompt).toContain('parent="c2"');
   });
 });
 

@@ -70,7 +70,7 @@ function threadToComment(t: InlineThread): Comment {
 function buildPrompt(rel: string, threads: InlineThread[]): string {
   const lines: string[] = [];
   lines.push(
-    `Address the following unresolved review threads in ${rel}.`,
+    `Respond to the following review threads in ${rel}.`,
     "",
     "These comments are stored INLINE in the markdown file itself, not in a sidecar.",
     "Format:",
@@ -81,9 +81,18 @@ function buildPrompt(rel: string, threads: InlineThread[]): string {
     "      <!--mc:t {\"id\":\"ID\",\"quote\":\"...\",\"status\":\"open\",\"comments\":[...]}-->",
     "      <!--mc:threads:end-->",
     "",
-    "When you're done addressing a thread, mark it resolved by changing its",
-    `\`"status":"open"\` to \`"status":"resolved"\` on the matching <!--mc:t ...--> line`,
-    "(and add \"resolvedBy\" and \"resolvedTs\" fields).",
+    "Do NOT mark threads resolved — the human reviewer decides when a",
+    "thread is resolved. Instead, REPLY to each thread by appending a new",
+    "comment to its `comments` array on the matching <!--mc:t ...--> line.",
+    "Each reply object looks like:",
+    '  {"id":"cN","parent":"<last-comment-id>","author":"claude","ts":"<ISO-8601>","body":"<your response>"}',
+    "where `id` is the next sequential `c<n>` for that thread, `parent`",
+    "points at the last live comment id in the thread (the one you are",
+    "replying to), and `ts` is the current UTC time in ISO-8601.",
+    "",
+    "Make the prose / code edits needed to address the reviewer's feedback,",
+    "then add your reply explaining what you changed (or why you didn't).",
+    "Keep `\"status\":\"open\"` — do not change it.",
     "",
     `Open threads (${threads.length}):`,
     "",
@@ -92,8 +101,10 @@ function buildPrompt(rel: string, threads: InlineThread[]): string {
     lines.push(`— ID ${t.id} | anchored: ${JSON.stringify(t.quote)}`);
     const live = t.comments.filter((c) => !c.deleted);
     for (const c of live) {
-      lines.push(`  [${c.author}${c.parent ? ` → ${c.parent}` : ""}] ${oneLine(c.body)}`);
+      lines.push(`  [${c.author}${c.parent ? ` → ${c.parent}` : ""}] (id ${c.id}) ${oneLine(c.body)}`);
     }
+    const lastId = live.length > 0 ? live[live.length - 1].id : "c1";
+    lines.push(`  → reply with: parent="${lastId}"`);
     lines.push("");
   }
   return lines.join("\n");
