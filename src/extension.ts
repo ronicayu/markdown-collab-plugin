@@ -6,6 +6,7 @@ import { ensureAgentsSnippet } from "./agents";
 import { resolve as resolveAnchor } from "./anchor";
 import { CollabEditorProvider } from "./collab/collabEditorProvider";
 import { startCollabServer, type CollabServerHandle } from "./collab/server";
+import { InlineCommentsPanel } from "./inlineComments/inlineCommentsPanel";
 import { MarkdownCollabController, extractAnchor } from "./commentController";
 import { OrphanView } from "./orphanView";
 import { PreviewPanel } from "./previewPanel";
@@ -281,6 +282,26 @@ export function activate(context: vscode.ExtensionContext): void {
       if (collabServer) void collabServer.dispose();
     },
   });
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "markdownCollab.openInlineCommentsView",
+      async (arg?: vscode.Uri) => {
+        const uri =
+          arg instanceof vscode.Uri
+            ? arg
+            : vscode.window.activeTextEditor?.document.uri;
+        if (!uri) {
+          void vscode.window.showWarningMessage(
+            "Open a Markdown file first, then run this command.",
+          );
+          return;
+        }
+        const doc = await vscode.workspace.openTextDocument(uri);
+        InlineCommentsPanel.reveal(context, doc);
+      },
+    ),
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand(

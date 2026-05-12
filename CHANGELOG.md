@@ -1,5 +1,78 @@
 # Changelog
 
+## 0.22.0 — 2026-05-12 (trial)
+
+### Added: experimental "inline comments" view — comments live inside the .md file
+
+A new experimental webview (`Markdown Collab: Open Inline Comments View
+(experimental)`) renders the markdown alongside a threads sidebar with
+full CRUD (add / reply / edit / resolve / unresolve / delete), but
+instead of writing to a sidecar JSON it persists everything **inside
+the .md file itself** as HTML comments. The format is reviewable from a
+plain text editor, diffs cleanly in git, and survives copy/paste of the
+file across tools.
+
+**Format.** Two pieces:
+
+- Anchored span — paired invisible markers wrap the highlighted text:
+  ```
+  The quick <!--mc:a:k3p9-->brown fox<!--mc:/a:k3p9--> jumps.
+  ```
+  IDs are 5-char base36. Zero-width point anchors are allowed.
+- Threads region — a single block at the end of the file:
+  ```
+  <!--mc:threads:begin-->
+  <!--mc:t {"id":"k3p9","quote":"brown fox","status":"open","comments":[…]}-->
+  <!--mc:threads:end-->
+  ```
+  One JSON object per `mc:t` line (avoids a YAML parser dep and keeps
+  the serializer deterministic). Replies use a flat `comments[]` with
+  optional `parent`. Deletions tombstone (`deleted:true`) when the
+  comment has descendants so reply trees stay coherent.
+
+**Parser robustness.** `<!--mc:...-->` markers inside fenced code
+blocks, indented code blocks, and inline code spans are ignored so a
+literal marker shown in a code example isn't interpreted as a real
+anchor. Threads referenced in the threads region but with no matching
+anchor markers in prose are surfaced in the sidebar with a "broken
+anchor" badge instead of silently disappearing.
+
+**Source-offset-aware renderer** (`renderWithOffsets.ts`). A custom
+markdown-it core rule walks the token stream and wraps every text /
+inline-code / fenced-code token in `<span data-mc-src="START.END">…`
+spans carrying exact prose-byte offsets. Highlight wrapping and
+selection-to-source mapping both read these attributes directly — no
+whitespace-collapse fuzzy matching. Table cells, headings, list items,
+inline code, and blockquotes all map exactly. Inline tokens inside
+table cells inherit their parent block's `.map` (which markdown-it
+leaves null on `td_open` / `inline` pairs) so cell text is annotated
+correctly. Selections inside `<pre>` / `<code>` are refused at the
+webview level with a tooltip — the parser would strip those markers
+anyway, so refusing up front avoids creating orphan threads.
+
+**Two-way sync.** The panel watches `onDidChangeTextDocument`, so edits
+made in the normal VSCode text editor re-render the preview live; the
+panel's mutations go through `WorkspaceEdit`, so VSCode undo/redo and
+dirty state work as expected.
+
+**Coverage.** New tests:
+- `inlineCommentsFormat.test.ts` — 17 cases for parse / round-trip /
+  addThread / replaceThread / appendReply / stripAnchorMarkers and the
+  code-block / inline-code marker exclusion.
+- `inlineCommentsPanel.test.ts` — 3 cases for prose-offset
+  serialization, including nested anchors and unanchored threads.
+- `inlineCommentsRenderer.test.ts` — 8 cases for the source-offset
+  plugin including paragraphs, inline emphasis breaks, table cells,
+  fenced code, inline code, headings, list items, and safe degradation
+  on entity-decoded text.
+
+The existing sidecar-based system (Reviews panel, CommentController,
+Send-to-Claude pipeline, real-time collab editor) is unchanged and
+unaffected. The inline-comments view is opt-in via the new command and
+the markdown editor context menu.
+
+523 unit tests passing.
+
 ## 0.21.3 — 2026-05-12 (trial)
 
 ### Fixed: collab editor anchors no longer fall back to the first occurrence
