@@ -38,7 +38,7 @@ import { CellSelection } from "@milkdown/prose/tables";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
-import { stripInlineMarkup } from "../collab/anchorExtractor";
+import { locateAnchorInLiveText } from "../collab/liveAnchorLocator";
 import { renderedRangeToPmRange } from "../collab/pmPositionMapper";
 import { formatRelativeTime } from "../collab/relativeTime";
 
@@ -740,63 +740,8 @@ function buildAnchorDecorations(
   return DecorationSet.create(doc as never, decos);
 }
 
-interface LiveAnchor {
-  text: string;
-  contextBefore: string;
-  contextAfter: string;
-}
-
-// Locate an anchor in the live rendered text. The anchor's text /
-// contextBefore / contextAfter were stored relative to the markdown
-// source, so they may contain inline-markup chars (e.g. `here](url)`)
-// that the live textContent does not have. We strip just those small
-// strings (not the full doc) and search.
-//
-// Disambiguation strategy (in order):
-//   1. Strip the anchor strings, look for unique exact match.
-//   2. If multiple matches, pick the one whose stripped contexts agree.
-//   3. If none match exact, fall back to whitespace-normalised search.
-//   4. Give up (return null — the comment doesn't get highlighted).
-function locateAnchorInLiveText(
-  haystack: string,
-  anchor: LiveAnchor,
-): { start: number; end: number } | null {
-  const needle = stripInlineMarkup(anchor.text).stripped.trim();
-  if (needle.length === 0) return null;
-  const before = stripInlineMarkup(anchor.contextBefore).stripped;
-  const after = stripInlineMarkup(anchor.contextAfter).stripped;
-
-  const hits: number[] = [];
-  let from = 0;
-  while (true) {
-    const idx = haystack.indexOf(needle, from);
-    if (idx < 0) break;
-    hits.push(idx);
-    from = idx + 1;
-  }
-  if (hits.length === 0) return null;
-  if (hits.length === 1) {
-    return { start: hits[0]!, end: hits[0]! + needle.length };
-  }
-  // Multiple hits — disambiguate by context.
-  for (const h of hits) {
-    const haystackBefore = haystack.slice(Math.max(0, h - before.length - 4), h);
-    const haystackAfter = haystack.slice(h + needle.length, h + needle.length + after.length + 4);
-    const beforeOk = before.length === 0 || haystackBefore.endsWith(before);
-    const afterOk = after.length === 0 || haystackAfter.startsWith(after);
-    if (beforeOk && afterOk) return { start: h, end: h + needle.length };
-  }
-  // Loosen: any hit where at least one side matches.
-  for (const h of hits) {
-    const haystackBefore = haystack.slice(Math.max(0, h - before.length - 4), h);
-    const haystackAfter = haystack.slice(h + needle.length, h + needle.length + after.length + 4);
-    const beforeOk = before.length > 0 && haystackBefore.endsWith(before);
-    const afterOk = after.length > 0 && haystackAfter.startsWith(after);
-    if (beforeOk || afterOk) return { start: h, end: h + needle.length };
-  }
-  // No context disambiguation possible — pick the first hit.
-  return { start: hits[0]!, end: hits[0]! + needle.length };
-}
+// locateAnchorInLiveText now lives in ../collab/liveAnchorLocator for
+// testability — re-exported via the top-of-file import.
 
 function forceHighlightRefresh(): void {
   if (!editor) return;
@@ -1634,5 +1579,27 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     handleDrawioReadResult(msg);
   }
 });
+
+// VS Code webviews lose document focus the moment the user clicks any
+// outer chrome (file tree, terminal, another editor). The next click
+// back into the webview is then consumed as a focus-capture gesture
+// before its own handler runs — every button feels like it needs two
+// clicks. Pre-empt that by stealing focus back the instant the pointer
+// re-enters or presses anywhere inside the iframe. Capture phase + no
+// preventDefault keeps it transparent to the actual click flow.
+window.addEventListener(
+  "pointerdown",
+  () => {
+    if (!document.hasFocus()) window.focus();
+  },
+  true,
+);
+window.addEventListener(
+  "mouseenter",
+  () => {
+    if (!document.hasFocus()) window.focus();
+  },
+  true,
+);
 
 vscode.postMessage({ type: "ready" });

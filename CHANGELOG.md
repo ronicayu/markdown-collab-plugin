@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.21.3 — 2026-05-12 (trial)
+
+### Fixed: collab editor anchors no longer fall back to the first occurrence
+
+`locateAnchorInLiveText` in the collab webview previously had two
+"loosening" fallbacks that diverged from the canonical
+`src/anchor.ts:resolve` semantics:
+
+1. A loose loop that accepted a hit when only **one** side of the
+   stored context matched.
+2. A final `hits[0]` fallback when no context side matched at all.
+
+In documents with duplicate substrings — e.g. the same word under
+multiple section headings — these would silently anchor a comment to
+the wrong occurrence (typically the first one in the document).
+
+The locator now mirrors `resolve()`'s contract: a unique exact match
+wins; with duplicates, **all** non-empty stored context sides must
+match strictly before a candidate is accepted; if 0 or >1 candidates
+pass, the anchor is orphaned (surfaced via the existing orphan tree)
+rather than guessed. A whitespace-normalised fallback is retained for
+cases where the live `textContent` collapses whitespace differently
+from the stored markdown source.
+
+The function was extracted into `src/collab/liveAnchorLocator.ts` so
+it could be covered by unit tests (`src/test/liveAnchorLocator.test.ts`,
+9 new cases).
+
+42 integration + 495 unit = 537 passing.
+
 ## 0.21.2 — 2026-05-07 (trial)
 
 ### Changed: editor pane is full-width
