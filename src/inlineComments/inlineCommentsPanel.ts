@@ -24,6 +24,7 @@ import {
   type InlineThread,
   type ParsedDocument,
 } from "./format";
+import { buildInlinePayload } from "./sendToClaude";
 
 interface InitMessage {
   type: "init";
@@ -78,6 +79,10 @@ interface ReadyMessage {
   type: "ready";
 }
 
+interface SendToClaudeRequest {
+  type: "send-to-claude";
+}
+
 type ClientMessage =
   | ReadyMessage
   | AddCommentRequest
@@ -85,7 +90,8 @@ type ClientMessage =
   | EditRequest
   | ToggleResolveRequest
   | DeleteThreadRequest
-  | DeleteCommentRequest;
+  | DeleteCommentRequest
+  | SendToClaudeRequest;
 
 /** Serializable view of `ParsedDocument` for the webview. */
 export interface SerializedState {
@@ -191,6 +197,7 @@ export class InlineCommentsPanel {
         <label><input type="radio" name="filter" value="open" checked> Open</label>
         <label><input type="radio" name="filter" value="all"> All</label>
         <label><input type="radio" name="filter" value="resolved"> Resolved</label>
+        <button id="send-to-claude" class="btn-ghost" title="Copy a prompt for the open threads to your clipboard.">Send to Claude</button>
       </div>
     </header>
     <div id="threads-list"></div>
@@ -257,6 +264,8 @@ export class InlineCommentsPanel {
               : { ...t, status: "open", resolvedBy: undefined, resolvedTs: undefined };
           return replaceThread(parsed.source, t.id, next);
         });
+      case "send-to-claude":
+        return this.handleSendToClaude();
       case "delete-thread":
         return this.applyMutation((parsed) => replaceThread(parsed.source, msg.threadId, null));
       case "delete-comment":
@@ -282,6 +291,33 @@ export class InlineCommentsPanel {
           return replaceThread(parsed.source, t.id, { ...t, comments: nextComments });
         });
     }
+  }
+
+  private async handleSendToClaude(): Promise<void> {
+    const folder = vscode.workspace.getWorkspaceFolder(this.doc.uri);
+    if (!folder) {
+      void vscode.window.showWarningMessage(
+        "Inline comments: send-to-claude needs the file to live inside a workspace folder.",
+      );
+      return;
+    }
+    const payload = buildInlinePayload(this.doc);
+    if (!payload) {
+      void vscode.window.showInformationMessage(
+        "Inline comments: no open threads to send.",
+      );
+      return;
+    }
+    // V1: clipboard delivery. The existing `markdownCollab.sendAllToClaude`
+    // command supports terminal / channel / mcp-channel modes but reads
+    // from the sidecar, not from the .md file. Routing the inline payload
+    // through those transports needs a refactor of invokeSendAllToClaude
+    // to take a payload rather than build one — deferred to keep this
+    // change focused.
+    await vscode.env.clipboard.writeText(payload.prompt);
+    void vscode.window.showInformationMessage(
+      `Inline comments: prompt for ${payload.unresolvedCount} open thread${payload.unresolvedCount === 1 ? "" : "s"} copied to clipboard — paste into Claude Code.`,
+    );
   }
 
   private resolveAuthor(): string {

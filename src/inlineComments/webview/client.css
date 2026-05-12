@@ -127,9 +127,12 @@ mark.mc-hl:hover { filter: brightness(1.15); }
   gap: 12px;
   font-size: 12px;
   color: var(--muted);
+  align-items: center;
+  flex-wrap: wrap;
 }
 .filter-row label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .filter-row input { accent-color: var(--accent); }
+.filter-row #send-to-claude { margin-left: auto; font-size: 11px; padding: 3px 8px; }
 
 #threads-list {
   flex: 1;

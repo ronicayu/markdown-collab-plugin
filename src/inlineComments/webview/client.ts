@@ -65,7 +65,12 @@ const dom = {
   threadsList: document.getElementById("threads-list") as HTMLElement,
   composer: document.getElementById("composer") as HTMLElement,
   filterRadios: document.querySelectorAll<HTMLInputElement>('input[name="filter"]'),
+  sendToClaude: document.getElementById("send-to-claude") as HTMLButtonElement,
 };
+
+dom.sendToClaude.addEventListener("click", () => {
+  vscode.postMessage({ type: "send-to-claude" });
+});
 
 let currentState: SerializedState | null = null;
 let user: { name: string } = { name: "anonymous" };
@@ -73,6 +78,12 @@ let filter: "open" | "all" | "resolved" = "open";
 let pendingSelection: { proseStart: number; proseEnd: number } | null = null;
 let editingCommentId: string | null = null; // composite "threadId:commentId" when editing
 let highlightedThreadId: string | null = null;
+// Track two-click delete confirmation per thread / per comment. Using
+// inline confirm rather than window.confirm() because VSCode webviews
+// silently block sync modal dialogs — the user would click Delete and
+// see nothing happen.
+const pendingDeleteThread = new Set<string>();
+const pendingDeleteComment = new Set<string>(); // composite "threadId:commentId"
 
 function render(state: SerializedState): void {
   currentState = state;
@@ -240,16 +251,37 @@ function renderThreadCard(t: ThreadState): HTMLElement {
     e.stopPropagation();
     vscode.postMessage({ type: "toggle-resolve", threadId: t.id });
   });
+  const armed = pendingDeleteThread.has(t.id);
   const deleteBtn = document.createElement("button");
   deleteBtn.className = "btn-ghost danger";
-  deleteBtn.textContent = "Delete";
+  deleteBtn.textContent = armed ? "Confirm delete" : "Delete";
   deleteBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (confirm("Delete this entire thread?")) {
+    if (pendingDeleteThread.has(t.id)) {
+      pendingDeleteThread.delete(t.id);
       vscode.postMessage({ type: "delete-thread", threadId: t.id });
+    } else {
+      pendingDeleteThread.add(t.id);
+      // Auto-disarm after a few seconds so a stale "Confirm delete"
+      // button doesn't sit there waiting to bite.
+      setTimeout(() => {
+        if (pendingDeleteThread.delete(t.id) && currentState) renderThreads(currentState);
+      }, 4000);
+      renderThreads(currentState!);
     }
   });
   actions.append(resolveBtn, deleteBtn);
+  if (armed) {
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn-ghost";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      pendingDeleteThread.delete(t.id);
+      renderThreads(currentState!);
+    });
+    actions.append(cancelBtn);
+  }
   head.appendChild(actions);
   card.appendChild(head);
 
@@ -351,16 +383,36 @@ function renderComment(thread: ThreadState, c: InlineComment): HTMLElement {
     editingCommentId = editingKey;
     renderThreads(currentState!);
   });
+  const cmtKey = `${thread.id}:${c.id}`;
+  const cmtArmed = pendingDeleteComment.has(cmtKey);
   const delBtn = document.createElement("button");
   delBtn.className = "btn-link danger";
-  delBtn.textContent = "Delete";
+  delBtn.textContent = cmtArmed ? "Confirm" : "Delete";
   delBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (confirm("Delete this comment?")) {
+    if (pendingDeleteComment.has(cmtKey)) {
+      pendingDeleteComment.delete(cmtKey);
       vscode.postMessage({ type: "delete-comment", threadId: thread.id, commentId: c.id });
+    } else {
+      pendingDeleteComment.add(cmtKey);
+      setTimeout(() => {
+        if (pendingDeleteComment.delete(cmtKey) && currentState) renderThreads(currentState);
+      }, 4000);
+      renderThreads(currentState!);
     }
   });
   tools.append(editBtn, delBtn);
+  if (cmtArmed) {
+    const cancel = document.createElement("button");
+    cancel.className = "btn-link";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", (e) => {
+      e.stopPropagation();
+      pendingDeleteComment.delete(cmtKey);
+      renderThreads(currentState!);
+    });
+    tools.append(cancel);
+  }
   el.appendChild(tools);
   return el;
 }

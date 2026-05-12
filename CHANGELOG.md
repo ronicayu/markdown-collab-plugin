@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.23.0 — 2026-05-12 (trial)
+
+### Added: "Send to Claude" in the inline-comments view
+
+The inline-comments threads sidebar gains a **Send to Claude** button.
+On click, the panel parses the open threads, formats a structured
+prompt — file path, the on-disk inline-comment format reminder (so
+Claude knows the markup is HTML comments inside the .md file rather
+than a sidecar JSON), instructions to mark addressed threads
+`"status":"resolved"`, and a list of every open thread's anchor quote
++ body + replies — and copies it to the clipboard. The notification
+reports how many threads were included.
+
+V1 ships clipboard-only delivery. Routing through the user's
+`markdownCollab.sendMode` setting (terminal / channel / mcp-channel)
+would require splitting `invokeSendAllToClaude`'s payload-builder from
+its dispatch logic; deferred to keep this change focused.
+
+4 new unit tests cover the inline → `Comment` shim (including reply
+threading and tombstone exclusion) and the prompt format.
+
+### Fixed: Delete buttons in the inline-comments view
+
+`window.confirm()` is silently blocked in VSCode webviews on some
+hosts, so clicking **Delete** on a thread or single comment appeared
+to do nothing. Replaced the modal with an inline two-click pattern:
+the button first arms ("Confirm delete") and shows a Cancel button
+alongside it; a second click within four seconds commits the
+deletion. The button auto-disarms after four seconds.
+
 ## 0.22.1 — 2026-05-12 (trial)
 
 ### Fixed: inline-comments view persists mutations to disk
