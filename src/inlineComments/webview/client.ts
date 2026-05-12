@@ -138,7 +138,24 @@ const dom = {
   filterRadios: document.querySelectorAll<HTMLInputElement>('input[name="filter"]'),
   sendToClaude: document.getElementById("send-to-claude") as HTMLButtonElement,
   copyPrompt: document.getElementById("copy-prompt") as HTMLButtonElement,
+  app: document.getElementById("app") as HTMLElement,
+  collapseThreads: document.getElementById("collapse-threads") as HTMLButtonElement,
+  expandThreads: document.getElementById("expand-threads") as HTMLButtonElement,
 };
+
+// Sidebar collapse state. Persisted across messages via vscode.setState so
+// the user's preference survives a webview reload.
+function setCollapsed(collapsed: boolean): void {
+  dom.app.classList.toggle("threads-collapsed", collapsed);
+  dom.expandThreads.hidden = !collapsed;
+  vscode.setState({ ...(vscode.getState() as Record<string, unknown> | undefined), collapsed });
+}
+{
+  const saved = vscode.getState() as { collapsed?: boolean } | undefined;
+  if (saved?.collapsed) setCollapsed(true);
+}
+dom.collapseThreads.addEventListener("click", () => setCollapsed(true));
+dom.expandThreads.addEventListener("click", () => setCollapsed(false));
 
 dom.sendToClaude.addEventListener("click", () => {
   vscode.postMessage({ type: "send-to-claude" });

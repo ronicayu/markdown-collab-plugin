@@ -259,12 +259,14 @@ export class InlineCommentsPanel {
     </header>
     <article id="preview"></article>
     <button id="floating-add" hidden>+ Comment on selection</button>
+    <button id="expand-threads" class="collapsed-toggle" title="Show comments" hidden>‹ Comments</button>
   </div>
   <aside id="threads-pane">
     <header id="threads-header">
       <div class="title-row">
         <h2>Comments</h2>
         <span id="thread-count"></span>
+        <button id="collapse-threads" class="btn-link" title="Hide comments panel" aria-label="Hide comments panel">›</button>
       </div>
       <div class="filter-row">
         <label><input type="radio" name="filter" value="open" checked> Open</label>

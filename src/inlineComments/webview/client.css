@@ -27,7 +27,37 @@ html, body {
   grid-template-columns: minmax(0, 1fr) 360px;
   height: 100vh;
   gap: 0;
+  transition: grid-template-columns 180ms ease;
 }
+#app.threads-collapsed {
+  grid-template-columns: minmax(0, 1fr) 0;
+}
+#app.threads-collapsed #threads-pane {
+  display: none;
+}
+
+#collapse-threads {
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 6px;
+  color: var(--muted);
+}
+#collapse-threads:hover { color: var(--fg); }
+
+.collapsed-toggle {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  font-size: 11px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  color: var(--fg);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.collapsed-toggle:hover { filter: brightness(1.15); }
 
 #preview-pane {
   position: relative;
@@ -110,9 +140,10 @@ mark.mc-hl:hover { filter: brightness(1.15); }
 }
 #threads-header .title-row {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
 }
+#threads-header .title-row #thread-count { margin-left: auto; }
 #threads-header h2 {
   margin: 0;
   font-size: 13px;

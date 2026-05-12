@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.26.0 — 2026-05-12 (trial)
+
+### Added: collapsible comments panel in the inline-comments view
+
+A `›` button in the comments-pane header collapses the sidebar; a
+small `‹ Comments` button pinned to the top-right of the preview pane
+brings it back. Collapsed state persists across webview reloads via
+`vscode.setState` so the preference survives a panel hide/show or
+window restart.
+
+When collapsed, the preview pane occupies the full webview width
+(grid-template-columns: 1fr 0). Transition is animated at 180ms ease
+to avoid a jarring snap.
+
 ## 0.25.2 — 2026-05-12 (trial)
 
 ### Fixed: inline-comments view now renders images
