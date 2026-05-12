@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.25.0 — 2026-05-12 (trial)
+
+### Fixed: reply to a thread after the AI replies
+
+Three latent bugs combined to make the reply textarea feel broken
+once the AI had written a response into the file:
+
+1. **In-progress typing wiped on re-render.** When the AI's reply
+   landed on disk, the panel's `onDidChangeTextDocument` listener
+   triggered a full `renderThreads` that rebuilt every card from
+   scratch — discarding any text the user was typing in a reply
+   textarea. The webview now captures every reply textarea's value
+   (and which one held focus) before clearing the list and restores
+   them on the freshly built cards.
+
+2. **Click bubbling re-rendered the list.** Clicking inside the reply
+   textarea bubbled up to the thread card's click handler, which
+   called `renderThreads` to update the highlight state — wiping the
+   textarea you just clicked into. The reply box now `stopPropagation`s
+   on click/mousedown, and the card-click and mark-click handlers
+   update the `.highlighted` class in place instead of rebuilding the
+   list at all.
+
+3. **AI bodies containing `-->` corrupted the thread JSON.** A reply
+   whose body contained the literal sequence `-->` (very common in
+   mermaid edge syntax: `A --> B`) terminated the surrounding
+   `<!--mc:t {...}-->` HTML comment early, breaking the rest of the
+   thread on parse. `renderThreadsRegion` now post-processes
+   `JSON.stringify` output to escape `-->` → `-->` and `<!--` →
+   `<!--`. `JSON.parse` reverses these losslessly on read, so
+   bodies round-trip unchanged; the on-disk text just has no literal
+   `-->` inside any thread's JSON.
+
+Two new format tests pin the escape and round-trip.
+
+### Added: Mermaid diagram rendering (v11.14.0)
+
+The inline-comments preview now renders ` ```mermaid ` fenced blocks
+as SVG diagrams. The renderer overrides markdown-it's `fence` rule to
+emit `<pre class="mermaid">` for mermaid blocks; the panel ships
+`node_modules/mermaid/dist/mermaid.min.js` as a webview resource and
+the client calls `mermaid.run({ querySelector: "pre.mermaid" })`
+after every preview render. Initialization picks `dark` or `default`
+theme based on the host VSCode theme.
+
+Mermaid blocks still carry a single `data-mc-src` span around their
+text content so a thread anchored on the source code (not the
+rendered SVG) parses correctly; the visual highlight inside the
+rendered SVG isn't supported (the SVG nodes aren't text-selectable),
+but the sidebar card still works.
+
+CSP loosened to allow `'unsafe-eval'` (mermaid's bundled DOMPurify
+uses `Function()` for config parsing) and `data:` images, matching
+the existing previewPanel's CSP.
+
 ## 0.24.0 — 2026-05-12 (trial)
 
 ### Changed: inline-comments "Send to Claude" routes to a Claude terminal by default; separate "Copy" button for clipboard

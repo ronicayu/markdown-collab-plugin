@@ -64,6 +64,8 @@ html, body {
 #preview h1, #preview h2, #preview h3 { line-height: 1.25; }
 #preview pre, #preview code { font-family: var(--vscode-editor-font-family, monospace); }
 #preview pre { background: var(--card-bg); padding: 12px; border-radius: 4px; overflow-x: auto; }
+#preview pre.mermaid { background: transparent; text-align: center; }
+#preview pre.mermaid svg { max-width: 100%; height: auto; }
 #preview blockquote { border-left: 3px solid var(--border); padding-left: 12px; color: var(--muted); margin-left: 0; }
 #preview a { color: var(--accent); }
 #preview table { border-collapse: collapse; }

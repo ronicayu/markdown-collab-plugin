@@ -291,10 +291,24 @@ export function renderThreadsRegion(threads: InlineThread[]): string {
     if (t.resolvedBy) obj.resolvedBy = t.resolvedBy;
     if (t.resolvedTs) obj.resolvedTs = t.resolvedTs;
     obj.comments = t.comments;
-    lines.push(`<!--mc:t ${JSON.stringify(obj)}-->`);
+    lines.push(`<!--mc:t ${safeStringify(obj)}-->`);
   }
   lines.push(THREADS_END);
   return lines.join("\n");
+}
+
+/**
+ * `JSON.stringify` + escape any literal `-->` (and the leading `<!--`)
+ * that would otherwise terminate or confuse the surrounding HTML
+ * comment in which we embed the JSON. We escape `>` after `--` to
+ * `>`; on read, `JSON.parse` reverses the `>` back to `>` so
+ * comment bodies round-trip losslessly. Belt-and-braces — also escape
+ * `<` after `!` to `<` in case an AI emits a literal `<!-- block.
+ */
+function safeStringify(obj: unknown): string {
+  return JSON.stringify(obj)
+    .replace(/-->/g, "--\\u003e")
+    .replace(/<!--/g, "\\u003c!--");
 }
 
 /** Replace (or insert) the threads region of `source` with `threads`. */

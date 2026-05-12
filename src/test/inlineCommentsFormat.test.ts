@@ -167,6 +167,40 @@ describe("inlineComments/format - replaceThread / appendReply / stripAnchorMarke
   });
 });
 
+describe("inlineComments/format - HTML-comment safety", () => {
+  it("escapes literal --> in comment bodies so the surrounding <!--mc:t ...--> doesn't terminate early", () => {
+    const src = addThread("Hello world.", 6, 11, {
+      author: "claude",
+      body: "see -->\n```mermaid\ngraph LR; A --> B\n```",
+      ts: TS,
+    }).source;
+    // The on-disk text must contain no `-->` sequence inside the JSON
+    // body — every one must be the literal `>` escape.
+    const region = src.slice(src.indexOf("<!--mc:threads:begin-->"));
+    const threadLine = region.split("\n")[1];
+    expect(threadLine.startsWith("<!--mc:t ")).toBe(true);
+    // Exactly one `-->` per thread line (the terminator).
+    expect(threadLine.match(/-->/g)!.length).toBe(1);
+    // Body still round-trips.
+    const parsed = parse(src);
+    expect(parsed.threads[0].comments[0].body).toContain("see -->");
+    expect(parsed.threads[0].comments[0].body).toContain("A --> B");
+  });
+
+  it("escapes literal <!-- in comment bodies", () => {
+    const src = addThread("Hello world.", 6, 11, {
+      author: "claude",
+      body: "an example: <!-- example -->",
+      ts: TS,
+    }).source;
+    const region = src.slice(src.indexOf("<!--mc:threads:begin-->"));
+    const threadLine = region.split("\n")[1];
+    // Only the thread-line opener should be a literal `<!--`.
+    expect(threadLine.match(/<!--/g)!.length).toBe(1);
+    expect(parse(src).threads[0].comments[0].body).toBe("an example: <!-- example -->");
+  });
+});
+
 describe("inlineComments/format - round-trip", () => {
   it("parse → render → parse is stable", () => {
     let md = "Doc.\n\nThe quick brown fox.";

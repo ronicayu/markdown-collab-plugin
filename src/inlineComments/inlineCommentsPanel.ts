@@ -150,7 +150,12 @@ export class InlineCommentsPanel {
       {
         enableScripts: true,
         retainContextWhenHidden: true,
-        localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, "out", "inlineComments")],
+        localResourceRoots: [
+          vscode.Uri.joinPath(context.extensionUri, "out", "inlineComments"),
+          // mermaid.min.js is shipped under node_modules and loaded at
+          // runtime as a webview resource (same pattern as previewPanel).
+          vscode.Uri.joinPath(context.extensionUri, "node_modules", "mermaid", "dist"),
+        ],
       },
     );
     panels.set(key, new InlineCommentsPanel(context, doc, panel, deps, () => panels.delete(key)));
@@ -186,12 +191,25 @@ export class InlineCommentsPanel {
     const styleUri = this.panel.webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, "out", "inlineComments", "client.css"),
     );
+    const mermaidUri = this.panel.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, "node_modules", "mermaid", "dist", "mermaid.min.js"),
+    );
     const cspSource = this.panel.webview.cspSource;
+    // `unsafe-eval` is required because mermaid's bundled DOMPurify uses
+    // `Function()` under the hood for its config parsing. img-src allows
+    // data: URIs because mermaid emits foreignObject contents that can
+    // reference inline images.
+    const csp =
+      `default-src 'none'; ` +
+      `style-src ${cspSource} 'unsafe-inline'; ` +
+      `script-src ${cspSource} 'unsafe-eval'; ` +
+      `img-src ${cspSource} data:; ` +
+      `font-src ${cspSource} data:;`;
     return `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource}; img-src ${cspSource} data:; font-src ${cspSource};">
+<meta http-equiv="Content-Security-Policy" content="${csp}">
 <link rel="stylesheet" href="${styleUri}">
 <title>Inline Comments</title>
 </head>
@@ -223,6 +241,7 @@ export class InlineCommentsPanel {
     <div id="composer" hidden></div>
   </aside>
 </div>
+<script src="${mermaidUri}"></script>
 <script src="${scriptUri}"></script>
 </body>
 </html>`;

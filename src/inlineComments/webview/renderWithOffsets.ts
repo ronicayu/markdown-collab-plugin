@@ -59,7 +59,14 @@ export function installSourceOffsetPlugin(md: MarkdownIt): void {
   md.renderer.rules.fence = (tokens, idx) => {
     const tok = tokens[idx];
     const meta = tok.meta as TokenMeta | null;
-    const langAttr = tok.info ? ` class="language-${escapeAttr(tok.info.trim().split(/\s+/)[0] ?? "")}"` : "";
+    const lang = tok.info ? tok.info.trim().split(/\s+/)[0] : "";
+    // Mermaid: emit a <pre class="mermaid"> with the raw source as text;
+    // the page-level mermaid runtime renders it into an SVG in place.
+    if (lang === "mermaid") {
+      const inner = wrap(meta?.mcStart, meta?.mcEnd, escapeHtml(tok.content));
+      return `<pre class="mermaid">${inner}</pre>\n`;
+    }
+    const langAttr = lang ? ` class="language-${escapeAttr(lang)}"` : "";
     const code = escapeHtml(tok.content);
     return `<pre><code${langAttr}>${wrap(meta?.mcStart, meta?.mcEnd, code)}</code></pre>\n`;
   };

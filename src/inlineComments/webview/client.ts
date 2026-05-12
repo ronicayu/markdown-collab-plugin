@@ -15,6 +15,15 @@ declare function acquireVsCodeApi(): {
   getState: () => unknown;
 };
 
+declare global {
+  interface Window {
+    mermaid?: {
+      initialize: (cfg: Record<string, unknown>) => void;
+      run: (cfg?: { querySelector?: string }) => Promise<void>;
+    };
+  }
+}
+
 const vscode = acquireVsCodeApi();
 
 interface InlineComment {
@@ -96,6 +105,8 @@ function render(state: SerializedState): void {
   positionFloatingButton();
 }
 
+let mermaidInitialized = false;
+
 function renderPreview(state: SerializedState): void {
   // markdown-it renders the prose to HTML. Our source-offset plugin
   // wraps every text/code token in `<span data-mc-src="START.END">…`,
@@ -103,6 +114,39 @@ function renderPreview(state: SerializedState): void {
   // spans to overlay anchor highlights — no fuzzy text matching.
   dom.preview.innerHTML = md.render(state.prose);
   applyAnchorHighlights(state);
+  void runMermaid();
+}
+
+async function runMermaid(): Promise<void> {
+  const mermaid = window.mermaid;
+  if (!mermaid) return;
+  if (!mermaidInitialized) {
+    const isDark =
+      document.body.classList.contains("vscode-dark") ||
+      window.matchMedia("(prefers-color-scheme: dark)").matches;
+    try {
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: isDark ? "dark" : "default",
+        securityLevel: "strict",
+      });
+      mermaidInitialized = true;
+    } catch (e) {
+      console.error("mermaid init failed", e);
+      return;
+    }
+  }
+  // mermaid.run mutates `<pre class="mermaid">` in place by replacing its
+  // content with an SVG. Anchored highlight spans inside the block (if
+  // any) survive only as data attributes on the source-offset span we
+  // wrap around the code; the SVG itself isn't selectable, so anchored
+  // text inside a mermaid block won't visually highlight (but the
+  // sidebar card still works).
+  try {
+    await mermaid.run({ querySelector: "pre.mermaid" });
+  } catch (e) {
+    console.error("mermaid render failed", e);
+  }
 }
 
 interface ProseSpan {
@@ -189,13 +233,37 @@ function wrapSpanRange(
     e.stopPropagation();
     highlightedThreadId = threadId;
     scrollSidebarTo(threadId);
-    renderThreads(currentState!);
+    for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
+      c.classList.toggle("highlighted", c.dataset.thread === threadId);
+    }
   });
   textHost.appendChild(mark);
   if (after) textHost.appendChild(document.createTextNode(after));
 }
 
+/**
+ * In-progress reply textarea content keyed by thread id. Preserved across
+ * re-renders (which fire on every external update — e.g., when the AI's
+ * reply lands and the file changes) so the user doesn't lose their typing
+ * mid-sentence. Also tracks which thread had the focused textarea so we
+ * can restore it.
+ */
+const pendingReplyText = new Map<string, string>();
+let focusedReplyThreadId: string | null = null;
+
+function captureReplyState(): void {
+  for (const card of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
+    const id = card.dataset.thread;
+    if (!id) continue;
+    const ta = card.querySelector<HTMLTextAreaElement>(".reply-box textarea");
+    if (!ta) continue;
+    if (ta.value.length > 0) pendingReplyText.set(id, ta.value);
+    if (document.activeElement === ta) focusedReplyThreadId = id;
+  }
+}
+
 function renderThreads(state: SerializedState): void {
+  captureReplyState();
   const list = dom.threadsList;
   list.innerHTML = "";
   const filtered = state.threads.filter((t) => {
@@ -229,7 +297,12 @@ function renderThreadCard(t: ThreadState): HTMLElement {
   card.addEventListener("click", () => {
     highlightedThreadId = t.id;
     scrollPreviewTo(t);
-    renderThreads(currentState!);
+    // Update only the .highlighted class on cards; do NOT re-render the
+    // list, because that would blow away any in-progress reply textarea
+    // content the user has typed on a different card.
+    for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
+      c.classList.toggle("highlighted", c.dataset.thread === t.id);
+    }
   });
 
   const head = document.createElement("header");
@@ -293,20 +366,33 @@ function renderThreadCard(t: ThreadState): HTMLElement {
     card.appendChild(renderComment(t, c));
   }
 
-  // Reply composer
+  // Reply composer. We stop click propagation on the box and its children
+  // so clicking inside doesn't bubble to the card's click handler (which
+  // would re-highlight the thread and trigger a re-render that wipes the
+  // textarea content the user just typed).
   const replyBox = document.createElement("div");
   replyBox.className = "reply-box";
+  replyBox.addEventListener("click", (e) => e.stopPropagation());
+  replyBox.addEventListener("mousedown", (e) => e.stopPropagation());
   const replyTa = document.createElement("textarea");
   replyTa.placeholder = "Reply…";
   replyTa.rows = 1;
-  replyTa.addEventListener("input", () => autoresize(replyTa));
+  // Restore in-progress text captured before the most recent re-render.
+  const restoredText = pendingReplyText.get(t.id) ?? "";
+  if (restoredText) {
+    replyTa.value = restoredText;
+    requestAnimationFrame(() => autoresize(replyTa));
+  }
+  replyTa.addEventListener("input", () => {
+    autoresize(replyTa);
+    replyBtn.disabled = replyTa.value.trim().length === 0;
+    if (replyTa.value.length === 0) pendingReplyText.delete(t.id);
+    else pendingReplyText.set(t.id, replyTa.value);
+  });
   replyBox.appendChild(replyTa);
   const replyBtn = document.createElement("button");
   replyBtn.textContent = "Reply";
-  replyBtn.disabled = true;
-  replyTa.addEventListener("input", () => {
-    replyBtn.disabled = replyTa.value.trim().length === 0;
-  });
+  replyBtn.disabled = restoredText.trim().length === 0;
   replyBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     const body = replyTa.value.trim();
@@ -314,9 +400,17 @@ function renderThreadCard(t: ThreadState): HTMLElement {
     vscode.postMessage({ type: "reply", threadId: t.id, body });
     replyTa.value = "";
     replyBtn.disabled = true;
+    pendingReplyText.delete(t.id);
   });
   replyBox.appendChild(replyBtn);
   card.appendChild(replyBox);
+  if (focusedReplyThreadId === t.id) {
+    requestAnimationFrame(() => {
+      replyTa.focus();
+      replyTa.selectionStart = replyTa.selectionEnd = replyTa.value.length;
+    });
+    focusedReplyThreadId = null;
+  }
 
   return card;
 }
