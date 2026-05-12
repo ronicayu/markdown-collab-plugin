@@ -60,11 +60,14 @@ export function installSourceOffsetPlugin(md: MarkdownIt): void {
     const tok = tokens[idx];
     const meta = tok.meta as TokenMeta | null;
     const lang = tok.info ? tok.info.trim().split(/\s+/)[0] : "";
-    // Mermaid: emit a <pre class="mermaid"> with the raw source as text;
-    // the page-level mermaid runtime renders it into an SVG in place.
+    // Mermaid: emit a bare <pre class="mermaid"> with the diagram source
+    // as plain text — the runtime later replaces the pre's children with
+    // an SVG. Do NOT wrap in a `<span data-mc-src>` because mermaid v11
+    // reads element children directly and the extra wrapper trips its
+    // parser ("Syntax error in text"). Anchoring inside a rendered SVG
+    // isn't supported anyway, so the source-offset hint isn't useful here.
     if (lang === "mermaid") {
-      const inner = wrap(meta?.mcStart, meta?.mcEnd, escapeHtml(tok.content));
-      return `<pre class="mermaid">${inner}</pre>\n`;
+      return `<pre class="mermaid">${escapeHtml(tok.content)}</pre>\n`;
     }
     const langAttr = lang ? ` class="language-${escapeAttr(lang)}"` : "";
     const code = escapeHtml(tok.content);

@@ -43,6 +43,19 @@ describe("inlineComments/webview/renderWithOffsets", () => {
     expect(parts.map((p) => p.substring).sort()).toEqual(["Cell A", "Header"]);
   });
 
+  it("emits mermaid blocks as a bare <pre class=\"mermaid\">…</pre> with NO inner wrapping span", () => {
+    const src = "```mermaid\ngraph LR\nA --> B\n```\n";
+    const html = mkRenderer().render(src);
+    // mermaid v11 fails ("Syntax error in text") if it has to read through
+    // a wrapping span — match the existing previewPanel's output exactly.
+    expect(html).toContain('<pre class="mermaid">');
+    // Inside the mermaid pre, the next char should be the diagram source
+    // (escaped), not "<span data-mc-src=".
+    const inner = html.slice(html.indexOf('<pre class="mermaid">') + '<pre class="mermaid">'.length);
+    expect(inner.startsWith("<span data-mc-src")).toBe(false);
+    expect(inner.startsWith("graph LR")).toBe(true);
+  });
+
   it("annotates a fenced code block as one span covering the inner code", () => {
     const src = "```\ncode line\n```\n";
     const html = mkRenderer().render(src);

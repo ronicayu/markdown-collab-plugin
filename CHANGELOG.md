@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.25.1 — 2026-05-12 (trial)
+
+### Fixed: Mermaid v11 "Syntax error in text" in the inline-comments view
+
+0.25.0 wrapped every fenced code block's content (including mermaid
+blocks) in `<span data-mc-src="START.END">…</span>` for source-offset
+mapping. Mermaid v11.14.0 reads its diagram source via element
+children rather than `textContent`, and the extra `<span>` wrapper
+caused every diagram to render as "Syntax error in text" while the
+existing preview panel (which emits a bare `<pre class="mermaid">`)
+rendered the same source correctly.
+
+The fence renderer now emits `<pre class="mermaid">…</pre>` with the
+diagram source as a direct text child for mermaid blocks, exactly
+matching the previewPanel's output. Source-offset annotation is
+dropped for mermaid only — anchoring inside a rendered SVG isn't
+supported anyway. Other fenced code blocks still carry their
+`data-mc-src` span.
+
+New renderer test pins the bare-pre output for mermaid blocks.
+
 ## 0.25.0 — 2026-05-12 (trial)
 
 ### Fixed: reply to a thread after the AI replies
