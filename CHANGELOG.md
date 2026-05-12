@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.25.2 — 2026-05-12 (trial)
+
+### Fixed: inline-comments view now renders images
+
+Markdown images (`![alt](path.png)`) and external image URLs were
+showing as broken icons because (1) the webview's `localResourceRoots`
+only granted access to the extension's own assets, not the workspace
+folder; (2) the CSP `img-src` was scoped to `${cspSource} data:` only,
+blocking `https://` image hosts; and (3) relative srcs in markdown
+weren't rewritten to webview-loadable URIs, so they resolved against
+the `vscode-webview://` origin and 404'd.
+
+Fix:
+
+- `localResourceRoots` now includes the workspace folder of the open
+  document (falling back to the .md file's parent directory if the
+  file is outside any workspace).
+- CSP `img-src` widened to `${cspSource} https: http: data:` —
+  matches VSCode's built-in markdown preview policy.
+- The webview installs a markdown-it `image` renderer override that
+  rewrites `src`: leading-slash paths resolve against the workspace
+  folder URI; everything else resolves against the .md's directory.
+  `http(s)://` and `data:` srcs pass through unchanged.
+
+The panel sends both base URIs as part of the `init` message
+(`imageBaseUris.docDir` and `imageBaseUris.workspaceFolder`), pre-
+computed via `webview.asWebviewUri` so the webview doesn't need to
+know how to convert filesystem paths itself.
+
 ## 0.25.1 — 2026-05-12 (trial)
 
 ### Fixed: Mermaid v11 "Syntax error in text" in the inline-comments view

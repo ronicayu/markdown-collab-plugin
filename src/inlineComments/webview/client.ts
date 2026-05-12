@@ -56,6 +56,10 @@ interface InitMsg {
   fileName: string;
   state: SerializedState;
   user: { name: string };
+  imageBaseUris: {
+    docDir: string;
+    workspaceFolder: string | null;
+  };
 }
 
 interface UpdateMsg {
@@ -65,6 +69,64 @@ interface UpdateMsg {
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
 installSourceOffsetPlugin(md);
+
+let imageBaseUris: { docDir: string; workspaceFolder: string | null } = {
+  docDir: "",
+  workspaceFolder: null,
+};
+
+// Override markdown-it's default image renderer so relative `src`
+// attributes resolve against the .md file's directory (turned into a
+// webview-loadable URI by the extension host). Without this every
+// `![alt](foo.png)` 404s against the webview's own vscode-webview://
+// origin.
+const defaultImageRule = md.renderer.rules.image ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
+md.renderer.rules.image = (tokens, idx, options, env, self) => {
+  const tok = tokens[idx];
+  const srcIdx = tok.attrIndex("src");
+  if (srcIdx >= 0 && tok.attrs) {
+    const original = tok.attrs[srcIdx][1];
+    const resolved = resolveImageSrc(original);
+    if (resolved !== original) tok.attrs[srcIdx][1] = resolved;
+  }
+  return defaultImageRule(tokens, idx, options, env, self);
+};
+
+/**
+ * Map a markdown image src to something the webview can load:
+ *   - `http://`, `https://`, `data:` → unchanged (CSP allows them)
+ *   - leading `/` → resolved against the workspace folder
+ *   - everything else → resolved against the .md's directory
+ *   - empty / undefined → unchanged
+ */
+function resolveImageSrc(src: string): string {
+  if (!src) return src;
+  if (/^(https?:|data:|vscode-webview-resource:|vscode-webview:|file:)/i.test(src)) return src;
+  if (src.startsWith("//")) return "https:" + src;
+  const cleaned = src.replace(/^\.\//, "");
+  if (cleaned.startsWith("/")) {
+    if (!imageBaseUris.workspaceFolder) return src;
+    return joinUri(imageBaseUris.workspaceFolder, cleaned.slice(1));
+  }
+  if (!imageBaseUris.docDir) return src;
+  return joinUri(imageBaseUris.docDir, cleaned);
+}
+
+function joinUri(base: string, rel: string): string {
+  // Best-effort URI join: strip any trailing slash on base, then split
+  // off `?query`/`#hash` so we don't merge them with the path.
+  const m = /^([^?#]*)([?#].*)?$/.exec(rel);
+  const path = m ? m[1] : rel;
+  const tail = m && m[2] ? m[2] : "";
+  const segments = path.split("/");
+  const out: string[] = [];
+  for (const seg of segments) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") out.pop();
+    else out.push(encodeURIComponent(seg));
+  }
+  return base.replace(/\/+$/, "") + "/" + out.join("/") + tail;
+}
 
 const dom = {
   fileName: document.getElementById("file-name") as HTMLElement,
@@ -819,6 +881,7 @@ window.addEventListener("message", (ev) => {
   if (msg.type === "init") {
     dom.fileName.textContent = msg.fileName;
     user = msg.user;
+    imageBaseUris = msg.imageBaseUris;
     render(msg.state);
   } else if (msg.type === "update") {
     render(msg.state);

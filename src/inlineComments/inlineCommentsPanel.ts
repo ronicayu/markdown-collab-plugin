@@ -14,6 +14,7 @@
 // commentController, sidecar, or the y-websocket relay.
 
 import * as os from "os";
+import * as path from "path";
 import * as vscode from "vscode";
 import {
   addThread,
@@ -32,6 +33,17 @@ interface InitMessage {
   fileName: string;
   state: SerializedState;
   user: { name: string };
+  /**
+   * Webview-loadable URIs the client uses to rewrite relative image
+   * src attributes. Without this every `![alt](foo.png)` would resolve
+   * against the webview's own origin and 404.
+   */
+  imageBaseUris: {
+    /** Directory containing the .md file, as a `vscode-webview://…` URI. */
+    docDir: string;
+    /** Workspace folder root, as a `vscode-webview://…` URI. Used for `/abs.png` style refs. */
+    workspaceFolder: string | null;
+  };
 }
 
 interface UpdateMessage {
@@ -134,6 +146,31 @@ const VIEW_TYPE = "markdownCollab.inlineCommentsView";
 
 const panels = new Map<string, InlineCommentsPanel>();
 
+/**
+ * Build the localResourceRoots that let the webview load mermaid +
+ * inline-comments assets AND any images sitting next to (or anywhere
+ * under) the markdown file.
+ */
+function imageResourceRoots(
+  context: vscode.ExtensionContext,
+  doc: vscode.TextDocument,
+): vscode.Uri[] {
+  const roots: vscode.Uri[] = [
+    vscode.Uri.joinPath(context.extensionUri, "out", "inlineComments"),
+    vscode.Uri.joinPath(context.extensionUri, "node_modules", "mermaid", "dist"),
+  ];
+  const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
+  if (folder) {
+    roots.push(folder.uri);
+  } else {
+    // No workspace folder — at least grant access to the file's own
+    // directory so sibling images resolve.
+    const dir = vscode.Uri.file(path.dirname(doc.uri.fsPath));
+    roots.push(dir);
+  }
+  return roots;
+}
+
 export class InlineCommentsPanel {
   static reveal(context: vscode.ExtensionContext, doc: vscode.TextDocument, deps: InlinePanelDeps): void {
     const key = doc.uri.toString();
@@ -150,12 +187,7 @@ export class InlineCommentsPanel {
       {
         enableScripts: true,
         retainContextWhenHidden: true,
-        localResourceRoots: [
-          vscode.Uri.joinPath(context.extensionUri, "out", "inlineComments"),
-          // mermaid.min.js is shipped under node_modules and loaded at
-          // runtime as a webview resource (same pattern as previewPanel).
-          vscode.Uri.joinPath(context.extensionUri, "node_modules", "mermaid", "dist"),
-        ],
+        localResourceRoots: imageResourceRoots(context, doc),
       },
     );
     panels.set(key, new InlineCommentsPanel(context, doc, panel, deps, () => panels.delete(key)));
@@ -199,11 +231,16 @@ export class InlineCommentsPanel {
     // `Function()` under the hood for its config parsing. img-src allows
     // data: URIs because mermaid emits foreignObject contents that can
     // reference inline images.
+    // img-src widened so the rendered preview can show:
+    //   - workspace-relative images via asWebviewUri (the `${cspSource}` slot)
+    //   - external http(s) images (e.g. badges, hosted screenshots)
+    //   - inline data: URIs
+    // matches VSCode's built-in markdown preview behavior.
     const csp =
       `default-src 'none'; ` +
       `style-src ${cspSource} 'unsafe-inline'; ` +
       `script-src ${cspSource} 'unsafe-eval'; ` +
-      `img-src ${cspSource} data:; ` +
+      `img-src ${cspSource} https: http: data:; ` +
       `font-src ${cspSource} data:;`;
     return `<!doctype html>
 <html>
@@ -411,11 +448,17 @@ export class InlineCommentsPanel {
 
   private async pushInit(): Promise<void> {
     const state = serialize(parse(this.doc.getText()));
+    const docDirUri = vscode.Uri.file(path.dirname(this.doc.uri.fsPath));
+    const folder = vscode.workspace.getWorkspaceFolder(this.doc.uri);
     const msg: InitMessage = {
       type: "init",
       fileName: vscode.workspace.asRelativePath(this.doc.uri),
       state,
       user: { name: this.resolveAuthor() },
+      imageBaseUris: {
+        docDir: this.panel.webview.asWebviewUri(docDirUri).toString(),
+        workspaceFolder: folder ? this.panel.webview.asWebviewUri(folder.uri).toString() : null,
+      },
     };
     await this.panel.webview.postMessage(msg);
   }
