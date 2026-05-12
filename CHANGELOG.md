@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.24.0 — 2026-05-12 (trial)
+
+### Changed: inline-comments "Send to Claude" routes to a Claude terminal by default; separate "Copy" button for clipboard
+
+Previously the inline view's Send-to-Claude button always copied the
+prompt to the clipboard. Now it routes through the same dispatcher as
+the sidecar-based `markdownCollab.sendAllToClaude` command, honoring
+the user's `markdownCollab.sendMode` setting:
+
+- `terminal` (the default behavior) — bracketed-pastes the prompt
+  directly into a running Claude REPL via the existing terminal
+  tracker. If no Claude terminal is running, offers to start one.
+- `channel` / `mcp-channel` — appends to `.markdown-collab/.events.jsonl`
+  and/or pushes to the bundled MCP channel server.
+- `clipboard` — copies the prompt.
+- `ask` — prompts the user once and remembers per workspace.
+
+A new **Copy** button next to **Send to Claude** in the sidebar always
+copies to clipboard regardless of `sendMode`, for the case where the
+user wants the prompt text without firing the configured transport.
+
+Implementation: extracted the existing per-transport dispatch loop
+from `invokeSendAllToClaude` into a standalone
+`dispatchReviewPayload(payload, …)` helper. The new inline-comments
+command path builds an `InlineReviewPayload` (which `extends
+ReviewPayload`) and feeds it through the same helper.
+
+The panel takes its dispatcher as a constructor dep so the transport
+machinery stays owned by `extension.ts` — the panel doesn't reach into
+`TerminalTracker` or `EventLog` directly.
+
 ## 0.23.2 — 2026-05-12 (trial)
 
 ### Changed: Send-to-Claude prompt asks AI to *reply*, not resolve

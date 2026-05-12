@@ -11,7 +11,7 @@ import { MarkdownCollabController, extractAnchor } from "./commentController";
 import { OrphanView } from "./orphanView";
 import { PreviewPanel } from "./previewPanel";
 import { ReviewView, type ReviewNode } from "./reviewView";
-import { buildReviewPayload, type SendMode } from "./sendToClaude";
+import { buildReviewPayload, type ReviewPayload, type SendMode } from "./sendToClaude";
 import { SidecarWatcher } from "./sidecarWatcher";
 import { installClaudeSkill } from "./skill";
 import { EVENT_LOG_REL, EventLog } from "./transports/eventLog";
@@ -298,7 +298,25 @@ export function activate(context: vscode.ExtensionContext): void {
           return;
         }
         const doc = await vscode.workspace.openTextDocument(uri);
-        InlineCommentsPanel.reveal(context, doc);
+        InlineCommentsPanel.reveal(context, doc, {
+          dispatchToClaude: async (payload) => {
+            const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
+            if (!folder) {
+              void vscode.window.showWarningMessage(
+                "Inline comments: send-to-claude needs the file to live inside a workspace folder.",
+              );
+              return;
+            }
+            await dispatchReviewPayload(
+              payload,
+              output,
+              terminalTracker,
+              eventLogs,
+              context.workspaceState,
+              folder,
+            );
+          },
+        });
       },
     ),
   );
@@ -572,8 +590,29 @@ async function invokeSendAllToClaude(
     );
     return;
   }
-  const payload = result.payload;
+  await dispatchReviewPayload(
+    result.payload,
+    output,
+    tracker,
+    eventLogs,
+    workspaceState,
+    folder,
+  );
+}
 
+/**
+ * Route a ReviewPayload through the user-configured sendMode (or prompt
+ * if unset). Extracted so both the sidecar-based command and the inline-
+ * comments command share the same delivery logic.
+ */
+async function dispatchReviewPayload(
+  payload: ReviewPayload,
+  output: vscode.OutputChannel,
+  tracker: TerminalTracker,
+  eventLogs: Map<string, EventLog>,
+  workspaceState: vscode.Memento,
+  folder: vscode.WorkspaceFolder,
+): Promise<void> {
   const config = vscode.workspace.getConfiguration("markdownCollab");
   const rawMode = config.get<unknown>("sendMode", "ask");
   let mode = normalizeSendMode(rawMode);

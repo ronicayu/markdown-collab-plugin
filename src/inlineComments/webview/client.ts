@@ -66,10 +66,14 @@ const dom = {
   composer: document.getElementById("composer") as HTMLElement,
   filterRadios: document.querySelectorAll<HTMLInputElement>('input[name="filter"]'),
   sendToClaude: document.getElementById("send-to-claude") as HTMLButtonElement,
+  copyPrompt: document.getElementById("copy-prompt") as HTMLButtonElement,
 };
 
 dom.sendToClaude.addEventListener("click", () => {
   vscode.postMessage({ type: "send-to-claude" });
+});
+dom.copyPrompt.addEventListener("click", () => {
+  vscode.postMessage({ type: "copy-prompt" });
 });
 
 let currentState: SerializedState | null = null;

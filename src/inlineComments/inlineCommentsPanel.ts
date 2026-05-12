@@ -25,6 +25,7 @@ import {
   type ParsedDocument,
 } from "./format";
 import { buildInlinePayload } from "./sendToClaude";
+import type { ReviewPayload } from "../sendToClaude";
 
 interface InitMessage {
   type: "init";
@@ -83,6 +84,10 @@ interface SendToClaudeRequest {
   type: "send-to-claude";
 }
 
+interface CopyPromptRequest {
+  type: "copy-prompt";
+}
+
 type ClientMessage =
   | ReadyMessage
   | AddCommentRequest
@@ -91,7 +96,19 @@ type ClientMessage =
   | ToggleResolveRequest
   | DeleteThreadRequest
   | DeleteCommentRequest
-  | SendToClaudeRequest;
+  | SendToClaudeRequest
+  | CopyPromptRequest;
+
+/** Dependencies the panel needs from the extension host (kept narrow so tests can stub them). */
+export interface InlinePanelDeps {
+  /**
+   * Route an inline-comments payload through the user's configured send
+   * mode (terminal / channel / mcp-channel / clipboard, with the same
+   * ask-once-and-remember UX as the sidecar path). Wired in
+   * extension.ts so the panel doesn't need to know about transports.
+   */
+  dispatchToClaude: (payload: ReviewPayload) => Promise<void>;
+}
 
 /** Serializable view of `ParsedDocument` for the webview. */
 export interface SerializedState {
@@ -118,7 +135,7 @@ const VIEW_TYPE = "markdownCollab.inlineCommentsView";
 const panels = new Map<string, InlineCommentsPanel>();
 
 export class InlineCommentsPanel {
-  static reveal(context: vscode.ExtensionContext, doc: vscode.TextDocument): void {
+  static reveal(context: vscode.ExtensionContext, doc: vscode.TextDocument, deps: InlinePanelDeps): void {
     const key = doc.uri.toString();
     const existing = panels.get(key);
     if (existing) {
@@ -136,7 +153,7 @@ export class InlineCommentsPanel {
         localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, "out", "inlineComments")],
       },
     );
-    panels.set(key, new InlineCommentsPanel(context, doc, panel, () => panels.delete(key)));
+    panels.set(key, new InlineCommentsPanel(context, doc, panel, deps, () => panels.delete(key)));
   }
 
   private readonly disposables: vscode.Disposable[] = [];
@@ -146,6 +163,7 @@ export class InlineCommentsPanel {
     private readonly context: vscode.ExtensionContext,
     private readonly doc: vscode.TextDocument,
     private readonly panel: vscode.WebviewPanel,
+    private readonly deps: InlinePanelDeps,
     private readonly onDispose: () => void,
   ) {
     panel.webview.html = this.renderHtml();
@@ -197,7 +215,8 @@ export class InlineCommentsPanel {
         <label><input type="radio" name="filter" value="open" checked> Open</label>
         <label><input type="radio" name="filter" value="all"> All</label>
         <label><input type="radio" name="filter" value="resolved"> Resolved</label>
-        <button id="send-to-claude" class="btn-ghost" title="Copy a prompt for the open threads to your clipboard.">Send to Claude</button>
+        <button id="send-to-claude" title="Send the prompt to a running Claude terminal (or your configured send mode).">Send to Claude</button>
+        <button id="copy-prompt" class="btn-ghost" title="Copy the prompt to your clipboard.">Copy</button>
       </div>
     </header>
     <div id="threads-list"></div>
@@ -266,6 +285,8 @@ export class InlineCommentsPanel {
         });
       case "send-to-claude":
         return this.handleSendToClaude();
+      case "copy-prompt":
+        return this.handleCopyPrompt();
       case "delete-thread":
         return this.applyMutation((parsed) => replaceThread(parsed.source, msg.threadId, null));
       case "delete-comment":
@@ -294,13 +315,6 @@ export class InlineCommentsPanel {
   }
 
   private async handleSendToClaude(): Promise<void> {
-    const folder = vscode.workspace.getWorkspaceFolder(this.doc.uri);
-    if (!folder) {
-      void vscode.window.showWarningMessage(
-        "Inline comments: send-to-claude needs the file to live inside a workspace folder.",
-      );
-      return;
-    }
     const payload = buildInlinePayload(this.doc);
     if (!payload) {
       void vscode.window.showInformationMessage(
@@ -308,15 +322,25 @@ export class InlineCommentsPanel {
       );
       return;
     }
-    // V1: clipboard delivery. The existing `markdownCollab.sendAllToClaude`
-    // command supports terminal / channel / mcp-channel modes but reads
-    // from the sidecar, not from the .md file. Routing the inline payload
-    // through those transports needs a refactor of invokeSendAllToClaude
-    // to take a payload rather than build one — deferred to keep this
-    // change focused.
+    // Route through the shared dispatcher so the inline view honors the
+    // user's `markdownCollab.sendMode` setting (terminal / channel /
+    // mcp-channel / clipboard) the same way the sidecar-based command
+    // does. Terminal is the natural default — drops the prompt straight
+    // into a running Claude REPL via bracketed paste.
+    await this.deps.dispatchToClaude(payload);
+  }
+
+  private async handleCopyPrompt(): Promise<void> {
+    const payload = buildInlinePayload(this.doc);
+    if (!payload) {
+      void vscode.window.showInformationMessage(
+        "Inline comments: no open threads to copy.",
+      );
+      return;
+    }
     await vscode.env.clipboard.writeText(payload.prompt);
     void vscode.window.showInformationMessage(
-      `Inline comments: prompt for ${payload.unresolvedCount} open thread${payload.unresolvedCount === 1 ? "" : "s"} copied to clipboard — paste into Claude Code.`,
+      `Inline comments: prompt for ${payload.unresolvedCount} open thread${payload.unresolvedCount === 1 ? "" : "s"} copied to clipboard.`,
     );
   }
 
