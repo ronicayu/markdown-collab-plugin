@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.26.0",
+  "version": "0.27.0",
   "publisher": "markdown-collab",
   "license": "MIT",
   "repository": {
@@ -129,7 +129,7 @@
       },
       {
         "command": "markdownCollab.openInlineCommentsView",
-        "title": "Markdown Collab: Open Inline Comments View (experimental)",
+        "title": "Markdown Collab: Open Inline Comments View",
         "category": "Markdown Collab"
       }
     ],
@@ -268,26 +268,36 @@
       ],
       "explorer/context": [
         {
-          "command": "markdownCollab.openPreview",
+          "command": "markdownCollab.openInlineCommentsView",
           "when": "resourceExtname == .md",
           "group": "navigation@30"
+        },
+        {
+          "command": "markdownCollab.openPreview",
+          "when": "resourceExtname == .md",
+          "group": "navigation@31"
         }
       ],
       "editor/title/context": [
         {
+          "command": "markdownCollab.openInlineCommentsView",
+          "when": "resourceExtname == .md",
+          "group": "1_open@1"
+        },
+        {
           "command": "markdownCollab.openPreview",
           "when": "resourceExtname == .md",
-          "group": "1_open"
+          "group": "1_open@2"
         }
       ],
       "editor/context": [
         {
-          "command": "markdownCollab.openPreview",
+          "command": "markdownCollab.openInlineCommentsView",
           "when": "resourceLangId == markdown",
           "group": "navigation@30"
         },
         {
-          "command": "markdownCollab.openInlineCommentsView",
+          "command": "markdownCollab.openPreview",
           "when": "resourceLangId == markdown",
           "group": "navigation@31"
         }

@@ -242,6 +242,130 @@ describe("mdc.mjs validate", () => {
   });
 });
 
+describe("mdc.mjs add", () => {
+  it("creates a sidecar from scratch with a generated c_<hex8> id and Z-suffixed createdAt", async () => {
+    const r = runCli([
+      "add",
+      "--workspace",
+      tmpDir,
+      "--file",
+      "new.md",
+      "--text",
+      "anchor with eight characters",
+      "--body",
+      "first review note",
+    ]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toMatch(/ok: added c_[0-9a-f]{8} /);
+    const sc = path.join(tmpDir, ".markdown-collab", "new.md.json");
+    const data = JSON.parse(await fs.readFile(sc, "utf8"));
+    expect(data.version).toBe(1);
+    expect(data.file).toBe("new.md");
+    expect(data.comments).toHaveLength(1);
+    const c = data.comments[0];
+    expect(c.id).toMatch(/^c_[0-9a-f]{8}$/);
+    expect(c.anchor.text).toBe("anchor with eight characters");
+    expect(c.body).toBe("first review note");
+    expect(c.author).toBe("claude");
+    expect(c.resolved).toBe(false);
+    expect(c.replies).toEqual([]);
+    expect(c.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  });
+
+  it("appends to an existing sidecar without disturbing prior comments", async () => {
+    await seedSidecar("spec.md.json", sample());
+    const r = runCli([
+      "add",
+      "--workspace",
+      tmpDir,
+      "--file",
+      "spec.md",
+      "--text",
+      "golf hotel india",
+      "--body",
+      "another note",
+    ]);
+    expect(r.code).toBe(0);
+    const data = JSON.parse(
+      await fs.readFile(path.join(tmpDir, ".markdown-collab", "spec.md.json"), "utf8"),
+    );
+    expect(data.comments).toHaveLength(4);
+    expect(data.comments[0].id).toBe("c_aaaaaaaa");
+    expect(data.comments[3].anchor.text).toBe("golf hotel india");
+    expect(data.comments[3].author).toBe("claude");
+  });
+
+  it("rejects an anchor with fewer than 8 non-whitespace chars", async () => {
+    const r = runCli([
+      "add",
+      "--workspace",
+      tmpDir,
+      "--file",
+      "new.md",
+      "--text",
+      "  short  ",
+      "--body",
+      "x",
+    ]);
+    expect(r.code).toBe(4);
+    expect(r.stderr).toMatch(/8 non-whitespace/);
+  });
+
+  it("rejects an empty --body", async () => {
+    const r = runCli([
+      "add",
+      "--workspace",
+      tmpDir,
+      "--file",
+      "new.md",
+      "--text",
+      "anchor with eight characters",
+      "--body",
+      "   ",
+    ]);
+    expect(r.code).toBe(4);
+    expect(r.stderr).toMatch(/body/);
+  });
+
+  it("honors a non-default --author", async () => {
+    const r = runCli([
+      "add",
+      "--workspace",
+      tmpDir,
+      "--file",
+      "new.md",
+      "--text",
+      "anchor with eight characters",
+      "--body",
+      "note",
+      "--author",
+      "ronica",
+    ]);
+    expect(r.code).toBe(0);
+    const data = JSON.parse(
+      await fs.readFile(path.join(tmpDir, ".markdown-collab", "new.md.json"), "utf8"),
+    );
+    expect(data.comments[0].author).toBe("ronica");
+  });
+
+  it("refuses to clobber a sidecar whose file field doesn't match --file", async () => {
+    await seedSidecar("spec.md.json", { version: 1, file: "OTHER.md", comments: [] });
+    const r = runCli([
+      "add",
+      "--workspace",
+      tmpDir,
+      "--file",
+      "spec.md",
+      "--text",
+      "anchor with eight characters",
+      "--body",
+      "note",
+    ]);
+    expect(r.code).toBe(4);
+    expect(r.stderr).toMatch(/does not match/);
+  });
+});
+
 describe("mdc.mjs argv parsing", () => {
   it("treats --body value containing spaces correctly", async () => {
     const sc = await seedSidecar("spec.md.json", sample());

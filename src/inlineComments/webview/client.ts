@@ -1,4 +1,4 @@
-// Webview client for the experimental inline-comments view.
+// Webview client for the inline-comments view (default storage in v0.27+).
 //
 // Renders the .md prose (with mc:* markup stripped) via markdown-it,
 // overlays a highlight on each anchored span, and runs a sidebar of

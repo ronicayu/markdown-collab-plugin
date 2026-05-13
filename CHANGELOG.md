@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.27.0 — 2026-05-13 (trial)
+
+### Changed: Inline Comments View is now the default
+
+The previously-experimental **Markdown Collab: Open Inline Comments View**
+is now the primary right-click action on `.md` files (the `(experimental)`
+suffix is dropped from the command title). All three context-menu surfaces
+(Explorer, Editor title, Editor body) list the inline view first; the
+legacy sidecar-based **Open Preview with Comments** stays as the secondary
+entry for workspaces with existing `.markdown-collab/*.md.json` history.
+Custom-editor priority for `.md` files is unchanged.
+
+### Changed: `vs-markdown-collab` skill restructured around per-file mode detection
+
+`SKILL.md` is reorganized around a per-file detection step: if the `.md`
+file contains `<!--mc:threads:begin-->`, Claude follows the **inline-mode
+workflow** (edit prose + append replies to the matching `<!--mc:t …-->`
+line; never mutate `status` or existing comments); otherwise it falls back
+to the sidecar workflow driven by `mdc.mjs`. Anchor maintenance, send-mode
+setup, and the channel watch-loop instructions are now mode-agnostic where
+they were previously sidecar-only.
+
+### Changed: sidecar workflow extracted to an on-demand reference (`SIDECAR.md`)
+
+`SKILL.md` is now inline-by-default and stays lean (~270 lines). The full
+legacy sidecar workflow — format spec, `mdc.mjs` CLI (`list`/`reply`/
+`add`/`delete`/`set-anchor`/`validate`), seven-phase workflow, sidecar
+anchor maintenance, sidecar-specific anti-patterns — lives in a new
+`~/.claude/skills/vs-markdown-collab/SIDECAR.md` reference that Claude
+reads only when sidecar mode actually applies, saving tokens on the
+default inline path. `installClaudeSkill` writes `SIDECAR.md` alongside
+`SKILL.md` and the bundled `mdc*.mjs` scripts.
+
+### Added: agent instructions for initiating new review threads
+
+Both `SKILL.md` (inline mode) and `SIDECAR.md` (legacy) now document how
+Claude should **create** a new review thread, gated on an explicit human
+request ("leave a comment on X", "add a review note", "flag this section").
+Inline mode: pick a unique 5-char base36 id, wrap the passage in
+`<!--mc:a:ID-->…<!--mc:/a:ID-->`, append a `<!--mc:t {…}-->` line with a
+single `c1` comment. Sidecar mode: a new `mdc.mjs add` subcommand
+generates a unique `c_<8 hex>` id, defaults author to `"claude"`, and
+creates the sidecar with `version: 1` if it doesn't exist yet (refuses
+sub-8-char anchors, empty bodies, and `--file` mismatches with an
+existing sidecar's `file` field).
+
+The skill explicitly forbids spontaneous thread creation while addressing
+existing comments or doing maintenance edits — initiation is opt-in. When
+a file has neither inline markers nor a sidecar and the human asks to add
+a thread, Claude defaults to inline mode; sidecars are never created from
+scratch.
+
+### Changed: `AGENTS.md` snippet documents both formats
+
+The convention block written by **Markdown Collab: Initialize AGENTS.md**
+(for non-Claude-Code agents that don't have the SKILL.md affordance) now
+documents both inline and sidecar formats, with detection rules and a
+per-format workflow. Inline is the default; sidecar appears as the legacy
+path.
+
 ## 0.26.0 — 2026-05-12 (trial)
 
 ### Added: collapsible comments panel in the inline-comments view

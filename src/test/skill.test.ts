@@ -5,6 +5,8 @@ import * as path from "path";
 import {
   CLI_SCRIPT_CONTENT,
   CLI_SCRIPT_REL,
+  SIDECAR_CONTENT,
+  SIDECAR_REF_REL,
   SKILL_CONTENT,
   SKILL_REL_PATH,
   installClaudeSkill,
@@ -21,39 +23,53 @@ afterEach(async () => {
 });
 
 describe("SKILL_CONTENT instructions", () => {
-  it("instructs the agent to maintain anchors after ANY .md edit, not just comment-driven ones", () => {
-    // Regression guard for the user-requested instruction added so the
-    // skill explicitly tells Claude: when you edit any .md file in a
-    // workspace that has a .markdown-collab/ sidecar dir, after the
-    // edit reconcile the sidecar's anchors to match the new content.
-    expect(SKILL_CONTENT).toContain("Anchor maintenance applies on EVERY");
-    expect(SKILL_CONTENT).toContain("for any reason, not only when addressing review comments");
-    expect(SKILL_CONTENT).toContain("mdc.mjs validate <sidecar>");
-    expect(SKILL_CONTENT).toContain("mdc.mjs set-anchor");
+  it("keeps inline mode as the default and points to SIDECAR.md for the legacy path on demand", () => {
+    // After the v0.27+ split: SKILL.md is inline-by-default and the
+    // sidecar workflow lives in a separate SIDECAR.md reference loaded
+    // on demand. The skill body must clearly point at the reference
+    // rather than inlining the legacy details (so the model only pays
+    // for legacy tokens when sidecar mode actually applies).
+    expect(SKILL_CONTENT).toContain("Sidecar-mode workflow (legacy path) — load on demand");
+    expect(SKILL_CONTENT).toContain("~/.claude/skills/vs-markdown-collab/SIDECAR.md");
+    expect(SKILL_CONTENT).toContain("Inline mode (default)");
+    // Sidecar-specific CLI / workflow details MUST NOT be inlined in
+    // SKILL.md anymore.
+    expect(SKILL_CONTENT).not.toContain("mdc.mjs set-anchor");
+    expect(SKILL_CONTENT).not.toContain("churn-prone fallback");
   });
 
-  it("preserves the orphan-on-deletion rule alongside the new instruction", () => {
-    // The new section must NOT override the existing rule that a
-    // deleted passage's comment is left to orphan, never re-anchored
-    // to nearby unrelated text.
-    expect(SKILL_CONTENT).toContain("leave the anchor untouched");
-    expect(SKILL_CONTENT).toContain("misleading link to content the comment was never about");
+  it("preserves the orphan-on-deletion rule for inline mode", () => {
+    // For the inline mode (which is now what SKILL.md primarily covers),
+    // the rule still stands: a deleted passage's thread orphans; never
+    // re-anchor to nearby unrelated text.
+    expect(SKILL_CONTENT).toContain("Re-anchor an orphaned thread to nearby unrelated text. Let it orphan.");
+  });
+});
+
+describe("SIDECAR_CONTENT instructions", () => {
+  it("retains the sidecar anchor-maintenance instructions in the reference file", () => {
+    // Same regression guard as before the split, but now against
+    // SIDECAR.md since that's where the sidecar workflow lives.
+    expect(SIDECAR_CONTENT).toContain("Anchor maintenance applies on EVERY");
+    expect(SIDECAR_CONTENT).toContain("for any reason, not only when addressing review comments");
+    expect(SIDECAR_CONTENT).toContain("mdc.mjs validate <sidecar>");
+    expect(SIDECAR_CONTENT).toContain("mdc.mjs set-anchor");
   });
 
-  it("instructs surgical Edit-tool anchor updates rather than full sidecar rewrite", () => {
-    // Regression guard: the user explicitly asked that anchor updates
-    // be surgical via the Edit tool, NOT full-file rewrites via
-    // `mdc.mjs set-anchor`. The CLI path remains documented as a
-    // last-resort fallback only — concurrent writers (webview,
-    // standard editor's CommentController) hold the sidecar open and
-    // a full rewrite races with them.
-    expect(SKILL_CONTENT).toContain("update the anchor SURGICALLY with the **Edit** tool");
-    expect(SKILL_CONTENT).toContain("Do NOT use `mdc.mjs set-anchor` and do NOT rewrite the whole sidecar JSON");
-    expect(SKILL_CONTENT).toContain("Preserve indentation, quoting, trailing commas");
-    // CLI path must still be MENTIONED (as a fallback) so the legacy
-    // assertion above keeps passing, but the wording must frame it as
-    // a fallback, not the primary path.
-    expect(SKILL_CONTENT).toContain("churn-prone fallback");
+  it("retains the orphan-on-deletion rule for sidecar mode", () => {
+    expect(SIDECAR_CONTENT).toContain("leave the anchor untouched");
+    expect(SIDECAR_CONTENT).toContain("misleading link to content the comment was never about");
+  });
+
+  it("retains the surgical Edit-tool anchor-update instructions", () => {
+    // Concurrent writers (webview, standard editor's CommentController)
+    // hold the sidecar open and a full rewrite races with them. The
+    // skill must keep telling Claude to do surgical Edits and frame the
+    // CLI set-anchor path as a churn-prone fallback only.
+    expect(SIDECAR_CONTENT).toContain("update the anchor SURGICALLY with the **Edit** tool");
+    expect(SIDECAR_CONTENT).toContain("Do NOT use `mdc.mjs set-anchor` and do NOT rewrite the whole sidecar JSON");
+    expect(SIDECAR_CONTENT).toContain("Preserve indentation, quoting, trailing commas");
+    expect(SIDECAR_CONTENT).toContain("churn-prone fallback");
   });
 });
 
@@ -118,6 +134,25 @@ describe("installClaudeSkill", () => {
     const contents = await fs.readFile(cliPath, "utf8");
     expect(contents).toBe(CLI_SCRIPT_CONTENT);
     expect(contents.startsWith("#!/usr/bin/env node")).toBe(true);
+  });
+
+  it("writes SIDECAR.md (the on-demand legacy reference) alongside SKILL.md on a fresh install", async () => {
+    await installClaudeSkill(tmpHome);
+    const sidecarRef = path.join(tmpHome, SIDECAR_REF_REL);
+    const contents = await fs.readFile(sidecarRef, "utf8");
+    expect(contents).toBe(SIDECAR_CONTENT);
+  });
+
+  it("syncs SIDECAR.md even when SKILL.md is left untouched", async () => {
+    const skillTarget = path.join(tmpHome, SKILL_REL_PATH);
+    await fs.mkdir(path.dirname(skillTarget), { recursive: true });
+    await fs.writeFile(skillTarget, SKILL_CONTENT, "utf8");
+    const refTarget = path.join(tmpHome, SIDECAR_REF_REL);
+    await fs.writeFile(refTarget, "stale legacy reference\n", "utf8");
+    const result = await installClaudeSkill(tmpHome);
+    expect(result.action).toBe("already-present");
+    const ref = await fs.readFile(refTarget, "utf8");
+    expect(ref).toBe(SIDECAR_CONTENT);
   });
 
   it("syncs mdc.mjs even when SKILL.md is left untouched (already-present)", async () => {

@@ -11,9 +11,11 @@ Highlight a passage, drop a review comment in the sidebar, click **Send to Claud
    code --install-extension markdown-collab-plugin-*.vsix
    ```
 2. **Install the Claude skill (one-time per machine).** In VS Code: `Cmd-Shift-P` → **Markdown Collab: Install Claude Skill**. This drops the skill instructions and bundled helpers into `~/.claude/skills/vs-markdown-collab/`.
-3. **Open a Markdown file** in a folder/workspace. Right-click the file → **Markdown Collab: Open Preview with Comments**, or use the command palette.
-4. **Highlight a passage in the preview** → click the **Comment** popup → write your review note → submit.
+3. **Open a Markdown file** in a folder/workspace. Right-click the file → **Markdown Collab: Open Inline Comments View**, or use the command palette.
+4. **Highlight a passage in the rendered view** → click the **Comment** popup → write your review note → submit.
 5. **Click Send to Claude** in the comments sidebar. The first time, you'll be asked which delivery mode to use; the answer is remembered. **For most users, pick `terminal`** (see [Choosing a send mode](#choosing-a-send-mode)).
+
+> Comments are stored **inline** in the `.md` file itself — anchored spans are wrapped in `<!--mc:a:ID-->…<!--mc:/a:ID-->` markers and threads live in a single `<!--mc:threads:begin-->`…`<!--mc:threads:end-->` block at the end of the file. Everything ships with the document; no sidecar to commit. The older sidecar-based **Open Preview with Comments** view (writes to `.markdown-collab/<rel>.md.json`) is still available as the secondary right-click option.
 
 That's it — Claude reads the comments, edits the doc, posts a reply per thread. You toggle resolved when you're satisfied.
 
@@ -21,10 +23,11 @@ That's it — Claude reads the comments, edits the doc, posts a reply per thread
 
 ### Adding a comment
 
-Two ways:
+Three ways, in order of preference:
 
-- **Preview sidebar.** Open the preview (`Markdown Collab: Open Preview with Comments`), highlight rendered text, click the floating **Comment** button, type your note, submit.
-- **Native VS Code Comments UI.** Highlight text in the editor, click the `+` in the gutter, type the comment.
+- **Inline Comments view (default).** Open it (`Markdown Collab: Open Inline Comments View`), highlight rendered text, click the floating **Comment** button, type your note, submit. The thread is written into the `.md` file itself as inline marker comments — no sidecar, everything travels with the document.
+- **Preview with Comments (legacy sidecar).** Same UX, but the threads are written to `.markdown-collab/<rel>.md.json`. Useful if you prefer keeping comment state out of the prose, or if you already have sidecar history.
+- **Native VS Code Comments UI.** Highlight text in the editor, click the `+` in the gutter, type the comment. Writes to the sidecar.
 
 Selections must contain at least **8 non-whitespace characters**. Shorter selections are rejected.
 
@@ -123,9 +126,10 @@ Copies the prompt to the clipboard. Paste into Claude however you like.
 
 | Command | Purpose |
 |---|---|
-| `Markdown Collab: Install Claude Skill` | Write `~/.claude/skills/vs-markdown-collab/SKILL.md` and bundled helpers (`mdc.mjs`, `mdc-tail.mjs`, `mdc-channel.mjs`). |
+| `Markdown Collab: Install Claude Skill` | Write `~/.claude/skills/vs-markdown-collab/SKILL.md` (inline-by-default), the on-demand `SIDECAR.md` reference (legacy sidecar workflow), and bundled helpers (`mdc.mjs`, `mdc-tail.mjs`, `mdc-channel.mjs`). |
 | `Markdown Collab: Initialize AGENTS.md` | Append a convention block to `<workspace>/AGENTS.md` (for non–Claude-Code agents). |
-| `Markdown Collab: Open Preview with Comments` | Open the side-by-side rendered preview with the comments sidebar. |
+| `Markdown Collab: Open Inline Comments View` | Open the rendered view with an inline-threads sidebar. Comments are stored inside the `.md` file. **Default right-click action on `.md` files.** |
+| `Markdown Collab: Open Preview with Comments` | Open the rendered preview with the legacy sidecar-based comments sidebar (writes to `.markdown-collab/<rel>.md.json`). |
 | `Markdown Collab: Send Unresolved Comments to Claude` | Same as the **Send to Claude** button — usable from palette. |
 | `Markdown Collab: Start Claude Review Terminal` | Spawn a fresh integrated terminal and launch `claude`. |
 | `Markdown Collab: Copy Claude Prompt` | Copy a short "address the comments on this file" prompt to clipboard. |
@@ -141,6 +145,20 @@ Copies the prompt to the clipboard. Paste into Claude however you like.
 
 ## Storage layout
 
+**Inline view (default).** Threads live inside the `.md` file itself. Anchored spans are wrapped in paired HTML comments and threads are serialized as `<!--mc:t {JSON}-->` lines inside a fenced region at the end of the file:
+
+```markdown
+The <!--mc:a:k7q3p-->quick brown fox<!--mc:/a:k7q3p--> jumps…
+
+<!--mc:threads:begin-->
+<!--mc:t {"id":"k7q3p","quote":"quick brown fox","status":"open","comments":[{"id":"c1","author":"ronica","ts":"2026-05-13T12:00:00Z","body":"too cliched"}]}-->
+<!--mc:threads:end-->
+```
+
+The markers are invisible in any rendered preview (they're HTML comments). Commit the `.md` file as-is — review state ships with the document.
+
+**Legacy sidecar view.** Used by `Open Preview with Comments` and the native VS Code Comments UI. Threads live in JSON sidecars under `.markdown-collab/`:
+
 ```
 <workspace>/
 ├── docs/guide.md
@@ -154,12 +172,14 @@ Copies the prompt to the clipboard. Paste into Claude however you like.
     └── .channel.json             ← mcp-channel endpoint descriptor (gitignore)
 ```
 
-Commit `.markdown-collab/*.md.json` to version control — that's your review state. The dotfiles (`.events*.jsonl`, `.channel.json`) are runtime state; add them to `.gitignore`:
+Commit `.markdown-collab/*.md.json` to version control. The dotfiles (`.events*.jsonl`, `.channel.json`) are runtime state; add them to `.gitignore`:
 
 ```gitignore
 .markdown-collab/.events*.jsonl
 .markdown-collab/.channel.json
 ```
+
+Both formats can coexist in a workspace; the skill detects which one to act on per-file by looking for `<!--mc:threads:begin-->` in the `.md` text.
 
 ## Troubleshooting
 

@@ -1,5 +1,5 @@
-// Inline-comment format for the experimental "comments live in the markdown"
-// view. Comments are stored in two places inside the .md file itself:
+// Inline-comment format — the default storage layout in v0.27+. Comments
+// live in two places inside the .md file itself:
 //
 //   1. Anchored span: paired HTML comments wrap the highlighted text
 //      `<!--mc:a:ID-->...<!--mc:/a:ID-->` (ID = 5-char base36)

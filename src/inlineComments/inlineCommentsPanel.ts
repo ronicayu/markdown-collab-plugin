@@ -1,5 +1,6 @@
-// Webview panel for the experimental "inline comments stored in the
-// markdown itself" view. One panel per file. The panel:
+// Webview panel for the "inline comments stored in the markdown itself"
+// view — the default storage layout in v0.27+. One panel per file. The
+// panel:
 //
 //   - reads the .md file (via the open TextDocument), parses it for
 //     `<!--mc:...-->` markers and the threads region
