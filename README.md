@@ -15,7 +15,7 @@ Highlight a passage, drop a review comment in the sidebar, click **Send to Claud
 4. **Highlight a passage in the rendered view** → click the **Comment** popup → write your review note → submit.
 5. **Click Send to Claude** in the comments sidebar. The first time, you'll be asked which delivery mode to use; the answer is remembered. **For most users, pick `terminal`** (see [Choosing a send mode](#choosing-a-send-mode)).
 
-> Comments are stored **inline** in the `.md` file itself — anchored spans are wrapped in `<!--mc:a:ID-->…<!--mc:/a:ID-->` markers and threads live in a single `<!--mc:threads:begin-->`…`<!--mc:threads:end-->` block at the end of the file. Everything ships with the document; no sidecar to commit. The older sidecar-based **Open Preview with Comments** view (writes to `.markdown-collab/<rel>.md.json`) is still available as the secondary right-click option.
+> Comments are stored **inline** in the `.md` file itself — anchored spans are wrapped in `<!--mc:a:ID-->…<!--mc:/a:ID-->` markers and threads live in a single `<!--mc:threads:begin-->`…`<!--mc:threads:end-->` block at the end of the file. Everything ships with the document; no sidecar to commit. The older sidecar-based **Open Preview with Comments** view (writes to `.markdown-collab/<rel>.md.json`) is still available from the command palette but no longer in the right-click menu.
 
 That's it — Claude reads the comments, edits the doc, posts a reply per thread. You toggle resolved when you're satisfied.
 
@@ -26,7 +26,7 @@ That's it — Claude reads the comments, edits the doc, posts a reply per thread
 Three ways, in order of preference:
 
 - **Inline Comments view (default).** Open it (`Markdown Collab: Open Inline Comments View`), highlight rendered text, click the floating **Comment** button, type your note, submit. The thread is written into the `.md` file itself as inline marker comments — no sidecar, everything travels with the document.
-- **Preview with Comments (legacy sidecar).** Same UX, but the threads are written to `.markdown-collab/<rel>.md.json`. Useful if you prefer keeping comment state out of the prose, or if you already have sidecar history.
+- **Preview with Comments (legacy sidecar).** Same UX, but threads are written to `.markdown-collab/<rel>.md.json`. As of v0.28 this view is **palette-only** (`Cmd-Shift-P` → `Markdown Collab: Open Preview with Comments`) — it's no longer in the right-click menu. Useful if you already have sidecar history or prefer comment state out of the prose.
 - **Native VS Code Comments UI.** Highlight text in the editor, click the `+` in the gutter, type the comment. Writes to the sidecar.
 
 Selections must contain at least **8 non-whitespace characters**. Shorter selections are rejected.
@@ -128,8 +128,8 @@ Copies the prompt to the clipboard. Paste into Claude however you like.
 |---|---|
 | `Markdown Collab: Install Claude Skill` | Write `~/.claude/skills/vs-markdown-collab/SKILL.md` (inline-by-default), the on-demand `SIDECAR.md` reference (legacy sidecar workflow), and bundled helpers (`mdc.mjs`, `mdc-tail.mjs`, `mdc-channel.mjs`). |
 | `Markdown Collab: Initialize AGENTS.md` | Append a convention block to `<workspace>/AGENTS.md` (for non–Claude-Code agents). |
-| `Markdown Collab: Open Inline Comments View` | Open the rendered view with an inline-threads sidebar. Comments are stored inside the `.md` file. **Default right-click action on `.md` files.** |
-| `Markdown Collab: Open Preview with Comments` | Open the rendered preview with the legacy sidecar-based comments sidebar (writes to `.markdown-collab/<rel>.md.json`). |
+| `Markdown Collab: Open Inline Comments View` | Open the rendered view with an inline-threads sidebar. Comments are stored inside the `.md` file. **The only right-click action on `.md` files** as of v0.28. |
+| `Markdown Collab: Open Preview with Comments` | Open the rendered preview with the legacy sidecar-based comments sidebar (writes to `.markdown-collab/<rel>.md.json`). **Palette-only** as of v0.28 — no right-click entry. |
 | `Markdown Collab: Send Unresolved Comments to Claude` | Same as the **Send to Claude** button — usable from palette. |
 | `Markdown Collab: Start Claude Review Terminal` | Spawn a fresh integrated terminal and launch `claude`. |
 | `Markdown Collab: Copy Claude Prompt` | Copy a short "address the comments on this file" prompt to clipboard. |

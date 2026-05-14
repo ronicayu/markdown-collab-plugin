@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.28.0 — 2026-05-14 (trial)
+
+### Removed: legacy sidecar Preview from right-click menus
+
+`Markdown Collab: Open Preview with Comments` (the sidecar-based view)
+is no longer shown in the Explorer, Editor title, or Editor body
+context menus. Right-clicking a `.md` file now offers only **Open
+Inline Comments View** — the v0.27+ default.
+
+The command itself is still registered, so users with existing
+`.markdown-collab/*.md.json` history can launch the legacy preview
+from the command palette (`Cmd-Shift-P` → `Markdown Collab: Open
+Preview with Comments`). The underlying sidecar storage + native
+VS Code Comments UI + `mdc.mjs` CLI are unchanged.
+
 ## 0.27.0 — 2026-05-13 (trial)
 
 ### Changed: Inline Comments View is now the default
