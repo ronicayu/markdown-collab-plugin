@@ -7,6 +7,8 @@
 // underlying .md file — there is no in-webview cache of comments.
 
 import MarkdownIt from "markdown-it";
+import { isClaudeReviewed, isClaudeUnread } from "../claudeUnread";
+import { slugifyHeading } from "../linkParse";
 import { installSourceOffsetPlugin } from "./renderWithOffsets";
 
 declare function acquireVsCodeApi(): {
@@ -65,6 +67,11 @@ interface InitMsg {
 interface UpdateMsg {
   type: "update";
   state: SerializedState;
+}
+
+interface ReviewPendingMsg {
+  type: "review-pending";
+  existingIds: string[];
 }
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
@@ -141,7 +148,37 @@ const dom = {
   app: document.getElementById("app") as HTMLElement,
   collapseThreads: document.getElementById("collapse-threads") as HTMLButtonElement,
   expandThreads: document.getElementById("expand-threads") as HTMLButtonElement,
+  claudeSummary: document.getElementById("claude-summary") as HTMLElement,
+  claudeSummaryText: document.getElementById("claude-summary-text") as HTMLElement,
+  claudeNext: document.getElementById("claude-next") as HTMLButtonElement,
+  claudeToggleCollapse: document.getElementById("claude-toggle-collapse") as HTMLButtonElement,
+  claudeFilterLabel: document.getElementById("filter-claude-label") as HTMLLabelElement,
 };
+
+let claudeUnreadCollapsed = ((): boolean => {
+  const saved = vscode.getState() as { claudeUnreadCollapsed?: boolean } | undefined;
+  return saved?.claudeUnreadCollapsed === true;
+})();
+
+/**
+ * Set when the user fires "Ask Claude to Review This Doc". Holds the
+ * thread IDs that existed at the time of the dispatch. On the next
+ * render where new claude-unread threads appear (i.e. Claude's reply
+ * has landed and the file was reloaded), we auto-scroll to the first
+ * new one and clear the snapshot. Survives webview reloads via state.
+ */
+let pendingReviewSnapshot: Set<string> | null = ((): Set<string> | null => {
+  const saved = vscode.getState() as { pendingReviewIds?: string[] } | undefined;
+  return saved?.pendingReviewIds ? new Set(saved.pendingReviewIds) : null;
+})();
+
+function savePendingReviewSnapshot(): void {
+  const ids = pendingReviewSnapshot ? Array.from(pendingReviewSnapshot) : null;
+  vscode.setState({
+    ...(vscode.getState() as Record<string, unknown> | undefined),
+    pendingReviewIds: ids,
+  });
+}
 
 // Sidebar collapse state. Persisted across messages via vscode.setState so
 // the user's preference survives a webview reload.
@@ -164,9 +201,97 @@ dom.copyPrompt.addEventListener("click", () => {
   vscode.postMessage({ type: "copy-prompt" });
 });
 
+// Intercept anchor clicks inside the rendered preview. Without this
+// markdown links are inert (the webview sandbox swallows navigation).
+// Same-doc `#fragment` links scroll within the preview; everything else
+// is handed to the extension host for resolution + opening.
+dom.preview.addEventListener("click", (e) => {
+  const target = e.target instanceof Element ? e.target.closest("a") : null;
+  if (!target) return;
+  const href = target.getAttribute("href");
+  if (!href) return;
+  e.preventDefault();
+  // Fragment-only links jump within the rendered preview by id. The
+  // markdown-it default renderer doesn't emit anchor ids on headings,
+  // so we fall back to text-matching when no element matches by id.
+  if (href.startsWith("#")) {
+    scrollPreviewToFragment(href.slice(1));
+    return;
+  }
+  vscode.postMessage({ type: "open-link", href });
+});
+
+function scrollPreviewToFragment(fragment: string): void {
+  if (!fragment) return;
+  const decoded = (() => {
+    try {
+      return decodeURIComponent(fragment);
+    } catch {
+      return fragment;
+    }
+  })();
+  // 1. Try exact id match (in case anything in the preview has ids).
+  const byId = dom.preview.querySelector<HTMLElement>(`[id="${cssEscape(decoded)}"]`);
+  if (byId) {
+    byId.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+  // 2. Match by slug against every heading in the preview.
+  const headings = dom.preview.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6");
+  for (const h of Array.from(headings)) {
+    if (slugifyHeading(h.textContent || "") === decoded) {
+      h.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+  }
+}
+
+
+function applyClaudeUnreadCollapsed(): void {
+  dom.threadsList.classList.toggle("collapse-claude-unread", claudeUnreadCollapsed);
+  dom.claudeToggleCollapse.textContent = claudeUnreadCollapsed ? "Expand all" : "Collapse all";
+}
+applyClaudeUnreadCollapsed();
+dom.claudeToggleCollapse.addEventListener("click", () => {
+  claudeUnreadCollapsed = !claudeUnreadCollapsed;
+  applyClaudeUnreadCollapsed();
+  vscode.setState({
+    ...(vscode.getState() as Record<string, unknown> | undefined),
+    claudeUnreadCollapsed,
+  });
+});
+
+dom.claudeNext.addEventListener("click", () => {
+  if (!currentState) return;
+  const unread = currentState.threads.filter(isClaudeUnread);
+  if (unread.length === 0) return;
+  const currentIdx = highlightedThreadId
+    ? unread.findIndex((t) => t.id === highlightedThreadId)
+    : -1;
+  const nextIdx = (currentIdx + 1) % unread.length;
+  const target = unread[nextIdx];
+  highlightedThreadId = target.id;
+  // Scroll the card into view, then scroll the preview to the anchor.
+  const card = dom.threadsList.querySelector<HTMLElement>(
+    `.thread-card[data-thread="${cssEscape(target.id)}"]`,
+  );
+  if (card) {
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
+      c.classList.toggle("highlighted", c.dataset.thread === target.id);
+    }
+  }
+  scrollPreviewTo(target);
+});
+
+function cssEscape(s: string): string {
+  // Thread ids are 5-char base36, no need for full CSS.escape support.
+  return s.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+}
+
 let currentState: SerializedState | null = null;
 let user: { name: string } = { name: "anonymous" };
-let filter: "open" | "all" | "resolved" = "open";
+let filter: "open" | "all" | "resolved" | "claude-unread" = "open";
 let pendingSelection: { proseStart: number; proseEnd: number } | null = null;
 let editingCommentId: string | null = null; // composite "threadId:commentId" when editing
 let highlightedThreadId: string | null = null;
@@ -182,6 +307,37 @@ function render(state: SerializedState): void {
   renderPreview(state);
   renderThreads(state);
   positionFloatingButton();
+  maybeScrollToNewReview(state);
+}
+
+function maybeScrollToNewReview(state: SerializedState): void {
+  if (!pendingReviewSnapshot) return;
+  const newClaudeUnread = state.threads
+    .filter((t) => isClaudeUnread(t) && !pendingReviewSnapshot!.has(t.id))
+    .sort((a, b) => {
+      const aPos = a.anchor?.proseStart ?? Number.MAX_SAFE_INTEGER;
+      const bPos = b.anchor?.proseStart ?? Number.MAX_SAFE_INTEGER;
+      return aPos - bPos;
+    });
+  if (newClaudeUnread.length === 0) return;
+  const target = newClaudeUnread[0];
+  highlightedThreadId = target.id;
+  // Clear the snapshot first so re-entry doesn't loop on subsequent updates.
+  pendingReviewSnapshot = null;
+  savePendingReviewSnapshot();
+  // Defer one frame so the freshly-rendered card is in the DOM.
+  requestAnimationFrame(() => {
+    const card = dom.threadsList.querySelector<HTMLElement>(
+      `.thread-card[data-thread="${cssEscape(target.id)}"]`,
+    );
+    if (card) {
+      card.scrollIntoView({ behavior: "smooth", block: "center" });
+      for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
+        c.classList.toggle("highlighted", c.dataset.thread === target.id);
+      }
+    }
+    scrollPreviewTo(target);
+  });
 }
 
 let mermaidInitialized = false;
@@ -263,6 +419,7 @@ function applyAnchorHighlights(state: SerializedState): void {
     if (!t.anchor) continue;
     if (filter === "open" && t.status === "resolved") continue;
     if (filter === "resolved" && t.status === "open") continue;
+    if (filter === "claude-unread" && !isClaudeUnread(t)) continue;
     for (const span of spans) {
       const start = Math.max(span.proseStart, t.anchor.proseStart);
       const end = Math.min(span.proseEnd, t.anchor.proseEnd);
@@ -348,17 +505,21 @@ function renderThreads(state: SerializedState): void {
   const filtered = state.threads.filter((t) => {
     if (filter === "open") return t.status === "open";
     if (filter === "resolved") return t.status === "resolved";
+    if (filter === "claude-unread") return isClaudeUnread(t);
     return true;
   });
   const totalOpen = state.threads.filter((t) => t.status === "open").length;
   dom.threadCount.textContent = `${totalOpen} open · ${state.threads.length} total`;
+  renderClaudeSummary(state);
   if (filtered.length === 0) {
     const empty = document.createElement("p");
     empty.className = "empty";
     empty.textContent =
       filter === "open"
         ? "No open comments. Select text in the preview to start a thread."
-        : "No comments match this filter.";
+        : filter === "claude-unread"
+          ? "No unread threads from Claude. Run 'Ask Claude to Review This Doc' to start one."
+          : "No comments match this filter.";
     list.appendChild(empty);
     return;
   }
@@ -367,11 +528,37 @@ function renderThreads(state: SerializedState): void {
   }
 }
 
+function renderClaudeSummary(state: SerializedState): void {
+  let unread = 0;
+  let reviewed = 0;
+  for (const t of state.threads) {
+    if (isClaudeUnread(t)) unread++;
+    else if (isClaudeReviewed(t)) reviewed++;
+  }
+  const hasAny = unread + reviewed > 0;
+  dom.claudeSummary.hidden = !hasAny;
+  // The "New from Claude" filter chip is only relevant when there are
+  // Claude threads to look at. Hide it (and snap filter back to "open")
+  // when none exist so the chip doesn't sit there in dead state.
+  dom.claudeFilterLabel.hidden = !hasAny;
+  if (!hasAny && filter === "claude-unread") {
+    filter = "open";
+    for (const r of dom.filterRadios) r.checked = r.value === "open";
+  }
+  if (!hasAny) return;
+  const unreadLabel = unread === 1 ? "1 new from Claude" : `${unread} new from Claude`;
+  const reviewedLabel = reviewed === 1 ? "1 reviewed" : `${reviewed} reviewed`;
+  dom.claudeSummaryText.textContent = `${unreadLabel} · ${reviewedLabel}`;
+  dom.claudeNext.disabled = unread === 0;
+  dom.claudeToggleCollapse.disabled = unread === 0;
+}
+
 function renderThreadCard(t: ThreadState): HTMLElement {
   const card = document.createElement("section");
   card.className = "thread-card";
   if (t.status === "resolved") card.classList.add("resolved");
   if (t.id === highlightedThreadId) card.classList.add("highlighted");
+  if (isClaudeUnread(t)) card.classList.add("claude-unread");
   card.dataset.thread = t.id;
   card.addEventListener("click", () => {
     highlightedThreadId = t.id;
@@ -893,7 +1080,7 @@ dom.filterRadios.forEach((r) =>
 );
 
 window.addEventListener("message", (ev) => {
-  const msg = ev.data as InitMsg | UpdateMsg;
+  const msg = ev.data as InitMsg | UpdateMsg | ReviewPendingMsg;
   if (!msg) return;
   if (msg.type === "init") {
     dom.fileName.textContent = msg.fileName;
@@ -902,6 +1089,9 @@ window.addEventListener("message", (ev) => {
     render(msg.state);
   } else if (msg.type === "update") {
     render(msg.state);
+  } else if (msg.type === "review-pending") {
+    pendingReviewSnapshot = new Set(msg.existingIds);
+    savePendingReviewSnapshot();
   }
 });
 

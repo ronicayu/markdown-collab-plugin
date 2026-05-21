@@ -11,7 +11,12 @@ import { MarkdownCollabController, extractAnchor } from "./commentController";
 import { OrphanView } from "./orphanView";
 import { PreviewPanel } from "./previewPanel";
 import { ReviewView, type ReviewNode } from "./reviewView";
-import { buildReviewPayload, type ReviewPayload, type SendMode } from "./sendToClaude";
+import {
+  buildReviewPayload,
+  buildReviewRequestPayload,
+  type ReviewPayload,
+  type SendMode,
+} from "./sendToClaude";
 import { SidecarWatcher } from "./sidecarWatcher";
 import { installClaudeSkill } from "./skill";
 import { EVENT_LOG_REL, EventLog } from "./transports/eventLog";
@@ -344,6 +349,47 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "markdownCollab.askClaudeToReview",
+      async (arg?: vscode.Uri) => {
+        const uri =
+          arg instanceof vscode.Uri
+            ? arg
+            : vscode.window.activeTextEditor?.document.uri;
+        if (!uri) {
+          void vscode.window.showWarningMessage(
+            "Open a Markdown file first, then run this command.",
+          );
+          return;
+        }
+        let doc: vscode.TextDocument;
+        try {
+          doc = await vscode.workspace.openTextDocument(uri);
+        } catch (e) {
+          void vscode.window.showErrorMessage(
+            `Failed to open ${uri.fsPath}: ${(e as Error).message}`,
+          );
+          return;
+        }
+        if (doc.languageId !== "markdown" && !uri.fsPath.toLowerCase().endsWith(".md")) {
+          void vscode.window.showWarningMessage(
+            "Ask Claude to Review only supports .md files.",
+          );
+          return;
+        }
+        await invokeAskClaudeToReview(
+          doc,
+          output,
+          terminalTracker,
+          eventLogs,
+          context.workspaceState,
+          context.globalState,
+        );
+      },
+    ),
+  );
+
   // Any docs already open at activation must be dispatched explicitly —
   // `onDidOpenTextDocument` only fires for opens *after* registration.
   void controller.handleInitialDocs(vscode.workspace.textDocuments);
@@ -600,10 +646,19 @@ async function invokeSendAllToClaude(
   );
 }
 
+type DispatchIntent =
+  | { kind: "address" }
+  | { kind: "review-request"; hasFocus: boolean };
+
 /**
  * Route a ReviewPayload through the user-configured sendMode (or prompt
  * if unset). Extracted so both the sidecar-based command and the inline-
  * comments command share the same delivery logic.
+ *
+ * `intent` shapes the UI strings (placeholder, toast) without forking the
+ * transport logic — review-request payloads carry `unresolvedCount: 0`
+ * and so the default "send N unresolved comments" wording would read
+ * wrong.
  */
 async function dispatchReviewPayload(
   payload: ReviewPayload,
@@ -612,6 +667,7 @@ async function dispatchReviewPayload(
   eventLogs: Map<string, EventLog>,
   workspaceState: vscode.Memento,
   folder: vscode.WorkspaceFolder,
+  intent: DispatchIntent = { kind: "address" },
 ): Promise<void> {
   const config = vscode.workspace.getConfiguration("markdownCollab");
   const rawMode = config.get<unknown>("sendMode", "ask");
@@ -631,7 +687,7 @@ async function dispatchReviewPayload(
     if (isConcreteSendMode(remembered)) {
       mode = remembered;
     } else {
-      const picked = await pickSendMode(payload.unresolvedCount);
+      const picked = await pickSendMode(payload.unresolvedCount, intent);
       if (!picked) return;
       mode = picked;
       await workspaceState.update(REMEMBERED_SEND_MODE_KEY, picked);
@@ -645,11 +701,13 @@ async function dispatchReviewPayload(
 
   if (mode === "clipboard") {
     await vscode.env.clipboard.writeText(payload.prompt);
-    void vscode.window.showInformationMessage(
-      `Prompt for ${payload.unresolvedCount} comment${
-        payload.unresolvedCount === 1 ? "" : "s"
-      } copied — paste into Claude Code.${rememberedSuffix}`,
-    );
+    const msg =
+      intent.kind === "review-request"
+        ? `Review-request prompt for \`${payload.file}\` copied — paste into Claude Code.`
+        : `Prompt for ${payload.unresolvedCount} comment${
+            payload.unresolvedCount === 1 ? "" : "s"
+          } copied — paste into Claude Code.`;
+    void vscode.window.showInformationMessage(`${msg}${rememberedSuffix}`);
     return;
   }
 
@@ -683,9 +741,11 @@ async function dispatchReviewPayload(
       return;
     }
     if (!sendResult.ok) return;
-    void vscode.window.showInformationMessage(
-      `Sent to "${sendResult.terminalName}".${rememberedSuffix}`,
-    );
+    const msg =
+      intent.kind === "review-request"
+        ? `Claude is reviewing — threads will appear when it's done. (Sent to "${sendResult.terminalName}".)`
+        : `Sent to "${sendResult.terminalName}".`;
+    void vscode.window.showInformationMessage(`${msg}${rememberedSuffix}`);
     return;
   }
 
@@ -739,6 +799,7 @@ async function dispatchReviewPayload(
 
 async function pickSendMode(
   unresolvedCount: number,
+  intent: DispatchIntent = { kind: "address" },
 ): Promise<SendMode | null> {
   const items: Array<vscode.QuickPickItem & { mode: SendMode }> = [
     {
@@ -763,12 +824,156 @@ async function pickSendMode(
       mode: "clipboard",
     },
   ];
-  const pick = await vscode.window.showQuickPick(items, {
-    placeHolder: `How to send ${unresolvedCount} unresolved comment${
-      unresolvedCount === 1 ? "" : "s"
-    } to Claude? (Set markdownCollab.sendMode to skip this prompt.)`,
-  });
+  const placeHolder =
+    intent.kind === "review-request"
+      ? `How to ask Claude to review${intent.hasFocus ? " (with focus)" : ""}? (Set markdownCollab.sendMode to skip this prompt.)`
+      : `How to send ${unresolvedCount} unresolved comment${
+          unresolvedCount === 1 ? "" : "s"
+        } to Claude? (Set markdownCollab.sendMode to skip this prompt.)`;
+  const pick = await vscode.window.showQuickPick(items, { placeHolder });
   return pick?.mode ?? null;
+}
+
+// -----------------------------------------------------------
+// "Ask Claude to Review This Doc" (v2 Review Mode entry point)
+// -----------------------------------------------------------
+
+const RECENT_FOCUS_KEY = "markdownCollab.recentFocusHistory";
+const RECENT_FOCUS_MAX = 5;
+const FOCUS_MAX_LEN = 500;
+const LARGE_DOC_WARN_BYTES = 50 * 1024;
+
+async function invokeAskClaudeToReview(
+  doc: vscode.TextDocument,
+  output: vscode.OutputChannel,
+  tracker: TerminalTracker,
+  eventLogs: Map<string, EventLog>,
+  workspaceState: vscode.Memento,
+  globalState: vscode.Memento,
+): Promise<void> {
+  const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
+  if (!folder) {
+    void vscode.window.showWarningMessage(
+      "Ask Claude to Review: the file must live inside a workspace folder.",
+    );
+    return;
+  }
+
+  // Soft size confirm — large docs may take a while; let the user back out.
+  const byteSize = Buffer.byteLength(doc.getText(), "utf8");
+  if (byteSize > LARGE_DOC_WARN_BYTES) {
+    const kb = Math.round(byteSize / 1024);
+    const pick = await vscode.window.showWarningMessage(
+      `This file is ${kb} KB — Claude's review may take a while and use significant context.`,
+      { modal: false },
+      "Continue",
+      "Cancel",
+    );
+    if (pick !== "Continue") return;
+  }
+
+  const focus = await promptForFocus(globalState);
+  if (focus === undefined) return; // user cancelled
+  const trimmedFocus = focus === "" ? undefined : focus;
+
+  const result = buildReviewRequestPayload(doc, trimmedFocus);
+  if (result.kind === "no-workspace") {
+    void vscode.window.showWarningMessage(
+      "Ask Claude to Review: the file must live inside a workspace folder.",
+    );
+    return;
+  }
+
+  if (trimmedFocus) await pushRecentFocus(globalState, trimmedFocus);
+
+  // Snapshot current thread state in any open InlineCommentsPanel for this
+  // doc BEFORE dispatching. The panel will auto-scroll to the first newly
+  // arrived claude-initiated thread once Claude finishes its pass.
+  InlineCommentsPanel.notifyReviewPending(doc.uri);
+
+  await dispatchReviewPayload(
+    result.payload,
+    output,
+    tracker,
+    eventLogs,
+    workspaceState,
+    folder,
+    { kind: "review-request", hasFocus: Boolean(trimmedFocus) },
+  );
+}
+
+/**
+ * Returns the focus string the user wants Claude to use, "" for an
+ * explicit general review (no focus), or `undefined` if the user
+ * cancelled. When there is recent-focus history, a quick-pick is shown
+ * first with the option to reuse a prior focus or enter a new one.
+ */
+async function promptForFocus(
+  globalState: vscode.Memento,
+): Promise<string | undefined> {
+  const history = readRecentFocus(globalState);
+  if (history.length > 0) {
+    interface FocusItem extends vscode.QuickPickItem {
+      tag: "history" | "custom" | "general";
+      value?: string;
+    }
+    const items: FocusItem[] = [
+      {
+        label: "$(edit) Enter a new focus…",
+        description: "Tell Claude what to look for",
+        tag: "custom",
+      },
+      {
+        label: "$(eye) General review (no focus)",
+        description: "Let Claude flag anything substantive",
+        tag: "general",
+      },
+      ...history.map<FocusItem>((h) => ({
+        label: `$(history) ${h}`,
+        tag: "history",
+        value: h,
+      })),
+    ];
+    const pick = await vscode.window.showQuickPick<FocusItem>(items, {
+      placeHolder: "What should Claude look for?",
+      ignoreFocusOut: true,
+    });
+    if (!pick) return undefined;
+    if (pick.tag === "general") return "";
+    if (pick.tag === "history" && pick.value) return pick.value;
+    // fall through to InputBox for "custom"
+  }
+  const entered = await vscode.window.showInputBox({
+    prompt: "What should Claude look for? (leave blank for a general review)",
+    placeHolder: "e.g. check API examples for correctness",
+    ignoreFocusOut: true,
+    validateInput: (v) => {
+      if (v.length > FOCUS_MAX_LEN) {
+        return `Focus is too long (${v.length}/${FOCUS_MAX_LEN}). Shorten or split into multiple review passes.`;
+      }
+      if (/[\r\n]/.test(v)) {
+        return "Focus must be a single line — newlines would inject extra instructions into the prompt.";
+      }
+      return null;
+    },
+  });
+  if (entered === undefined) return undefined;
+  return entered.trim();
+}
+
+function readRecentFocus(globalState: vscode.Memento): string[] {
+  const raw = globalState.get<unknown>(RECENT_FOCUS_KEY);
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((v): v is string => typeof v === "string" && v.length > 0);
+}
+
+async function pushRecentFocus(
+  globalState: vscode.Memento,
+  focus: string,
+): Promise<void> {
+  const prior = readRecentFocus(globalState).filter((f) => f !== focus);
+  const next = [focus, ...prior].slice(0, RECENT_FOCUS_MAX);
+  await globalState.update(RECENT_FOCUS_KEY, next);
 }
 
 async function pickWorkspaceFolder(): Promise<vscode.WorkspaceFolder | undefined> {

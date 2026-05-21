@@ -167,6 +167,36 @@ mark.mc-hl:hover { filter: brightness(1.15); }
 .filter-row #send-to-claude { margin-left: auto; font-size: 11px; padding: 3px 8px; }
 .filter-row #copy-prompt { font-size: 11px; padding: 3px 8px; }
 
+#claude-summary {
+  margin-top: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent, #6c8eef);
+  border-radius: 4px;
+}
+#claude-summary #claude-summary-text { color: var(--muted); flex: 1; }
+#claude-summary button { font-size: 11px; }
+
+.thread-card.claude-unread {
+  border-left: 3px solid var(--accent, #6c8eef);
+}
+.thread-card.claude-unread .thread-quote::before {
+  content: "● ";
+  color: var(--accent, #6c8eef);
+  font-weight: bold;
+}
+#threads-list.collapse-claude-unread .thread-card.claude-unread > :not(.thread-head) {
+  display: none;
+}
+#threads-list.collapse-claude-unread .thread-card.claude-unread .thread-head {
+  margin-bottom: 0;
+}
+
 #threads-list {
   flex: 1;
   overflow-y: auto;

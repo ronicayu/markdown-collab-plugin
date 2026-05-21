@@ -881,7 +881,7 @@ Whenever you modify a \`.md\` file in a sidecar-mode workspace — for any reaso
 
 export const SKILL_CONTENT = `---
 name: vs-markdown-collab
-description: Agentic workflow for addressing review comments on Markdown (.md) files in a Markdown Collab workspace. Comments are stored INLINE in the .md file itself (default in v0.27+, look for \`<!--mc:threads:begin-->\`); a legacy sidecar format (\`.markdown-collab/<rel>.md.json\`) is documented separately in SIDECAR.md, loaded on demand. TRIGGER when the user asks to address, resolve, respond to, incorporate, or act on review comments, notes, suggestions, or feedback on any Markdown document. Trigger phrases include "address the comments on foo.md", "apply the review feedback", "respond to the notes in README", "incorporate the suggestions", "fix the markdown collab comments", "work through the review on docs/spec.md".
+description: Agentic workflow for addressing review comments on Markdown (.md) files in a Markdown Collab workspace, AND for reviewing Markdown docs by leaving review comments for the human. Comments are stored INLINE in the .md file itself (default in v0.27+, look for \`<!--mc:threads:begin-->\`); a legacy sidecar format (\`.markdown-collab/<rel>.md.json\`) is documented separately in SIDECAR.md, loaded on demand. TRIGGER when the user asks to address, resolve, respond to, incorporate, or act on review comments, notes, suggestions, or feedback on any Markdown document — trigger phrases include "address the comments on foo.md", "apply the review feedback", "respond to the notes in README", "incorporate the suggestions", "fix the markdown collab comments", "work through the review on docs/spec.md". ALSO TRIGGER on review-mode requests where the user asks YOU to play reviewer — "review this doc", "leave your thoughts on README", "do a review pass on docs/spec.md", "second pair of eyes on this", "what would you flag in this file", "review the markdown collab doc on X".
 ---
 
 # Markdown Collab — agentic review-address skill
@@ -1013,8 +1013,109 @@ You MUST NOT:
 - Move existing anchor markers to a new location unless you also moved the passage they wrap.
 - Change \`thread.id\`, \`thread.quote\`, existing comment \`id\` / \`author\` / \`ts\` / \`body\`, or any other historical field.
 - Introduce comment ids that don't follow the \`c<N>\` sequence within a thread (\`c1\` for the first comment, \`c2\` next, etc.).
-- Initiate a new thread (Phase 5) unless the human explicitly asked.
+- Initiate a new thread (Phase 5) unless the human explicitly asked. The Review Mode trigger ("review this doc", "leave your thoughts on X", "do a review pass") counts as an explicit ask and unlocks one or more thread initiations — see the Review Mode section below.
 - Reformat the threads region (drop newlines, merge lines, reorder threads). Only line-level edits to one thread JSON at a time.
+- Edit prose in Review Mode. In review mode you OPEN threads, you do not modify the doc text. Even obvious typos go in a thread unless the human said "fix as you go".
+
+### Review Mode (inline) — Claude as the reviewer
+
+When the human's request matches **Review Mode** trigger phrases — "review this doc", "leave your thoughts on X", "do a review pass on Y", "second pair of eyes on README", "what would you flag in this file", or the Markdown Collab extension's "Ask Claude to Review This Doc" command — you switch from addressing existing comments to **initiating** new review threads. The human will triage them in the sidebar.
+
+The mechanics are the same as Phase 5: pick a passage, allocate an id, insert paired markers, append a \`<!--mc:t {…}-->\` line with a single \`c1\` comment authored by \`"claude"\`, verify. Read Phase 5 first if you have not — it carries the invariants you must respect when wrapping passages.
+
+#### Focus directive
+
+The prompt may include a \`Focus:\` line — a free-form instruction from the human (e.g. *"check API examples for correctness," "find marketing-y tone," "look for contradictions with the architecture doc"*). When a focus directive is present:
+
+- It is the **primary filter** for what counts as a concern worth a thread. Only flag things that match the focus.
+- A general-quality issue that doesn't match the focus does **not** warrant a thread unless it's a hard error (e.g. broken example, factually wrong claim).
+- If no concerns match the focus after a careful read, reply (via the send channel, not via a thread) saying so. **Do not fabricate threads to feel productive.**
+
+Without a focus directive, do a general review against the rubric below.
+
+#### What warrants a thread
+
+- Factual error or claim that's wrong.
+- Unclear claim that a reader could plausibly misinterpret.
+- Missing context the reader will need (e.g. an undefined term used in passing).
+- Broken example: code that won't run, a command with a wrong flag, a link to a nonexistent file.
+- Contradiction between this doc and another section / file the human has scoped in.
+- Structural issue: section out of order, heading hierarchy broken, key info buried.
+- Anything matching the focus directive when one was given.
+
+#### What does NOT warrant a thread by default
+
+- Pure typos (commas, articles, capitalization). Skip unless the focus is "copy-edit".
+- Style preferences (Oxford comma, sentence length, voice). Skip unless the focus is "tone" / "style".
+- Generic "could be clearer" / "this section feels long" without naming the specific problem. If you can't name it, you can't anchor it.
+- Restating the anchored text. The body must add something the human doesn't already see.
+
+#### Anchor sizing in Review Mode
+
+- The anchor should be the **smallest passage that makes the comment make sense**. Prefer one sentence over a paragraph. Prefer one phrase over a sentence when the issue is local.
+- Avoid wrapping a whole section. If the issue is structural ("this section is in the wrong place"), anchor the section heading line, not the body.
+- Anchors must still satisfy Phase 5 constraints: 8+ non-whitespace chars, outside code spans, marker-safe location.
+
+#### Thread body — specificity rule
+
+Every \`c1\` body must name the concern concretely.
+
+- **Good:** *"The claim that \`X\` implies \`Y\` skips intermediate step \`Z\`. Either justify the jump or add the step."*
+- **Good:** *"Example uses \`--all\` but the CLI flag is \`--include-deleted\` per \`mdc.mjs\` line 142. Update the flag or update the CLI."*
+- **Bad:** *"This could be clearer."*
+- **Bad:** *"The whole section needs work."*
+- **Bad:** *Restating the anchored text with no analysis.*
+
+The body should fit in 1–3 sentences. If you need more, split into separate threads on different anchors.
+
+#### Worked examples — good vs bad
+
+These calibrate the rubric. Mirror the *shape* of the good examples; avoid the failure modes in the bad ones.
+
+**Good — concrete factual correction.** Doc says: *"The CLI accepts \`--all\` to include resolved comments."* Code says the flag is \`--include-resolved\`. Anchor the literal \`--all\` token only (smallest meaningful span). Body: *"CLI flag is \`--include-resolved\` per \`mdc.mjs:142\`, not \`--all\`. Either rename the doc or update the CLI."*
+
+**Good — unclear claim with a named ambiguity.** Doc says: *"The skill triggers on review-mode phrases."* Anchor the sentence. Body: *"\\'Review-mode phrases\\' isn't defined here — the rubric for what counts as one is in Phase 5+. Either inline a one-line definition or link to the Review Mode section."*
+
+**Good — contradiction across sections.** Doc's \`Quick start\` says \`Send to Claude\` is in the right-click menu; doc's \`Commands\` table says it's palette-only. Anchor the quick-start claim (because it's the one that's likely wrong). Body: *"Conflicts with the Commands table, which marks this palette-only as of v0.28. Update one or the other to match reality."*
+
+**Good — structural issue, anchored at a heading.** Doc has a \`## Settings\` heading before \`## Storage layout\`, but Storage explains terms used in Settings. Anchor the \`## Settings\` heading. Body: *"Settings references the \`<!--mc:threads:begin-->\` marker introduced in Storage layout below. Move Storage layout above Settings, or forward-link explicitly."*
+
+**Bad — vague.** *"This could be clearer."* No anchored specifics, no named problem, nothing the human can act on without re-deriving the concern. Either name the specific issue or skip.
+
+**Bad — anchor too wide.** Anchoring an entire 8-paragraph section because *"the whole section needs work."* The human can't tell which sentence drove the comment. Pick the single sentence (or heading) that crystallizes the issue.
+
+**Bad — restating the anchor.** Anchored: *"Channels need MCP."* Body: *"This sentence is about channels needing MCP."* Adds nothing the reader doesn't see. Either explain *why* the claim is problematic (it's incomplete? wrong? unclear in this context?) or skip.
+
+**Bad — opinion presented as fact.** *"This intro is too marketing-y."* — only valid if the focus directive explicitly asks for tone. Without that, style preferences aren't a substantive concern.
+
+**Bad — fix dressed as a comment.** Body: *"I changed this to X."* You don't edit prose in Review Mode. Open a thread proposing the change in the body; let the human accept it.
+
+#### No upper bound on thread count
+
+There is **no maximum number of threads** per review pass. Leave a thread for every substantive concern that fits the focus directive (or the general rubric, if no focus was given). If you find 30 issues, leave 30 threads. The human triages with the sidebar UI; your job is signal, not curation.
+
+Do not "leave the top N" — dropping findings to hit a count target risks suppressing the one that matters most.
+
+#### Honest empty result
+
+If you read the doc carefully and find no concerns that match the focus (or no general-rubric concerns if no focus was given), say so explicitly via the send channel. Do **not** open a thread to comment "looks good" — threads are for actionable concerns. A short reply of *"Reviewed \`<path>\` against focus \`<focus>\`. No concerns found."* is the correct outcome.
+
+#### Workflow — Review Mode pass
+
+1. **Read the doc end to end** before opening any threads. Cross-referencing the focus directive against the whole doc avoids redundant or contradictory threads.
+2. **List concerns mentally** with anchor candidate, severity (in your head — do not encode it in JSON), and one-sentence body. Discard anything that fails the specificity rule.
+3. **Initiate threads one at a time**, in document order (earlier anchors first). Use the Phase 5 mechanics:
+   - Verbatim anchor passage (8+ non-whitespace chars, outside code fences).
+   - 5-char lowercase base36 id, unique against existing markers and \`<!--mc:t …-->\` ids.
+   - Paired markers wrap the passage; \`<!--mc:t {…}-->\` line appended in the threads region (create the region if absent).
+   - \`c1\` comment: \`author:"claude"\`, current UTC ISO-8601 \`ts\`, body following the specificity rule.
+4. **Re-read after each Edit.** Anchor offsets may shift; the next thread's anchor must still be a unique substring.
+5. **Do not edit prose.** Even if the fix is obvious. Open a thread; the human decides.
+6. **Verify.** Re-read the file. Confirm every new thread has a paired marker, a \`<!--mc:t …-->\` line with valid JSON, \`status:"open"\`, and a single \`c1\` from \`"claude"\`. Confirm no existing thread or prose was disturbed.
+
+#### Sidecar mode in review
+
+If the target file is in sidecar mode (no \`<!--mc:threads:begin-->\`, but \`<workspaceRoot>/.markdown-collab/<rel>.md.json\` exists), apply the same rubric (focus, no cap, no prose edits, anchor sizing, specificity) but use the sidecar mechanics from SIDECAR.md to create the comments. If the file has neither inline markers nor a sidecar, default to inline mode and create the threads region.
 
 ### Phase 7 — Verify (inline mode)
 

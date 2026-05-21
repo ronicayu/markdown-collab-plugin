@@ -4,6 +4,8 @@ A VS Code extension that lets you leave review comments on Markdown files in a f
 
 Highlight a passage, drop a review comment in the sidebar, click **Send to Claude** — Claude reads the comment, edits the doc, and replies. Loop until you mark the thread resolved.
 
+You can also flip the direction and ask Claude to act as the reviewer (v0.29+): right-click a `.md` file → **Markdown Collab: Ask Claude to Review This Doc**, optionally tell Claude what to focus on, and Claude opens one inline-comment thread per substantive concern for you to triage in the sidebar.
+
 ## Quick start
 
 1. **Install the extension.** Either build it from source (see [Development](#development)) or grab the latest `.vsix` from the [GitHub Releases page](https://github.com/ronicayu/markdown-collab-plugin/releases) and install it:
@@ -38,6 +40,21 @@ Once you've left one or more unresolved comments, click **Send N to Claude** at 
 ### Reviewing replies
 
 Claude addresses each comment, edits the doc in place, and appends a reply with what it changed. The reply lands as a thread reply in VS Code. Toggle the thread to **Resolved** when satisfied; reply with more questions if not.
+
+### Asking Claude to review (Claude-initiated threads)
+
+The flow above is human-to-Claude: you leave comments, Claude addresses them. v0.29 added the reverse direction — **Markdown Collab: Ask Claude to Review This Doc** (right-click a `.md` file or run from the command palette).
+
+The extension prompts for an optional **focus directive** — a free-form sentence telling Claude what to look for, e.g. *"check API examples for correctness"* or *"find marketing-y tone."* Leave it blank for a general review. The last five focus directives you've used are offered in a quick-pick so you don't retype the common ones.
+
+Claude reads the doc and opens one inline-comment thread per substantive concern it finds. There's **no cap on thread count** — if 30 things warrant a thread, Claude leaves 30. The sidebar grows two affordances when Claude-initiated threads exist:
+
+- A summary row: *"N new from Claude · M reviewed,"* with a **Next** button that jumps to the next unread Claude thread.
+- A **Collapse all** / **Expand all** toggle that folds every unread Claude card so a big review pass stays browseable.
+
+A thread counts as "reviewed" once you reply or resolve it; the indicator clears automatically. The detection uses the existing inline-thread JSON — no schema change, no migration needed.
+
+Files larger than 50 KB prompt a soft confirm before sending (Claude's review can use significant context on big docs). In review mode the skill never edits prose — every concern goes in a thread for you to gate. Expect *"Reviewed `<path>` — no concerns found"* via the send channel if Claude reads the doc and finds nothing matching the focus.
 
 ### Comments that survive doc edits
 
@@ -129,6 +146,7 @@ Copies the prompt to the clipboard. Paste into Claude however you like.
 | `Markdown Collab: Install Claude Skill` | Write `~/.claude/skills/vs-markdown-collab/SKILL.md` (inline-by-default), the on-demand `SIDECAR.md` reference (legacy sidecar workflow), and bundled helpers (`mdc.mjs`, `mdc-tail.mjs`, `mdc-channel.mjs`). |
 | `Markdown Collab: Initialize AGENTS.md` | Append a convention block to `<workspace>/AGENTS.md` (for non–Claude-Code agents). |
 | `Markdown Collab: Open Inline Comments View` | Open the rendered view with an inline-threads sidebar. Comments are stored inside the `.md` file. **The only right-click action on `.md` files** as of v0.28. |
+| `Markdown Collab: Ask Claude to Review This Doc` | Ask Claude to act as the reviewer (v0.29+). Prompts for an optional focus directive, then sends a Review Mode payload through the configured send mode. Claude opens one thread per concern; you triage in the sidebar. |
 | `Markdown Collab: Open Preview with Comments` | Open the rendered preview with the legacy sidecar-based comments sidebar (writes to `.markdown-collab/<rel>.md.json`). **Palette-only** as of v0.28 — no right-click entry. |
 | `Markdown Collab: Send Unresolved Comments to Claude` | Same as the **Send to Claude** button — usable from palette. |
 | `Markdown Collab: Start Claude Review Terminal` | Spawn a fresh integrated terminal and launch `claude`. |

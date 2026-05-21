@@ -14,9 +14,12 @@
 // a standalone experiment, not an integration. No coupling to
 // commentController, sidecar, or the y-websocket relay.
 
+import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
+import { isInsideRoot } from "../previewPanel";
+import { parseLinkHref, slugifyHeading } from "./linkParse";
 import {
   addThread,
   appendReply,
@@ -50,6 +53,12 @@ interface InitMessage {
 interface UpdateMessage {
   type: "update";
   state: SerializedState;
+}
+
+interface ReviewPendingMessage {
+  type: "review-pending";
+  /** Thread IDs that already existed when the user fired Ask Claude to Review. */
+  existingIds: string[];
 }
 
 interface AddCommentRequest {
@@ -101,6 +110,11 @@ interface CopyPromptRequest {
   type: "copy-prompt";
 }
 
+interface OpenLinkRequest {
+  type: "open-link";
+  href: string;
+}
+
 type ClientMessage =
   | ReadyMessage
   | AddCommentRequest
@@ -110,7 +124,8 @@ type ClientMessage =
   | DeleteThreadRequest
   | DeleteCommentRequest
   | SendToClaudeRequest
-  | CopyPromptRequest;
+  | CopyPromptRequest
+  | OpenLinkRequest;
 
 /** Dependencies the panel needs from the extension host (kept narrow so tests can stub them). */
 export interface InlinePanelDeps {
@@ -173,6 +188,18 @@ function imageResourceRoots(
 }
 
 export class InlineCommentsPanel {
+  /**
+   * Notify any open InlineCommentsPanel for `docUri` that a review
+   * request was just dispatched. The panel snapshots its current thread
+   * IDs and, on the next update where new claude-initiated threads
+   * appear, scrolls to the first one. No-op when no panel is open.
+   */
+  static notifyReviewPending(docUri: vscode.Uri): void {
+    const panel = panels.get(docUri.toString());
+    if (!panel) return;
+    void panel.pushReviewPending();
+  }
+
   static reveal(context: vscode.ExtensionContext, doc: vscode.TextDocument, deps: InlinePanelDeps): void {
     const key = doc.uri.toString();
     const existing = panels.get(key);
@@ -269,10 +296,16 @@ export class InlineCommentsPanel {
         <span id="thread-count"></span>
         <button id="collapse-threads" class="btn-link" title="Hide comments panel" aria-label="Hide comments panel">›</button>
       </div>
+      <div id="claude-summary" hidden>
+        <span id="claude-summary-text"></span>
+        <button id="claude-next" class="btn-link" title="Jump to the next unread thread from Claude.">Next</button>
+        <button id="claude-toggle-collapse" class="btn-link" title="Collapse / expand all unread Claude threads.">Collapse all</button>
+      </div>
       <div class="filter-row">
         <label><input type="radio" name="filter" value="open" checked> Open</label>
         <label><input type="radio" name="filter" value="all"> All</label>
         <label><input type="radio" name="filter" value="resolved"> Resolved</label>
+        <label id="filter-claude-label" hidden><input type="radio" name="filter" value="claude-unread"> New from Claude</label>
         <button id="send-to-claude" title="Send the prompt to a running Claude terminal (or your configured send mode).">Send to Claude</button>
         <button id="copy-prompt" class="btn-ghost" title="Copy the prompt to your clipboard.">Copy</button>
       </div>
@@ -346,6 +379,8 @@ export class InlineCommentsPanel {
         return this.handleSendToClaude();
       case "copy-prompt":
         return this.handleCopyPrompt();
+      case "open-link":
+        return this.handleOpenLink(msg.href);
       case "delete-thread":
         return this.applyMutation((parsed) => replaceThread(parsed.source, msg.threadId, null));
       case "delete-comment":
@@ -401,6 +436,148 @@ export class InlineCommentsPanel {
     void vscode.window.showInformationMessage(
       `Inline comments: prompt for ${payload.unresolvedCount} open thread${payload.unresolvedCount === 1 ? "" : "s"} copied to clipboard.`,
     );
+  }
+
+  /**
+   * Resolve a click on a rendered markdown link.
+   *
+   * Same-doc `#fragment` links are handled webview-side. By the time we
+   * get here, `href` either has an explicit path or an external scheme.
+   *
+   * - `http(s)://`, `mailto:`, `tel:` → `openExternal`
+   * - other schemes → refused
+   * - `<path>[:N][#heading][?query]` → resolved against the doc's dir,
+   *   must stay inside the workspace folder, opened in VS Code:
+   *     - `.md` → open another inline-comments panel; jump to heading
+   *       by re-using the existing setSelection-after-open trick.
+   *     - everything else → `vscode.open` default opener.
+   */
+  private async handleOpenLink(rawHref: string): Promise<void> {
+    const raw = (rawHref || "").trim();
+    if (!raw) return;
+
+    // External schemes: allow http(s)/mailto/tel; refuse the rest. Same
+    // policy as the legacy PreviewPanel for parity (and security).
+    const schemeMatch = /^([a-z][a-z0-9+.-]*):/i.exec(raw);
+    if (schemeMatch) {
+      const scheme = schemeMatch[1].toLowerCase();
+      const allowed = ["http", "https", "mailto", "tel"];
+      if (!allowed.includes(scheme)) {
+        void vscode.window.showWarningMessage(
+          `Refusing to open link with scheme '${scheme}'.`,
+        );
+        return;
+      }
+      try {
+        await vscode.env.openExternal(vscode.Uri.parse(raw));
+      } catch (e) {
+        void vscode.window.showWarningMessage(
+          `Could not open ${raw}: ${(e as Error).message}`,
+        );
+      }
+      return;
+    }
+
+    const parsed = parseLinkHref(raw);
+    if (!parsed.path) return; // pure fragment — webview already handled
+
+    // Resolve against the .md file's directory. Block paths outside the
+    // workspace root, matching the legacy PreviewPanel safeguard.
+    const folder = vscode.workspace.getWorkspaceFolder(this.doc.uri);
+    const baseDir = path.dirname(this.doc.uri.fsPath);
+    const resolved = path.resolve(baseDir, parsed.path);
+    const root = folder ? folder.uri.fsPath : baseDir;
+    if (!isInsideRoot(resolved, root)) {
+      void vscode.window.showWarningMessage(
+        `Link blocked: ${parsed.path} resolves outside the workspace.`,
+      );
+      return;
+    }
+
+    let stat: import("fs").Stats;
+    try {
+      stat = (await fs.stat(resolved)) as unknown as import("fs").Stats;
+    } catch (e) {
+      void vscode.window.showWarningMessage(
+        `Linked file not found: ${resolved}`,
+      );
+      return;
+    }
+    if (stat.isDirectory()) {
+      void vscode.window.showWarningMessage(
+        `Cannot open directory: ${resolved}`,
+      );
+      return;
+    }
+
+    const targetUri = vscode.Uri.file(resolved);
+    if (resolved.toLowerCase().endsWith(".md")) {
+      try {
+        const targetDoc = await vscode.workspace.openTextDocument(targetUri);
+        // Reveal in another inline-comments panel for `.md` targets so
+        // the user stays in the review workflow. Heading/line jumps are
+        // best-effort against the text editor below, since the inline
+        // view doesn't yet expose a "scroll to heading" API.
+        InlineCommentsPanel.reveal(this.context, targetDoc, this.deps);
+        await this.revealInEditor(targetDoc, parsed.heading, parsed.line);
+      } catch (e) {
+        void vscode.window.showErrorMessage(
+          `Failed to open ${resolved}: ${(e as Error).message}`,
+        );
+      }
+      return;
+    }
+
+    // Non-markdown: hand to VS Code's default opener so the user gets
+    // the right viewer (images, JSON, source, etc.).
+    try {
+      await vscode.commands.executeCommand("vscode.open", targetUri);
+      if (parsed.line) {
+        await this.revealLineInActiveEditor(parsed.line);
+      }
+    } catch (e) {
+      void vscode.window.showWarningMessage(
+        `Could not open ${resolved}: ${(e as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Show the linked .md in a text editor and jump to the requested
+   * heading or line. We always open the text editor (even when also
+   * revealing the inline-comments panel) so the user has a concrete
+   * cursor position to anchor on — heading-aware scrolling inside the
+   * webview alone isn't reliable yet.
+   */
+  private async revealInEditor(
+    doc: vscode.TextDocument,
+    heading: string | null,
+    line: number | null,
+  ): Promise<void> {
+    let targetLine: number | null = line;
+    if (!targetLine && heading) {
+      targetLine = findHeadingLine(doc, heading);
+    }
+    if (targetLine === null) {
+      await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: true });
+      return;
+    }
+    const zeroBased = Math.max(0, targetLine - 1);
+    const pos = new vscode.Position(zeroBased, 0);
+    await vscode.window.showTextDocument(doc, {
+      preview: false,
+      preserveFocus: true,
+      selection: new vscode.Range(pos, pos),
+    });
+  }
+
+  private async revealLineInActiveEditor(line: number): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) return;
+    const zeroBased = Math.max(0, line - 1);
+    const pos = new vscode.Position(zeroBased, 0);
+    editor.selection = new vscode.Selection(pos, pos);
+    editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
   }
 
   private resolveAuthor(): string {
@@ -469,6 +646,15 @@ export class InlineCommentsPanel {
   private async pushState(): Promise<void> {
     const state = serialize(parse(this.doc.getText()));
     const msg: UpdateMessage = { type: "update", state };
+    await this.panel.webview.postMessage(msg);
+  }
+
+  private async pushReviewPending(): Promise<void> {
+    const state = serialize(parse(this.doc.getText()));
+    const msg: ReviewPendingMessage = {
+      type: "review-pending",
+      existingIds: state.threads.map((t) => t.id),
+    };
     await this.panel.webview.postMessage(msg);
   }
 
@@ -571,6 +757,38 @@ function findProseIndex(proseToSrc: number[], srcOffset: number): number | null 
   for (let i = 0; i < proseToSrc.length; i++) {
     if (proseToSrc[i] === srcOffset) return i;
     if (proseToSrc[i] > srcOffset) return i; // Marker boundary collapse — closest prose index.
+  }
+  return null;
+}
+
+/**
+ * Find the 1-based line number of the first ATX heading (`#`, `##`, …)
+ * whose slug matches the requested fragment. Returns null if no heading
+ * matches. Operates on the raw document text — markdown-collab markers
+ * inside the heading text are stripped before slugifying so they don't
+ * leak into the slug.
+ */
+export function findHeadingLine(
+  doc: vscode.TextDocument,
+  fragment: string,
+): number | null {
+  const decoded = (() => {
+    try {
+      return decodeURIComponent(fragment);
+    } catch {
+      return fragment;
+    }
+  })();
+  const target = slugifyHeading(decoded);
+  if (!target) return null;
+  for (let i = 0; i < doc.lineCount; i++) {
+    const text = doc.lineAt(i).text;
+    const m = /^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(text);
+    if (!m) continue;
+    // Strip mc:* HTML-comment markers so heading text like
+    // `# <!--mc:a:k7q3p-->Intro<!--mc:/a:k7q3p-->` slugifies as `intro`.
+    const cleaned = m[2].replace(/<!--mc:[^>]*-->/g, "");
+    if (slugifyHeading(cleaned) === target) return i + 1;
   }
   return null;
 }

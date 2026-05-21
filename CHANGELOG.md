@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.29.0 — 2026-05-15 (trial)
+
+### Added: "Ask Claude to Review This Doc" — Claude as reviewer
+
+A new command and right-click action lets the human ask Claude to act as
+a reviewer on a Markdown doc. Claude reads the file and opens one
+inline-comment thread per substantive concern — the human triages from
+the existing sidebar. Built on top of the v0.27+ inline-comment
+substrate; no storage-format changes.
+
+The command is **Markdown Collab: Ask Claude to Review This Doc**, also
+available from the Explorer, Editor body, and Editor title right-click
+menus on `.md` files. On invocation the extension prompts for an
+optional **focus directive** — a free-form string like *"check API
+examples for correctness"* or *"find marketing-y tone"* — and remembers
+the last 5 focuses in `globalState` for quick reuse. Files larger than
+50 KB prompt a soft confirm before sending.
+
+The payload flows through the existing send-mode pipeline (terminal /
+channel / mcp-channel / clipboard) — no new transport. The skill's new
+**Review Mode** workflow governs what warrants a thread (factual
+errors, unclear claims, contradictions, broken examples, anything
+matching the focus directive) and what doesn't (pure typos, vague
+"could be clearer" notes). There is **no upper bound on thread count**;
+volume is solved in the UI, not by gagging Claude.
+
+The inline-comments sidebar gained two MVP affordances to handle
+potentially-large review passes:
+
+- A **summary row** — *"N new from Claude · M reviewed"* — appears
+  above the filter row whenever Claude-initiated threads exist.
+- **Next** jumps the highlighted card to the next unread Claude
+  thread; **Collapse all** / **Expand all** toggles a folded view of
+  every unread Claude card so a 30-thread review is browseable.
+
+Claude-initiated unread threads are detected from existing JSON (no
+schema change): a thread's first non-deleted comment authored by
+`claude` with no human reply yet, status open.
+
+The `vs-markdown-collab` skill (re-installable via **Markdown Collab:
+Install Claude Skill**) now includes a Review Mode section with the
+rubric, focus-directive handling, anchor-sizing rules, and the
+"don't edit prose in review mode" invariant. Phase 6 has been
+updated accordingly.
+
+### Fixed: clicking links in the inline-comments preview did nothing
+
+Markdown links in the rendered preview were inert because the webview
+sandbox swallows navigation. They now:
+
+- jump to a same-doc `#heading` by slug-matching the rendered headings;
+- open another `.md` in an inline-comments panel, and also reveal the
+  target line in a text editor for `#heading` or `:lineNumber` suffixes;
+- hand non-markdown files to VS Code's default opener (image viewer,
+  JSON formatter, etc.);
+- send `http(s)`, `mailto:`, and `tel:` to `openExternal`;
+- refuse any other URL scheme and any path that resolves outside the
+  workspace folder.
+
+The `:lineNumber` suffix (e.g. `foo.md:42`) is recognized as a 1-based
+line jump in either a `.md` (no fragment) or non-markdown target. The
+heading slug rules mirror the common GitHub-flavored implementation
+(lowercase, punctuation stripped, spaces → hyphens, diacritics
+stripped via NFKD).
+
 ## 0.28.0 — 2026-05-14 (trial)
 
 ### Removed: legacy sidecar Preview from right-click menus
