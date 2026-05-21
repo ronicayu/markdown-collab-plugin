@@ -61,6 +61,19 @@ interface ReviewPendingMessage {
   existingIds: string[];
 }
 
+interface ScrollToMessage {
+  type: "scroll-to";
+  /** Prose offset to scroll into view. */
+  proseOffset: number;
+}
+
+export interface RevealOpts {
+  /** 1-based line number to scroll to after opening. */
+  line?: number;
+  /** Heading slug (without leading `#`) to scroll to after opening. */
+  heading?: string;
+}
+
 interface AddCommentRequest {
   type: "add-comment";
   selStart: number;
@@ -200,11 +213,19 @@ export class InlineCommentsPanel {
     void panel.pushReviewPending();
   }
 
-  static reveal(context: vscode.ExtensionContext, doc: vscode.TextDocument, deps: InlinePanelDeps): void {
+  static reveal(
+    context: vscode.ExtensionContext,
+    doc: vscode.TextDocument,
+    deps: InlinePanelDeps,
+    opts?: RevealOpts,
+  ): void {
     const key = doc.uri.toString();
     const existing = panels.get(key);
     if (existing) {
       existing.panel.reveal();
+      if (opts && (opts.line || opts.heading)) {
+        void existing.scrollTo(opts);
+      }
       return;
     }
     const column = vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.One;
@@ -218,11 +239,17 @@ export class InlineCommentsPanel {
         localResourceRoots: imageResourceRoots(context, doc),
       },
     );
-    panels.set(key, new InlineCommentsPanel(context, doc, panel, deps, () => panels.delete(key)));
+    panels.set(
+      key,
+      new InlineCommentsPanel(context, doc, panel, deps, () => panels.delete(key), opts),
+    );
   }
 
   private readonly disposables: vscode.Disposable[] = [];
   private pendingApply = false;
+
+  /** Set by reveal() when an open request includes a scroll target. Consumed once on the next `ready` after init. */
+  private pendingScroll: RevealOpts | null = null;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -230,7 +257,11 @@ export class InlineCommentsPanel {
     private readonly panel: vscode.WebviewPanel,
     private readonly deps: InlinePanelDeps,
     private readonly onDispose: () => void,
+    initialScroll?: RevealOpts,
   ) {
+    if (initialScroll && (initialScroll.line || initialScroll.heading)) {
+      this.pendingScroll = initialScroll;
+    }
     panel.webview.html = this.renderHtml();
     this.disposables.push(
       panel.webview.onDidReceiveMessage((m) => void this.handleMessage(m as ClientMessage)),
@@ -242,6 +273,16 @@ export class InlineCommentsPanel {
       panel,
     );
     panel.onDidDispose(() => this.dispose());
+  }
+
+  private async scrollTo(opts: RevealOpts): Promise<void> {
+    const proseOffset = resolveScrollProseOffset(this.doc, {
+      line: opts.line ?? null,
+      heading: opts.heading ?? null,
+    });
+    if (proseOffset === null) return;
+    const msg: ScrollToMessage = { type: "scroll-to", proseOffset };
+    await this.panel.webview.postMessage(msg);
   }
 
   private renderHtml(): string {
@@ -324,6 +365,11 @@ export class InlineCommentsPanel {
     switch (msg.type) {
       case "ready":
         await this.pushInit();
+        if (this.pendingScroll) {
+          const opts = this.pendingScroll;
+          this.pendingScroll = null;
+          await this.scrollTo(opts);
+        }
         return;
       case "add-comment":
         return this.applyMutation((parsed) => {
@@ -515,11 +561,13 @@ export class InlineCommentsPanel {
       try {
         const targetDoc = await vscode.workspace.openTextDocument(targetUri);
         // Reveal in another inline-comments panel for `.md` targets so
-        // the user stays in the review workflow. Heading/line jumps are
-        // best-effort against the text editor below, since the inline
-        // view doesn't yet expose a "scroll to heading" API.
-        InlineCommentsPanel.reveal(this.context, targetDoc, this.deps);
-        await this.revealInEditor(targetDoc, parsed.heading, parsed.line);
+        // the user stays in the review workflow. The reveal opts carry
+        // any heading/line suffix from the link; the panel scrolls the
+        // preview to the matching span after init.
+        InlineCommentsPanel.reveal(this.context, targetDoc, this.deps, {
+          line: parsed.line ?? undefined,
+          heading: parsed.heading ?? undefined,
+        });
       } catch (e) {
         void vscode.window.showErrorMessage(
           `Failed to open ${resolved}: ${(e as Error).message}`,
@@ -540,35 +588,6 @@ export class InlineCommentsPanel {
         `Could not open ${resolved}: ${(e as Error).message}`,
       );
     }
-  }
-
-  /**
-   * Show the linked .md in a text editor and jump to the requested
-   * heading or line. We always open the text editor (even when also
-   * revealing the inline-comments panel) so the user has a concrete
-   * cursor position to anchor on — heading-aware scrolling inside the
-   * webview alone isn't reliable yet.
-   */
-  private async revealInEditor(
-    doc: vscode.TextDocument,
-    heading: string | null,
-    line: number | null,
-  ): Promise<void> {
-    let targetLine: number | null = line;
-    if (!targetLine && heading) {
-      targetLine = findHeadingLine(doc, heading);
-    }
-    if (targetLine === null) {
-      await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: true });
-      return;
-    }
-    const zeroBased = Math.max(0, targetLine - 1);
-    const pos = new vscode.Position(zeroBased, 0);
-    await vscode.window.showTextDocument(doc, {
-      preview: false,
-      preserveFocus: true,
-      selection: new vscode.Range(pos, pos),
-    });
   }
 
   private async revealLineInActiveEditor(line: number): Promise<void> {
@@ -682,6 +701,13 @@ function mapProseToSource(parsed: ParsedDocument): {
   proseStartToSource: (proseOffset: number) => number | null;
   /** Map an *end* prose offset (exclusive boundary) to a source offset. */
   proseEndToSource: (proseOffset: number) => number | null;
+  /**
+   * Map a source offset to a prose offset. If the source offset falls
+   * inside a skipped region (anchor marker or threads block), returns
+   * the prose offset of the next surviving character. Returns `null`
+   * only when the source offset is past the end of the source.
+   */
+  sourceToProse: (srcOffset: number) => number | null;
   anchorsInProse: Map<string, { proseStart: number; proseEnd: number }>;
 } {
   const src = parsed.source;
@@ -748,6 +774,7 @@ function mapProseToSource(parsed: ParsedDocument): {
       if (proseOffset === 0) return proseToSrc[0];
       return proseToSrc[proseOffset - 1] + 1;
     },
+    sourceToProse: (srcOffset: number) => findProseIndex(proseToSrc, srcOffset),
   };
 }
 
@@ -759,6 +786,30 @@ function findProseIndex(proseToSrc: number[], srcOffset: number): number | null 
     if (proseToSrc[i] > srcOffset) return i; // Marker boundary collapse — closest prose index.
   }
   return null;
+}
+
+/**
+ * Translate a `{ line, heading }` request into a prose-space offset
+ * suitable for posting to the webview. Returns null when neither is
+ * resolvable (heading not found, line past EOF, both absent).
+ *
+ * Heading resolution takes priority when both are provided since users
+ * tend to write `foo.md:42#api` meaning the heading; line is the
+ * fallback when the heading isn't present.
+ */
+export function resolveScrollProseOffset(
+  doc: vscode.TextDocument,
+  opts: { line?: number | null; heading?: string | null },
+): number | null {
+  let line: number | null = null;
+  if (opts.heading) line = findHeadingLine(doc, opts.heading);
+  if (line === null && opts.line && opts.line > 0) line = opts.line;
+  if (line === null) return null;
+  if (line > doc.lineCount) return null;
+  const srcOffset = doc.offsetAt(new vscode.Position(line - 1, 0));
+  const parsed = parse(doc.getText());
+  const { sourceToProse } = mapProseToSource(parsed);
+  return sourceToProse(srcOffset);
 }
 
 /**

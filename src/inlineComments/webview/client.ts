@@ -74,6 +74,11 @@ interface ReviewPendingMsg {
   existingIds: string[];
 }
 
+interface ScrollToMsg {
+  type: "scroll-to";
+  proseOffset: number;
+}
+
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
 installSourceOffsetPlugin(md);
 
@@ -1080,7 +1085,7 @@ dom.filterRadios.forEach((r) =>
 );
 
 window.addEventListener("message", (ev) => {
-  const msg = ev.data as InitMsg | UpdateMsg | ReviewPendingMsg;
+  const msg = ev.data as InitMsg | UpdateMsg | ReviewPendingMsg | ScrollToMsg;
   if (!msg) return;
   if (msg.type === "init") {
     dom.fileName.textContent = msg.fileName;
@@ -1092,8 +1097,47 @@ window.addEventListener("message", (ev) => {
   } else if (msg.type === "review-pending") {
     pendingReviewSnapshot = new Set(msg.existingIds);
     savePendingReviewSnapshot();
+  } else if (msg.type === "scroll-to") {
+    scrollPreviewToProseOffset(msg.proseOffset);
   }
 });
+
+/**
+ * Scroll the rendered preview so the source-offset span enclosing
+ * `proseOffset` is visible. Used by the host to support "open inline
+ * view at line N" (and the heading-jump variant of cross-file links).
+ *
+ * Defers one frame so the call works even when fired immediately after
+ * init, before the preview HTML has been painted.
+ */
+function scrollPreviewToProseOffset(proseOffset: number): void {
+  requestAnimationFrame(() => {
+    const spans = dom.preview.querySelectorAll<HTMLElement>("[data-mc-src]");
+    let best: HTMLElement | null = null;
+    let bestStart = -1;
+    for (const el of Array.from(spans)) {
+      const raw = el.dataset.mcSrc;
+      if (!raw) continue;
+      const dot = raw.indexOf(".");
+      if (dot === -1) continue;
+      const start = Number(raw.slice(0, dot));
+      const end = Number(raw.slice(dot + 1));
+      if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+      // Prefer the first span that *contains* the offset. Fall back to
+      // the closest one that starts at or after the offset.
+      if (start <= proseOffset && proseOffset < end) {
+        best = el;
+        break;
+      }
+      if (start >= proseOffset && (bestStart === -1 || start < bestStart)) {
+        best = el;
+        bestStart = start;
+      }
+    }
+    if (!best) return;
+    best.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
 
 void user; // silence unused for now; will use when threading authorship UI hints
 

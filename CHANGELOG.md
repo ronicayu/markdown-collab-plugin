@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.29.1 — 2026-05-21 (trial)
+
+### Changed: inline-comments view scrolls to line / heading on open
+
+`InlineCommentsPanel.reveal(...)` now accepts an optional
+`{ line, heading }` to scroll the rendered preview to a specific spot
+when the panel opens (or re-opens). The panel translates a 1-based
+line or a heading slug into a prose-offset via the existing source ↔
+prose mapping and posts a `scroll-to` message to the webview, which
+finds the matching `[data-mc-src]` span and `scrollIntoView`s it.
+
+This collapses the old workaround in the link-click path: clicking
+`[link](other.md#heading)` previously opened both an inline-comments
+panel *and* a text editor (because the inline view couldn't jump to
+a heading on its own). It now opens just the inline view and scrolls
+the preview, matching what users actually want.
+
 ## 0.29.0 — 2026-05-15 (trial)
 
 ### Added: "Ask Claude to Review This Doc" — Claude as reviewer
