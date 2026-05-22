@@ -27,6 +27,26 @@ describe("inlineComments/panel - serialize", () => {
     expect(ser.prose.slice(byBody("inner").anchor!.proseStart, byBody("inner").anchor!.proseEnd)).toBe("baz");
   });
 
+  it("strips YAML frontmatter from the rendered prose", () => {
+    const src = "---\ntitle: My Doc\nauthor: me\n---\n\n# Heading\n\nBody.";
+    const ser = serialize(parse(src));
+    expect(ser.prose).not.toContain("title:");
+    expect(ser.prose).not.toContain("author:");
+    expect(ser.prose).not.toMatch(/^---/);
+    expect(ser.prose.trimStart().startsWith("# Heading")).toBe(true);
+  });
+
+  it("anchor offsets remain valid in prose space when frontmatter is stripped", () => {
+    const src = "---\ntitle: hi\n---\n\nHello brave world.";
+    // Anchor "brave" in the body — its source offset is past the frontmatter.
+    const start = src.indexOf("brave");
+    const end = start + "brave".length;
+    const after = addThread(src, start, end, { author: "r", body: "x", ts: "2026-05-12T00:00:00Z" }).source;
+    const ser = serialize(parse(after));
+    const anchor = ser.threads[0].anchor!;
+    expect(ser.prose.slice(anchor.proseStart, anchor.proseEnd)).toBe("brave");
+  });
+
   it("threads with no markers come through unanchored", () => {
     // Manually craft a file with a thread block but no markers in prose.
     const md = [

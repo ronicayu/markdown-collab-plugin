@@ -63,6 +63,14 @@ export interface ParsedDocument {
    * the begin/end fences). `null` if no threads region present yet.
    */
   threadsRegion: { start: number; end: number } | null;
+  /**
+   * Half-open `[start, end)` range covering YAML / TOML frontmatter at
+   * the very top of the file, including the leading and trailing fence
+   * lines and the trailing newline after the closing fence. `null` when
+   * the file has no frontmatter. The range is stripped from the
+   * rendered preview and is off-limits for thread anchors.
+   */
+  frontmatter: { start: number; end: number } | null;
 }
 
 export interface AnchorRange {
@@ -253,12 +261,68 @@ function isValidComment(c: unknown): c is InlineComment {
   );
 }
 
+/**
+ * Detect a YAML (`---`) or TOML (`+++`) frontmatter block at the very
+ * top of the source. The opening fence must be the first non-BOM line;
+ * the closing fence must be on its own line and match the opening
+ * format. Returns `null` when no valid block is found.
+ *
+ * The returned range covers everything from the opening `---` to the
+ * `\n` that ends the closing fence's line — stripping that range
+ * eliminates the frontmatter cleanly without leaving a blank gap at
+ * the top of the prose.
+ */
+export function findFrontmatter(source: string): { start: number; end: number } | null {
+  // Skip a UTF-8 BOM so files saved with one still detect frontmatter.
+  const offset = source.charCodeAt(0) === 0xfeff ? 1 : 0;
+  // Opening fence: exactly `---` or `+++` followed by an end-of-line or EOF.
+  const head = source.slice(offset, offset + 4);
+  let fence: string | null = null;
+  if (head.startsWith("---") && (head.length === 3 || head[3] === "\n" || head[3] === "\r")) {
+    fence = "---";
+  } else if (head.startsWith("+++") && (head.length === 3 || head[3] === "\n" || head[3] === "\r")) {
+    fence = "+++";
+  }
+  if (!fence) return null;
+
+  // Walk lines after the opening fence looking for a matching closing
+  // fence line (`---` or `...` for YAML; `+++` for TOML). Bail if EOF
+  // hits first — partial frontmatter isn't a frontmatter.
+  let cursor = offset + fence.length;
+  // Eat the newline after the opening fence (it might be missing if
+  // the doc is a one-liner, in which case there's no closing fence
+  // either).
+  if (source[cursor] === "\r") cursor++;
+  if (source[cursor] === "\n") cursor++;
+  else return null;
+
+  while (cursor < source.length) {
+    const lineEnd = source.indexOf("\n", cursor);
+    const realLineEnd = lineEnd === -1 ? source.length : lineEnd;
+    let line = source.slice(cursor, realLineEnd);
+    if (line.endsWith("\r")) line = line.slice(0, -1);
+    const isClosing =
+      (fence === "---" && (line === "---" || line === "...")) ||
+      (fence === "+++" && line === "+++");
+    if (isClosing) {
+      // Include the trailing newline (if any) so stripping the range
+      // doesn't leave a blank gap before the first real content line.
+      const end = lineEnd === -1 ? source.length : lineEnd + 1;
+      return { start: 0, end };
+    }
+    if (lineEnd === -1) return null;
+    cursor = lineEnd + 1;
+  }
+  return null;
+}
+
 export function parse(source: string): ParsedDocument {
   const mask = buildCodeMask(source);
   const markers = findMarkers(source, mask);
   const { anchors } = pairAnchors(markers);
   const region = findThreadsRegion(source);
   const threads = region ? parseThreads(region.body) : [];
+  const frontmatter = findFrontmatter(source);
 
   // Sort threads by anchor position; threads without an anchor go to the end.
   threads.sort((a, b) => {
@@ -275,6 +339,7 @@ export function parse(source: string): ParsedDocument {
     anchors,
     unanchoredThreadIds,
     threadsRegion: region ? { start: region.start, end: region.end } : null,
+    frontmatter,
   };
 }
 
@@ -374,6 +439,17 @@ export function addThread(
     }
     if (selEnd > parsed.threadsRegion.start && selEnd <= parsed.threadsRegion.end) {
       throw new Error("Cannot anchor a comment inside the threads region");
+    }
+  }
+  // Frontmatter is stripped from the rendered preview, so a comment
+  // anchored there would be invisible. Refuse for the same reason we
+  // refuse the threads region.
+  if (parsed.frontmatter) {
+    if (selStart >= parsed.frontmatter.start && selStart < parsed.frontmatter.end) {
+      throw new Error("Cannot anchor a comment inside the frontmatter");
+    }
+    if (selEnd > parsed.frontmatter.start && selEnd <= parsed.frontmatter.end) {
+      throw new Error("Cannot anchor a comment inside the frontmatter");
     }
   }
   const withMarkers =

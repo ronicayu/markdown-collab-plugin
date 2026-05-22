@@ -23,6 +23,7 @@ import { parseLinkHref, slugifyHeading } from "./linkParse";
 import {
   addThread,
   appendReply,
+  findFrontmatter,
   parse,
   replaceThread,
   type InlineComment,
@@ -712,7 +713,8 @@ function mapProseToSource(parsed: ParsedDocument): {
 } {
   const src = parsed.source;
   // Build a list of "skip" intervals (every mc marker + the entire
-  // threads region). We then walk src and emit a position map.
+  // threads region + frontmatter block). We then walk src and emit a
+  // position map.
   const skips: Array<[number, number]> = [];
   for (const a of parsed.anchors.values()) {
     skips.push([a.openStart, a.openEnd]);
@@ -725,6 +727,9 @@ function mapProseToSource(parsed: ParsedDocument): {
       ? parsed.threadsRegion.start - 1
       : parsed.threadsRegion.start;
     skips.push([start, parsed.threadsRegion.end]);
+  }
+  if (parsed.frontmatter) {
+    skips.push([parsed.frontmatter.start, parsed.frontmatter.end]);
   }
   skips.sort((a, b) => a[0] - b[0]);
 
@@ -832,7 +837,11 @@ export function findHeadingLine(
   })();
   const target = slugifyHeading(decoded);
   if (!target) return null;
-  for (let i = 0; i < doc.lineCount; i++) {
+  // Skip frontmatter so YAML values like `subtitle: # something` can't
+  // be mistaken for ATX headings.
+  const fm = findFrontmatter(doc.getText());
+  const skipUntilLine = fm ? doc.positionAt(fm.end).line : 0;
+  for (let i = skipUntilLine; i < doc.lineCount; i++) {
     const text = doc.lineAt(i).text;
     const m = /^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(text);
     if (!m) continue;

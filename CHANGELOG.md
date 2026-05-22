@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.29.2 — 2026-05-22 (trial)
+
+### Added: YAML / TOML frontmatter support in the inline-comments view
+
+`.md` files that start with a `---\n…\n---\n` (YAML) or `+++\n…\n+++\n`
+(TOML) frontmatter block now render correctly in the inline-comments
+preview — the block is stripped from the rendered prose instead of
+being parsed as a horizontal rule + setext heading. Anchor offsets
+remain valid because frontmatter is added to the existing skip
+machinery alongside `mc:*` markers and the threads region.
+
+Detection is BOM-tolerant, CRLF-tolerant, and refuses partial blocks
+(an opening fence with no matching close) and openers that aren't on
+the first non-BOM line — so a setext heading like `Heading\n---` is
+still a heading, not a malformed frontmatter.
+
+The `addThread` API refuses selections that overlap the frontmatter
+range, matching the existing guard for the threads region. Heading
+slug resolution (used by `[link](other.md#heading)`) skips
+frontmatter lines so YAML values that happen to contain `# foo` can't
+be mistaken for ATX headings.
+
 ## 0.29.1 — 2026-05-21 (trial)
 
 ### Changed: inline-comments view scrolls to line / heading on open
