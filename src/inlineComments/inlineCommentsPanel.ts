@@ -19,7 +19,7 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import { isInsideRoot } from "../previewPanel";
-import { parseLinkHref, slugifyHeading } from "./linkParse";
+import { detectUrlScheme, parseLinkHref, slugifyHeading } from "./linkParse";
 import {
   addThread,
   appendReply,
@@ -503,11 +503,12 @@ export class InlineCommentsPanel {
     const raw = (rawHref || "").trim();
     if (!raw) return;
 
-    // External schemes: allow http(s)/mailto/tel; refuse the rest. Same
-    // policy as the legacy PreviewPanel for parity (and security).
-    const schemeMatch = /^([a-z][a-z0-9+.-]*):/i.exec(raw);
-    if (schemeMatch) {
-      const scheme = schemeMatch[1].toLowerCase();
+    // External schemes: allow http(s)/mailto/tel; refuse the rest.
+    // `detectUrlScheme` rejects bare-colon filenames like `foo.md:42`
+    // so the path-resolve branch below sees them, instead of this
+    // branch treating them as URLs with scheme "foo.md".
+    const scheme = detectUrlScheme(raw);
+    if (scheme) {
       const allowed = ["http", "https", "mailto", "tel"];
       if (!allowed.includes(scheme)) {
         void vscode.window.showWarningMessage(
@@ -577,27 +578,30 @@ export class InlineCommentsPanel {
       return;
     }
 
-    // Non-markdown: hand to VS Code's default opener so the user gets
-    // the right viewer (images, JSON, source, etc.).
+    // Non-markdown:
+    // - With `:N`, jump to line N in a text editor atomically via
+    //   `showTextDocument({ selection })`. Doing the open + reveal in
+    //   one call avoids a race where `vscode.open` resolves before the
+    //   newly-opened editor is the active one.
+    // - Without `:N`, fall through to `vscode.open` so binary types
+    //   (images, PDFs) get the right viewer.
     try {
-      await vscode.commands.executeCommand("vscode.open", targetUri);
-      if (parsed.line) {
-        await this.revealLineInActiveEditor(parsed.line);
+      if (parsed.line && parsed.line > 0) {
+        const zeroBased = parsed.line - 1;
+        const pos = new vscode.Position(zeroBased, 0);
+        await vscode.window.showTextDocument(targetUri, {
+          preview: false,
+          preserveFocus: false,
+          selection: new vscode.Range(pos, pos),
+        });
+      } else {
+        await vscode.commands.executeCommand("vscode.open", targetUri);
       }
     } catch (e) {
       void vscode.window.showWarningMessage(
         `Could not open ${resolved}: ${(e as Error).message}`,
       );
     }
-  }
-
-  private async revealLineInActiveEditor(line: number): Promise<void> {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) return;
-    const zeroBased = Math.max(0, line - 1);
-    const pos = new vscode.Position(zeroBased, 0);
-    editor.selection = new vscode.Selection(pos, pos);
-    editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
   }
 
   private resolveAuthor(): string {

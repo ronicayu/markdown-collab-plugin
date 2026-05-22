@@ -2,6 +2,31 @@
 // shared by the webview client (for in-doc # navigation) and the panel
 // host (for cross-file navigation). No DOM, no vscode API.
 
+/**
+ * True when `href` looks like an absolute URL (worth handing off to the
+ * OS via `openExternal`) rather than a relative file path.
+ *
+ * RFC 3986 says scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ) —
+ * which means `foo.md:42` is technically a valid scheme syntactically.
+ * To avoid mis-detecting filenames with `:line` suffixes as URLs, we
+ * require either:
+ *
+ *   - the scheme is followed by `//` (web URLs: http, https, file, ftp), OR
+ *   - the scheme is one of the well-known no-slash schemes (`mailto`, `tel`).
+ *
+ * Returns the matched scheme (lowercased) when absolute, or `null`
+ * otherwise. Callers can inspect the scheme for allow-listing.
+ */
+export function detectUrlScheme(href: string): string | null {
+  const m = /^([a-z][a-z0-9+.-]*):/i.exec(href);
+  if (!m) return null;
+  const scheme = m[1].toLowerCase();
+  const rest = href.slice(m[0].length);
+  if (scheme === "mailto" || scheme === "tel") return scheme;
+  if (rest.startsWith("//")) return scheme;
+  return null;
+}
+
 export interface ParsedLinkHref {
   /** Path portion (decoded, with `./` stripped). Empty when href is fragment-only. */
   path: string;
@@ -54,6 +79,19 @@ export function parseLinkHref(raw: string): ParsedLinkHref {
   if (lineMatch) {
     line = Number(lineMatch[1]);
     rest = rest.slice(0, rest.length - lineMatch[0].length);
+  }
+
+  // GitHub-style `#L42` (or `#L42-L50`) in the fragment — treat as a
+  // line hint and clear the heading so downstream code doesn't try to
+  // slug-match a heading named "L42". A `:N` suffix already on the
+  // path takes priority over this; we only fill from the fragment
+  // when no explicit line was given.
+  if (line === null && heading) {
+    const lineFragMatch = /^L([1-9]\d{0,8})(?:[-:]L?[1-9]\d{0,8})?$/i.exec(heading);
+    if (lineFragMatch) {
+      line = Number(lineFragMatch[1]);
+      heading = null;
+    }
   }
 
   // Decode the path; tolerate badly-encoded input by falling back to raw.

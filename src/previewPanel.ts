@@ -3,6 +3,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import MarkdownIt from "markdown-it";
 import { resolve as resolveAnchor } from "./anchor";
+import { detectUrlScheme } from "./inlineComments/linkParse";
 import {
   addComment,
   addReply,
@@ -998,11 +999,12 @@ pre.mermaid svg { max-width: 100%; height: auto; }
     const raw = (msg.href || "").trim();
     if (!raw) return;
 
-    // Absolute URLs go to the OS handler. Allow only safe schemes — never
-    // dispatch javascript: or data: through openExternal.
-    const schemeMatch = /^([a-z][a-z0-9+.-]*):/i.exec(raw);
-    if (schemeMatch) {
-      const scheme = schemeMatch[1].toLowerCase();
+    // Absolute URLs go to the OS handler. `detectUrlScheme` requires a
+    // `//` after the colon (or a known no-slash scheme like mailto)
+    // so filenames like `foo.md:42` aren't mis-detected as URLs with
+    // scheme `foo.md`.
+    const scheme = detectUrlScheme(raw);
+    if (scheme) {
       if (
         scheme === "http" ||
         scheme === "https" ||

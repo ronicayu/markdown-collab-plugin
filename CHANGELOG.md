@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.29.3 — 2026-05-22 (trial)
+
+### Fixed: clicking line-number links now actually jumps to the line
+
+Three independent bugs were stacked on top of each other, all of them
+quiet failures (no toast, no error log — the click just did nothing
+useful).
+
+**1. URL scheme detection was too greedy.** Per RFC 3986 a scheme is
+ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ), so `foo.md:42` matched as
+scheme `foo.md` and got refused as an unknown protocol — never
+reaching the path-resolve code. New `detectUrlScheme()` requires
+either `scheme://` (http, https, file, ftp) OR a known no-slash
+scheme (`mailto`, `tel`). Plain `foo.md:42` / `src/foo.ts:42` are
+correctly classified as relative paths now. The same regex was wrong
+in the legacy sidecar preview's `onOpenLink`; fixed there too.
+
+**2. GitHub-style `#L42` fragments weren't recognized.** Links like
+`[code](src/foo.ts#L42)` put `L42` in the heading slot, which then
+failed to slug-match any real heading and the line was lost.
+`parseLinkHref` now extracts the line number from an `#L<digits>`
+fragment (also `#L42-L50` ranges — first line wins, lowercase `#l42`,
+all common variants). An explicit `:N` on the path still takes
+priority since it's the more specific signal.
+
+**3. Non-md target line jump raced the active editor.**
+`vscode.commands.executeCommand("vscode.open", uri)` returns before
+the newly opened editor becomes the active one, so the follow-up
+`revealLineInActiveEditor(N)` targeted whatever editor *was* active.
+Replaced with a single atomic `vscode.window.showTextDocument(uri,
+{ selection })`. Binary files (images, PDFs) without a line argument
+still go through `vscode.open` for the right viewer.
+
+Resulting behavior — all three line-link patterns now work:
+
+| Link | Result |
+|---|---|
+| `[x](src/foo.ts#L42)` | opens text editor, cursor on line 42 |
+| `[x](src/foo.ts:42)` | same |
+| `[x](other.md#L42)` | opens inline-comments view, scrolls preview to line 42 |
+
 ## 0.29.2 — 2026-05-22 (trial)
 
 ### Added: YAML / TOML frontmatter support in the inline-comments view
