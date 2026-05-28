@@ -25,8 +25,20 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Package (smoke test)
-        run: npx --yes @vscode/vsce package --no-dependencies --out markdown-collab-plugin.vsix
+      # Real package, NOT `--no-dependencies`. The release pipeline ships
+      # the same artifact; CI must catch missing-runtime-dep failures
+      # (e.g. y-protocols not bundled) before a tag goes out, not after.
+      - name: Package (full)
+        run: npx --yes @vscode/vsce package --out markdown-collab-plugin.vsix
+
+      - name: Verify runtime deps are bundled
+        run: |
+          for dep in node_modules/y-protocols/awareness.js node_modules/yjs/package.json node_modules/lib0/package.json node_modules/ws/package.json node_modules/markdown-it/package.json; do
+            if ! unzip -l markdown-collab-plugin.vsix | grep -q "extension/$dep"; then
+              echo "::error::missing $dep in vsix — vscodeignore re-includes are out of sync with the code's requires"
+              exit 1
+            fi
+          done
 
       - uses: actions/upload-artifact@v4
         with:
