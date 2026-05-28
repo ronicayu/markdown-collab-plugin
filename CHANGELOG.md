@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.29.4 — 2026-05-28 (trial)
+
+### Added: per-thread Send-to-Claude and Copy buttons
+
+Each comment in the inline-comments view now has its own `→ Claude` and
+`Copy` button alongside Edit / Delete. They scope the existing
+document-level "Send to Claude" / "Copy prompt" actions down to the
+single thread the button lives on — useful when a doc has dozens of
+threads and you only want Claude to look at one.
+
+The dispatched prompt is a two-liner that just invokes the
+`vs-markdown-collab` skill with the thread's id and quoted anchor text.
+No format documentation is embedded — the skill already knows the inline
+format, so per-thread sends stay tiny instead of re-shipping the same
+instructions over and over.
+
+`→ Claude` routes through the configured `markdownCollab.sendMode`
+(terminal / channel / mcp-channel / clipboard), same as the existing
+document-level button. `Copy` writes the prompt to the system clipboard.
+
 ## 0.29.3 — 2026-05-22 (trial)
 
 ### Fixed: clicking line-number links now actually jumps to the line

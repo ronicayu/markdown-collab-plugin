@@ -30,7 +30,7 @@ import {
   type InlineThread,
   type ParsedDocument,
 } from "./format";
-import { buildInlinePayload } from "./sendToClaude";
+import { buildInlinePayload, buildSingleThreadPayload } from "./sendToClaude";
 import type { ReviewPayload } from "../sendToClaude";
 
 interface InitMessage {
@@ -124,6 +124,16 @@ interface CopyPromptRequest {
   type: "copy-prompt";
 }
 
+interface SendToClaudeCommentRequest {
+  type: "send-to-claude-comment";
+  threadId: string;
+}
+
+interface CopyClaudeCommentRequest {
+  type: "copy-claude-comment";
+  threadId: string;
+}
+
 interface OpenLinkRequest {
   type: "open-link";
   href: string;
@@ -139,6 +149,8 @@ type ClientMessage =
   | DeleteCommentRequest
   | SendToClaudeRequest
   | CopyPromptRequest
+  | SendToClaudeCommentRequest
+  | CopyClaudeCommentRequest
   | OpenLinkRequest;
 
 /** Dependencies the panel needs from the extension host (kept narrow so tests can stub them). */
@@ -426,6 +438,10 @@ export class InlineCommentsPanel {
         return this.handleSendToClaude();
       case "copy-prompt":
         return this.handleCopyPrompt();
+      case "send-to-claude-comment":
+        return this.handleSendToClaudeComment(msg.threadId);
+      case "copy-claude-comment":
+        return this.handleCopyClaudeComment(msg.threadId);
       case "open-link":
         return this.handleOpenLink(msg.href);
       case "delete-thread":
@@ -482,6 +498,31 @@ export class InlineCommentsPanel {
     await vscode.env.clipboard.writeText(payload.prompt);
     void vscode.window.showInformationMessage(
       `Inline comments: prompt for ${payload.unresolvedCount} open thread${payload.unresolvedCount === 1 ? "" : "s"} copied to clipboard.`,
+    );
+  }
+
+  private async handleSendToClaudeComment(threadId: string): Promise<void> {
+    const payload = buildSingleThreadPayload(this.doc, threadId);
+    if (!payload) {
+      void vscode.window.showInformationMessage(
+        "Inline comments: thread not found or already resolved.",
+      );
+      return;
+    }
+    await this.deps.dispatchToClaude(payload);
+  }
+
+  private async handleCopyClaudeComment(threadId: string): Promise<void> {
+    const payload = buildSingleThreadPayload(this.doc, threadId);
+    if (!payload) {
+      void vscode.window.showInformationMessage(
+        "Inline comments: thread not found or already resolved.",
+      );
+      return;
+    }
+    await vscode.env.clipboard.writeText(payload.prompt);
+    void vscode.window.showInformationMessage(
+      "Inline comments: thread prompt copied to clipboard.",
     );
   }
 

@@ -770,7 +770,23 @@ function renderComment(thread: ThreadState, c: InlineComment): HTMLElement {
       renderThreads(currentState!);
     }
   });
-  tools.append(editBtn, delBtn);
+  const sendClaudeBtn = document.createElement("button");
+  sendClaudeBtn.className = "btn-link";
+  sendClaudeBtn.textContent = "→ Claude";
+  sendClaudeBtn.title = "Send this thread to Claude";
+  sendClaudeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    vscode.postMessage({ type: "send-to-claude-comment", threadId: thread.id });
+  });
+  const copyClaudeBtn = document.createElement("button");
+  copyClaudeBtn.className = "btn-link";
+  copyClaudeBtn.textContent = "Copy";
+  copyClaudeBtn.title = "Copy this thread's prompt to clipboard";
+  copyClaudeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    vscode.postMessage({ type: "copy-claude-comment", threadId: thread.id });
+  });
+  tools.append(editBtn, sendClaudeBtn, copyClaudeBtn, delBtn);
   if (cmtArmed) {
     const cancel = document.createElement("button");
     cancel.className = "btn-link";

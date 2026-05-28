@@ -24,6 +24,33 @@ export interface InlineReviewPayload extends ReviewPayload {
 }
 
 /**
+ * Convert a single open thread to a `ReviewPayload`-compatible shape.
+ * Returns null when the thread is not found or is already resolved.
+ */
+export function buildSingleThreadPayload(
+  doc: vscode.TextDocument,
+  threadId: string,
+): InlineReviewPayload | null {
+  const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
+  if (!folder) return null;
+  const parsed = parse(doc.getText());
+  const thread = parsed.threads.find((t) => t.id === threadId && t.status === "open");
+  if (!thread) return null;
+  const rel = path.relative(folder.uri.fsPath, doc.uri.fsPath);
+  const prompt = [
+    `Use the vs-markdown-collab skill on \`${rel}\`.`,
+    `Address only the open thread with id ${thread.id} (anchored on: ${JSON.stringify(thread.quote)}).`,
+  ].join("\n");
+  return {
+    file: rel,
+    unresolvedCount: 1,
+    prompt,
+    comments: [threadToComment(thread)],
+    inlineThreads: [thread],
+  };
+}
+
+/**
  * Convert open inline threads to a `ReviewPayload`-compatible shape.
  * Returns null when there's nothing to send.
  */
