@@ -34,9 +34,22 @@ export function activate(context: vscode.ExtensionContext): void {
   controller.activate(context.subscriptions);
   context.subscriptions.push(controller);
 
-  const prReviewController = new PrReviewController(context, output);
-  prReviewController.activate(context.subscriptions);
-  context.subscriptions.push(prReviewController);
+  // PR review init is wrapped because it pulls in the comments API in a
+  // configuration the legacy controller doesn't use; any failure here must
+  // not take down the rest of the extension (terminal, send-to-claude,
+  // inline view, etc. all live below).
+  try {
+    const prReviewController = new PrReviewController(context, output);
+    prReviewController.activate(context.subscriptions);
+    context.subscriptions.push(prReviewController);
+  } catch (e) {
+    const err = e as Error;
+    output.appendLine(`[fatal] PR review init failed: ${err.message}`);
+    if (err.stack) output.appendLine(err.stack);
+    void vscode.window.showErrorMessage(
+      `Markdown Collab: PR review feature failed to initialize — ${err.message}. Other commands still work. See the "Markdown Collab" output channel for the stack trace.`,
+    );
+  }
 
   // Per-workspace event logs, materialized lazily on first "channel" send
   // for each folder. The log is plain append-only newline-delimited JSON;

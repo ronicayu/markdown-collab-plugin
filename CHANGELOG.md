@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.30.1 — 2026-05-28 (trial)
+
+### Fixed: PR review init crash no longer takes down the rest of the extension
+
+If the PR-review controller throws at construction or activation, the
+crash is now caught, the stack trace logged to the "Markdown Collab"
+output channel, and a toast surfaces the error message. The rest of
+`activate()` continues — `startClaudeTerminal`, `openInlineCommentsView`,
+and all the other commands stay available.
+
+(0.30.0 had the inverse: a throw inside `new PrReviewController(...)` or
+its `activate()` would short-circuit the whole extension's activation,
+leaving every command registered as "not found".)
+
 ## 0.30.0 — 2026-05-28 (trial)
 
 ### Added: PR / MR review for `.md` files
