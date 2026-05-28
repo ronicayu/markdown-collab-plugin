@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.30.2 — 2026-05-28 (trial)
+
+### Fixed: bundled .vsix is missing runtime dependencies → all commands "not found"
+
+0.30.0 and 0.30.1 were packaged with `vsce package --no-dependencies`,
+which skipped the dependency-bundling step entirely. The resulting
+`.vsix` shipped zero `node_modules` entries — so on a clean install
+`out/collab/server.js` failed its top-level `require("y-protocols/awareness")`,
+the extension's `activate()` aborted, and every command (including
+`markdownCollab.startClaudeTerminal`) was reported as "not found".
+
+On my dev machine the previous releases looked fine because the bundled
+deps were already present in the working tree, so the require resolved
+from there. The `.vsix` only manifests the bug on a machine without the
+deps installed.
+
+0.30.2 is packaged without `--no-dependencies`. The `.vscodeignore`
+re-include patterns for `yjs`, `y-protocols`, `lib0`, `ws`, etc. now
+apply, so the .vsix carries the runtime deps it needs.
+
 ## 0.30.1 — 2026-05-28 (trial)
 
 ### Fixed: PR review init crash no longer takes down the rest of the extension
