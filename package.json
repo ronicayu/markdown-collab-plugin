@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.29.5",
+  "version": "0.30.0",
   "publisher": "markdown-collab",
   "license": "MIT",
   "repository": {
@@ -43,7 +43,9 @@
     "onCommand:markdownCollab.openCollabEditor",
     "onCustomEditor:markdownCollab.collabEditor",
     "onCommand:markdownCollab.openInlineCommentsView",
-    "onCommand:markdownCollab.askClaudeToReview"
+    "onCommand:markdownCollab.askClaudeToReview",
+    "onCommand:markdownCollab.startPrReview",
+    "onCommand:markdownCollab.submitPrReview"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -137,6 +139,38 @@
         "command": "markdownCollab.askClaudeToReview",
         "title": "Markdown Collab: Ask Claude to Review This Doc",
         "category": "Markdown Collab"
+      },
+      {
+        "command": "markdownCollab.startPrReview",
+        "title": "Markdown Collab: Review PR / MR",
+        "category": "Markdown Collab"
+      },
+      {
+        "command": "markdownCollab.submitPrReview",
+        "title": "Markdown Collab: Submit PR / MR Review",
+        "category": "Markdown Collab"
+      },
+      {
+        "command": "markdownCollab.prReviewAddComment",
+        "title": "Add"
+      },
+      {
+        "command": "markdownCollab.prReviewEditComment",
+        "title": "Edit",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "markdownCollab.prReviewSaveEdit",
+        "title": "Save"
+      },
+      {
+        "command": "markdownCollab.prReviewCancelEdit",
+        "title": "Cancel"
+      },
+      {
+        "command": "markdownCollab.prReviewDeleteComment",
+        "title": "Delete draft",
+        "icon": "$(trash)"
       }
     ],
     "configuration": {
@@ -220,6 +254,26 @@
         {
           "command": "markdownCollab.revealComment",
           "when": "false"
+        },
+        {
+          "command": "markdownCollab.prReviewAddComment",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.prReviewEditComment",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.prReviewSaveEdit",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.prReviewCancelEdit",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.prReviewDeleteComment",
+          "when": "false"
         }
       ],
       "comments/commentThread/context": [
@@ -232,6 +286,11 @@
           "command": "markdownCollab.addReply",
           "group": "inline",
           "when": "commentController == markdown-collab && !commentThreadIsEmpty && commentThread != markdown-collab-readonly"
+        },
+        {
+          "command": "markdownCollab.prReviewAddComment",
+          "group": "inline",
+          "when": "commentController == markdown-collab-pr && commentThreadIsEmpty"
         }
       ],
       "comments/commentThread/title": [
@@ -244,6 +303,11 @@
           "command": "markdownCollab.deleteThread",
           "group": "inline@2",
           "when": "commentController == markdown-collab && !commentThreadIsEmpty && commentThread != markdown-collab-readonly"
+        },
+        {
+          "command": "markdownCollab.prReviewDeleteComment",
+          "group": "inline@1",
+          "when": "commentController == markdown-collab-pr && !commentThreadIsEmpty"
         }
       ],
       "comments/comment/title": [
@@ -251,6 +315,11 @@
           "command": "markdownCollab.editComment",
           "group": "group@1",
           "when": "commentController == markdown-collab && comment == markdown-collab-editable"
+        },
+        {
+          "command": "markdownCollab.prReviewEditComment",
+          "group": "group@1",
+          "when": "commentController == markdown-collab-pr && comment == prDraft"
         }
       ],
       "comments/comment/context": [
@@ -263,6 +332,16 @@
           "command": "markdownCollab.cancelEdit",
           "group": "inline@2",
           "when": "commentController == markdown-collab && comment == markdown-collab-editing"
+        },
+        {
+          "command": "markdownCollab.prReviewSaveEdit",
+          "group": "inline@1",
+          "when": "commentController == markdown-collab-pr && comment == prDraft"
+        },
+        {
+          "command": "markdownCollab.prReviewCancelEdit",
+          "group": "inline@2",
+          "when": "commentController == markdown-collab-pr && comment == prDraft"
         }
       ],
       "view/item/context": [

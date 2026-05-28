@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.30.0 — 2026-05-28 (trial)
+
+### Added: PR / MR review for `.md` files
+
+Open the command palette, run `Markdown Collab: Review PR / MR`, and the
+extension walks the user through reviewing the markdown files changed in
+the current branch's pull request (GitHub) or merge request (GitLab).
+Comments are posted back as native PR / MR review comments — the `.md`
+file itself is never touched.
+
+The flow:
+
+1. Check out the PR branch locally (`gh pr checkout <n>` /
+   `glab mr checkout <n>`).
+2. Run `Markdown Collab: Review PR / MR`. The platform is picked from
+   the `origin` remote — any URL containing "gitlab" routes to GitLab,
+   everything else routes to GitHub. The matching CLI (`gh` or `glab`)
+   is probed for installation + auth before anything else happens; if
+   either is missing the toast tells you exactly which `auth login` to
+   run.
+3. A QuickPick lists the changed `.md` / `.markdown` files (added /
+   modified / renamed). Picking one opens it in a regular editor with
+   the native commenting gutter active *only* on head-side added lines
+   — clicking `+` on an unchanged line is impossible, by design.
+4. Type your comment in the native UI. Single-line and multi-line
+   selections both work. Drafts persist in workspace state keyed by
+   `sha1(remoteUrl + baseSha + headSha)`, so they survive a VS Code
+   restart but rescope cleanly if you check out a different PR.
+5. A `PR: N drafts ▸ Submit` status-bar item appears. Clicking it
+   prompts for a verdict (Comment / Approve / Request changes) and an
+   optional review-summary body, then submits the whole batch in one
+   round trip per platform.
+
+GitHub goes via `gh api repos/.../pulls/.../reviews` with the full
+`{event, body, commit_id, comments[]}` payload. GitLab goes via
+`glab api .../discussions` (one POST per inline note, GitLab has no
+batch endpoint) plus an `/approve` or summary `/notes` call for the
+verdict.
+
+Self-hosted is handled by setting `GH_HOST` / `GITLAB_HOST` in the
+spawn env when the parsed remote host isn't `github.com` /
+`gitlab.com`. Submit-time validation re-runs the diff against the
+current HEAD and drops any drafts whose anchor line has moved out of
+the diff (with a confirm-before-submit prompt naming the count), so
+force-pushes mid-review don't silently send comments to the wrong
+lines.
+
+Out of scope for v1: replying to existing PR threads, reading existing
+PR comments back into VS Code, `suggestion` blocks, editing already-
+submitted comments, `LEFT`-side base-file comments, `.mdx`, deleted
+files.
+
 ## 0.29.5 — 2026-05-28 (trial)
 
 ### Added: find-in-preview (Cmd+F / Ctrl+F)

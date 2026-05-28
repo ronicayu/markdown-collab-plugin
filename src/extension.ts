@@ -9,6 +9,7 @@ import { startCollabServer, type CollabServerHandle } from "./collab/server";
 import { InlineCommentsPanel } from "./inlineComments/inlineCommentsPanel";
 import { MarkdownCollabController, extractAnchor } from "./commentController";
 import { OrphanView } from "./orphanView";
+import { PrReviewController } from "./pr/prReviewController";
 import { PreviewPanel } from "./previewPanel";
 import { ReviewView, type ReviewNode } from "./reviewView";
 import {
@@ -32,6 +33,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const controller = new MarkdownCollabController(output);
   controller.activate(context.subscriptions);
   context.subscriptions.push(controller);
+
+  const prReviewController = new PrReviewController(context, output);
+  prReviewController.activate(context.subscriptions);
+  context.subscriptions.push(prReviewController);
 
   // Per-workspace event logs, materialized lazily on first "channel" send
   // for each folder. The log is plain append-only newline-delimited JSON;
