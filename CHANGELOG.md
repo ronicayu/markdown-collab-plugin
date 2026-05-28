@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.29.5 — 2026-05-28 (trial)
+
+### Added: find-in-preview (Cmd+F / Ctrl+F)
+
+The inline-comments view has its own find bar now, scoped to the
+rendered prose pane. Press `Cmd+F` (macOS) or `Ctrl+F` (Linux/Windows)
+to open it; `Esc` to close.
+
+Matches are highlighted live as you type — case-insensitive plain-text
+search. The current match gets a stronger highlight and scrolls into
+view. `Enter` jumps to the next match, `Shift+Enter` to the previous;
+the `↑` / `↓` buttons do the same. The counter on the right of the bar
+shows `N / M`.
+
+The walker skips `<svg>` subtrees so wrapping text nodes inside a
+mermaid diagram doesn't break the rendered output. When the doc
+re-renders (file changed on disk, comment added, etc.) the find bar
+stays open and re-runs the query against the new DOM, so you don't lose
+your place.
+
 ## 0.29.4 — 2026-05-28 (trial)
 
 ### Added: per-thread Send-to-Claude and Copy buttons

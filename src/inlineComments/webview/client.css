@@ -66,6 +66,54 @@ html, body {
   border-right: 1px solid var(--border);
 }
 
+#find-bar {
+  position: sticky;
+  top: -24px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -24px -32px 12px;
+  padding: 8px 12px;
+  background: var(--card-bg, var(--vscode-editorWidget-background, #1e1e1e));
+  border-bottom: 1px solid var(--border);
+}
+#find-bar[hidden] { display: none; }
+#find-bar input[type="search"] {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  background: var(--vscode-input-background, transparent);
+  color: var(--vscode-input-foreground, inherit);
+  border: 1px solid var(--vscode-input-border, var(--border));
+  border-radius: 3px;
+  font: inherit;
+}
+#find-bar input[type="search"]:focus {
+  outline: 1px solid var(--vscode-focusBorder, var(--accent));
+  outline-offset: -1px;
+}
+#find-bar .find-count {
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 56px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+#find-bar .find-count.empty { color: var(--vscode-errorForeground, #f48771); }
+#find-bar button { padding: 2px 8px; font-size: 14px; line-height: 1; }
+
+#preview mark.mc-search {
+  background: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
+  color: inherit;
+  border-radius: 2px;
+  padding: 0;
+}
+#preview mark.mc-search--current {
+  background: var(--vscode-editor-findMatchBackground, rgba(255, 144, 0, 0.66));
+  outline: 1px solid var(--vscode-editor-findMatchBorder, transparent);
+}
+
 #preview-header h2 {
   margin: 0 0 4px;
   font-size: 12px;

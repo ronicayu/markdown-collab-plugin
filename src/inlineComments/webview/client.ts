@@ -158,6 +158,12 @@ const dom = {
   claudeNext: document.getElementById("claude-next") as HTMLButtonElement,
   claudeToggleCollapse: document.getElementById("claude-toggle-collapse") as HTMLButtonElement,
   claudeFilterLabel: document.getElementById("filter-claude-label") as HTMLLabelElement,
+  findBar: document.getElementById("find-bar") as HTMLElement,
+  findInput: document.getElementById("find-input") as HTMLInputElement,
+  findCount: document.getElementById("find-count") as HTMLElement,
+  findPrev: document.getElementById("find-prev") as HTMLButtonElement,
+  findNext: document.getElementById("find-next") as HTMLButtonElement,
+  findClose: document.getElementById("find-close") as HTMLButtonElement,
 };
 
 let claudeUnreadCollapsed = ((): boolean => {
@@ -198,6 +204,163 @@ function setCollapsed(collapsed: boolean): void {
 }
 dom.collapseThreads.addEventListener("click", () => setCollapsed(true));
 dom.expandThreads.addEventListener("click", () => setCollapsed(false));
+
+// ---------------------------------------------------------------------------
+// Find-in-preview
+// ---------------------------------------------------------------------------
+// Scoped find for the rendered prose. Walks text nodes inside #preview,
+// wraps matches in <mark class="mc-search">, tracks them as `findMatches`,
+// and lets the user step through with Enter / Shift+Enter / buttons.
+//
+// State is cleared whenever the preview re-renders (handled in the message
+// update path) so stale <mark> nodes don't survive a state change.
+
+let findMatches: HTMLElement[] = [];
+let findIndex = -1;
+
+function findOpen(): void {
+  dom.findBar.hidden = false;
+  dom.findInput.focus();
+  dom.findInput.select();
+}
+
+function findClose(): void {
+  dom.findBar.hidden = true;
+  findClear();
+  dom.findInput.value = "";
+}
+
+function findClear(): void {
+  for (const m of findMatches) {
+    const parent = m.parentNode;
+    if (!parent) continue;
+    parent.replaceChild(document.createTextNode(m.textContent ?? ""), m);
+    parent.normalize();
+  }
+  findMatches = [];
+  findIndex = -1;
+  updateFindCount();
+}
+
+function updateFindCount(): void {
+  const total = findMatches.length;
+  const query = dom.findInput.value;
+  if (!query) {
+    dom.findCount.textContent = "";
+    dom.findCount.classList.remove("empty");
+    return;
+  }
+  if (total === 0) {
+    dom.findCount.textContent = "No results";
+    dom.findCount.classList.add("empty");
+    return;
+  }
+  dom.findCount.textContent = `${findIndex + 1} / ${total}`;
+  dom.findCount.classList.remove("empty");
+}
+
+function findRun(): void {
+  findClear();
+  const query = dom.findInput.value;
+  if (!query) return;
+  const needle = query.toLowerCase();
+  const root = dom.preview;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      // Skip text inside SVG (mermaid diagrams) — wrapping their text
+      // nodes in <mark> breaks the rendered diagram.
+      let p: Node | null = node.parentNode;
+      while (p && p !== root) {
+        const name = (p as Element).nodeName;
+        if (name === "SVG" || name === "STYLE" || name === "SCRIPT") {
+          return NodeFilter.FILTER_REJECT;
+        }
+        p = p.parentNode;
+      }
+      return (node.textContent ?? "").toLowerCase().includes(needle)
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT;
+    },
+  });
+
+  const targets: Text[] = [];
+  let n: Node | null = walker.nextNode();
+  while (n) {
+    targets.push(n as Text);
+    n = walker.nextNode();
+  }
+
+  for (const textNode of targets) {
+    const text = textNode.textContent ?? "";
+    const lower = text.toLowerCase();
+    const frag = document.createDocumentFragment();
+    let pos = 0;
+    while (pos < text.length) {
+      const hit = lower.indexOf(needle, pos);
+      if (hit === -1) {
+        frag.appendChild(document.createTextNode(text.slice(pos)));
+        break;
+      }
+      if (hit > pos) frag.appendChild(document.createTextNode(text.slice(pos, hit)));
+      const mark = document.createElement("mark");
+      mark.className = "mc-search";
+      mark.textContent = text.slice(hit, hit + needle.length);
+      frag.appendChild(mark);
+      findMatches.push(mark);
+      pos = hit + needle.length;
+    }
+    textNode.parentNode?.replaceChild(frag, textNode);
+  }
+
+  if (findMatches.length > 0) {
+    findIndex = 0;
+    highlightCurrent(true);
+  }
+  updateFindCount();
+}
+
+function highlightCurrent(scroll: boolean): void {
+  for (const m of findMatches) m.classList.remove("mc-search--current");
+  const cur = findMatches[findIndex];
+  if (!cur) return;
+  cur.classList.add("mc-search--current");
+  if (scroll) cur.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+function findStep(delta: number): void {
+  if (findMatches.length === 0) return;
+  findIndex = (findIndex + delta + findMatches.length) % findMatches.length;
+  highlightCurrent(true);
+  updateFindCount();
+}
+
+dom.findInput.addEventListener("input", () => {
+  findRun();
+});
+dom.findInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    findStep(e.shiftKey ? -1 : 1);
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    findClose();
+  }
+});
+dom.findPrev.addEventListener("click", () => findStep(-1));
+dom.findNext.addEventListener("click", () => findStep(1));
+dom.findClose.addEventListener("click", () => findClose());
+
+document.addEventListener("keydown", (e) => {
+  // Cmd+F (macOS) / Ctrl+F (others) opens the find bar. The webview
+  // doesn't expose VS Code's editor find widget, so we own this shortcut.
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+    e.preventDefault();
+    findOpen();
+  } else if (e.key === "Escape" && !dom.findBar.hidden) {
+    e.preventDefault();
+    findClose();
+  }
+});
 
 dom.sendToClaude.addEventListener("click", () => {
   vscode.postMessage({ type: "send-to-claude" });
@@ -355,6 +518,16 @@ function renderPreview(state: SerializedState): void {
   dom.preview.innerHTML = md.render(state.prose);
   applyAnchorHighlights(state);
   void runMermaid();
+  // The rerender just blew away any <mark> nodes we'd inserted. Reset
+  // find state, and if the bar is still open re-run against the new DOM
+  // so the user doesn't lose their query.
+  findMatches = [];
+  findIndex = -1;
+  if (!dom.findBar.hidden && dom.findInput.value) {
+    findRun();
+  } else {
+    updateFindCount();
+  }
 }
 
 async function runMermaid(): Promise<void> {

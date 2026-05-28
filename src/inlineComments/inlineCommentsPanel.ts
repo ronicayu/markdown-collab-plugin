@@ -335,9 +335,16 @@ export class InlineCommentsPanel {
 <body>
 <div id="app">
   <div id="preview-pane">
+    <div id="find-bar" hidden role="search">
+      <input id="find-input" type="search" placeholder="Find in preview…" aria-label="Find in preview" />
+      <span id="find-count" class="find-count">0 / 0</span>
+      <button id="find-prev" class="btn-link" title="Previous match (Shift+Enter)" aria-label="Previous match">↑</button>
+      <button id="find-next" class="btn-link" title="Next match (Enter)" aria-label="Next match">↓</button>
+      <button id="find-close" class="btn-link" title="Close (Esc)" aria-label="Close find">×</button>
+    </div>
     <header id="preview-header">
       <h2 id="file-name"></h2>
-      <p class="hint">Select text in the preview, then press <kbd>C</kbd> or use the floating button to add a comment.</p>
+      <p class="hint">Select text in the preview, then press <kbd>C</kbd> or use the floating button to add a comment. <kbd>⌘F</kbd> to find.</p>
     </header>
     <article id="preview"></article>
     <button id="floating-add" hidden>+ Comment on selection</button>
