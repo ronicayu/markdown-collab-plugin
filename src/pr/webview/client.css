@@ -78,13 +78,42 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
 
 /* --- drafts pane --- */
 #drafts-pane {
+  position: relative;
   overflow-y: auto;
-  padding: 24px 20px 24px;
+  padding: 24px 20px 96px; /* extra bottom padding so the sticky submit bar doesn't cover the last draft card */
   background: var(--bg);
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
+
+#submit-bar {
+  position: sticky;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  margin: 12px -20px -24px;
+  padding: 12px 20px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 5;
+}
+#submit-bar #submit-review {
+  background: var(--vscode-button-background, var(--accent));
+  color: var(--vscode-button-foreground, white);
+  border: none;
+  padding: 8px 12px;
+  border-radius: 3px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+#submit-bar #submit-review:hover:not(:disabled) { filter: brightness(1.1); }
+#submit-bar #submit-review:disabled { opacity: 0.5; cursor: not-allowed; }
+#submit-bar #submit-hint { margin: 0; color: var(--muted); font-size: 11px; }
 #drafts-header h2 { margin: 0; font-size: 13px; }
 #drafts-header .title-row { display: flex; align-items: baseline; gap: 6px; }
 #drafts-header #draft-count { color: var(--muted); font-size: 12px; }

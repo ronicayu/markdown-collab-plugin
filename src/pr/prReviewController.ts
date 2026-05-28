@@ -87,13 +87,16 @@ export class PrReviewController implements vscode.Disposable {
   private readonly controller: vscode.CommentController;
   private readonly output: vscode.OutputChannel;
   private readonly context: vscode.ExtensionContext;
-  private readonly statusItem: vscode.StatusBarItem;
   private readonly disposables: vscode.Disposable[] = [];
   private session: ActiveSession | null = null;
 
   constructor(context: vscode.ExtensionContext, output: vscode.OutputChannel) {
     this.context = context;
     this.output = output;
+    // The controller is retained for the legacy native-gutter surface
+    // (kept dormant in the preview-mode flow but still registered so
+    // existing menu contributions resolve cleanly). Drafts are
+    // managed entirely through the webview panel now.
     this.controller = vscode.comments.createCommentController(CONTROLLER_ID, CONTROLLER_LABEL);
     this.controller.commentingRangeProvider = {
       provideCommentingRanges: (doc) => this.commentingRangesFor(doc),
@@ -102,17 +105,13 @@ export class PrReviewController implements vscode.Disposable {
       prompt: "Add a PR review comment…",
       placeHolder: "Markdown rendered in the PR comment.",
     };
-    this.statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    this.statusItem.command = "markdownCollab.submitPrReview";
-    this.statusItem.hide();
-    this.disposables.push(this.controller, this.statusItem);
+    this.disposables.push(this.controller);
     this.gcStaleDrafts();
   }
 
   activate(subs: vscode.Disposable[]): void {
     subs.push(
       vscode.commands.registerCommand("markdownCollab.startPrReview", () => this.startPrReview()),
-      vscode.commands.registerCommand("markdownCollab.submitPrReview", () => this.submitPrReview()),
       vscode.commands.registerCommand("markdownCollab.prReviewAddComment", (reply: vscode.CommentReply) =>
         this.addComment(reply),
       ),
@@ -187,7 +186,6 @@ export class PrReviewController implements vscode.Disposable {
         rangesByPath: new Map(),
         threadsByDraft: new Map(),
       };
-      this.refreshStatusBar();
       await this.rehydrateDrafts();
       await this.pickAndOpenFile(changed);
     } catch (e) {
@@ -225,15 +223,18 @@ export class PrReviewController implements vscode.Disposable {
   private draftHostApi(): {
     ctx: PrContext;
     getDraftsFor: (rel: string) => PrDraft[];
+    getAllDrafts: () => PrDraft[];
     addDraft: (d: Omit<PrDraft, "id" | "createdAt">) => Promise<PrDraft>;
     updateDraftBody: (id: string, body: string) => Promise<void>;
     deleteDraft: (id: string) => Promise<void>;
+    submit: () => Promise<void>;
   } {
     if (!this.session) throw new Error("PR review session not active");
     const session = this.session;
     return {
       ctx: session.ctx,
       getDraftsFor: (rel) => this.loadDrafts().filter((d) => d.path === rel),
+      getAllDrafts: () => this.loadDrafts(),
       addDraft: async (d) => {
         const draft: PrDraft = {
           ...d,
@@ -241,7 +242,6 @@ export class PrReviewController implements vscode.Disposable {
           createdAt: new Date().toISOString(),
         };
         await this.persistDrafts((arr) => arr.concat(draft));
-        this.refreshStatusBar();
         PrReviewPanel.notifyDraftsChanged(session.ctx, this.draftHostApi());
         return draft;
       },
@@ -251,9 +251,9 @@ export class PrReviewController implements vscode.Disposable {
       },
       deleteDraft: async (id) => {
         await this.persistDrafts((arr) => arr.filter((d) => d.id !== id));
-        this.refreshStatusBar();
         PrReviewPanel.notifyDraftsChanged(session.ctx, this.draftHostApi());
       },
+      submit: () => this.submitPrReview(),
     };
   }
 
@@ -324,7 +324,6 @@ export class PrReviewController implements vscode.Disposable {
     }
     this.persistDrafts((arr) => arr.concat(draft));
     this.attachDraftToThread(reply.thread, draft);
-    this.refreshStatusBar();
   }
 
   private attachDraftToThread(thread: vscode.CommentThread, draft: PrDraft): void {
@@ -395,7 +394,6 @@ export class PrReviewController implements vscode.Disposable {
     this.persistDrafts((arr) => arr.filter((d) => d.id !== first.draftId));
     this.session.threadsByDraft.delete(first.draftId);
     thread.dispose();
-    this.refreshStatusBar();
   }
 
   private findThreadForComment(c: PrReviewComment): vscode.CommentThread | undefined {
@@ -536,7 +534,7 @@ export class PrReviewController implements vscode.Disposable {
       t?.dispose();
       this.session.threadsByDraft.delete(id);
     }
-    this.refreshStatusBar();
+    PrReviewPanel.notifyDraftsChanged(this.session.ctx, this.draftHostApi());
     const action = await vscode.window.showInformationMessage(
       `Submitted ${live.length} comment${live.length === 1 ? "" : "s"} (${verdict}).`,
       "Open review",
@@ -560,23 +558,6 @@ export class PrReviewController implements vscode.Disposable {
       { placeHolder: "Review verdict" },
     );
     return pick?.value ?? null;
-  }
-
-  // --- status bar ---------------------------------------------------------
-
-  private refreshStatusBar(): void {
-    if (!this.session) {
-      this.statusItem.hide();
-      return;
-    }
-    const count = this.loadDrafts().length;
-    if (count === 0) {
-      this.statusItem.text = `$(comment) PR: 0 drafts`;
-    } else {
-      this.statusItem.text = `$(comment-discussion) PR: ${count} draft${count === 1 ? "" : "s"} ▸ Submit`;
-    }
-    this.statusItem.tooltip = `${this.session.ctx.platform === "github" ? "PR" : "MR"} #${this.session.ctx.prNumber} — click to submit`;
-    this.statusItem.show();
   }
 
   dispose(): void {

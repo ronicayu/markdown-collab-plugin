@@ -50,9 +50,10 @@ interface InitMessage {
   source: string;
   addedRanges: LineRange[];
   drafts: PrDraft[];
+  totalDraftCount: number;
   imageBaseUris: { docDir: string; workspaceFolder: string | null };
 }
-interface DraftsMessage { type: "drafts"; drafts: PrDraft[]; }
+interface DraftsMessage { type: "drafts"; drafts: PrDraft[]; totalDraftCount: number; }
 type HostMessage = InitMessage | DraftsMessage;
 
 interface ReadyMessage { type: "ready"; }
@@ -60,7 +61,8 @@ interface AddDraftRequest { type: "add-draft"; startLine: number; endLine: numbe
 interface EditDraftRequest { type: "edit-draft"; id: string; body: string; }
 interface DeleteDraftRequest { type: "delete-draft"; id: string; }
 interface JumpRequest { type: "jump"; line: number; }
-type ClientToHost = ReadyMessage | AddDraftRequest | EditDraftRequest | DeleteDraftRequest | JumpRequest;
+interface SubmitRequest { type: "submit"; }
+type ClientToHost = ReadyMessage | AddDraftRequest | EditDraftRequest | DeleteDraftRequest | JumpRequest | SubmitRequest;
 
 const vscode = window.acquireVsCodeApi();
 
@@ -74,7 +76,11 @@ const dom = {
   draftCount: document.getElementById("draft-count") as HTMLElement,
   draftsList: document.getElementById("drafts-list") as HTMLElement,
   composer: document.getElementById("composer") as HTMLElement,
+  submitButton: document.getElementById("submit-review") as HTMLButtonElement,
+  submitHint: document.getElementById("submit-hint") as HTMLElement,
 };
+
+let totalDraftCount = 0;
 
 let state: InitMessage | null = null;
 let editingDraftId: string | null = null;
@@ -91,15 +97,40 @@ window.addEventListener("message", (ev) => {
   if (msg.type === "init") {
     state = msg;
     drafts = msg.drafts;
+    totalDraftCount = msg.totalDraftCount;
     lineStarts = computeLineStarts(msg.source);
     dom.fileName.textContent = msg.fileName;
     renderPreview(msg.source, msg.addedRanges);
     renderDrafts();
+    refreshSubmitButton();
   } else if (msg.type === "drafts") {
     drafts = msg.drafts;
+    totalDraftCount = msg.totalDraftCount;
     renderDrafts();
+    refreshSubmitButton();
   }
 });
+
+dom.submitButton.addEventListener("click", () => {
+  if (totalDraftCount === 0) return;
+  vscode.postMessage({ type: "submit" });
+});
+
+function refreshSubmitButton(): void {
+  if (totalDraftCount === 0) {
+    dom.submitButton.disabled = true;
+    dom.submitButton.textContent = "Submit review";
+    dom.submitHint.textContent = "No drafts yet.";
+  } else {
+    dom.submitButton.disabled = false;
+    dom.submitButton.textContent = `Submit review (${totalDraftCount})`;
+    const localCount = drafts.length;
+    const elsewhere = totalDraftCount - localCount;
+    dom.submitHint.textContent = elsewhere > 0
+      ? `${localCount} on this file · ${elsewhere} on other files`
+      : `${localCount} draft${localCount === 1 ? "" : "s"} ready to submit`;
+  }
+}
 
 vscode.postMessage({ type: "ready" });
 

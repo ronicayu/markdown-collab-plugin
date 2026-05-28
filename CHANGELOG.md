@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.31.2 — 2026-05-28 (trial)
+
+### Changed: submit-review moved into the drafts pane
+
+The "Submit Review" affordance is now a sticky button at the bottom of
+the drafts pane, not a status-bar item or palette command. The button
+shows the total draft count across the PR (e.g. "Submit review (5)")
+and a hint line below it breaks the count down by "on this file" vs
+"on other files". Disabled when there are zero drafts.
+
+The status-bar item and the `markdownCollab.submitPrReview` palette
+command both went away — submit lives in the panel, where the drafts
+do. Click it, pick a verdict, the same batched-POST pipeline ships
+your review.
+
 ## 0.31.1 — 2026-05-28 (trial)
 
 ### Fixed: GitLab MR submit (HTTP 415) and floating comment button position

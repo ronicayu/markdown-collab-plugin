@@ -24,11 +24,13 @@ import type {
 } from "./types";
 
 interface DraftHost {
+  ctx: PrContext;
   getDraftsFor(relPath: string): PrDraft[];
+  getAllDrafts(): PrDraft[];
   addDraft(draft: Omit<PrDraft, "id" | "createdAt">): Promise<PrDraft>;
   updateDraftBody(id: string, body: string): Promise<void>;
   deleteDraft(id: string): Promise<void>;
-  ctx: PrContext;
+  submit(): Promise<void>;
 }
 
 interface InitMessage {
@@ -37,12 +39,18 @@ interface InitMessage {
   source: string;
   addedRanges: LineRange[];
   drafts: PrDraft[];
+  totalDraftCount: number;
   imageBaseUris: { docDir: string; workspaceFolder: string | null };
 }
 
 interface UpdateDraftsMessage {
   type: "drafts";
   drafts: PrDraft[];
+  totalDraftCount: number;
+}
+
+interface SubmitRequest {
+  type: "submit";
 }
 
 
@@ -78,7 +86,8 @@ type ClientToHost =
   | AddDraftRequest
   | EditDraftRequest
   | DeleteDraftRequest
-  | JumpToLineRequest;
+  | JumpToLineRequest
+  | SubmitRequest;
 
 const VIEW_TYPE = "markdownCollab.prReviewView";
 const panels = new Map<string, PrReviewPanel>();
@@ -159,6 +168,7 @@ export class PrReviewPanel {
       source,
       addedRanges: ranges,
       drafts: this.host.getDraftsFor(this.relPath),
+      totalDraftCount: this.host.getAllDrafts().length,
       imageBaseUris: {
         docDir: this.panel.webview.asWebviewUri(docDir).toString(),
         workspaceFolder: folder ? this.panel.webview.asWebviewUri(folder.uri).toString() : null,
@@ -168,7 +178,11 @@ export class PrReviewPanel {
   }
 
   private async pushDrafts(host: DraftHost): Promise<void> {
-    const msg: UpdateDraftsMessage = { type: "drafts", drafts: host.getDraftsFor(this.relPath) };
+    const msg: UpdateDraftsMessage = {
+      type: "drafts",
+      drafts: host.getDraftsFor(this.relPath),
+      totalDraftCount: host.getAllDrafts().length,
+    };
     await this.panel.webview.postMessage(msg);
   }
 
@@ -194,6 +208,8 @@ export class PrReviewPanel {
         return this.pushDrafts(this.host);
       case "jump":
         return this.openSourceAt(msg.line);
+      case "submit":
+        return this.host.submit();
     }
   }
 
@@ -251,6 +267,10 @@ export class PrReviewPanel {
     </header>
     <div id="drafts-list"></div>
     <div id="composer" hidden></div>
+    <footer id="submit-bar">
+      <button id="submit-review" type="button" disabled>Submit review</button>
+      <p id="submit-hint" class="hint">No drafts yet.</p>
+    </footer>
   </aside>
 </div>
 <script src="${mermaidUri}"></script>

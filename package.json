@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.31.1",
+  "version": "0.31.2",
   "publisher": "markdown-collab",
   "license": "MIT",
   "repository": {
@@ -44,8 +44,7 @@
     "onCustomEditor:markdownCollab.collabEditor",
     "onCommand:markdownCollab.openInlineCommentsView",
     "onCommand:markdownCollab.askClaudeToReview",
-    "onCommand:markdownCollab.startPrReview",
-    "onCommand:markdownCollab.submitPrReview"
+    "onCommand:markdownCollab.startPrReview"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -143,11 +142,6 @@
       {
         "command": "markdownCollab.startPrReview",
         "title": "Markdown Collab: Review PR / MR",
-        "category": "Markdown Collab"
-      },
-      {
-        "command": "markdownCollab.submitPrReview",
-        "title": "Markdown Collab: Submit PR / MR Review",
         "category": "Markdown Collab"
       },
       {
