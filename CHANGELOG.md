@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.31.1 — 2026-05-28 (trial)
+
+### Fixed: GitLab MR submit (HTTP 415) and floating comment button position
+
+Two bugs in the preview-mode PR review from 0.31.0:
+
+1. **GitLab discussion submit failed with HTTP 415.** I was sending the
+   request body as JSON via stdin (`glab api ... --input -`). GitLab's
+   `/discussions` endpoint expects form-encoded data — without an
+   explicit `Content-Type: application/json` header, glab handed the
+   raw JSON to the server with a Content-Type the server didn't accept.
+
+   The fix switches to glab's `-f key=value` field syntax, which uses
+   form encoding and bracket notation for the nested `position` object.
+   Same pattern used for the verdict `/notes` and `/approve` calls. No
+   stdin JSON anywhere in the GitLab path now.
+
+2. **"+ Comment on selection" button stuck near the top of the page.**
+   The CSS positioned the button with `position: absolute` while the
+   client wrote viewport-relative `getBoundingClientRect()` coords plus
+   `window.scrollY` to its top. Absolute positioning made those coords
+   relative to the nearest positioned ancestor (`#preview-pane`), so
+   the scroll math doubled up and the button drifted up.
+
+   The fix changes the CSS to `position: fixed` and drops the scroll
+   offset from the JS — `getBoundingClientRect` is already in viewport
+   coords, which is exactly what fixed positioning wants. Button now
+   follows the selection wherever it is on the page.
+
 ## 0.31.0 — 2026-05-28 (trial)
 
 ### Changed: PR / MR review opens the file in a rendered preview, not the source editor

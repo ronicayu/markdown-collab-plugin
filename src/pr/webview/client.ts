@@ -238,8 +238,10 @@ function positionFloatingButton(): void {
     dom.floating.hidden = true;
     return;
   }
-  dom.floating.style.top = `${rect.bottom + window.scrollY + 4}px`;
-  dom.floating.style.left = `${rect.left + window.scrollX}px`;
+  // `position: fixed` (set in CSS) — viewport coords from
+  // getBoundingClientRect are exactly what we want, no scroll math.
+  dom.floating.style.top = `${rect.bottom + 4}px`;
+  dom.floating.style.left = `${rect.left}px`;
   dom.floating.hidden = false;
 }
 

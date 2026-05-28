@@ -89,22 +89,24 @@ export const gitlabPlatform: PrPlatform = {
     if (!ctx.projectId) throw new Error("GitLab context missing projectId");
     const baseEndpoint = `projects/${ctx.projectId}/merge_requests/${ctx.prNumber}`;
 
+    // GitLab's /discussions endpoint expects form-encoded data, NOT JSON.
+    // Send each field via glab's `-f key=value` so glab generates the
+    // right Content-Type. Nested `position` uses bracket notation per
+    // GitLab's standard for form-encoded objects.
     for (const c of input.comments) {
-      const position = {
-        base_sha: ctx.baseSha,
-        start_sha: ctx.startSha ?? ctx.baseSha,
-        head_sha: ctx.headSha,
-        position_type: "text",
-        new_path: c.path,
-        old_path: c.path,
-        new_line: c.line,
-      };
-      const payload = { body: c.body, position };
-      const res = await runner(
-        GLAB,
-        ["api", `${baseEndpoint}/discussions`, "--method", "POST", "--input", "-"],
-        { cwd: ctx.repoRoot, env, stdin: JSON.stringify(payload) },
-      );
+      const fields = [
+        `body=${c.body}`,
+        `position[base_sha]=${ctx.baseSha}`,
+        `position[start_sha]=${ctx.startSha ?? ctx.baseSha}`,
+        `position[head_sha]=${ctx.headSha}`,
+        `position[position_type]=text`,
+        `position[new_path]=${c.path}`,
+        `position[old_path]=${c.path}`,
+        `position[new_line]=${c.line}`,
+      ];
+      const args = ["api", `${baseEndpoint}/discussions`, "--method", "POST"];
+      for (const f of fields) args.push("-f", f);
+      const res = await runner(GLAB, args, { cwd: ctx.repoRoot, env });
       if (res.code !== 0) {
         throw new Error(
           `glab api discussion failed on ${c.path}:${c.line}: ${res.stderr.trim() || res.stdout.trim()}`,
@@ -115,8 +117,8 @@ export const gitlabPlatform: PrPlatform = {
     if (input.body && input.body.trim()) {
       const res = await runner(
         GLAB,
-        ["api", `${baseEndpoint}/notes`, "--method", "POST", "--input", "-"],
-        { cwd: ctx.repoRoot, env, stdin: JSON.stringify({ body: input.body }) },
+        ["api", `${baseEndpoint}/notes`, "--method", "POST", "-f", `body=${input.body}`],
+        { cwd: ctx.repoRoot, env },
       );
       if (res.code !== 0) {
         throw new Error(`glab api note failed: ${res.stderr.trim()}`);
@@ -137,12 +139,15 @@ export const gitlabPlatform: PrPlatform = {
       // if the user didn't supply a top-level body.
       const res = await runner(
         GLAB,
-        ["api", `${baseEndpoint}/notes`, "--method", "POST", "--input", "-"],
-        {
-          cwd: ctx.repoRoot,
-          env,
-          stdin: JSON.stringify({ body: "Requesting changes (see inline comments)." }),
-        },
+        [
+          "api",
+          `${baseEndpoint}/notes`,
+          "--method",
+          "POST",
+          "-f",
+          "body=Requesting changes (see inline comments).",
+        ],
+        { cwd: ctx.repoRoot, env },
       );
       if (res.code !== 0) {
         throw new Error(`glab api note (request-changes) failed: ${res.stderr.trim()}`);

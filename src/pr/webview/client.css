@@ -64,7 +64,7 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
 #preview hr.pr-changed { box-shadow: -3px 0 0 var(--diff-add-stripe); }
 
 #floating-add {
-  position: absolute;
+  position: fixed;
   z-index: 20;
   background: var(--vscode-button-background, var(--accent));
   color: var(--vscode-button-foreground, white);
