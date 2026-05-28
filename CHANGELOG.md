@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.31.0 — 2026-05-28 (trial)
+
+### Changed: PR / MR review opens the file in a rendered preview, not the source editor
+
+Picking a file from `Markdown Collab: Review PR / MR` now opens it in a
+preview-mode webview instead of the raw editor. The view has two panes:
+
+- **Left:** the head-side markdown rendered as prose. Any block whose
+  source byte range overlaps an added-line range from the PR diff gets
+  a left side stripe. The stripe is painted on *anything* the diff
+  touches — paragraphs, headings, list items, code blocks, frontmatter
+  rows, link nodes whose URL changed even when the rendered text
+  didn't. If git says the line changed, the stripe appears.
+- **Right:** the drafts pane for this file. Cards show the comment body
+  and the source line(s) it anchors to; click the line label to jump
+  to that line in the source editor in a side column. Edit / Delete
+  inline.
+
+Adding a comment: select prose in the preview, click the floating
+"+ Comment on selection" button, type the body, hit "Add draft". The
+selection is mapped from the rendered DOM back to source line numbers
+via the existing source-offset plugin (the same one inline-comments
+uses for anchor highlighting). Single-line and multi-line ranges both
+work.
+
+The source-mode comment-controller code from 0.30.x is still in the
+tree but no longer reachable from the main flow — `pickAndOpenFile`
+opens the preview instead. The submit pipeline (verdict picker, draft
+re-validation against the current diff, batched POST to GitHub or
+GitLab) is unchanged from 0.30.0.
+
 ## 0.30.2 — 2026-05-28 (trial)
 
 ### Fixed: bundled .vsix is missing runtime dependencies → all commands "not found"

@@ -22,6 +22,7 @@ import {
   type LineRange,
 } from "./diff";
 import { detectPlatform } from "./platform";
+import { PrReviewPanel } from "./prReviewPanel";
 import type {
   PrComment,
   PrContext,
@@ -217,9 +218,43 @@ export class PrReviewController implements vscode.Disposable {
       matchOnDescription: true,
     });
     if (!picked) return;
-    const fullPath = path.join(this.session.ctx.repoRoot, picked.file.path);
-    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(fullPath));
-    await vscode.window.showTextDocument(doc, { preview: false });
+    PrReviewPanel.reveal(this.context, this.draftHostApi(), picked.file.path);
+  }
+
+  /** API surface the preview panel uses to read + mutate drafts. */
+  private draftHostApi(): {
+    ctx: PrContext;
+    getDraftsFor: (rel: string) => PrDraft[];
+    addDraft: (d: Omit<PrDraft, "id" | "createdAt">) => Promise<PrDraft>;
+    updateDraftBody: (id: string, body: string) => Promise<void>;
+    deleteDraft: (id: string) => Promise<void>;
+  } {
+    if (!this.session) throw new Error("PR review session not active");
+    const session = this.session;
+    return {
+      ctx: session.ctx,
+      getDraftsFor: (rel) => this.loadDrafts().filter((d) => d.path === rel),
+      addDraft: async (d) => {
+        const draft: PrDraft = {
+          ...d,
+          id: uuid(),
+          createdAt: new Date().toISOString(),
+        };
+        await this.persistDrafts((arr) => arr.concat(draft));
+        this.refreshStatusBar();
+        PrReviewPanel.notifyDraftsChanged(session.ctx, this.draftHostApi());
+        return draft;
+      },
+      updateDraftBody: async (id, body) => {
+        await this.persistDrafts((arr) => arr.map((d) => (d.id === id ? { ...d, body } : d)));
+        PrReviewPanel.notifyDraftsChanged(session.ctx, this.draftHostApi());
+      },
+      deleteDraft: async (id) => {
+        await this.persistDrafts((arr) => arr.filter((d) => d.id !== id));
+        this.refreshStatusBar();
+        PrReviewPanel.notifyDraftsChanged(session.ctx, this.draftHostApi());
+      },
+    };
   }
 
   // --- commenting-range provider -----------------------------------------
