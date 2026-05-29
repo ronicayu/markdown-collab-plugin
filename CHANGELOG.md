@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.31.3 — 2026-05-29 (trial)
+
+### Fixed: GitLab MR comments now anchor to the diff line
+
+0.31.1 switched the GitLab submit path to `glab -f position[base_sha]=…`
+style form fields to fix HTTP 415. That stopped the 415, but glab treats
+the `position[*]` keys as flat fields, not nested-object lookups —
+GitLab received `body=…` and seven unrelated top-level fields, dropped
+all of them on the floor, and stored the comment as a general MR note
+with no anchor.
+
+Switched back to JSON via `glab api --input -`, this time with an
+explicit `--header "Content-Type: application/json"` so GitLab parses
+it (the missing header is what caused the original 415). The `position`
+object now arrives intact and the discussion comes back as a `DiffNote`.
+
+Defensive: after POSTing the discussion, the response is parsed and
+inspected. If `notes[0].position` is null — meaning GitLab accepted the
+request but couldn't anchor it (SHA mismatch, line outside the diff,
+etc.) — submit fails loudly with the raw response in the error
+message, instead of silently shipping a hidden general note.
+
 ## 0.31.2 — 2026-05-28 (trial)
 
 ### Changed: submit-review moved into the drafts pane

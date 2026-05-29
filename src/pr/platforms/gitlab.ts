@@ -89,27 +89,57 @@ export const gitlabPlatform: PrPlatform = {
     if (!ctx.projectId) throw new Error("GitLab context missing projectId");
     const baseEndpoint = `projects/${ctx.projectId}/merge_requests/${ctx.prNumber}`;
 
-    // GitLab's /discussions endpoint expects form-encoded data, NOT JSON.
-    // Send each field via glab's `-f key=value` so glab generates the
-    // right Content-Type. Nested `position` uses bracket notation per
-    // GitLab's standard for form-encoded objects.
+    // POST JSON with an explicit `Content-Type: application/json` header.
+    // We tried form-encoding with `glab -f position[new_line]=...` in
+    // 0.31.1 — that fixed the 415, but glab silently treats the bracket
+    // keys as literal flat fields, so the `position` object never lands
+    // and the comment posts as a general MR note with no anchor. JSON +
+    // explicit Content-Type avoids both problems.
     for (const c of input.comments) {
-      const fields = [
-        `body=${c.body}`,
-        `position[base_sha]=${ctx.baseSha}`,
-        `position[start_sha]=${ctx.startSha ?? ctx.baseSha}`,
-        `position[head_sha]=${ctx.headSha}`,
-        `position[position_type]=text`,
-        `position[new_path]=${c.path}`,
-        `position[old_path]=${c.path}`,
-        `position[new_line]=${c.line}`,
-      ];
-      const args = ["api", `${baseEndpoint}/discussions`, "--method", "POST"];
-      for (const f of fields) args.push("-f", f);
-      const res = await runner(GLAB, args, { cwd: ctx.repoRoot, env });
+      const position: Record<string, unknown> = {
+        base_sha: ctx.baseSha,
+        start_sha: ctx.startSha ?? ctx.baseSha,
+        head_sha: ctx.headSha,
+        position_type: "text",
+        new_path: c.path,
+        old_path: c.path,
+        new_line: c.line,
+      };
+      const payload = { body: c.body, position };
+      const res = await runner(
+        GLAB,
+        [
+          "api",
+          `${baseEndpoint}/discussions`,
+          "--method",
+          "POST",
+          "--header",
+          "Content-Type: application/json",
+          "--input",
+          "-",
+        ],
+        { cwd: ctx.repoRoot, env, stdin: JSON.stringify(payload) },
+      );
       if (res.code !== 0) {
         throw new Error(
           `glab api discussion failed on ${c.path}:${c.line}: ${res.stderr.trim() || res.stdout.trim()}`,
+        );
+      }
+      // Verify the server actually anchored the note. GitLab returns the
+      // discussion JSON; if `notes[0].position` is null the comment posted
+      // as an unanchored MR note instead of a diff thread.
+      try {
+        const body = JSON.parse(res.stdout) as { notes?: Array<{ position?: unknown }> };
+        if (!body.notes?.[0]?.position) {
+          throw new Error(
+            `GitLab accepted the comment on ${c.path}:${c.line} but did not anchor it to the diff (likely a SHA mismatch or out-of-diff line). Raw response: ${res.stdout.slice(0, 400)}`,
+          );
+        }
+      } catch (parseErr) {
+        if (parseErr instanceof Error && parseErr.message.startsWith("GitLab accepted")) throw parseErr;
+        // Couldn't parse JSON — bubble up the raw response for the user.
+        throw new Error(
+          `glab api discussion: unexpected response for ${c.path}:${c.line}: ${res.stdout.slice(0, 400)}`,
         );
       }
     }
@@ -117,8 +147,17 @@ export const gitlabPlatform: PrPlatform = {
     if (input.body && input.body.trim()) {
       const res = await runner(
         GLAB,
-        ["api", `${baseEndpoint}/notes`, "--method", "POST", "-f", `body=${input.body}`],
-        { cwd: ctx.repoRoot, env },
+        [
+          "api",
+          `${baseEndpoint}/notes`,
+          "--method",
+          "POST",
+          "--header",
+          "Content-Type: application/json",
+          "--input",
+          "-",
+        ],
+        { cwd: ctx.repoRoot, env, stdin: JSON.stringify({ body: input.body }) },
       );
       if (res.code !== 0) {
         throw new Error(`glab api note failed: ${res.stderr.trim()}`);
@@ -144,10 +183,16 @@ export const gitlabPlatform: PrPlatform = {
           `${baseEndpoint}/notes`,
           "--method",
           "POST",
-          "-f",
-          "body=Requesting changes (see inline comments).",
+          "--header",
+          "Content-Type: application/json",
+          "--input",
+          "-",
         ],
-        { cwd: ctx.repoRoot, env },
+        {
+          cwd: ctx.repoRoot,
+          env,
+          stdin: JSON.stringify({ body: "Requesting changes (see inline comments)." }),
+        },
       );
       if (res.code !== 0) {
         throw new Error(`glab api note (request-changes) failed: ${res.stderr.trim()}`);
