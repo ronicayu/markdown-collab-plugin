@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.31.5 — 2026-05-29 (trial)
+
+### Changed: → Claude / Copy buttons live on the thread, not on each comment
+
+In 0.29.4 I put a `→ Claude` and `Copy` button on every comment in an
+inline thread. They all sent the *whole thread* to Claude, which made
+the per-comment placement misleading — a 4-message thread had four
+identical buttons that all did the same thing.
+
+Moved to the thread-actions row at the top of the card, next to
+Resolve / Delete. One thread, one button. Sends the entire thread
+(initial comment + every reply, with the anchor quote) — exactly the
+same payload as before, just unambiguous about scope now.
+
 ## 0.31.4 — 2026-05-29 (trial)
 
 ### Changed: verdict + review summary are in the drafts pane, no more popups
