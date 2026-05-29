@@ -21,6 +21,7 @@ import {
 import type {
   PrContext,
   PrDraft,
+  ReviewVerdict,
 } from "./types";
 
 interface DraftHost {
@@ -30,7 +31,7 @@ interface DraftHost {
   addDraft(draft: Omit<PrDraft, "id" | "createdAt">): Promise<PrDraft>;
   updateDraftBody(id: string, body: string): Promise<void>;
   deleteDraft(id: string): Promise<void>;
-  submit(): Promise<void>;
+  submit(verdict: ReviewVerdict, body: string | undefined): Promise<void>;
 }
 
 interface InitMessage {
@@ -51,6 +52,8 @@ interface UpdateDraftsMessage {
 
 interface SubmitRequest {
   type: "submit";
+  verdict: ReviewVerdict;
+  body?: string;
 }
 
 
@@ -209,7 +212,7 @@ export class PrReviewPanel {
       case "jump":
         return this.openSourceAt(msg.line);
       case "submit":
-        return this.host.submit();
+        return this.host.submit(msg.verdict, msg.body);
     }
   }
 
@@ -268,6 +271,12 @@ export class PrReviewPanel {
     <div id="drafts-list"></div>
     <div id="composer" hidden></div>
     <footer id="submit-bar">
+      <div class="verdict-row" role="radiogroup" aria-label="Review verdict">
+        <label><input type="radio" name="verdict" value="comment" checked> Comment</label>
+        <label><input type="radio" name="verdict" value="approve"> Approve</label>
+        <label><input type="radio" name="verdict" value="request-changes"> Request changes</label>
+      </div>
+      <textarea id="review-body" rows="2" placeholder="Optional review summary (posted alongside the inline comments)"></textarea>
       <button id="submit-review" type="button" disabled>Submit review</button>
       <p id="submit-hint" class="hint">No drafts yet.</p>
     </footer>

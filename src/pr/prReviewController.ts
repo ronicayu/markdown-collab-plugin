@@ -227,7 +227,7 @@ export class PrReviewController implements vscode.Disposable {
     addDraft: (d: Omit<PrDraft, "id" | "createdAt">) => Promise<PrDraft>;
     updateDraftBody: (id: string, body: string) => Promise<void>;
     deleteDraft: (id: string) => Promise<void>;
-    submit: () => Promise<void>;
+    submit: (verdict: ReviewVerdict, body: string | undefined) => Promise<void>;
   } {
     if (!this.session) throw new Error("PR review session not active");
     const session = this.session;
@@ -253,7 +253,7 @@ export class PrReviewController implements vscode.Disposable {
         await this.persistDrafts((arr) => arr.filter((d) => d.id !== id));
         PrReviewPanel.notifyDraftsChanged(session.ctx, this.draftHostApi());
       },
-      submit: () => this.submitPrReview(),
+      submit: (verdict, body) => this.submitPrReview(verdict, body),
     };
   }
 
@@ -465,7 +465,10 @@ export class PrReviewController implements vscode.Disposable {
 
   // --- submit -------------------------------------------------------------
 
-  private async submitPrReview(): Promise<void> {
+  private async submitPrReview(
+    verdict: ReviewVerdict,
+    reviewBody: string | undefined,
+  ): Promise<void> {
     if (!this.session) {
       void vscode.window.showInformationMessage(
         "No active PR review. Run `Markdown Collab: Review PR` first.",
@@ -493,22 +496,9 @@ export class PrReviewController implements vscode.Disposable {
       );
       return;
     }
-    if (stale.length > 0) {
-      const proceed = await vscode.window.showWarningMessage(
-        `${stale.length} draft${stale.length === 1 ? "" : "s"} are anchored to lines no longer in the PR diff and will be skipped. Submit the remaining ${live.length}?`,
-        { modal: true },
-        "Submit",
-      );
-      if (proceed !== "Submit") return;
-    }
-    const verdict = await this.askVerdict();
-    if (!verdict) return;
-    const reviewBody = await vscode.window.showInputBox({
-      prompt: "Optional review summary (markdown, posted alongside the inline comments)",
-      placeHolder: "Leave empty for inline comments only",
-    });
-    if (reviewBody === undefined) return;
-
+    // Stale drafts (lines no longer in the diff) are dropped silently
+    // here — the post-submit toast surfaces the count so the user can
+    // rework them. No modal interruption.
     const submitted: { url: string } = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: "Markdown Collab: submitting review…" },
       async () => {
@@ -535,29 +525,16 @@ export class PrReviewController implements vscode.Disposable {
       this.session.threadsByDraft.delete(id);
     }
     PrReviewPanel.notifyDraftsChanged(this.session.ctx, this.draftHostApi());
+    const skipped = stale.length > 0
+      ? ` ${stale.length} stale draft${stale.length === 1 ? "" : "s"} kept for rework.`
+      : "";
     const action = await vscode.window.showInformationMessage(
-      `Submitted ${live.length} comment${live.length === 1 ? "" : "s"} (${verdict}).`,
+      `Submitted ${live.length} comment${live.length === 1 ? "" : "s"} (${verdict}).${skipped}`,
       "Open review",
     );
     if (action === "Open review") {
       void vscode.env.openExternal(vscode.Uri.parse(submitted.url));
     }
-  }
-
-  private async askVerdict(): Promise<ReviewVerdict | null> {
-    const pick = await vscode.window.showQuickPick(
-      [
-        { label: "Comment", value: "comment" as const, description: "Inline comments only, no approval signal." },
-        { label: "Approve", value: "approve" as const, description: "Approve the PR with these comments." },
-        {
-          label: "Request changes",
-          value: "request-changes" as const,
-          description: "Block the PR and leave these comments.",
-        },
-      ],
-      { placeHolder: "Review verdict" },
-    );
-    return pick?.value ?? null;
   }
 
   dispose(): void {

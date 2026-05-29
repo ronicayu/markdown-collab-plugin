@@ -61,7 +61,8 @@ interface AddDraftRequest { type: "add-draft"; startLine: number; endLine: numbe
 interface EditDraftRequest { type: "edit-draft"; id: string; body: string; }
 interface DeleteDraftRequest { type: "delete-draft"; id: string; }
 interface JumpRequest { type: "jump"; line: number; }
-interface SubmitRequest { type: "submit"; }
+type ReviewVerdict = "comment" | "approve" | "request-changes";
+interface SubmitRequest { type: "submit"; verdict: ReviewVerdict; body?: string; }
 type ClientToHost = ReadyMessage | AddDraftRequest | EditDraftRequest | DeleteDraftRequest | JumpRequest | SubmitRequest;
 
 const vscode = window.acquireVsCodeApi();
@@ -78,6 +79,8 @@ const dom = {
   composer: document.getElementById("composer") as HTMLElement,
   submitButton: document.getElementById("submit-review") as HTMLButtonElement,
   submitHint: document.getElementById("submit-hint") as HTMLElement,
+  verdictRadios: document.querySelectorAll<HTMLInputElement>('input[name="verdict"]'),
+  reviewBody: document.getElementById("review-body") as HTMLTextAreaElement,
 };
 
 let totalDraftCount = 0;
@@ -113,8 +116,13 @@ window.addEventListener("message", (ev) => {
 
 dom.submitButton.addEventListener("click", () => {
   if (totalDraftCount === 0) return;
-  vscode.postMessage({ type: "submit" });
+  vscode.postMessage({ type: "submit", verdict: currentVerdict(), body: dom.reviewBody.value.trim() || undefined });
 });
+
+function currentVerdict(): ReviewVerdict {
+  for (const r of dom.verdictRadios) if (r.checked) return r.value as ReviewVerdict;
+  return "comment";
+}
 
 function refreshSubmitButton(): void {
   if (totalDraftCount === 0) {

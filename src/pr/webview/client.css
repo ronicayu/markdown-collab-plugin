@@ -98,8 +98,32 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
   z-index: 5;
+}
+#submit-bar .verdict-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--fg);
+}
+#submit-bar .verdict-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+#submit-bar #review-body {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, var(--border));
+  border-radius: 3px;
+  padding: 6px 8px;
+  font: inherit;
+  resize: vertical;
 }
 #submit-bar #submit-review {
   background: var(--vscode-button-background, var(--accent));

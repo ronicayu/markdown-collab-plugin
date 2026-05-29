@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.31.4 — 2026-05-29 (trial)
+
+### Changed: verdict + review summary are in the drafts pane, no more popups
+
+Clicking **Submit review** previously fired two modal-ish prompts in
+sequence — a QuickPick for the verdict (Comment / Approve / Request
+changes) and an InputBox for the optional review summary. Both are gone.
+
+The submit footer in the drafts pane now hosts:
+
+- Three radio buttons for the verdict, defaulting to **Comment**.
+- A small textarea for the optional review summary, placeholder
+  "Optional review summary…".
+- The submit button (already there).
+
+Clicking submit sends whatever's currently selected + typed. The stale-
+drafts modal warning is also gone — stale drafts are dropped silently
+and the post-submit toast tells you how many were kept for rework. Same
+toast still surfaces the "Open review" link on success.
+
 ## 0.31.3 — 2026-05-29 (trial)
 
 ### Fixed: GitLab MR comments now anchor to the diff line
