@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.33.0 — 2026-05-29 (trial)
+
+### Added: PlantUML diagrams in every preview surface
+
+```` ```plantuml ```` (and ```` ```puml ````) fenced code blocks now
+render as inline diagrams across all three markdown surfaces:
+
+- The legacy preview (`Markdown Collab: Open Preview with Comments`).
+- The inline-comments view.
+- The PR review preview.
+
+Same markdown-it plugin shared across host-side rendering and the
+webview bundles. Encoding uses PlantUML's `~h<hex>` prefix path —
+UTF-8 bytes of the source as a hex string after `~h`. No deflate
+dependency, no extra npm package.
+
+By default the plugin posts to the public `https://www.plantuml.com/plantuml`
+server. Two new settings let you point it elsewhere:
+
+- `markdownCollab.plantuml.serverUrl` — base URL (e.g.
+  `http://localhost:8080` for a self-hosted server, keeping your
+  diagrams off the public web).
+- `markdownCollab.plantuml.format` — `svg` (default) or `png`.
+
+CSP on the legacy preview widened from `img-src ${webview} data:` to
+`img-src ${webview} https: data:` so PlantUML images render — the
+inline-comments and PR review CSPs already allowed this.
+
 ## 0.32.0 — 2026-05-29 (trial)
 
 ### Added: existing PR / MR comments in the side panel

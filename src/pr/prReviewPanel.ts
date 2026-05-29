@@ -44,6 +44,7 @@ interface InitMessage {
   drafts: PrDraft[];
   totalDraftCount: number;
   imageBaseUris: { docDir: string; workspaceFolder: string | null };
+  plantuml: { serverUrl: string; format: "svg" | "png" };
 }
 
 interface UpdateDraftsMessage {
@@ -183,6 +184,7 @@ export class PrReviewPanel {
         docDir: this.panel.webview.asWebviewUri(docDir).toString(),
         workspaceFolder: folder ? this.panel.webview.asWebviewUri(folder.uri).toString() : null,
       },
+      plantuml: readPlantumlConfig(),
     };
     await this.panel.webview.postMessage(msg);
     // Existing comments arrive after init so the preview renders fast;
@@ -314,6 +316,14 @@ export class PrReviewPanel {
     panels.delete(this.key);
     try { this.panel.dispose(); } catch { /* ignore */ }
   }
+}
+
+function readPlantumlConfig(): { serverUrl: string; format: "svg" | "png" } {
+  const cfg = vscode.workspace.getConfiguration("markdownCollab");
+  return {
+    serverUrl: cfg.get<string>("plantuml.serverUrl") ?? "https://www.plantuml.com/plantuml",
+    format: cfg.get<"svg" | "png">("plantuml.format") ?? "svg",
+  };
 }
 
 function prKeyFor(ctx: PrContext): string {

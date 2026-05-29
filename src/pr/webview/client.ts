@@ -16,6 +16,7 @@
 
 import MarkdownIt from "markdown-it";
 import { installSourceOffsetPlugin } from "../../inlineComments/webview/renderWithOffsets";
+import { installPlantumlPlugin } from "../../plantumlPlugin";
 
 interface VsCodeApi {
   postMessage(msg: ClientToHost): void;
@@ -52,6 +53,7 @@ interface InitMessage {
   drafts: PrDraft[];
   totalDraftCount: number;
   imageBaseUris: { docDir: string; workspaceFolder: string | null };
+  plantuml?: { serverUrl: string; format: "svg" | "png" };
 }
 interface DraftsMessage { type: "drafts"; drafts: PrDraft[]; totalDraftCount: number; }
 interface ExistingPrComment {
@@ -82,6 +84,12 @@ const vscode = window.acquireVsCodeApi();
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
 installSourceOffsetPlugin(md);
+let plantumlInstalled = false;
+function ensurePlantumlInstalled(opts: { serverUrl: string; format: "svg" | "png" } | undefined): void {
+  if (plantumlInstalled || !opts) return;
+  installPlantumlPlugin(md, opts);
+  plantumlInstalled = true;
+}
 
 const dom = {
   fileName: document.getElementById("file-name") as HTMLElement,
@@ -121,6 +129,7 @@ window.addEventListener("message", (ev) => {
     existingComments = null;
     lineStarts = computeLineStarts(msg.source);
     dom.fileName.textContent = msg.fileName;
+    ensurePlantumlInstalled(msg.plantuml);
     renderPreview(msg.source, msg.addedRanges);
     renderDrafts();
     renderExisting();

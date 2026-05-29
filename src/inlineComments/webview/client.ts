@@ -10,6 +10,7 @@ import MarkdownIt from "markdown-it";
 import { isClaudeReviewed, isClaudeUnread } from "../claudeUnread";
 import { slugifyHeading } from "../linkParse";
 import { installSourceOffsetPlugin } from "./renderWithOffsets";
+import { installPlantumlPlugin } from "../../plantumlPlugin";
 
 declare function acquireVsCodeApi(): {
   postMessage: (msg: unknown) => void;
@@ -62,6 +63,7 @@ interface InitMsg {
     docDir: string;
     workspaceFolder: string | null;
   };
+  plantuml?: { serverUrl: string; format: "svg" | "png" };
 }
 
 interface UpdateMsg {
@@ -81,6 +83,12 @@ interface ScrollToMsg {
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
 installSourceOffsetPlugin(md);
+let plantumlInstalled = false;
+function ensurePlantumlInstalled(opts: { serverUrl: string; format: "svg" | "png" } | undefined): void {
+  if (plantumlInstalled || !opts) return;
+  installPlantumlPlugin(md, opts);
+  plantumlInstalled = true;
+}
 
 let imageBaseUris: { docDir: string; workspaceFolder: string | null } = {
   docDir: "",
@@ -1280,6 +1288,7 @@ window.addEventListener("message", (ev) => {
     dom.fileName.textContent = msg.fileName;
     user = msg.user;
     imageBaseUris = msg.imageBaseUris;
+    ensurePlantumlInstalled(msg.plantuml);
     render(msg.state);
   } else if (msg.type === "update") {
     render(msg.state);

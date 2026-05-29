@@ -3,6 +3,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import MarkdownIt from "markdown-it";
 import { resolve as resolveAnchor } from "./anchor";
+import { installPlantumlPlugin } from "./plantumlPlugin";
 import { detectUrlScheme } from "./inlineComments/linkParse";
 import {
   addComment,
@@ -93,6 +94,13 @@ export class PreviewPanel {
       }
       return defaultFence(tokens, idx, options, env, self);
     };
+    // Install PlantUML after the mermaid override so its handler captures
+    // ours as `prev` and chains to it for non-plantuml fences.
+    const cfg = vscode.workspace.getConfiguration("markdownCollab");
+    installPlantumlPlugin(this.md, {
+      serverUrl: cfg.get<string>("plantuml.serverUrl"),
+      format: cfg.get<"svg" | "png">("plantuml.format") ?? "svg",
+    });
 
     // External-write watcher for the .md file. VS Code's onDidChangeTextDocument
     // only fires for buffer-level edits — when an external process (the AI
@@ -247,7 +255,10 @@ export class PreviewPanel {
     // runtime so img-src and font-src remain locked to the webview origin.
     // 'unsafe-eval' is required because mermaid's dompurify build uses
     // Function() under the hood for configuration parsing.
-    const csp = `default-src 'none'; style-src 'unsafe-inline'; img-src ${cspSource} data:; font-src ${cspSource} data:; script-src 'nonce-${nonce}' 'unsafe-eval' ${cspSource};`;
+    // img-src widened to include https: so PlantUML diagrams served by
+    // the configured PlantUML server render. The inline-comments and PR
+    // review views already use the same pattern.
+    const csp = `default-src 'none'; style-src 'unsafe-inline'; img-src ${cspSource} https: data:; font-src ${cspSource} data:; script-src 'nonce-${nonce}' 'unsafe-eval' ${cspSource};`;
     return `<!DOCTYPE html><html><head>
 <meta charset="utf-8" />
 <meta http-equiv="Content-Security-Policy" content="${csp}" />
@@ -338,6 +349,8 @@ pre { background: var(--vscode-textCodeBlock-background, #1e1e1e); padding: 0.75
 .mdc-msg-body table { border-collapse: collapse; margin: 0.25rem 0; }
 .mdc-msg-body th, .mdc-msg-body td { padding: 0.1rem 0.4rem; border: 1px solid var(--vscode-panel-border); }
 .mdc-msg-body img { max-width: 100%; }
+.mdc-msg-body figure.mc-plantuml { margin: 0.5rem 0; text-align: center; }
+.mdc-msg-body figure.mc-plantuml img { max-width: 100%; height: auto; background: white; padding: 4px; border-radius: 3px; }
 .mdc-card .anchor-snippet { font-size: 0.75em; color: var(--vscode-descriptionForeground); font-family: var(--vscode-editor-font-family, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0.25rem; }
 .mdc-card-body { display: none; margin-top: 0.5rem; }
 .mdc-card.open .mdc-card-body { display: block; }

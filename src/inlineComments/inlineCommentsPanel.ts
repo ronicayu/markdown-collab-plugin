@@ -49,6 +49,7 @@ interface InitMessage {
     /** Workspace folder root, as a `vscode-webview://…` URI. Used for `/abs.png` style refs. */
     workspaceFolder: string | null;
   };
+  plantuml: { serverUrl: string; format: "svg" | "png" };
 }
 
 interface UpdateMessage {
@@ -711,6 +712,7 @@ export class InlineCommentsPanel {
         docDir: this.panel.webview.asWebviewUri(docDirUri).toString(),
         workspaceFolder: folder ? this.panel.webview.asWebviewUri(folder.uri).toString() : null,
       },
+      plantuml: readPlantumlConfig(),
     };
     await this.panel.webview.postMessage(msg);
   }
@@ -921,5 +923,13 @@ export function serialize(parsed: ParsedDocument): SerializedState {
         anchor: a ? { proseStart: a.proseStart, proseEnd: a.proseEnd } : null,
       };
     }),
+  };
+}
+
+function readPlantumlConfig(): { serverUrl: string; format: "svg" | "png" } {
+  const cfg = vscode.workspace.getConfiguration("markdownCollab");
+  return {
+    serverUrl: cfg.get<string>("plantuml.serverUrl") ?? "https://www.plantuml.com/plantuml",
+    format: cfg.get<"svg" | "png">("plantuml.format") ?? "svg",
   };
 }

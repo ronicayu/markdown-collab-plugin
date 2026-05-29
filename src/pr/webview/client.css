@@ -45,6 +45,8 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
 #preview table { border-collapse: collapse; }
 #preview th, #preview td { border: 1px solid var(--border); padding: 4px 8px; }
 #preview img { max-width: 100%; height: auto; }
+#preview figure.mc-plantuml { margin: 12px 0; text-align: center; }
+#preview figure.mc-plantuml img { max-width: 100%; height: auto; background: white; padding: 4px; border-radius: 3px; }
 
 /* Diff stripe + background tint — painted on any rendered block whose
    source-byte range overlaps an added-line range. Bold left bar plus a
