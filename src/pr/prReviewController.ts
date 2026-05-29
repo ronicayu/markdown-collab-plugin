@@ -23,7 +23,9 @@ import {
 } from "./diff";
 import { detectPlatform } from "./platform";
 import { PrReviewPanel } from "./prReviewPanel";
+import { PrReviewTreeProvider } from "./prReviewTreeProvider";
 import type {
+  ExistingPrComment,
   PrComment,
   PrContext,
   PrDraft,
@@ -55,6 +57,10 @@ interface ActiveSession {
   rangesByPath: Map<string, LineRange[]>;
   /** Live `CommentThread`s keyed by draft id so we can update on edit. */
   threadsByDraft: Map<string, vscode.CommentThread>;
+  /** Existing PR comments fetched from the platform, populated lazily. null until first fetch resolves. */
+  existingComments: ExistingPrComment[] | null;
+  /** In-flight fetch promise; subsequent callers await this instead of double-fetching. */
+  existingCommentsLoading: Promise<ExistingPrComment[]> | null;
 }
 
 /**
@@ -88,6 +94,8 @@ export class PrReviewController implements vscode.Disposable {
   private readonly output: vscode.OutputChannel;
   private readonly context: vscode.ExtensionContext;
   private readonly disposables: vscode.Disposable[] = [];
+  private readonly treeProvider: PrReviewTreeProvider;
+  private treeView: vscode.TreeView<unknown> | null = null;
   private session: ActiveSession | null = null;
 
   constructor(context: vscode.ExtensionContext, output: vscode.OutputChannel) {
@@ -105,12 +113,24 @@ export class PrReviewController implements vscode.Disposable {
       prompt: "Add a PR review comment…",
       placeHolder: "Markdown rendered in the PR comment.",
     };
+    this.treeProvider = new PrReviewTreeProvider({
+      onOpenFile: (file) => this.openFile(file.path),
+      getDraftCount: (rel) => this.loadDrafts().filter((d) => d.path === rel).length,
+    });
     this.disposables.push(this.controller);
     this.gcStaleDrafts();
   }
 
   activate(subs: vscode.Disposable[]): void {
+    this.treeView = vscode.window.createTreeView("markdownCollab.prReviewFiles", {
+      treeDataProvider: this.treeProvider,
+      showCollapseAll: true,
+    });
     subs.push(
+      this.treeView,
+      vscode.commands.registerCommand("markdownCollab.openPrReviewFile", (file: ChangedFile) => {
+        this.openFile(file.path);
+      }),
       vscode.commands.registerCommand("markdownCollab.startPrReview", () => this.startPrReview()),
       vscode.commands.registerCommand("markdownCollab.prReviewAddComment", (reply: vscode.CommentReply) =>
         this.addComment(reply),
@@ -185,9 +205,20 @@ export class PrReviewController implements vscode.Disposable {
         platform,
         rangesByPath: new Map(),
         threadsByDraft: new Map(),
+        existingComments: null,
+        existingCommentsLoading: null,
       };
       await this.rehydrateDrafts();
-      await this.pickAndOpenFile(changed);
+      this.treeProvider.setFiles(changed);
+      // Reveal the tree view in the sidebar — focus brings it into view.
+      try {
+        await vscode.commands.executeCommand("markdownCollab.prReviewFiles.focus");
+      } catch {
+        /* view may not be ready yet on first activation; ignore */
+      }
+      // If there's exactly one file, open it straight away so single-file
+      // PRs don't make the user click again.
+      if (changed.length === 1) this.openFile(changed[0].path);
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
       void vscode.window.showErrorMessage(`PR review failed: ${msg}`);
@@ -195,28 +226,34 @@ export class PrReviewController implements vscode.Disposable {
     }
   }
 
-  private async pickAndOpenFile(changed: ChangedFile[]): Promise<void> {
+  private openFile(relPath: string): void {
     if (!this.session) return;
-    const drafts = this.loadDrafts();
-    const draftsByPath = new Map<string, number>();
-    for (const d of drafts) {
-      draftsByPath.set(d.path, (draftsByPath.get(d.path) ?? 0) + 1);
-    }
-    const items: (vscode.QuickPickItem & { file: ChangedFile })[] = changed.map((f) => {
-      const draftCount = draftsByPath.get(f.path) ?? 0;
-      const tag = f.status === "A" ? "added" : f.status === "R" ? "renamed" : "modified";
-      return {
-        label: f.path,
-        description: tag + (draftCount > 0 ? ` · ${draftCount} draft${draftCount === 1 ? "" : "s"}` : ""),
-        file: f,
-      };
-    });
-    const picked = await vscode.window.showQuickPick(items, {
-      placeHolder: `${changed.length} markdown file${changed.length === 1 ? "" : "s"} changed in this PR — pick one to review`,
-      matchOnDescription: true,
-    });
-    if (!picked) return;
-    PrReviewPanel.reveal(this.context, this.draftHostApi(), picked.file.path);
+    PrReviewPanel.reveal(this.context, this.draftHostApi(), relPath);
+  }
+
+  /** Fetch (and cache) the platform-side existing comments for this session. */
+  private async getExistingComments(): Promise<ExistingPrComment[]> {
+    if (!this.session) return [];
+    const session = this.session;
+    if (session.existingComments) return session.existingComments;
+    if (session.existingCommentsLoading) return session.existingCommentsLoading;
+    const promise = (async () => {
+      try {
+        const comments = await session.platform.listExistingComments(session.ctx);
+        session.existingComments = comments;
+        return comments;
+      } catch (e) {
+        this.output.appendLine(
+          `PR review: failed to fetch existing comments: ${(e as Error).message}`,
+        );
+        session.existingComments = [];
+        return [];
+      } finally {
+        session.existingCommentsLoading = null;
+      }
+    })();
+    session.existingCommentsLoading = promise;
+    return promise;
   }
 
   /** API surface the preview panel uses to read + mutate drafts. */
@@ -228,6 +265,7 @@ export class PrReviewController implements vscode.Disposable {
     updateDraftBody: (id: string, body: string) => Promise<void>;
     deleteDraft: (id: string) => Promise<void>;
     submit: (verdict: ReviewVerdict, body: string | undefined) => Promise<void>;
+    getExistingCommentsFor: (rel: string) => Promise<ExistingPrComment[]>;
   } {
     if (!this.session) throw new Error("PR review session not active");
     const session = this.session;
@@ -254,6 +292,10 @@ export class PrReviewController implements vscode.Disposable {
         PrReviewPanel.notifyDraftsChanged(session.ctx, this.draftHostApi());
       },
       submit: (verdict, body) => this.submitPrReview(verdict, body),
+      getExistingCommentsFor: async (rel) => {
+        const all = await this.getExistingComments();
+        return all.filter((c) => c.path === rel);
+      },
     };
   }
 
@@ -426,6 +468,7 @@ export class PrReviewController implements vscode.Disposable {
       updatedAt: new Date().toISOString(),
     };
     await this.context.workspaceState.update(key, next);
+    this.treeProvider.refresh();
   }
 
   private async rehydrateDrafts(): Promise<void> {

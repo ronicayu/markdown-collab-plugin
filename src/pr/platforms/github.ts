@@ -7,7 +7,7 @@
 
 import { getCliRunner } from "../cli";
 import { mergeBaseSha, parseRemoteUrl } from "../diff";
-import type { PrPlatform } from "../types";
+import type { ExistingPrComment, PrPlatform } from "../types";
 
 const GH = "gh";
 
@@ -125,5 +125,79 @@ export const githubPlatform: PrPlatform = {
     }
     const parsed = JSON.parse(res.stdout) as { html_url?: string };
     return { url: parsed.html_url ?? ctx.prUrl };
+  },
+
+  async listExistingComments(ctx) {
+    const runner = getCliRunner();
+    const env = ghEnvForHost(ctx.host);
+    // Paginate so PRs with hundreds of comments don't truncate.
+    const res = await runner(
+      GH,
+      [
+        "api",
+        "--paginate",
+        `repos/${ctx.owner}/${ctx.repo}/pulls/${ctx.prNumber}/comments`,
+      ],
+      { cwd: ctx.repoRoot, env },
+    );
+    if (res.code !== 0) {
+      throw new Error(`gh api comments failed: ${res.stderr.trim() || res.stdout.trim()}`);
+    }
+    // gh --paginate concatenates pages as JSON arrays separated by newlines.
+    // Each page is a `[...]` array. Parse them all and flatten.
+    const raw = res.stdout.trim();
+    if (!raw) return [];
+    type GhComment = {
+      id: number;
+      in_reply_to_id?: number;
+      user?: { login?: string };
+      body: string;
+      path: string;
+      line?: number;
+      original_line?: number;
+      side?: "RIGHT" | "LEFT";
+      created_at: string;
+      html_url: string;
+    };
+    const items: GhComment[] = [];
+    // gh --paginate yields either one big array or a stream of arrays
+    // concatenated. Handle both via incremental scanning.
+    try {
+      const parsed = JSON.parse(raw) as GhComment[];
+      items.push(...parsed);
+    } catch {
+      // Multi-page: split on `][` boundaries and re-wrap.
+      const pages = raw.split(/\]\s*\[/g).map((p, i, arr) => {
+        if (arr.length === 1) return p;
+        if (i === 0) return `${p}]`;
+        if (i === arr.length - 1) return `[${p}`;
+        return `[${p}]`;
+      });
+      for (const page of pages) {
+        try {
+          const parsed = JSON.parse(page) as GhComment[];
+          items.push(...parsed);
+        } catch {
+          // Page didn't parse — skip rather than fail the whole load.
+        }
+      }
+    }
+    const out: ExistingPrComment[] = [];
+    for (const c of items) {
+      const line = c.line ?? c.original_line;
+      if (line == null || !c.path) continue;
+      out.push({
+        id: String(c.id),
+        threadId: c.in_reply_to_id ? String(c.in_reply_to_id) : String(c.id),
+        author: c.user?.login ?? "unknown",
+        body: c.body,
+        path: c.path,
+        line,
+        side: c.side ?? "RIGHT",
+        createdAt: c.created_at,
+        url: c.html_url,
+      });
+    }
+    return out;
   },
 };

@@ -111,6 +111,74 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
   gap: 12px;
 }
 
+#existing-section {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  margin-top: 8px;
+}
+#existing-section .section-title {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+#existing-section #existing-status { margin: 0 0 8px; color: var(--muted); font-size: 12px; }
+#existing-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.existing-card {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  background: var(--card-bg);
+}
+.existing-card.resolved { opacity: 0.65; }
+.existing-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.existing-head .badge.resolved {
+  font-size: 11px;
+  background: var(--diff-add-bg);
+  color: var(--diff-add-stripe);
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+
+.existing-comment {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+.existing-comment:first-of-type {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+.existing-comment.reply { margin-left: 12px; }
+.existing-meta {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.existing-meta strong { color: var(--fg); font-weight: 600; }
+.existing-link { font-size: 13px; padding: 0 4px; text-decoration: none; }
+.existing-body {
+  margin-top: 4px;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 #submit-bar {
   position: sticky;
   bottom: 0;

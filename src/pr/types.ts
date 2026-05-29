@@ -61,6 +61,34 @@ export interface SubmitReviewInput {
   comments: PrComment[];
 }
 
+/**
+ * A comment that already exists on the PR/MR — fetched from the platform
+ * API. v1 surfaces these as read-only cards alongside the reviewer's own
+ * drafts; reply support is deferred.
+ */
+export interface ExistingPrComment {
+  /** Platform-side comment id (string for cross-platform safety). */
+  id: string;
+  /** Discussion / thread id when the platform groups replies. Used to nest. */
+  threadId?: string;
+  /** Display name of the comment author. */
+  author: string;
+  /** Markdown body, posted verbatim by the author. */
+  body: string;
+  /** Repo-relative path, head side. */
+  path: string;
+  /** 1-based line number this comment anchors to. */
+  line: number;
+  /** "RIGHT" for head-side, "LEFT" for base-side. */
+  side: "RIGHT" | "LEFT";
+  /** ISO-8601 creation timestamp. */
+  createdAt: string;
+  /** Permalink to the comment on the platform. */
+  url: string;
+  /** Resolved / outdated state when the platform tracks it. */
+  resolved?: boolean;
+}
+
 export interface PrPlatform {
   readonly name: Platform;
   /** Quick stdout/stderr-safe check that the CLI is installed and authenticated for `host`. */
@@ -69,4 +97,6 @@ export interface PrPlatform {
   loadContext(repoRoot: string, remoteUrl: string, host: string): Promise<PrContext>;
   /** Submit a batch review. Returns the URL of the resulting review. */
   submitReview(ctx: PrContext, input: SubmitReviewInput): Promise<{ url: string }>;
+  /** Fetch every existing line-anchored review comment on the PR/MR. */
+  listExistingComments(ctx: PrContext): Promise<ExistingPrComment[]>;
 }

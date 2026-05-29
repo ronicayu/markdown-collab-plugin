@@ -10,7 +10,7 @@
 
 import { getCliRunner } from "../cli";
 import { mergeBaseSha, parseRemoteUrl } from "../diff";
-import type { PrPlatform } from "../types";
+import type { ExistingPrComment, PrPlatform } from "../types";
 
 const GLAB = "glab";
 
@@ -200,5 +200,76 @@ export const gitlabPlatform: PrPlatform = {
     }
 
     return { url: ctx.prUrl };
+  },
+
+  async listExistingComments(ctx) {
+    const runner = getCliRunner();
+    const env = glabEnvForHost(ctx.host);
+    if (!ctx.projectId) throw new Error("GitLab context missing projectId");
+    const res = await runner(
+      GLAB,
+      [
+        "api",
+        "--paginate",
+        `projects/${ctx.projectId}/merge_requests/${ctx.prNumber}/discussions`,
+      ],
+      { cwd: ctx.repoRoot, env },
+    );
+    if (res.code !== 0) {
+      throw new Error(`glab api discussions failed: ${res.stderr.trim() || res.stdout.trim()}`);
+    }
+    type GlabNote = {
+      id: number;
+      author?: { username?: string; name?: string };
+      body: string;
+      created_at: string;
+      resolved?: boolean;
+      position?: {
+        new_path?: string;
+        old_path?: string;
+        new_line?: number;
+        old_line?: number;
+      };
+    };
+    type GlabDiscussion = { id: string; notes: GlabNote[] };
+    const raw = res.stdout.trim();
+    if (!raw) return [];
+    const discussions: GlabDiscussion[] = [];
+    try {
+      discussions.push(...(JSON.parse(raw) as GlabDiscussion[]));
+    } catch {
+      const pages = raw.split(/\]\s*\[/g).map((p, i, arr) => {
+        if (arr.length === 1) return p;
+        if (i === 0) return `${p}]`;
+        if (i === arr.length - 1) return `[${p}`;
+        return `[${p}]`;
+      });
+      for (const page of pages) {
+        try { discussions.push(...(JSON.parse(page) as GlabDiscussion[])); } catch { /* skip */ }
+      }
+    }
+    const out: ExistingPrComment[] = [];
+    for (const d of discussions) {
+      for (const n of d.notes ?? []) {
+        const pos = n.position;
+        if (!pos) continue;
+        const line = pos.new_line ?? pos.old_line;
+        const path = pos.new_path ?? pos.old_path;
+        if (line == null || !path) continue;
+        out.push({
+          id: String(n.id),
+          threadId: d.id,
+          author: n.author?.username ?? n.author?.name ?? "unknown",
+          body: n.body,
+          path,
+          line,
+          side: pos.new_line != null ? "RIGHT" : "LEFT",
+          createdAt: n.created_at,
+          url: `${ctx.prUrl}#note_${n.id}`,
+          resolved: n.resolved,
+        });
+      }
+    }
+    return out;
   },
 };

@@ -19,6 +19,7 @@ import {
   type LineRange,
 } from "./diff";
 import type {
+  ExistingPrComment,
   PrContext,
   PrDraft,
   ReviewVerdict,
@@ -32,6 +33,7 @@ interface DraftHost {
   updateDraftBody(id: string, body: string): Promise<void>;
   deleteDraft(id: string): Promise<void>;
   submit(verdict: ReviewVerdict, body: string | undefined): Promise<void>;
+  getExistingCommentsFor(relPath: string): Promise<ExistingPrComment[]>;
 }
 
 interface InitMessage {
@@ -48,6 +50,11 @@ interface UpdateDraftsMessage {
   type: "drafts";
   drafts: PrDraft[];
   totalDraftCount: number;
+}
+
+interface ExistingCommentsMessage {
+  type: "existing-comments";
+  comments: ExistingPrComment[];
 }
 
 interface SubmitRequest {
@@ -178,6 +185,12 @@ export class PrReviewPanel {
       },
     };
     await this.panel.webview.postMessage(msg);
+    // Existing comments arrive after init so the preview renders fast;
+    // they show up in the sidebar once the API call settles.
+    void this.host.getExistingCommentsFor(this.relPath).then(async (comments) => {
+      const m: ExistingCommentsMessage = { type: "existing-comments", comments };
+      await this.panel.webview.postMessage(m);
+    });
   }
 
   private async pushDrafts(host: DraftHost): Promise<void> {
@@ -270,6 +283,11 @@ export class PrReviewPanel {
     </header>
     <div id="drafts-list"></div>
     <div id="composer" hidden></div>
+    <section id="existing-section" hidden>
+      <h3 class="section-title">Existing comments</h3>
+      <p id="existing-status" class="hint">Loading…</p>
+      <div id="existing-list"></div>
+    </section>
     <footer id="submit-bar">
       <div class="verdict-row" role="radiogroup" aria-label="Review verdict">
         <label><input type="radio" name="verdict" value="comment" checked> Comment</label>

@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.31.6",
+  "version": "0.32.0",
   "publisher": "markdown-collab",
   "license": "MIT",
   "repository": {
@@ -44,7 +44,8 @@
     "onCustomEditor:markdownCollab.collabEditor",
     "onCommand:markdownCollab.openInlineCommentsView",
     "onCommand:markdownCollab.askClaudeToReview",
-    "onCommand:markdownCollab.startPrReview"
+    "onCommand:markdownCollab.startPrReview",
+    "onView:markdownCollab.prReviewFiles"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -165,6 +166,10 @@
         "command": "markdownCollab.prReviewDeleteComment",
         "title": "Delete draft",
         "icon": "$(trash)"
+      },
+      {
+        "command": "markdownCollab.openPrReviewFile",
+        "title": "Open in PR review"
       }
     ],
     "configuration": {
@@ -267,6 +272,10 @@
         },
         {
           "command": "markdownCollab.prReviewDeleteComment",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.openPrReviewFile",
           "when": "false"
         }
       ],
@@ -393,6 +402,10 @@
           "id": "markdownCollab.review",
           "name": "Markdown Review",
           "when": "markdownCollab.hasReview"
+        },
+        {
+          "id": "markdownCollab.prReviewFiles",
+          "name": "PR Review (markdown files)"
         }
       ]
     },

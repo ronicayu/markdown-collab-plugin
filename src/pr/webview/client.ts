@@ -54,7 +54,20 @@ interface InitMessage {
   imageBaseUris: { docDir: string; workspaceFolder: string | null };
 }
 interface DraftsMessage { type: "drafts"; drafts: PrDraft[]; totalDraftCount: number; }
-type HostMessage = InitMessage | DraftsMessage;
+interface ExistingPrComment {
+  id: string;
+  threadId?: string;
+  author: string;
+  body: string;
+  path: string;
+  line: number;
+  side: "RIGHT" | "LEFT";
+  createdAt: string;
+  url: string;
+  resolved?: boolean;
+}
+interface ExistingMessage { type: "existing-comments"; comments: ExistingPrComment[]; }
+type HostMessage = InitMessage | DraftsMessage | ExistingMessage;
 
 interface ReadyMessage { type: "ready"; }
 interface AddDraftRequest { type: "add-draft"; startLine: number; endLine: number; body: string; }
@@ -81,9 +94,13 @@ const dom = {
   submitHint: document.getElementById("submit-hint") as HTMLElement,
   verdictRadios: document.querySelectorAll<HTMLInputElement>('input[name="verdict"]'),
   reviewBody: document.getElementById("review-body") as HTMLTextAreaElement,
+  existingSection: document.getElementById("existing-section") as HTMLElement,
+  existingStatus: document.getElementById("existing-status") as HTMLElement,
+  existingList: document.getElementById("existing-list") as HTMLElement,
 };
 
 let totalDraftCount = 0;
+let existingComments: ExistingPrComment[] | null = null;
 
 let state: InitMessage | null = null;
 let editingDraftId: string | null = null;
@@ -101,16 +118,21 @@ window.addEventListener("message", (ev) => {
     state = msg;
     drafts = msg.drafts;
     totalDraftCount = msg.totalDraftCount;
+    existingComments = null;
     lineStarts = computeLineStarts(msg.source);
     dom.fileName.textContent = msg.fileName;
     renderPreview(msg.source, msg.addedRanges);
     renderDrafts();
+    renderExisting();
     refreshSubmitButton();
   } else if (msg.type === "drafts") {
     drafts = msg.drafts;
     totalDraftCount = msg.totalDraftCount;
     renderDrafts();
     refreshSubmitButton();
+  } else if (msg.type === "existing-comments") {
+    existingComments = msg.comments;
+    renderExisting();
   }
 });
 
@@ -453,4 +475,114 @@ function renderDraftCard(d: PrDraft): HTMLElement {
   tools.append(editBtn, delBtn);
   card.appendChild(tools);
   return card;
+}
+
+// --- existing comments (read-only) ----------------------------------------
+
+function renderExisting(): void {
+  dom.existingSection.hidden = false;
+  if (existingComments === null) {
+    dom.existingStatus.textContent = "Loading existing comments…";
+    dom.existingStatus.hidden = false;
+    dom.existingList.innerHTML = "";
+    return;
+  }
+  if (existingComments.length === 0) {
+    dom.existingStatus.textContent = "No existing PR comments on this file.";
+    dom.existingStatus.hidden = false;
+    dom.existingList.innerHTML = "";
+    return;
+  }
+  dom.existingStatus.hidden = true;
+  dom.existingList.innerHTML = "";
+  // Group by threadId so replies nest under their parent.
+  const byThread = new Map<string, ExistingPrComment[]>();
+  for (const c of existingComments) {
+    const key = c.threadId ?? c.id;
+    const list = byThread.get(key) ?? [];
+    list.push(c);
+    byThread.set(key, list);
+  }
+  const threads = Array.from(byThread.values())
+    .map((list) => list.slice().sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt)))
+    .sort((a, b) => a[0].line - b[0].line);
+  for (const thread of threads) {
+    dom.existingList.appendChild(renderExistingThread(thread));
+  }
+}
+
+function renderExistingThread(thread: ExistingPrComment[]): HTMLElement {
+  const head = thread[0];
+  const card = document.createElement("section");
+  card.className = "existing-card";
+  if (head.resolved) card.classList.add("resolved");
+
+  const meta = document.createElement("header");
+  meta.className = "existing-head";
+  const lineBtn = document.createElement("button");
+  lineBtn.className = "draft-line btn-link";
+  lineBtn.textContent = `Line ${head.line}`;
+  lineBtn.title = "Jump to this line in the source editor";
+  lineBtn.addEventListener("click", () => vscode.postMessage({ type: "jump", line: head.line }));
+  meta.appendChild(lineBtn);
+  if (head.resolved) {
+    const tag = document.createElement("span");
+    tag.className = "badge resolved";
+    tag.textContent = "resolved";
+    meta.appendChild(tag);
+  }
+  card.appendChild(meta);
+
+  for (const c of thread) {
+    card.appendChild(renderExistingComment(c, c === head));
+  }
+  return card;
+}
+
+function renderExistingComment(c: ExistingPrComment, isHead: boolean): HTMLElement {
+  const el = document.createElement("article");
+  el.className = "existing-comment";
+  if (!isHead) el.classList.add("reply");
+
+  const meta = document.createElement("header");
+  meta.className = "existing-meta";
+  const author = document.createElement("strong");
+  author.textContent = c.author;
+  const ts = document.createElement("time");
+  ts.textContent = " · " + formatTs(c.createdAt);
+  const linkOut = document.createElement("a");
+  linkOut.href = c.url;
+  linkOut.className = "btn-link existing-link";
+  linkOut.textContent = "↗";
+  linkOut.title = "Open this comment on the platform";
+  linkOut.addEventListener("click", (e) => {
+    e.preventDefault();
+    // Open via the same path the markdown links use — handled in pr review
+    // we don't have an open-link handler yet, so just rely on the anchor
+    // navigation the webview will perform when href is a real URL. VS Code's
+    // webview will hand http(s) to openExternal automatically.
+    window.open(c.url, "_blank");
+  });
+  meta.append(author, ts, linkOut);
+  el.appendChild(meta);
+
+  const body = document.createElement("div");
+  body.className = "existing-body";
+  body.textContent = c.body;
+  el.appendChild(body);
+  return el;
+}
+
+function formatTs(ts: string): string {
+  const t = new Date(ts);
+  if (isNaN(t.getTime())) return ts;
+  const diff = Date.now() - t.getTime();
+  const min = Math.round(diff / 60_000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.round(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  return t.toLocaleDateString();
 }

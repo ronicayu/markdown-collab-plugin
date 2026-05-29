@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.32.0 — 2026-05-29 (trial)
+
+### Added: existing PR / MR comments in the side panel
+
+The drafts pane now has an "Existing comments" section below your own
+drafts. When the panel opens it fires off a `gh api …/pulls/N/comments`
+(or `glab api …/merge_requests/N/discussions`) and renders the
+line-anchored review comments others have left on the file.
+
+Each thread shows the line anchor (clickable, jumps to source), the
+authors and timestamps, the comment bodies, and a `↗` link to the
+comment on the platform. Replies nest under their parent thread.
+Resolved discussions get a faded card + "resolved" badge. v1 is
+read-only — reply support is the next obvious thing to add but isn't
+in this drop.
+
+### Added: explorer-style tree view of changed files
+
+The QuickPick file picker is gone. `Markdown Collab: Review PR / MR`
+now populates a tree view in the Explorer sidebar called "PR Review
+(markdown files)", nested by directory the same way the file
+explorer is. Each leaf shows the file name plus a description with
+the status (added / modified / renamed) and unsubmitted draft count.
+Click a leaf to open the preview panel; the tree is the persistent
+navigation while the preview panels open and close. Single-file PRs
+still skip the click and open directly.
+
 ## 0.31.6 — 2026-05-29 (trial)
 
 ### Changed: PR review diff stripes are more visible
