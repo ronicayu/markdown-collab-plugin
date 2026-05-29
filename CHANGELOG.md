@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.33.1 — 2026-05-29 (trial)
+
+### Changed: thread action buttons stack below the quote instead of to its right
+
+In the inline-comments view, each thread card had its action buttons
+(→ Claude / Copy / Resolve / Delete) sitting in a row to the right of
+the quoted text. On narrower panel widths the row got cramped and the
+buttons crowded the quote.
+
+The header is now a vertical flex: quote on top, buttons on a new row
+below it. Buttons wrap when there isn't room for all of them. The
+indent matches the quote's border so the row still visually belongs
+to its anchor.
+
 ## 0.33.0 — 2026-05-29 (trial)
 
 ### Added: PlantUML diagrams in every preview surface
