@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.31.6 — 2026-05-29 (trial)
+
+### Changed: PR review diff stripes are more visible
+
+The 3px stripe + translucent diff-editor variable from 0.31.0 was too
+quiet — on dense themes the changed blocks looked identical to
+unchanged content.
+
+- Stripe is now **5px** wide with a hard `gitDecoration-addedResource`
+  green that's defined on every theme (instead of the diff editor's
+  translucent background variable).
+- Changed blocks get a faint **background tint** (14% of the stripe
+  color) so they pop even when scanning quickly. Hover bumps the tint
+  to 24% so a moused-over block self-identifies.
+- Images and `<hr>` get a `border-left: 5px solid` + tint since they
+  don't have inline padding to grow into.
+- Nested `pr-changed` (a changed inline span inside an already-changed
+  paragraph) is suppressed — only the outermost block carries the bar
+  + tint to avoid doubled stripes inside paragraphs.
+
 ## 0.31.5 — 2026-05-29 (trial)
 
 ### Changed: → Claude / Copy buttons live on the thread, not on each comment

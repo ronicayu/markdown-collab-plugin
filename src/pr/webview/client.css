@@ -5,8 +5,11 @@
   --accent: var(--vscode-textLink-foreground);
   --border: var(--vscode-panel-border, rgba(128,128,128,0.3));
   --card-bg: var(--vscode-editorWidget-background, rgba(128,128,128,0.08));
-  --diff-add: var(--vscode-diffEditor-insertedTextBackground, rgba(70,200,90,0.35));
-  --diff-add-stripe: var(--vscode-diffEditor-insertedLineBackground, rgba(70,200,90,0.85));
+  /* Use git "added" green: visible on every theme. Diff-editor variables
+     are translucent and disappear on busy themes. */
+  --diff-add-stripe: var(--vscode-gitDecoration-addedResourceForeground, #4caf50);
+  --diff-add-bg: color-mix(in srgb, var(--diff-add-stripe) 14%, transparent);
+  --diff-add-bg-strong: color-mix(in srgb, var(--diff-add-stripe) 24%, transparent);
 }
 
 body { margin: 0; font-family: var(--vscode-font-family); color: var(--fg); background: var(--bg); font-size: var(--vscode-font-size); }
@@ -43,12 +46,17 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
 #preview th, #preview td { border: 1px solid var(--border); padding: 4px 8px; }
 #preview img { max-width: 100%; height: auto; }
 
-/* Diff side stripe — painted on any rendered block whose source-byte
-   range overlaps an added-line range. Click to jump to source line. */
+/* Diff stripe + background tint — painted on any rendered block whose
+   source-byte range overlaps an added-line range. Bold left bar plus a
+   faint tint so changes are obvious even on dense themes; the stripe
+   alone was too easy to miss. */
 #preview .pr-changed {
   position: relative;
-  padding-left: 12px;
-  margin-left: -12px;
+  padding: 4px 8px 4px 14px;
+  margin: 2px -8px 2px -14px;
+  background: var(--diff-add-bg);
+  border-radius: 3px;
+  transition: background-color 80ms ease-out;
 }
 #preview .pr-changed::before {
   content: "";
@@ -56,12 +64,28 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
   left: 0;
   top: 0;
   bottom: 0;
-  width: 3px;
+  width: 5px;
   background: var(--diff-add-stripe);
-  border-radius: 2px;
+  border-radius: 2px 0 0 2px;
 }
+#preview .pr-changed:hover { background: var(--diff-add-bg-strong); }
+
+/* Inline elements (links, code spans) inside changed prose: don't double
+   up the stripe — only outer blocks get the full treatment. */
+#preview .pr-changed .pr-changed {
+  padding: 0;
+  margin: 0;
+  background: transparent;
+}
+#preview .pr-changed .pr-changed::before { content: none; }
+
+/* Block-level non-text: images, hr — give them a hard left border + tint
+   since they don't have inline padding to grow into. */
 #preview img.pr-changed,
-#preview hr.pr-changed { box-shadow: -3px 0 0 var(--diff-add-stripe); }
+#preview hr.pr-changed {
+  border-left: 5px solid var(--diff-add-stripe);
+  background: var(--diff-add-bg);
+}
 
 #floating-add {
   position: fixed;
