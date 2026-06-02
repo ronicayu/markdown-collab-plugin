@@ -4,22 +4,15 @@ src/**
 out/test/**
 **/*.test.ts
 **/*.test.js
-**/*.test.js.map
+# Source maps are debug-only; never loaded at runtime.
+**/*.map
+# The host extension is bundled into out/extension.js (npm run bundle:extension),
+# so node_modules runtime deps (markdown-it, yjs, y-protocols, lib0, ws, pako, …)
+# are inlined and need not ship. The only exception is mermaid, which the webviews
+# load as a script asset by URI rather than requiring it.
 node_modules/**
-!node_modules/markdown-it/**
-!node_modules/argparse/**
-!node_modules/entities/**
-!node_modules/linkify-it/**
-!node_modules/mdurl/**
-!node_modules/punycode.js/**
-!node_modules/uc.micro/**
 !node_modules/mermaid/package.json
 !node_modules/mermaid/dist/mermaid.min.js
-!node_modules/yjs/**
-!node_modules/y-protocols/**
-!node_modules/lib0/**
-!node_modules/isomorphic.js/**
-!node_modules/ws/**
 tsconfig.json
 tsconfig.webview.json
 vitest.config.ts

@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.33.2",
+  "version": "0.33.3",
   "publisher": "markdown-collab",
   "license": "MIT",
   "repository": {
@@ -447,8 +447,9 @@
     ]
   },
   "scripts": {
-    "compile": "tsc -p . && tsc -p tsconfig.webview.json && npm run bundle:webview && npm run bundle:inline-comments && npm run bundle:pr-review && npm run copy:fixtures",
+    "compile": "tsc -p . && tsc -p tsconfig.webview.json && npm run bundle:extension && npm run bundle:webview && npm run bundle:inline-comments && npm run bundle:pr-review && npm run copy:fixtures",
     "watch": "tsc -w -p .",
+    "bundle:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --external:bufferutil --external:utf-8-validate --outfile=out/extension.js --minify --sourcemap=linked --legal-comments=none",
     "bundle:webview": "esbuild src/webview/client.ts --bundle --format=iife --outfile=out/webview/client.js --target=es2020 --platform=browser --minify --sourcemap=linked --legal-comments=none",
     "bundle:webview:watch": "npm run bundle:webview -- --watch",
     "bundle:inline-comments": "esbuild src/inlineComments/webview/client.ts --bundle --format=iife --outfile=out/inlineComments/client.js --target=es2020 --platform=browser --minify --sourcemap=linked --legal-comments=none && node -e \"require('fs').copyFileSync('src/inlineComments/webview/client.css','out/inlineComments/client.css')\"",

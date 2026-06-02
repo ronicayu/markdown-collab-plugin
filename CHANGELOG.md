@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.33.3 — 2026-06-02 (trial)
+
+### Changed: the extension is now bundled, shrinking the published package
+
+The host extension is now bundled into a single `out/extension.js` with
+esbuild (`npm run bundle:extension`), so its runtime dependencies
+(markdown-it, yjs, y-protocols, lib0, ws, pako) are inlined instead of
+shipped as loose `node_modules` trees. `.vscodeignore` no longer ships
+those packages — only mermaid remains, since the webviews load it as a
+script asset by URL rather than requiring it. Source maps are excluded
+from the package too.
+
+Net effect: the `.vsix` drops from ~1300 files (221 JavaScript files) to
+~60 files, and the vsce "you should bundle your extension" packaging
+warning is gone. No runtime behavior changes.
+
+The release workflow also opts into the Node 24 runtime for its GitHub
+Actions (`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`), ahead of GitHub forcing
+the switch on 2026-06-16, so it stops emitting the Node 20 deprecation
+warning.
+
 ## 0.33.2 — 2026-06-02 (trial)
 
 ### Added: refresh button in the PR review Changed Files panel
