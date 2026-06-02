@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.33.2 — 2026-06-02 (trial)
+
+### Added: refresh button in the PR review Changed Files panel
+
+The "PR Review (markdown files)" sidebar view now has a refresh button
+in its title bar. Click it to re-pull the review without restarting:
+the changed-file list and per-file diff ranges are recomputed (so new
+local commits show up), the cached platform comments are dropped and
+re-fetched, draft threads are rebuilt against the fresh diff, and any
+open file panels re-render with the new source, ranges, drafts, and
+comments.
+
+Note: this does not run `git fetch` — commits pushed to the PR's head
+or base won't appear until you fetch them yourself, since the draft
+store is keyed to HEAD's SHA and silently shifting that baseline would
+strand your in-progress drafts.
+
 ## 0.33.1 — 2026-05-29 (trial)
 
 ### Changed: thread action buttons stack below the quote instead of to its right

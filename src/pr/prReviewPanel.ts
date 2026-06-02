@@ -146,6 +146,19 @@ export class PrReviewPanel {
     }
   }
 
+  /**
+   * Fully re-render every open panel for this PR — re-reads the file from
+   * disk, recomputes diff ranges, and re-fetches platform comments. Used by
+   * the Changed Files refresh button. The caller is responsible for clearing
+   * any cached comments on the shared host first.
+   */
+  static refreshAll(prCtx: PrContext): void {
+    const prefix = `${prKeyFor(prCtx)}::`;
+    for (const [k, p] of panels) {
+      if (k.startsWith(prefix)) void p.pushInit();
+    }
+  }
+
   private readonly disposables: vscode.Disposable[] = [];
 
   private constructor(

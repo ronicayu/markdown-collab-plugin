@@ -132,6 +132,7 @@ export class PrReviewController implements vscode.Disposable {
         this.openFile(file.path);
       }),
       vscode.commands.registerCommand("markdownCollab.startPrReview", () => this.startPrReview()),
+      vscode.commands.registerCommand("markdownCollab.prReviewRefresh", () => this.refreshReview()),
       vscode.commands.registerCommand("markdownCollab.prReviewAddComment", (reply: vscode.CommentReply) =>
         this.addComment(reply),
       ),
@@ -229,6 +230,52 @@ export class PrReviewController implements vscode.Disposable {
   private openFile(relPath: string): void {
     if (!this.session) return;
     PrReviewPanel.reveal(this.context, this.draftHostApi(), relPath);
+  }
+
+  /**
+   * Re-pull the review from git + the platform without restarting the
+   * session: recompute the changed-file list and per-file diff ranges
+   * (picks up new local commits), drop the cached platform comments so the
+   * next read re-fetches them, rebuild the draft threads against the fresh
+   * diff, and re-render any open file panels.
+   */
+  private async refreshReview(): Promise<void> {
+    if (!this.session) {
+      void vscode.window.showInformationMessage(
+        'No active PR review to refresh. Run "Markdown Collab: Review PR / MR" first.',
+      );
+      return;
+    }
+    const session = this.session;
+    try {
+      const changed = await vscode.window.withProgress(
+        { location: { viewId: "markdownCollab.prReviewFiles" } },
+        async () => {
+          const files = await listChangedMarkdownFiles(
+            session.ctx.repoRoot,
+            `origin/${session.ctx.baseRef}`,
+          );
+          // Diff may have moved (new commits); drop the cached ranges.
+          session.rangesByPath.clear();
+          // Force the next existing-comment read to re-hit the platform.
+          session.existingComments = null;
+          session.existingCommentsLoading = null;
+          // Rebuild draft threads against the fresh diff.
+          for (const t of session.threadsByDraft.values()) t.dispose();
+          session.threadsByDraft.clear();
+          await this.rehydrateDrafts();
+          return files;
+        },
+      );
+      this.treeProvider.setFiles(changed);
+      // Re-render open panels: fresh source, ranges, drafts, and a
+      // re-fetch of the (now-uncached) platform comments.
+      PrReviewPanel.refreshAll(session.ctx);
+    } catch (e) {
+      const msg = (e as Error).message ?? String(e);
+      void vscode.window.showErrorMessage(`PR review refresh failed: ${msg}`);
+      this.output.appendLine(`refreshReview error: ${msg}`);
+    }
   }
 
   /** Fetch (and cache) the platform-side existing comments for this session. */

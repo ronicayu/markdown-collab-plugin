@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.33.1",
+  "version": "0.33.2",
   "publisher": "markdown-collab",
   "license": "MIT",
   "repository": {
@@ -170,6 +170,12 @@
       {
         "command": "markdownCollab.openPrReviewFile",
         "title": "Open in PR review"
+      },
+      {
+        "command": "markdownCollab.prReviewRefresh",
+        "title": "Refresh Changed Files",
+        "category": "Markdown Collab",
+        "icon": "$(refresh)"
       }
     ],
     "configuration": {
@@ -356,6 +362,13 @@
           "command": "markdownCollab.prReviewCancelEdit",
           "group": "inline@2",
           "when": "commentController == markdown-collab-pr && comment == prDraft"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "markdownCollab.prReviewRefresh",
+          "when": "view == markdownCollab.prReviewFiles",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
