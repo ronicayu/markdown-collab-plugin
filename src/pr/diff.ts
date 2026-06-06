@@ -154,6 +154,37 @@ export async function headSha(
   return res.stdout.trim();
 }
 
+/** Current checked-out branch name, or "HEAD" when in a detached state. */
+export async function currentBranch(
+  repoRoot: string,
+  runner: CliRunner = getCliRunner(),
+): Promise<string> {
+  const res = await runner("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repoRoot });
+  if (res.code !== 0) {
+    throw new Error(`git rev-parse --abbrev-ref HEAD failed: ${res.stderr.trim()}`);
+  }
+  return res.stdout.trim();
+}
+
+/**
+ * Repo default branch as recorded by `origin/HEAD` (e.g. "main"), or null
+ * when it isn't resolvable locally (`git remote set-head` never run). Callers
+ * fall back to a name match against "main"/"master".
+ */
+export async function defaultBranch(
+  repoRoot: string,
+  runner: CliRunner = getCliRunner(),
+): Promise<string | null> {
+  const res = await runner(
+    "git",
+    ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+    { cwd: repoRoot },
+  );
+  if (res.code !== 0) return null;
+  const m = /^refs\/remotes\/origin\/(.+)$/.exec(res.stdout.trim());
+  return m ? m[1] : null;
+}
+
 /** Read the `origin` remote URL. */
 export async function originRemoteUrl(
   repoRoot: string,

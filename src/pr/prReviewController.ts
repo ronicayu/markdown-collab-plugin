@@ -13,6 +13,8 @@ import * as path from "path";
 import * as vscode from "vscode";
 import {
   addedLineRanges,
+  currentBranch,
+  defaultBranch,
   headSha as readHeadSha,
   lineInRanges,
   listChangedMarkdownFiles,
@@ -53,6 +55,8 @@ interface DraftEnvelope {
 interface ActiveSession {
   ctx: PrContext;
   platform: PrPlatform;
+  /** Branch the review was started on, so a checkout elsewhere restarts it. */
+  branch: string;
   /** Per-file added-line ranges, lazily populated as files open. */
   rangesByPath: Map<string, LineRange[]>;
   /** Live `CommentThread`s keyed by draft id so we can update on edit. */
@@ -163,6 +167,7 @@ export class PrReviewController implements vscode.Disposable {
         return;
       }
       const repoRoot = folder.uri.fsPath;
+      const branch = await currentBranch(repoRoot).catch(() => "");
       const remoteUrl = await originRemoteUrl(repoRoot).catch(() => null);
       if (!remoteUrl) {
         void vscode.window.showWarningMessage(
@@ -201,9 +206,13 @@ export class PrReviewController implements vscode.Disposable {
         );
         return;
       }
+      // Retire any review left over from a previously checked-out branch so
+      // its draft threads and open panels don't linger over the new one.
+      this.disposeSession();
       this.session = {
         ctx,
         platform,
+        branch,
         rangesByPath: new Map(),
         threadsByDraft: new Map(),
         existingComments: null,
@@ -233,20 +242,77 @@ export class PrReviewController implements vscode.Disposable {
   }
 
   /**
+   * Refresh-button handler. Doubles as a start affordance: with no active
+   * review — or after checking out a different branch — it starts a fresh
+   * review for the current branch. On the base/default branch (or a detached
+   * HEAD) there's nothing to review, so it retires any stale session and
+   * hints instead. Otherwise it refreshes the active review in place.
+   */
+  private async refreshReview(): Promise<void> {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) {
+      void vscode.window.showWarningMessage("Open a workspace folder first.");
+      return;
+    }
+    const repoRoot = folder.uri.fsPath;
+    const branch = await currentBranch(repoRoot).catch(() => "");
+
+    const onSessionBranch = !!this.session && branch !== "" && this.session.branch === branch;
+    if (!onSessionBranch) {
+      if (await this.onBaseBranch(repoRoot, branch)) {
+        // Switched onto the base branch (or detached) — drop the stale review.
+        if (this.session) {
+          this.disposeSession();
+          this.treeProvider.clear();
+        }
+        const where = branch && branch !== "HEAD" ? `"${branch}"` : "a detached HEAD";
+        void vscode.window.showInformationMessage(
+          `You're on ${where}. Check out a PR/MR branch, then refresh to start a review.`,
+        );
+        return;
+      }
+      // No session, or the working copy moved to a different branch → (re)start.
+      return this.startPrReview();
+    }
+
+    await this.refreshActiveSession(this.session!);
+  }
+
+  /**
+   * Is `branch` the one we should never auto-start a review on? True for the
+   * active session's base ref, the repo default branch (`origin/HEAD`, falling
+   * back to a main/master name match), and a detached HEAD.
+   */
+  private async onBaseBranch(repoRoot: string, branch: string): Promise<boolean> {
+    if (branch === "" || branch === "HEAD") return true;
+    if (this.session && branch === this.session.ctx.baseRef) return true;
+    const def = await defaultBranch(repoRoot).catch(() => null);
+    if (def) return branch === def;
+    return branch === "main" || branch === "master";
+  }
+
+  /** Tear down the active session: dispose its draft threads and open panels. */
+  private disposeSession(): void {
+    if (!this.session) return;
+    for (const t of this.session.threadsByDraft.values()) {
+      try {
+        t.dispose();
+      } catch {
+        /* ignore */
+      }
+    }
+    PrReviewPanel.closeForContext(this.session.ctx);
+    this.session = null;
+  }
+
+  /**
    * Re-pull the review from git + the platform without restarting the
    * session: recompute the changed-file list and per-file diff ranges
    * (picks up new local commits), drop the cached platform comments so the
    * next read re-fetches them, rebuild the draft threads against the fresh
    * diff, and re-render any open file panels.
    */
-  private async refreshReview(): Promise<void> {
-    if (!this.session) {
-      void vscode.window.showInformationMessage(
-        'No active PR review to refresh. Run "Markdown Collab: Review PR / MR" first.',
-      );
-      return;
-    }
-    const session = this.session;
+  private async refreshActiveSession(session: ActiveSession): Promise<void> {
     try {
       const changed = await vscode.window.withProgress(
         { location: { viewId: "markdownCollab.prReviewFiles" } },

@@ -159,6 +159,15 @@ export class PrReviewPanel {
     }
   }
 
+  /** Close every open panel for a PR context — used when a review restarts on a new branch. */
+  static closeForContext(prCtx: PrContext): void {
+    const prefix = `${prKeyFor(prCtx)}::`;
+    // Snapshot first: dispose() mutates `panels`.
+    for (const [k, p] of [...panels]) {
+      if (k.startsWith(prefix)) p.dispose();
+    }
+  }
+
   private readonly disposables: vscode.Disposable[] = [];
 
   private constructor(

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.33.4 — 2026-06-06 (trial)
+
+### Changed: the Changed Files refresh button now starts and restarts reviews
+
+The refresh button in the "PR Review (markdown files)" panel does more
+than refresh now:
+
+- With no review running, clicking it starts one for the current branch
+  (the same as `Markdown Collab: Review PR / MR`).
+- After you check out a different branch, clicking it retires the old
+  review and starts a fresh one for the branch you're now on, disposing
+  the previous review's draft comment threads and closing its open file
+  panels so nothing stale lingers.
+- On the base/default branch (resolved from `origin/HEAD`, falling back
+  to `main`/`master`) or a detached HEAD there's nothing to review, so it
+  clears the panel and hints to check out a PR/MR branch instead.
+- With a review already running on the current branch, it still refreshes
+  in place exactly as before.
+
 ## 0.33.3 — 2026-06-02 (trial)
 
 ### Changed: the extension is now bundled, shrinking the published package
