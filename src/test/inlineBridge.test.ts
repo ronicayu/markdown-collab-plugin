@@ -50,6 +50,19 @@ describe("proseOf", () => {
     const withFm = `---\ntitle: x\n---\n\n${DOC}`;
     expect(proseOf(withFm)).toContain("title: x");
   });
+
+  it("round-trips exactly: stripping a freshly-seeded doc yields the original prose", () => {
+    // Regression guard: a stray trailing newline here made the editor↔document
+    // echo non-idempotent and reverted edits on save.
+    const { source } = seed();
+    expect(proseOf(source)).toBe(DOC);
+  });
+
+  it("round-trips exactly after a prose edit (proseOf ∘ mergeProseEdit is identity)", () => {
+    const { source } = seed();
+    const edited = DOC.replace("# Title", "# Title edited");
+    expect(proseOf(mergeProseEdit(source, edited))).toBe(edited);
+  });
 });
 
 describe("addThreadFromAnchor", () => {

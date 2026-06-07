@@ -190,6 +190,13 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     // webview's Y.Text mid-edit.
     let pendingApply = false;
 
+    // The prose the editor currently has. We only push an `externalChange`
+    // (which replaces the whole Milkdown doc) when the document's prose
+    // actually diverges from this — so the editor's own edits, our marker
+    // re-writes, and no-op save formatting never bounce back and revert
+    // what the user just typed.
+    let lastWebviewProse = proseOf(document.getText());
+
     /** Replace the whole document with `next`. Guards against echo. */
     const writeDocument = async (next: string): Promise<boolean> => {
       if (document.getText() === next) return true;
@@ -212,6 +219,9 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
 
     /** Apply a prose-only edit from the webview, preserving inline comment markers. */
     const applyProseEdit = async (newProse: string): Promise<void> => {
+      // The editor now holds `newProse` — record it so a later doc-change echo
+      // (e.g. format-on-save) isn't mistaken for an external edit.
+      lastWebviewProse = newProse;
       const current = document.getText();
       if (proseOf(current) === newProse) return; // prose unchanged — nothing to merge
       await writeDocument(mergeProseEdit(current, newProse));
@@ -228,9 +238,11 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       const msg = raw as ClientMessage | undefined;
       if (!msg || typeof msg !== "object") return;
       if (msg.type === "ready") {
+        const text = proseOf(document.getText());
+        lastWebviewProse = text;
         const payload: InitPayload = {
           type: "init",
-          text: proseOf(document.getText()),
+          text,
           room,
           serverUrl,
           user,
@@ -294,12 +306,18 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     const docSub = vscode.workspace.onDidChangeTextDocument((e) => {
       if (e.document.uri.toString() !== document.uri.toString()) return;
       if (pendingApply) return;
-      // An external write (standard editor, git, another window) may have
-      // changed the prose AND the inline comments — refresh both.
-      void panel.webview.postMessage({
-        type: "externalChange",
-        text: proseOf(e.document.getText()),
-      });
+      // A genuine external write (standard editor, git, another window) changes
+      // the prose the editor doesn't yet have — only then replace its content.
+      // Skip echoes whose prose the editor already shows (our own marker
+      // re-writes, no-op format-on-save, a save racing the edit debounce), so
+      // we never revert what the user just typed.
+      const newProse = proseOf(e.document.getText());
+      if (newProse !== lastWebviewProse) {
+        lastWebviewProse = newProse;
+        void panel.webview.postMessage({ type: "externalChange", text: newProse });
+      }
+      // Comments are cheap to re-derive and may have changed (markers moved,
+      // a comment edited elsewhere) even when the prose didn't.
       pushComments();
     });
 

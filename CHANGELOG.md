@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.33.6 — 2026-06-07 (trial)
+
+### Fixed: live editor no longer reverts your edits on save
+
+0.33.5 introduced a regression where saving in the live (collab) editor
+could snap the document back to an earlier state, losing what you'd just
+typed. Two causes, both fixed:
+
+- Stripping the inline comment markers left a stray trailing newline, so
+  the prose the extension compared against never quite matched what the
+  editor had — making the editor↔document sync echo back on every change.
+- That echo replaced the whole editor document. Combined with the brief
+  save/typing debounce, a save could push slightly-stale text back into the
+  editor and wipe recent keystrokes.
+
+The extension now only refreshes the editor when the file's prose genuinely
+changes outside it (another window, git, a real format-on-save), never for
+its own marker rewrites or no-op saves.
+
 ## 0.33.5 — 2026-06-07 (trial)
 
 ### Changed: the live editor stores comments inline in the .md, not a sidecar

@@ -108,7 +108,13 @@ function buildBridge(source: string): Bridge {
       parsed.threadsRegion.start > 0 && source[parsed.threadsRegion.start - 1] === "\n"
         ? parsed.threadsRegion.start - 1
         : parsed.threadsRegion.start;
-    skips.push([start, parsed.threadsRegion.end]);
+    // Also swallow one trailing newline after the region. `withThreads`
+    // writes "<prose>\n<region>\n", so without this the closing newline
+    // survives stripping and the prose gains a trailing "\n" on every
+    // round-trip — which makes the editor↔document echo non-idempotent.
+    let end = parsed.threadsRegion.end;
+    if (source[end] === "\n") end += 1;
+    skips.push([start, end]);
   }
   skips.sort((a, b) => a[0] - b[0]);
 
