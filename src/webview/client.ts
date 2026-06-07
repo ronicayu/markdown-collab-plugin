@@ -65,11 +65,17 @@ interface InitMessage {
   serverUrl: string;
   user: { name: string; color: string };
   comments: CommentSummary[];
+  frontmatter?: string;
 }
 
 interface ExternalChangeMessage {
   type: "externalChange";
   text: string;
+}
+
+interface FrontmatterMessage {
+  type: "frontmatter";
+  frontmatter: string;
 }
 
 interface SidecarChangedMessage {
@@ -124,6 +130,7 @@ interface DrawioReadResultMessage {
 type IncomingMessage =
   | InitMessage
   | ExternalChangeMessage
+  | FrontmatterMessage
   | SidecarChangedMessage
   | AddCommentResultMessage
   | ReplyCommentResultMessage
@@ -157,6 +164,7 @@ const sidebarState: {
 let sidebarEl: HTMLElement | null = null;
 let composerEl: HTMLElement | null = null;
 let editorContainer: HTMLElement | null = null;
+let frontmatterEl: HTMLElement | null = null;
 let layoutEl: HTMLElement | null = null;
 let collapseToggleEl: HTMLButtonElement | null = null;
 
@@ -210,6 +218,7 @@ async function init(msg: InitMessage): Promise<void> {
   buildLayout();
   sidebarState.comments = msg.comments ?? [];
   cachedMarkdown = msg.text;
+  renderFrontmatter(msg.frontmatter ?? "");
   renderSidebar();
 
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -314,9 +323,20 @@ function buildLayout(): void {
   layoutEl.className = "mdc-layout";
   document.body.appendChild(layoutEl);
 
+  const editorPane = document.createElement("div");
+  editorPane.className = "mdc-editor-pane";
+  layoutEl.appendChild(editorPane);
+
+  // Frontmatter panel sits above the Milkdown body. The body editor mounts
+  // into its own element so ProseMirror never touches the frontmatter DOM.
+  frontmatterEl = document.createElement("div");
+  frontmatterEl.className = "mdc-frontmatter";
+  frontmatterEl.hidden = true;
+  editorPane.appendChild(frontmatterEl);
+
   editorContainer = document.createElement("div");
-  editorContainer.className = "mdc-editor-pane";
-  layoutEl.appendChild(editorContainer);
+  editorContainer.className = "mdc-editor-root";
+  editorPane.appendChild(editorContainer);
 
   collapseToggleEl = document.createElement("button");
   collapseToggleEl.type = "button";
@@ -1460,6 +1480,26 @@ function applyExternalChange(text: string): void {
   forceHighlightRefresh();
 }
 
+// Render the read-only frontmatter panel above the editor. Milkdown would
+// turn the `---` fences into thematic breaks and corrupt the YAML on save, so
+// the frontmatter is kept out of the body and surfaced here instead.
+function renderFrontmatter(raw: string): void {
+  if (!frontmatterEl) return;
+  const text = (raw ?? "").replace(/\n+$/, "");
+  if (!text.trim()) {
+    frontmatterEl.hidden = true;
+    frontmatterEl.textContent = "";
+    return;
+  }
+  frontmatterEl.hidden = false;
+  frontmatterEl.innerHTML =
+    `<div class="mdc-frontmatter-head">` +
+    `<span class="mdc-frontmatter-label">Frontmatter</span>` +
+    `<span class="mdc-frontmatter-hint">read-only — edit in the plain text editor</span>` +
+    `</div>` +
+    `<pre class="mdc-frontmatter-body">${escapeHtml(text)}</pre>`;
+}
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -1540,6 +1580,8 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     } catch (err) {
       postError("externalChange", err);
     }
+  } else if (msg.type === "frontmatter") {
+    renderFrontmatter(msg.frontmatter);
   } else if (msg.type === "sidecar-changed") {
     sidebarState.comments = msg.comments ?? [];
     renderSidebar();

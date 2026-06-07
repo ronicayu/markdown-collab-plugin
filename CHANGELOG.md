@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.33.7 — 2026-06-07 (trial)
+
+### Added: frontmatter support in the live editor
+
+The live (collaborative) editor now handles a document's YAML/TOML
+frontmatter (the `---` / `+++` block at the top) instead of letting
+Milkdown turn the fences into horizontal rules and scramble the metadata
+on save. The frontmatter is shown in a labeled, read-only panel above the
+editor and is preserved verbatim through every edit and save. To change
+it, open the file in the plain text editor.
+
 ## 0.33.6 — 2026-06-07 (trial)
 
 ### Fixed: live editor no longer reverts your edits on save

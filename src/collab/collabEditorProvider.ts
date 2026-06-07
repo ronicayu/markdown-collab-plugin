@@ -7,6 +7,7 @@ import {
   addThreadFromAnchor,
   commentsOf,
   deleteThread,
+  frontmatterOf,
   mergeProseEdit,
   proseOf,
   replyToThread,
@@ -27,6 +28,14 @@ interface InitPayload {
   serverUrl: string;
   user: { name: string; color: string };
   comments: CollabComment[];
+  /** Raw frontmatter block, shown in a dedicated read-only panel. "" when absent. */
+  frontmatter: string;
+}
+
+/** Pushed when the frontmatter changes on disk (external edit) without the body changing. */
+interface FrontmatterChangedPayload {
+  type: "frontmatter";
+  frontmatter: string;
 }
 
 // Wire type kept as "sidecar-changed" for back-compat with the webview
@@ -196,6 +205,10 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     // re-writes, and no-op save formatting never bounce back and revert
     // what the user just typed.
     let lastWebviewProse = proseOf(document.getText());
+    // Frontmatter the editor currently shows. Tracked separately because it
+    // lives in its own panel, not the Milkdown body — an external edit can
+    // change it while the body prose stays identical.
+    let lastFrontmatter = frontmatterOf(document.getText());
 
     /** Replace the whole document with `next`. Guards against echo. */
     const writeDocument = async (next: string): Promise<boolean> => {
@@ -238,15 +251,18 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       const msg = raw as ClientMessage | undefined;
       if (!msg || typeof msg !== "object") return;
       if (msg.type === "ready") {
-        const text = proseOf(document.getText());
+        const source = document.getText();
+        const text = proseOf(source);
         lastWebviewProse = text;
+        lastFrontmatter = frontmatterOf(source);
         const payload: InitPayload = {
           type: "init",
           text,
           room,
           serverUrl,
           user,
-          comments: commentsOf(document.getText()),
+          comments: commentsOf(source),
+          frontmatter: lastFrontmatter,
         };
         void panel.webview.postMessage(payload);
       } else if (msg.type === "edit") {
@@ -311,10 +327,21 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       // Skip echoes whose prose the editor already shows (our own marker
       // re-writes, no-op format-on-save, a save racing the edit debounce), so
       // we never revert what the user just typed.
-      const newProse = proseOf(e.document.getText());
+      const source = e.document.getText();
+      const newProse = proseOf(source);
       if (newProse !== lastWebviewProse) {
         lastWebviewProse = newProse;
         void panel.webview.postMessage({ type: "externalChange", text: newProse });
+      }
+      // Frontmatter lives in its own panel — push it when it changes even if
+      // the body prose didn't.
+      const newFrontmatter = frontmatterOf(source);
+      if (newFrontmatter !== lastFrontmatter) {
+        lastFrontmatter = newFrontmatter;
+        void panel.webview.postMessage({
+          type: "frontmatter",
+          frontmatter: newFrontmatter,
+        } satisfies FrontmatterChangedPayload);
       }
       // Comments are cheap to re-derive and may have changed (markers moved,
       // a comment edited elsewhere) even when the prose didn't.

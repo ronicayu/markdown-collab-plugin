@@ -116,6 +116,13 @@ function buildBridge(source: string): Bridge {
     if (source[end] === "\n") end += 1;
     skips.push([start, end]);
   }
+  // Frontmatter is kept out of the editor body — Milkdown would render the
+  // `---` fences as thematic breaks and mangle the YAML on save. It's shown
+  // in a dedicated block and re-prepended on write (see frontmatterOf /
+  // mergeProseEdit).
+  if (parsed.frontmatter) {
+    skips.push([parsed.frontmatter.start, parsed.frontmatter.end]);
+  }
   skips.sort((a, b) => a[0] - b[0]);
 
   const proseChars: string[] = [];
@@ -148,9 +155,15 @@ function findProseIndex(proseToSrc: number[], srcOffset: number): number | null 
   return null;
 }
 
-/** The prose the collab editor should display (markers + threads region removed). */
+/** The prose the collab editor should display (frontmatter, markers + threads region removed). */
 export function proseOf(source: string): string {
   return buildBridge(source).prose;
+}
+
+/** The raw frontmatter block (including fences + trailing newline), or "" when absent. */
+export function frontmatterOf(source: string): string {
+  const fm = parse(source).frontmatter;
+  return fm ? source.slice(fm.start, fm.end) : "";
 }
 
 /** Project the parsed inline threads into the flat comment list the sidebar renders. */
@@ -294,5 +307,7 @@ export function mergeProseEdit(oldSource: string, newProse: string): string {
   }
   marked += newProse.slice(cursor);
 
-  return withThreads(marked, threads);
+  // Re-prepend the frontmatter the editor never sees, so it round-trips
+  // verbatim instead of being lost when the body is written back.
+  return withThreads(frontmatterOf(oldSource) + marked, threads);
 }

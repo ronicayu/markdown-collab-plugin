@@ -3,6 +3,7 @@ import {
   addThreadFromAnchor,
   commentsOf,
   deleteThread,
+  frontmatterOf,
   mergeProseEdit,
   proseOf,
   replyToThread,
@@ -44,11 +45,6 @@ describe("proseOf", () => {
     expect(prose).toContain("jumps over the lazy dog");
     // Round-trips back to the original prose (markers were invisible).
     expect(prose.trimEnd()).toBe(DOC.trimEnd());
-  });
-
-  it("keeps frontmatter in the prose (the editor shows it)", () => {
-    const withFm = `---\ntitle: x\n---\n\n${DOC}`;
-    expect(proseOf(withFm)).toContain("title: x");
   });
 
   it("round-trips exactly: stripping a freshly-seeded doc yields the original prose", () => {
@@ -158,6 +154,37 @@ describe("replyToThread / setThreadResolved / deleteThread", () => {
     expect(replyToThread(source, "zzzzz", { body: "x", author: "a" })).toBeNull();
     expect(setThreadResolved(source, "zzzzz", true, "a")).toBeNull();
     expect(deleteThread(source, "zzzzz")).toBeNull();
+  });
+});
+
+describe("frontmatter", () => {
+  const FM = "---\ntitle: Hello\ntags: [a, b]\n---\n";
+  const fmDoc = FM + DOC;
+
+  it("frontmatterOf extracts the block (with fences); '' when absent", () => {
+    expect(frontmatterOf(fmDoc)).toBe(FM);
+    expect(frontmatterOf(DOC)).toBe("");
+  });
+
+  it("proseOf strips the frontmatter out of the editor body", () => {
+    expect(proseOf(fmDoc)).toBe(DOC);
+    expect(proseOf(fmDoc)).not.toContain("title: Hello");
+  });
+
+  it("adding a comment keeps the frontmatter and anchors in the body", () => {
+    const res = addThreadFromAnchor(fmDoc, ANCHOR, { author: "ron", body: "c" });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.source.startsWith(FM)).toBe(true);
+    expect(commentsOf(res.source)[0]!.anchor.text).toBe("jumps over the lazy dog");
+  });
+
+  it("a body edit re-prepends the frontmatter verbatim and round-trips", () => {
+    const { source } = seed(fmDoc);
+    const editedBody = proseOf(source).replace("# Title", "# Title edited");
+    const merged = mergeProseEdit(source, editedBody);
+    expect(frontmatterOf(merged)).toBe(FM);
+    expect(proseOf(merged)).toBe(editedBody);
   });
 });
 

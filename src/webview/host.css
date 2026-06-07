@@ -76,6 +76,44 @@ body { overflow: hidden; }
   width: 100%;
 }
 
+/* Read-only frontmatter panel, shown above the editor body. */
+.mdc-frontmatter {
+  margin-bottom: var(--mdc-space-4);
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
+  border-radius: var(--mdc-radius);
+  background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.08));
+  overflow: hidden;
+}
+.mdc-frontmatter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--mdc-space-2);
+  padding: var(--mdc-space-2) var(--mdc-space-3);
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
+}
+.mdc-frontmatter-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.8;
+}
+.mdc-frontmatter-hint {
+  font-size: 11px;
+  opacity: 0.55;
+}
+.mdc-frontmatter-body {
+  margin: 0;
+  padding: var(--mdc-space-3);
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0.9;
+}
+
 .mdc-sidebar {
   height: 100vh;
   overflow-y: auto;
