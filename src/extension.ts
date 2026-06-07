@@ -18,6 +18,7 @@ import {
   type ReviewPayload,
   type SendMode,
 } from "./sendToClaude";
+import { buildInlinePayload } from "./inlineComments/sendToClaude";
 import { SidecarWatcher } from "./sidecarWatcher";
 import { installClaudeSkill } from "./skill";
 import { EVENT_LOG_REL, EventLog } from "./transports/eventLog";
@@ -633,6 +634,22 @@ async function invokeSendAllToClaude(
     void vscode.window.showWarningMessage(
       "Markdown file is outside any workspace folder.",
     );
+    return;
+  }
+  // Inline-mode docs (those with a `<!--mc:threads:begin-->` block — the
+  // default storage and what the live editor now writes) keep their comments
+  // in the file itself, not a sidecar. Detect that and build the payload from
+  // the inline threads; fall back to the sidecar otherwise. Mirrors the
+  // skill's own inline-vs-sidecar detection.
+  if (doc.getText().includes("<!--mc:threads:begin-->")) {
+    const inlinePayload = buildInlinePayload(doc);
+    if (!inlinePayload) {
+      void vscode.window.showInformationMessage(
+        "No unresolved comments on this file.",
+      );
+      return;
+    }
+    await dispatchReviewPayload(inlinePayload, output, tracker, eventLogs, workspaceState, folder);
     return;
   }
   const result = await buildReviewPayload(doc, output);

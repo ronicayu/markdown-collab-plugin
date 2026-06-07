@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.33.8 — 2026-06-07 (trial)
+
+### Fixed: live editor comment panel after the move to inline comments
+
+Two leftovers from the inline-comment storage switch:
+
+- **"Send to Claude" now works in the live editor.** It previously read the
+  legacy sidecar, so the live editor's in-file comments looked empty and
+  nothing got sent. It now reads the inline comments stored in the Markdown
+  file (and any inline-mode doc does the same), falling back to the sidecar
+  for older files.
+- **Corrected the empty-state hint.** It no longer claims comments show up
+  in VS Code's gutter (that path reads the sidecar). It now says comments
+  are saved in the Markdown file itself and appear in the Inline Comments
+  view.
+
 ## 0.33.7 — 2026-06-07 (trial)
 
 ### Added: frontmatter support in the live editor

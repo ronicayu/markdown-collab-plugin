@@ -452,7 +452,7 @@ function renderSidebar(): void {
             <li>Or click <strong>+ Add comment</strong> at the top of this panel</li>
             <li>Or use the floating button that appears next to your selection</li>
           </ul>
-          Threads written here also appear in VS Code's gutter UI on the same file.
+          Comments are saved inside the Markdown file itself, so they travel with it and show up in the Inline Comments view.
         </div>
       </div>
     `;
