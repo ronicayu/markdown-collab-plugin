@@ -1319,89 +1319,74 @@ function openComposerForCurrentSelection(): void {
     const fullMd = serializer(view.state.doc);
     cachedMarkdown = fullMd;
     anchorFullMd = fullMd;
-    let sliceMd = "";
-    try {
-      const sliced = view.state.doc.cut(selFrom, selTo);
-      sliceMd = serializer(sliced).trim();
-    } catch (e) {
-      failureReason = `Couldn't extract the selection's markdown: ${(e as Error).message}`;
-      return;
-    }
+    // The selection's *visible text* (textContent) is reliable for ANY
+    // content — table cells, bold, links — and is the anchor backbone: the
+    // live highlight matches it against the editor text and the host stores
+    // it as the quote. The markdown slice + offsets are computed too, but
+    // only as a precise-placement bonus when the slice maps cleanly into
+    // fullMd (plain paragraph spans). A table cell serializes to a mini-table
+    // that isn't in fullMd verbatim — we just skip the offsets there and let
+    // the host place by text or save loosely-anchored, instead of refusing.
     const renderedText = view.state.doc.textContent;
     const renderedSelStart = renderedOffsetForPm(view.state.doc, selFrom);
     const renderedSelEnd = renderedOffsetForPm(view.state.doc, selTo);
-    if (renderedSelStart >= 0 && renderedSelEnd >= 0) {
-      displayText = renderedText.slice(renderedSelStart, renderedSelEnd).trim();
-    } else {
-      displayText = sliceMd;
-    }
-
-    // Anchor.text = the precise markdown slice. anchor.contextBefore/
-    // After = the surrounding markdown chars from the full doc — find
-    // the slice's position via Nth-occurrence (count occurrences of
-    // sliceMd in fullMd before the user's selection point).
-    if (sliceMd.length === 0) {
-      failureReason = "Selection produced no text.";
-      return;
-    }
-    const nonWs = sliceMd.replace(/\s/g, "").length;
-    if (nonWs < 8) {
-      failureReason = "Selection is too short. Pick at least 8 characters of contiguous text.";
-      return;
-    }
-    // Choose the occurrence whose position best matches where in
-    // fullMd we'd expect — for write side, prefer the FIRST occurrence
-    // unless we have prior info. Better: count occurrences of sliceMd
-    // in fullMd up to (but not past) the selection's "begin position
-    // when serialized standalone" — too complex, just use first hit
-    // disambiguated by surrounding text.
-    const occurrences: number[] = [];
-    let from = 0;
-    while (true) {
-      const idx = fullMd.indexOf(sliceMd, from);
-      if (idx < 0) break;
-      occurrences.push(idx);
-      from = idx + 1;
-    }
-    if (occurrences.length === 0) {
-      // Slice doesn't appear in fullMd verbatim — slice serialization
-      // produced something the full serialization doesn't have (rare
-      // edge: marked-up node boundaries). Fall back to the slice
-      // text alone with empty context; the tolerant resolver will
-      // try its best.
-      anchor = { text: sliceMd, contextBefore: "", contextAfter: "" };
-      return;
-    }
-    // Pick the occurrence whose surrounding chars appear "around" the
-    // user's selection point. We approximate the selection's md
-    // position via len(serialize(doc.cut(0, selFrom))).
-    let approxMdStart = -1;
+    let sliceMd = "";
     try {
-      const beforeDoc = view.state.doc.cut(0, selFrom);
-      approxMdStart = serializer(beforeDoc).length;
+      sliceMd = serializer(view.state.doc.cut(selFrom, selTo)).trim();
     } catch {
-      approxMdStart = -1;
+      sliceMd = "";
     }
-    let chosen = occurrences[0]!;
-    if (approxMdStart >= 0 && occurrences.length > 1) {
-      let bestDiff = Infinity;
-      for (const o of occurrences) {
-        const diff = Math.abs(o - approxMdStart);
-        if (diff < bestDiff) {
-          bestDiff = diff;
-          chosen = o;
+    displayText =
+      renderedSelStart >= 0 && renderedSelEnd >= 0
+        ? renderedText.slice(renderedSelStart, renderedSelEnd).trim()
+        : sliceMd;
+
+    const anchorText = displayText || sliceMd;
+    if (anchorText.replace(/\s/g, "").length < 3) {
+      failureReason = "Selection is too short. Highlight a few more characters.";
+      return;
+    }
+    anchor = {
+      text: anchorText,
+      contextBefore:
+        renderedSelStart >= 0 ? renderedText.slice(Math.max(0, renderedSelStart - 24), renderedSelStart) : "",
+      contextAfter: renderedSelEnd >= 0 ? renderedText.slice(renderedSelEnd, renderedSelEnd + 24) : "",
+    };
+
+    // Precise-placement bonus: if the markdown slice appears in fullMd, record
+    // exact offsets so the host wraps that exact span. Otherwise leave the
+    // offsets at -1 and let the host fall back to text / loose anchoring.
+    if (sliceMd.length > 0) {
+      const occurrences: number[] = [];
+      let from = 0;
+      while (true) {
+        const idx = fullMd.indexOf(sliceMd, from);
+        if (idx < 0) break;
+        occurrences.push(idx);
+        from = idx + 1;
+      }
+      if (occurrences.length > 0) {
+        let approxMdStart = -1;
+        try {
+          approxMdStart = serializer(view.state.doc.cut(0, selFrom)).length;
+        } catch {
+          approxMdStart = -1;
         }
+        let chosen = occurrences[0]!;
+        if (approxMdStart >= 0 && occurrences.length > 1) {
+          let bestDiff = Infinity;
+          for (const o of occurrences) {
+            const diff = Math.abs(o - approxMdStart);
+            if (diff < bestDiff) {
+              bestDiff = diff;
+              chosen = o;
+            }
+          }
+        }
+        anchorSelStart = chosen;
+        anchorSelEnd = chosen + sliceMd.length;
       }
     }
-    const mdStart = chosen;
-    const mdEnd = mdStart + sliceMd.length;
-    anchorSelStart = mdStart;
-    anchorSelEnd = mdEnd;
-    anchor = {
-      text: sliceMd,
-      contextBefore: fullMd.slice(Math.max(0, mdStart - 24), mdStart),
-      contextAfter: fullMd.slice(mdEnd, mdEnd + 24),
-    };
   });
 
   if (!anchor) {

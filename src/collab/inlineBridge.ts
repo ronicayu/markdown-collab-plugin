@@ -209,22 +209,36 @@ export function addThreadFromAnchor(
 ): { ok: true; source: string } | { ok: false; error: string } {
   const { prose, proseToSrc } = buildBridge(source);
   const range = locate(prose, anchor);
-  if (!range) {
-    return { ok: false, error: "Could not locate the selected text in the document." };
+  if (range) {
+    const srcStart = proseToSrc[range.start];
+    // End boundary: map the last selected prose char to source, then +1, so we
+    // don't swallow a marker that may sit immediately after in source space.
+    const srcEnd = range.end === 0 ? proseToSrc[0]! : proseToSrc[range.end - 1]! + 1;
+    if (srcStart !== undefined && srcEnd !== undefined) {
+      try {
+        const { source: next } = addThread(source, srcStart, srcEnd, comment);
+        return { ok: true, source: next };
+      } catch {
+        // Fall through to a loosely-anchored save below.
+      }
+    }
   }
-  const srcStart = proseToSrc[range.start];
-  // End boundary: map the last selected prose char to source, then +1, so we
-  // don't swallow a marker that may sit immediately after in source space.
-  const srcEnd = range.end === 0 ? proseToSrc[0]! : proseToSrc[range.end - 1]! + 1;
-  if (srcStart === undefined || srcEnd === undefined) {
-    return { ok: false, error: "Internal anchor mapping failed." };
-  }
-  try {
-    const { source: next } = addThread(source, srcStart, srcEnd, comment);
-    return { ok: true, source: next };
-  } catch (e) {
-    return { ok: false, error: (e as Error).message };
-  }
+  // The selected text couldn't be placed as markers in the source — e.g. a
+  // table cell or inline-formatted span whose visible text doesn't appear
+  // verbatim in the markdown. Save the comment loosely-anchored (quote only,
+  // no markers) so it's never lost: the live editor still highlights it by
+  // matching the quote against the editor text; other surfaces show it as an
+  // unanchored thread.
+  const parsed = parse(source);
+  const thread: InlineThread = {
+    id: mintThreadId(parsed.threads.map((t) => t.id)),
+    quote: anchor.text,
+    status: "open",
+    comments: [
+      { id: "c1", author: comment.author, ts: comment.ts ?? new Date().toISOString(), body: comment.body },
+    ],
+  };
+  return { ok: true, source: withThreads(source, [...parsed.threads, thread]) };
 }
 
 /**

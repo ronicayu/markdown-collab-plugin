@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.33.11 — 2026-06-07 (trial)
+
+### Fixed: can't comment on table cells / formatted text in the live editor
+
+Selecting text inside a table cell (or some bold/inline-formatted spans) and
+adding a comment failed silently — the live editor serializes such a
+selection to something that doesn't appear verbatim in the file, so anchoring
+gave up. Commenting now works on any selection:
+
+- The selection's visible text drives the anchor (reliable for tables, bold,
+  links), with exact source placement kept as a bonus when the text maps
+  cleanly into the file.
+- Adding a comment never fails to save. When the exact text can't be located
+  in the source (e.g. a table cell), the comment is saved loosely-anchored —
+  still highlighted in the live editor by matching its text — instead of
+  being refused.
+- Lowered the overly strict minimum selection length.
+
+Note: a loosely-anchored comment is highlighted in the live editor but shows
+as an unanchored thread in the other comment surfaces.
+
 ## 0.33.10 — 2026-06-07 (trial)
 
 ### Fixed: unreadable table columns in the live editor (dark-on-dark)

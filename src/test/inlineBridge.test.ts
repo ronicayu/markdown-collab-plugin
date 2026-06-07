@@ -73,12 +73,20 @@ describe("addThreadFromAnchor", () => {
     expect(comments[0]!.author).toBe("ron");
   });
 
-  it("rejects an anchor whose text isn't in the document", () => {
-    const res = addThreadFromAnchor(DOC, { text: "nonexistent phrase here", contextBefore: "", contextAfter: "" }, {
+  it("saves loosely-anchored (no markers) when the text isn't found verbatim", () => {
+    // e.g. a table cell or formatted span whose visible text isn't in the
+    // source markdown verbatim — the comment must still be saved, not refused.
+    const res = addThreadFromAnchor(DOC, { text: "Alex — PM", contextBefore: "", contextAfter: "" }, {
       author: "ron",
       body: "x",
     });
-    expect(res.ok).toBe(false);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.source).not.toContain("<!--mc:a:"); // no anchor markers placed
+    const comments = commentsOf(res.source);
+    expect(comments).toHaveLength(1);
+    expect(comments[0]!.anchor.text).toBe("Alex — PM"); // quote preserved for the highlight
+    expect(proseOf(res.source)).toBe(DOC); // body untouched
   });
 
   it("disambiguates duplicate anchor text using context", () => {

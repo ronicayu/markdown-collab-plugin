@@ -2,7 +2,6 @@ import * as crypto from "crypto";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
-import { isAnchorTextValid } from "../anchor";
 import {
   addThreadAtOffsets,
   addThreadFromAnchor,
@@ -383,11 +382,11 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       contextBefore: msg.anchor.contextBefore,
       contextAfter: msg.anchor.contextAfter,
     };
-    if (!isAnchorTextValid(anchor.text)) {
+    if (!anchor.text || anchor.text.trim().length === 0) {
       return {
         type: "add-comment-result",
         ok: false,
-        error: "Anchor text needs at least 8 non-whitespace characters.",
+        error: "Select some text to comment on.",
       };
     }
     const author = (msg.author && msg.author.trim()) || resolveAuthorFromConfig();
