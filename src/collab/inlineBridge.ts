@@ -20,6 +20,7 @@
 import {
   addThread,
   appendReply,
+  mintThreadId,
   parse,
   replaceThread,
   withThreads,
@@ -224,6 +225,80 @@ export function addThreadFromAnchor(
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }
+}
+
+/**
+ * Add a thread at exact selection offsets into `newBody` (the editor's current
+ * body markdown). The marker is placed precisely at [selStart, selEnd) — no
+ * text search — so commenting can't fail to "locate" the selection even when
+ * the stored document has drifted from the editor's serialization. `newBody`
+ * is adopted as the body (re-anchoring existing threads into it); the
+ * frontmatter is re-prepended. Returns ok:false only when the offsets are
+ * unusable, letting the caller fall back to the text-anchored path.
+ */
+export function addThreadAtOffsets(
+  oldSource: string,
+  newBody: string,
+  selStart: number,
+  selEnd: number,
+  comment: { author: string; body: string; ts?: string },
+): { ok: true; source: string } | { ok: false; error: string } {
+  if (
+    !Number.isInteger(selStart) ||
+    !Number.isInteger(selEnd) ||
+    selStart < 0 ||
+    selEnd > newBody.length ||
+    selStart >= selEnd ||
+    newBody.slice(selStart, selEnd).trim().length === 0
+  ) {
+    return { ok: false, error: "selection offsets out of range" };
+  }
+
+  const { parsed, prose: oldProse, anchorsInProse } = buildBridge(oldSource);
+  const newId = mintThreadId(parsed.threads.map((t) => t.id));
+  const newThread: InlineThread = {
+    id: newId,
+    quote: newBody.slice(selStart, selEnd),
+    status: "open",
+    comments: [
+      { id: "c1", author: comment.author, ts: comment.ts ?? new Date().toISOString(), body: comment.body },
+    ],
+  };
+
+  // The new comment is placed exactly. Existing threads re-anchor by quote;
+  // any that would overlap the new span (or each other) drop to unanchored.
+  const overlaps = (a: { start: number; end: number }, b: { start: number; end: number }): boolean =>
+    a.start < b.end && b.start < a.end;
+  const kept: Array<{ id: string; start: number; end: number }> = [
+    { id: newId, start: selStart, end: selEnd },
+  ];
+  for (const thread of parsed.threads) {
+    const span = anchorsInProse.get(thread.id);
+    if (!span) continue;
+    const loc = locate(newBody, {
+      text: oldProse.slice(span.proseStart, span.proseEnd),
+      contextBefore: oldProse.slice(Math.max(0, span.proseStart - CONTEXT_CHARS), span.proseStart),
+      contextAfter: oldProse.slice(span.proseEnd, span.proseEnd + CONTEXT_CHARS),
+    });
+    if (loc && !kept.some((k) => overlaps(k, loc))) {
+      kept.push({ id: thread.id, start: loc.start, end: loc.end });
+    }
+  }
+  kept.sort((a, b) => a.start - b.start);
+
+  let marked = "";
+  let cursor = 0;
+  for (const p of kept) {
+    marked +=
+      newBody.slice(cursor, p.start) +
+      openMarker(p.id) +
+      newBody.slice(p.start, p.end) +
+      closeMarker(p.id);
+    cursor = p.end;
+  }
+  marked += newBody.slice(cursor);
+
+  return { ok: true, source: withThreads(frontmatterOf(oldSource) + marked, [...parsed.threads, newThread]) };
 }
 
 /** Append a reply to a thread. Returns the rewritten source, or null if the thread is gone. */

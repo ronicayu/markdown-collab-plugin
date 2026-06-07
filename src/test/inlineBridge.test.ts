@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  addThreadAtOffsets,
   addThreadFromAnchor,
   commentsOf,
   deleteThread,
@@ -154,6 +155,68 @@ describe("replyToThread / setThreadResolved / deleteThread", () => {
     expect(replyToThread(source, "zzzzz", { body: "x", author: "a" })).toBeNull();
     expect(setThreadResolved(source, "zzzzz", true, "a")).toBeNull();
     expect(deleteThread(source, "zzzzz")).toBeNull();
+  });
+});
+
+describe("addThreadAtOffsets (exact placement, no text search)", () => {
+  it("wraps exactly the offset span and saves the comment", () => {
+    const sel = "jumps over the lazy dog";
+    const start = DOC.indexOf(sel);
+    const end = start + sel.length;
+    const res = addThreadAtOffsets(DOC, DOC, start, end, { author: "ron", body: "c", ts: "2026-01-01T00:00:00Z" });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const id = parse(res.source).threads[0]!.id;
+    expect(res.source).toContain(`<!--mc:a:${id}-->${sel}<!--mc:/a:${id}-->`);
+    expect(commentsOf(res.source)[0]!.anchor.text).toBe(sel);
+    expect(proseOf(res.source)).toBe(DOC);
+  });
+
+  it("succeeds even when the stored doc has drifted from the editor body", () => {
+    // Existing comment in the stored doc; the editor's body is a reformatted
+    // version (heading changed) the stored prose never had verbatim.
+    const { source } = seed();
+    const newBody = proseOf(source).replace("# Title", "# Title (reformatted)");
+    const sel = "second paragraph";
+    const start = newBody.indexOf(sel);
+    const res = addThreadAtOffsets(source, newBody, start, start + sel.length, { author: "ron", body: "new" });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(commentsOf(res.source)).toHaveLength(2); // old re-anchored + new
+    expect(proseOf(res.source)).toBe(newBody); // editor body adopted, round-trips
+  });
+
+  it("keeps the new comment even if an existing anchor can't be relocated", () => {
+    const { source, id } = seed();
+    // Editor body deletes the old anchor text entirely.
+    const newBody = proseOf(source).replace("The quick brown fox jumps over the lazy dog near the river bank.", "Gone.");
+    const sel = "second paragraph";
+    const start = newBody.indexOf(sel);
+    const res = addThreadAtOffsets(source, newBody, start, start + sel.length, { author: "ron", body: "new" });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const comments = commentsOf(res.source);
+    expect(comments).toHaveLength(2); // both threads survive (old one unanchored)
+    expect(res.source).not.toContain(`<!--mc:a:${id}-->`); // old anchor dropped
+  });
+
+  it("rejects unusable offsets (caller falls back to text anchoring)", () => {
+    expect(addThreadAtOffsets(DOC, DOC, -1, 5, { author: "r", body: "c" }).ok).toBe(false);
+    expect(addThreadAtOffsets(DOC, DOC, 5, 5, { author: "r", body: "c" }).ok).toBe(false);
+    expect(addThreadAtOffsets(DOC, DOC, 0, DOC.length + 50, { author: "r", body: "c" }).ok).toBe(false);
+  });
+
+  it("preserves frontmatter and offsets are body-relative", () => {
+    const FM = "---\ntitle: x\n---\n";
+    const newBody = DOC;
+    const sel = "quick brown fox";
+    const start = newBody.indexOf(sel);
+    const res = addThreadAtOffsets(FM + DOC, newBody, start, start + sel.length, { author: "r", body: "c" });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.source.startsWith(FM)).toBe(true);
+    expect(commentsOf(res.source)[0]!.anchor.text).toBe(sel);
+    expect(proseOf(res.source)).toBe(newBody);
   });
 });
 

@@ -4,6 +4,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { isAnchorTextValid } from "../anchor";
 import {
+  addThreadAtOffsets,
   addThreadFromAnchor,
   commentsOf,
   deleteThread,
@@ -75,6 +76,11 @@ interface AddCommentMessage {
   body: string;
   /** Author name from the webview (defaults to extension's userName setting). */
   author?: string;
+  /** Editor's current body markdown — the offsets index into this exact string. */
+  fullMd?: string;
+  /** Exact selection offsets into `fullMd`; -1 when the webview couldn't resolve them. */
+  selStart?: number;
+  selEnd?: number;
 }
 
 interface ReplyCommentMessage {
@@ -221,7 +227,12 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       edit.replace(document.uri, fullRange, next);
       pendingApply = true;
       try {
-        return await vscode.workspace.applyEdit(edit);
+        const ok = await vscode.workspace.applyEdit(edit);
+        // Keep the echo guard in sync with whatever we just wrote (a comment
+        // op can adopt the editor's body), so a later doc-change echo isn't
+        // mistaken for an external edit and doesn't revert the editor.
+        if (ok) lastWebviewProse = proseOf(next);
+        return ok;
       } catch (e) {
         this.output.appendLine(`CollabEditor applyEdit failed: ${(e as Error).message}`);
         return false;
@@ -380,11 +391,25 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       };
     }
     const author = (msg.author && msg.author.trim()) || resolveAuthorFromConfig();
-    const result = addThreadFromAnchor(document.getText(), anchor, {
-      author,
-      body: msg.body,
-      ts: new Date().toISOString(),
-    });
+    const newComment = { author, body: msg.body, ts: new Date().toISOString() };
+    // Preferred path: place the marker at the exact selection offsets the
+    // editor reported, against the editor's own body markdown — no text search,
+    // so a doc that's drifted from the editor's serialization can't cause a
+    // "could not locate the text" failure. Fall back to text-anchoring only
+    // when the editor couldn't resolve offsets (selStart/selEnd === -1).
+    const useOffsets =
+      typeof msg.fullMd === "string" &&
+      Number.isInteger(msg.selStart) &&
+      Number.isInteger(msg.selEnd) &&
+      (msg.selStart as number) >= 0 &&
+      (msg.selEnd as number) >= 0;
+    let result = useOffsets
+      ? addThreadAtOffsets(document.getText(), msg.fullMd!, msg.selStart!, msg.selEnd!, newComment)
+      : addThreadFromAnchor(document.getText(), anchor, newComment);
+    if (!result.ok && useOffsets) {
+      // Offsets were rejected (out of range) — fall back to the text anchor.
+      result = addThreadFromAnchor(document.getText(), anchor, newComment);
+    }
     if (!result.ok) {
       this.output.appendLine(`CollabEditor: addComment failed for ${document.uri.fsPath}: ${result.error}`);
       return { type: "add-comment-result", ok: false, error: result.error };

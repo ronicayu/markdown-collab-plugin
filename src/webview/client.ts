@@ -1268,6 +1268,13 @@ function installAddCommentAffordance(): void {
 function openComposerForCurrentSelection(): void {
   if (!editor || !composerEl) return;
   let anchor: import("../types").Anchor | null = null;
+  // Exact selection offsets into `anchorFullMd` (the editor's current body
+  // markdown). The host places the invisible marker at these offsets instead
+  // of fuzzy-searching, so commenting never fails to "locate the text".
+  // -1 means "unknown" (the rare slice-not-in-fullMd case) → host falls back.
+  let anchorSelStart = -1;
+  let anchorSelEnd = -1;
+  let anchorFullMd = "";
   let displayText = "";
   let failureReason = "";
   // Three-layer selection lookup — see the comment block on
@@ -1311,6 +1318,7 @@ function openComposerForCurrentSelection(): void {
     // what Milkdown would write for that span on save.
     const fullMd = serializer(view.state.doc);
     cachedMarkdown = fullMd;
+    anchorFullMd = fullMd;
     let sliceMd = "";
     try {
       const sliced = view.state.doc.cut(selFrom, selTo);
@@ -1387,6 +1395,8 @@ function openComposerForCurrentSelection(): void {
     }
     const mdStart = chosen;
     const mdEnd = mdStart + sliceMd.length;
+    anchorSelStart = mdStart;
+    anchorSelEnd = mdEnd;
     anchor = {
       text: sliceMd,
       contextBefore: fullMd.slice(Math.max(0, mdStart - 24), mdStart),
@@ -1430,6 +1440,11 @@ function openComposerForCurrentSelection(): void {
       anchor: finalAnchor,
       body,
       author: userName,
+      // Exact placement: the host wraps [selStart, selEnd) in fullMd with the
+      // marker, no fuzzy locate. Falls back to anchor text when offsets are -1.
+      fullMd: anchorFullMd,
+      selStart: anchorSelStart,
+      selEnd: anchorSelEnd,
     });
   });
 }

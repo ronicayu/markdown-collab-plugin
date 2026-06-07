@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.33.9 — 2026-06-07 (trial)
+
+### Fixed: "Could not save comment — could not locate the text" in the live editor
+
+Adding a comment in the live editor could fail with "could not locate the
+selected text," even though the whole point of the invisible markers is that
+the selection's position is known. The host was fuzzy-searching the saved
+`.md` for the selected text, but the live editor reformats the Markdown as
+you load/edit it, so the text often didn't match the saved copy verbatim and
+the search failed.
+
+The editor now reports the exact selection offsets against its own current
+text, and the host places the invisible marker at those offsets directly —
+no search. Commenting works regardless of how the file was formatted on
+disk. (A text-anchored fallback remains for the rare case the editor can't
+resolve offsets.)
+
 ## 0.33.8 — 2026-06-07 (trial)
 
 ### Fixed: live editor comment panel after the move to inline comments
