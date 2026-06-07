@@ -4,29 +4,21 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { isAnchorTextValid } from "../anchor";
 import {
-  addComment as addCommentToSidecar,
-  addReply as addReplyToSidecar,
-  deleteComment as deleteCommentFromSidecar,
-  loadSidecar,
-  setResolved as setResolvedInSidecar,
-  sidecarPathFor,
-} from "../sidecar";
-import type { Anchor, Comment } from "../types";
+  addThreadFromAnchor,
+  commentsOf,
+  deleteThread,
+  mergeProseEdit,
+  proseOf,
+  replyToThread,
+  setThreadResolved,
+  type CollabComment,
+  type CollabCommentAnchor,
+} from "./inlineBridge";
 import { resolveDrawioHref } from "./drawioFileResolver";
 import { classifyLink } from "./linkRouter";
 import { isExternalLinkSafe } from "./urlAllowlist";
 
 const VIEW_TYPE = "markdownCollab.collabEditor";
-
-interface CommentSummary {
-  id: string;
-  body: string;
-  author: string;
-  createdAt: string;
-  resolved: boolean;
-  anchor: { text: string; contextBefore: string; contextAfter: string };
-  replies: Array<{ author: string; body: string; createdAt: string }>;
-}
 
 interface InitPayload {
   type: "init";
@@ -34,12 +26,16 @@ interface InitPayload {
   room: string;
   serverUrl: string;
   user: { name: string; color: string };
-  comments: CommentSummary[];
+  comments: CollabComment[];
 }
 
-interface SidecarChangedPayload {
+// Wire type kept as "sidecar-changed" for back-compat with the webview
+// client; the comments now come from the inline markers in the .md, not a
+// sidecar. Renaming would mean a coordinated webview change for no behavior
+// gain, so the legacy name stays.
+interface CommentsChangedPayload {
   type: "sidecar-changed";
-  comments: CommentSummary[];
+  comments: CollabComment[];
 }
 
 interface EditMessage {
@@ -189,58 +185,60 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     const room = computeRoom(document.uri);
     const user = { name: userName, color: pickColor(userName) };
 
-    const sidecarPath = this.computeSidecarPath(document.uri);
-
-    const readSidecarComments = async (): Promise<CommentSummary[]> => {
-      if (!sidecarPath) return [];
-      const loaded = await loadSidecar(sidecarPath);
-      if (!loaded) return [];
-      return loaded.sidecar.comments.map((c) => commentToSummary(c));
-    };
-
     // Track our own writes so the workspace.onDidChangeTextDocument handler
     // doesn't bounce them back as "external" updates and overwrite the
     // webview's Y.Text mid-edit.
     let pendingApply = false;
 
-    const applyEditFromWebview = async (text: string): Promise<void> => {
-      if (document.getText() === text) return;
+    /** Replace the whole document with `next`. Guards against echo. */
+    const writeDocument = async (next: string): Promise<boolean> => {
+      if (document.getText() === next) return true;
       const edit = new vscode.WorkspaceEdit();
       const fullRange = new vscode.Range(
         document.positionAt(0),
         document.positionAt(document.getText().length),
       );
-      edit.replace(document.uri, fullRange, text);
+      edit.replace(document.uri, fullRange, next);
       pendingApply = true;
       try {
-        await vscode.workspace.applyEdit(edit);
+        return await vscode.workspace.applyEdit(edit);
       } catch (e) {
-        this.output.appendLine(
-          `CollabEditor applyEdit failed: ${(e as Error).message}`,
-        );
+        this.output.appendLine(`CollabEditor applyEdit failed: ${(e as Error).message}`);
+        return false;
       } finally {
         pendingApply = false;
       }
+    };
+
+    /** Apply a prose-only edit from the webview, preserving inline comment markers. */
+    const applyProseEdit = async (newProse: string): Promise<void> => {
+      const current = document.getText();
+      if (proseOf(current) === newProse) return; // prose unchanged — nothing to merge
+      await writeDocument(mergeProseEdit(current, newProse));
+    };
+
+    const pushComments = (): void => {
+      void panel.webview.postMessage({
+        type: "sidecar-changed",
+        comments: commentsOf(document.getText()),
+      } satisfies CommentsChangedPayload);
     };
 
     const messageSub = panel.webview.onDidReceiveMessage((raw: unknown) => {
       const msg = raw as ClientMessage | undefined;
       if (!msg || typeof msg !== "object") return;
       if (msg.type === "ready") {
-        void (async () => {
-          const comments = await readSidecarComments();
-          const payload: InitPayload = {
-            type: "init",
-            text: document.getText(),
-            room,
-            serverUrl,
-            user,
-            comments,
-          };
-          void panel.webview.postMessage(payload);
-        })();
+        const payload: InitPayload = {
+          type: "init",
+          text: proseOf(document.getText()),
+          room,
+          serverUrl,
+          user,
+          comments: commentsOf(document.getText()),
+        };
+        void panel.webview.postMessage(payload);
       } else if (msg.type === "edit") {
-        void applyEditFromWebview(msg.text);
+        void applyProseEdit(msg.text);
       } else if (msg.type === "ready-with-content") {
         lastReadyByUri.set(document.uri.toString(), msg);
         this.output.appendLine(
@@ -256,32 +254,27 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         );
       } else if (msg.type === "add-comment") {
         void (async () => {
-          const result = await this.handleAddComment(document, msg, sidecarPath);
+          const result = await this.addComment(document, msg, writeDocument);
           void panel.webview.postMessage(result);
-          if (result.ok) await pushSidecar();
+          if (result.ok) pushComments();
         })();
       } else if (msg.type === "reply-comment") {
         void (async () => {
-          const result = await CollabEditorProvider.runReplyComment(
-            sidecarPath,
-            msg.commentId,
-            msg.body,
-            msg.author,
-          );
+          const result = await this.replyComment(document, msg, writeDocument);
           void panel.webview.postMessage(result);
-          if (result.ok) await pushSidecar();
+          if (result.ok) pushComments();
         })();
       } else if (msg.type === "toggle-resolve-comment") {
         void (async () => {
-          const result = await this.handleToggleResolve(msg, sidecarPath);
+          const result = await this.toggleResolve(document, msg, writeDocument);
           void panel.webview.postMessage(result);
-          if (result.ok) await pushSidecar();
+          if (result.ok) pushComments();
         })();
       } else if (msg.type === "delete-comment") {
         void (async () => {
-          const result = await this.handleDeleteComment(msg, sidecarPath);
+          const result = await this.deleteComment(document, msg, writeDocument);
           void panel.webview.postMessage(result);
-          if (result.ok) await pushSidecar();
+          if (result.ok) pushComments();
         })();
       } else if (msg.type === "open-link") {
         void this.handleOpenLink(msg, panel, document);
@@ -298,151 +291,132 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       }
     });
 
-    const pushSidecar = async (): Promise<void> => {
-      const comments = await readSidecarComments();
-      void panel.webview.postMessage({
-        type: "sidecar-changed",
-        comments,
-      } satisfies SidecarChangedPayload);
-    };
-
     const docSub = vscode.workspace.onDidChangeTextDocument((e) => {
       if (e.document.uri.toString() !== document.uri.toString()) return;
       if (pendingApply) return;
+      // An external write (standard editor, git, another window) may have
+      // changed the prose AND the inline comments — refresh both.
       void panel.webview.postMessage({
         type: "externalChange",
-        text: e.document.getText(),
+        text: proseOf(e.document.getText()),
       });
+      pushComments();
     });
-
-    // Watch the sidecar file so the comment side panel stays fresh as
-    // reviewers add or resolve comments — including changes made via the
-    // standard editor's CommentController in another window. We use a
-    // plain workspace file watcher rather than tying into the existing
-    // SidecarWatcher because that one is owned by the comment controller
-    // and re-routing it would entangle two unrelated lifecycles.
-    let sidecarWatcher: vscode.FileSystemWatcher | undefined;
-    if (sidecarPath) {
-      const pattern = new vscode.RelativePattern(
-        path.dirname(sidecarPath),
-        path.basename(sidecarPath),
-      );
-      sidecarWatcher = vscode.workspace.createFileSystemWatcher(pattern);
-      const push = async (): Promise<void> => {
-        const comments = await readSidecarComments();
-        const payload: SidecarChangedPayload = {
-          type: "sidecar-changed",
-          comments,
-        };
-        void panel.webview.postMessage(payload);
-      };
-      sidecarWatcher.onDidChange(() => void push());
-      sidecarWatcher.onDidCreate(() => void push());
-      sidecarWatcher.onDidDelete(() => void push());
-    }
 
     panel.onDidDispose(() => {
       messageSub.dispose();
       docSub.dispose();
-      sidecarWatcher?.dispose();
     });
   }
 
-  private computeSidecarPath(uri: vscode.Uri): string | null {
-    const folder = vscode.workspace.getWorkspaceFolder(uri);
-    if (!folder) return null;
-    return sidecarPathFor(uri.fsPath, folder.uri.fsPath);
-  }
+  // --- comment handlers ---------------------------------------------------
+  // Each rewrites the .md source via the inline bridge and writes it back
+  // through `writeDocument`. Returning the exact payload the webview expects
+  // keeps the message plumbing in resolveCustomTextEditor trivial.
 
-  private async handleToggleResolve(
-    msg: ToggleResolveCommentMessage,
-    sidecarPath: string | null,
-  ): Promise<{ type: "toggle-resolve-result"; ok: boolean; commentId: string; resolved?: boolean; error?: string }> {
-    return CollabEditorProvider.runToggleResolve(sidecarPath, msg.commentId);
-  }
-
-  private async handleDeleteComment(
-    msg: DeleteCommentMessage,
-    sidecarPath: string | null,
-  ): Promise<{ type: "delete-comment-result"; ok: boolean; commentId: string; error?: string }> {
-    return CollabEditorProvider.runDeleteComment(sidecarPath, msg.commentId);
-  }
-
-  // Static helpers — same logic as the message handlers above, but with
-  // no `vscode.WebviewPanel` / `vscode.TextDocument` dependency so tests
-  // can drive them directly. Each returns the exact payload that gets
-  // postMessage'd back to the webview, so tests can assert both the
-  // sidecar mutation AND the response shape the webview will see.
-
-  static async runReplyComment(
-    sidecarPath: string | null,
-    commentId: string,
-    body: string,
-    author?: string,
-  ): Promise<{ type: "reply-comment-result"; ok: boolean; commentId: string; error?: string }> {
-    if (!sidecarPath) {
-      return { type: "reply-comment-result", ok: false, commentId, error: "no sidecar path (file outside workspace?)" };
+  private async addComment(
+    document: vscode.TextDocument,
+    msg: AddCommentMessage,
+    writeDocument: (next: string) => Promise<boolean>,
+  ): Promise<{ type: "add-comment-result"; ok: boolean; error?: string }> {
+    if (!vscode.workspace.getWorkspaceFolder(document.uri)) {
+      return { type: "add-comment-result", ok: false, error: "File is outside any workspace folder." };
     }
-    if (!body || !body.trim()) {
+    const anchor: CollabCommentAnchor = {
+      text: msg.anchor.text,
+      contextBefore: msg.anchor.contextBefore,
+      contextAfter: msg.anchor.contextAfter,
+    };
+    if (!isAnchorTextValid(anchor.text)) {
+      return {
+        type: "add-comment-result",
+        ok: false,
+        error: "Anchor text needs at least 8 non-whitespace characters.",
+      };
+    }
+    const author = (msg.author && msg.author.trim()) || resolveAuthorFromConfig();
+    const result = addThreadFromAnchor(document.getText(), anchor, {
+      author,
+      body: msg.body,
+      ts: new Date().toISOString(),
+    });
+    if (!result.ok) {
+      this.output.appendLine(`CollabEditor: addComment failed for ${document.uri.fsPath}: ${result.error}`);
+      return { type: "add-comment-result", ok: false, error: result.error };
+    }
+    const wrote = await writeDocument(result.source);
+    if (!wrote) {
+      return { type: "add-comment-result", ok: false, error: "Could not write the comment into the document." };
+    }
+    this.output.appendLine(
+      `CollabEditor: added comment on ${document.uri.fsPath} (anchor=${JSON.stringify(anchor.text.slice(0, 40))})`,
+    );
+    return { type: "add-comment-result", ok: true };
+  }
+
+  private async replyComment(
+    document: vscode.TextDocument,
+    msg: ReplyCommentMessage,
+    writeDocument: (next: string) => Promise<boolean>,
+  ): Promise<{ type: "reply-comment-result"; ok: boolean; commentId: string; error?: string }> {
+    const commentId = msg.commentId;
+    if (!msg.body || !msg.body.trim()) {
       return { type: "reply-comment-result", ok: false, commentId, error: "reply body is empty" };
     }
-    try {
-      await addReplyToSidecar(
-        sidecarPath,
-        commentId,
-        {
-          body,
-          author: (author && author.trim()) || resolveAuthorFromConfig(),
-          createdAt: new Date().toISOString(),
-        },
-        { trackSelfWrite: false },
-      );
-      return { type: "reply-comment-result", ok: true, commentId };
-    } catch (e) {
-      return { type: "reply-comment-result", ok: false, commentId, error: (e as Error).message };
+    const next = replyToThread(document.getText(), commentId, {
+      body: msg.body,
+      author: (msg.author && msg.author.trim()) || resolveAuthorFromConfig(),
+      ts: new Date().toISOString(),
+    });
+    if (next === null) {
+      return { type: "reply-comment-result", ok: false, commentId, error: "comment not found" };
     }
+    const wrote = await writeDocument(next);
+    return wrote
+      ? { type: "reply-comment-result", ok: true, commentId }
+      : { type: "reply-comment-result", ok: false, commentId, error: "could not write reply" };
   }
 
-  static async runToggleResolve(
-    sidecarPath: string | null,
-    commentId: string,
+  private async toggleResolve(
+    document: vscode.TextDocument,
+    msg: ToggleResolveCommentMessage,
+    writeDocument: (next: string) => Promise<boolean>,
   ): Promise<{ type: "toggle-resolve-result"; ok: boolean; commentId: string; resolved?: boolean; error?: string }> {
-    if (!sidecarPath) {
-      return { type: "toggle-resolve-result", ok: false, commentId, error: "no sidecar path" };
+    const commentId = msg.commentId;
+    const current = commentsOf(document.getText()).find((c) => c.id === commentId);
+    if (!current) {
+      return { type: "toggle-resolve-result", ok: false, commentId, error: "comment not found" };
     }
-    try {
-      const loaded = await loadSidecar(sidecarPath);
-      if (!loaded) return { type: "toggle-resolve-result", ok: false, commentId, error: "sidecar not found" };
-      const existing = loaded.sidecar.comments.find((c) => c.id === commentId);
-      if (!existing) {
-        return { type: "toggle-resolve-result", ok: false, commentId, error: "comment not found" };
-      }
-      const next = !existing.resolved;
-      await setResolvedInSidecar(sidecarPath, commentId, next, { trackSelfWrite: false });
-      return { type: "toggle-resolve-result", ok: true, commentId, resolved: next };
-    } catch (e) {
-      return { type: "toggle-resolve-result", ok: false, commentId, error: (e as Error).message };
+    const nextResolved = !current.resolved;
+    const next = setThreadResolved(
+      document.getText(),
+      commentId,
+      nextResolved,
+      resolveAuthorFromConfig(),
+    );
+    if (next === null) {
+      return { type: "toggle-resolve-result", ok: false, commentId, error: "comment not found" };
     }
+    const wrote = await writeDocument(next);
+    return wrote
+      ? { type: "toggle-resolve-result", ok: true, commentId, resolved: nextResolved }
+      : { type: "toggle-resolve-result", ok: false, commentId, error: "could not write resolve state" };
   }
 
-  static async runDeleteComment(
-    sidecarPath: string | null,
-    commentId: string,
+  private async deleteComment(
+    document: vscode.TextDocument,
+    msg: DeleteCommentMessage,
+    writeDocument: (next: string) => Promise<boolean>,
   ): Promise<{ type: "delete-comment-result"; ok: boolean; commentId: string; error?: string }> {
-    if (!sidecarPath) {
-      return { type: "delete-comment-result", ok: false, commentId, error: "no sidecar path" };
+    const commentId = msg.commentId;
+    const next = deleteThread(document.getText(), commentId);
+    if (next === null) {
+      return { type: "delete-comment-result", ok: false, commentId, error: "comment id not found" };
     }
-    try {
-      const removed = await deleteCommentFromSidecar(sidecarPath, commentId, {
-        trackSelfWrite: false,
-      });
-      if (!removed) {
-        return { type: "delete-comment-result", ok: false, commentId, error: "comment id not found" };
-      }
-      return { type: "delete-comment-result", ok: true, commentId };
-    } catch (e) {
-      return { type: "delete-comment-result", ok: false, commentId, error: (e as Error).message };
-    }
+    const wrote = await writeDocument(next);
+    return wrote
+      ? { type: "delete-comment-result", ok: true, commentId }
+      : { type: "delete-comment-result", ok: false, commentId, error: "could not write deletion" };
   }
 
   private async handleOpenLink(
@@ -615,65 +589,6 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     }
   }
 
-  private async handleAddComment(
-    document: vscode.TextDocument,
-    msg: AddCommentMessage,
-    sidecarPath: string | null,
-  ): Promise<{ type: "add-comment-result"; ok: boolean; error?: string }> {
-    if (!sidecarPath) {
-      return {
-        type: "add-comment-result",
-        ok: false,
-        error: "File is outside any workspace folder.",
-      };
-    }
-    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
-    if (!folder) {
-      return {
-        type: "add-comment-result",
-        ok: false,
-        error: "File is outside any workspace folder.",
-      };
-    }
-    const anchor: Anchor = {
-      text: msg.anchor.text,
-      contextBefore: msg.anchor.contextBefore,
-      contextAfter: msg.anchor.contextAfter,
-    };
-    if (!isAnchorTextValid(anchor.text)) {
-      return {
-        type: "add-comment-result",
-        ok: false,
-        error: "Anchor text needs at least 8 non-whitespace characters.",
-      };
-    }
-    const mdRel = path.relative(folder.uri.fsPath, document.uri.fsPath);
-    const author = (msg.author && msg.author.trim()) || resolveAuthorFromConfig();
-    try {
-      await addCommentToSidecar(
-        sidecarPath,
-        mdRel,
-        {
-          anchor,
-          body: msg.body,
-          author,
-          createdAt: new Date().toISOString(),
-        },
-        { trackSelfWrite: false },
-      );
-      this.output.appendLine(
-        `CollabEditor: added comment on ${document.uri.fsPath} (anchor=${JSON.stringify(anchor.text.slice(0, 40))})`,
-      );
-      return { type: "add-comment-result", ok: true };
-    } catch (e) {
-      const message = (e as Error).message;
-      this.output.appendLine(
-        `CollabEditor: addComment failed for ${document.uri.fsPath}: ${message}`,
-      );
-      return { type: "add-comment-result", ok: false, error: message };
-    }
-  }
-
   private renderHtml(webview: vscode.Webview): string {
     const scriptUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.extensionUri, "out", "webview", "client.js"),
@@ -720,26 +635,6 @@ function resolveAuthorFromConfig(): string {
   const configured = (config.get<string>("collab.userName", "") || "").trim();
   if (configured) return configured;
   return os.userInfo().username || "user";
-}
-
-function commentToSummary(c: Comment): CommentSummary {
-  return {
-    id: c.id,
-    body: c.body,
-    author: typeof c.author === "string" ? c.author : "user",
-    createdAt: c.createdAt,
-    resolved: c.resolved,
-    anchor: {
-      text: c.anchor.text,
-      contextBefore: c.anchor.contextBefore,
-      contextAfter: c.anchor.contextAfter,
-    },
-    replies: c.replies.map((r) => ({
-      author: typeof r.author === "string" ? r.author : "user",
-      body: r.body,
-      createdAt: r.createdAt,
-    })),
-  };
 }
 
 function computeRoom(uri: vscode.Uri): string {

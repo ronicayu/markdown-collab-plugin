@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.33.5 — 2026-06-07 (trial)
+
+### Changed: the live editor stores comments inline in the .md, not a sidecar
+
+The real-time collaborative editor now keeps review comments as the same
+invisible `<!--mc:...-->` markers the rest of Markdown Collab uses, written
+into the `.md` file itself, instead of a separate `.markdown-collab/<file>.md.json`
+sidecar. Comments now travel with the file and are shared with the standard
+editor's comment view, the preview, and the Claude skill.
+
+The editor still shows clean prose; the markers are stripped before display
+and re-materialized around the same text after you edit. Comment add / reply /
+resolve / delete now change the `.md` and persist on save (Ctrl+S), the same
+as the inline-comments view.
+
+Notes:
+- Legacy `.md.json` sidecars are not read by the live editor anymore. Files
+  that only have a sidecar will show no comments here until re-commented.
+- Anchoring across edits is best-effort: a comment whose quoted text is
+  rewritten or duplicated may fall back to "unanchored" (the comment is kept,
+  just without a highlight).
+
 ## 0.33.4 — 2026-06-06 (trial)
 
 ### Changed: the Changed Files refresh button now starts and restarts reviews
