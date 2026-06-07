@@ -42,9 +42,23 @@ body { overflow: hidden; }
   background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.12)) !important;
   color: var(--vscode-editor-foreground) !important;
 }
+/* The Nord theme zebra-stripes table COLUMNS with a hardcoded near-black
+   (`:nth-child(odd) { background: var(--color-gray-900) }`) that ignores the
+   VS Code theme — on a dark theme the odd columns turn dark-on-dark and become
+   unreadable. Force cell colors onto VS Code tokens and replace the stripe
+   with a faint, theme-agnostic overlay that reads in both light and dark. */
 .milkdown table th,
 .milkdown table td {
+  color: var(--vscode-editor-foreground) !important;
+  background-color: transparent !important;
   border-color: var(--vscode-panel-border, rgba(127, 127, 127, 0.3)) !important;
+}
+.milkdown table td:nth-child(odd) {
+  background-color: rgba(127, 127, 127, 0.06) !important;
+}
+.milkdown table th {
+  background-color: rgba(127, 127, 127, 0.12) !important;
+  font-weight: 600;
 }
 
 /* ===========================================================

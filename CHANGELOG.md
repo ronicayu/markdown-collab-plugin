@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.33.10 — 2026-06-07 (trial)
+
+### Fixed: unreadable table columns in the live editor (dark-on-dark)
+
+Tables in the live editor rendered every other column (1st, 3rd, …) as
+dark-on-dark and effectively invisible. The bundled editor theme zebra-
+stripes table columns with a hardcoded near-black that ignored your VS Code
+theme. Table cells now follow VS Code's editor colors: readable text on a
+faint, theme-aware stripe, with a uniform header tint.
+
 ## 0.33.9 — 2026-06-07 (trial)
 
 ### Fixed: "Could not save comment — could not locate the text" in the live editor
