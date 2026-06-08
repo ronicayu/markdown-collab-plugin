@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.33.12 — 2026-06-08 (trial)
+
+### Fixed: live editor jumping to the top of the file
+
+The live editor snapped back to the top of the document — losing your scroll
+position and cursor — after saving (when format-on-save touched the file) and
+whenever the file changed externally. Refreshing the editor's content
+replaced the whole document without remembering where you were. It now
+preserves the scroll position and cursor across that refresh, so you stay put.
+
 ## 0.33.11 — 2026-06-07 (trial)
 
 ### Fixed: can't comment on table cells / formatted text in the live editor

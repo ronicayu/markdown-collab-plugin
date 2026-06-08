@@ -1470,6 +1470,17 @@ function reportReady(synced: boolean): void {
 
 function applyExternalChange(text: string): void {
   if (!editor) return;
+  // `applyTemplate` replaces the whole document, which otherwise snaps the
+  // view back to the top and drops the cursor. Capture the scroll position
+  // and selection first, then restore them — so an external edit, or a
+  // format-on-save echo right after you typed, doesn't jump to the file head.
+  const scroller = editorContainer?.parentElement ?? null; // .mdc-editor-pane (overflow:auto)
+  const prevScrollTop = scroller?.scrollTop ?? 0;
+  let prevFrom = -1;
+  editor.action((ctx) => {
+    prevFrom = ctx.get(editorViewCtx).state.selection.from;
+  });
+
   suppressNextPost = true;
   cachedMarkdown = text;
   editor.action((ctx) => ctx.set(defaultValueCtx, text));
@@ -1477,6 +1488,25 @@ function applyExternalChange(text: string): void {
     const collabService = ctx.get(collabServiceCtx);
     collabService.applyTemplate(text, () => true);
   });
+
+  // Restore the cursor near its old position (clamped to the new doc),
+  // without auto-scrolling — we restore the scroll offset ourselves.
+  if (prevFrom >= 0) {
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      try {
+        const pos = Math.max(0, Math.min(prevFrom, view.state.doc.content.size));
+        view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(pos))));
+      } catch {
+        /* positions shifted past EOF after the change — leave the default */
+      }
+    });
+  }
+  if (scroller) {
+    requestAnimationFrame(() => {
+      scroller.scrollTop = prevScrollTop;
+    });
+  }
   forceHighlightRefresh();
 }
 
