@@ -10,7 +10,7 @@ import {
   replyToThread,
   setThreadResolved,
 } from "../collab/inlineBridge";
-import { parse } from "../inlineComments/format";
+import { parse, withThreads } from "../inlineComments/format";
 
 const DOC = [
   "# Title",
@@ -225,6 +225,43 @@ describe("addThreadAtOffsets (exact placement, no text search)", () => {
     expect(res.source.startsWith(FM)).toBe(true);
     expect(commentsOf(res.source)[0]!.anchor.text).toBe(sel);
     expect(proseOf(res.source)).toBe(newBody);
+  });
+});
+
+describe("quote hygiene (no captured markers)", () => {
+  it("a new comment's quote doesn't capture an adjacent comment's markers", () => {
+    const { source } = seed(); // existing comment on "jumps over the lazy dog"
+    // New comment whose text abuts the existing anchor, so its source span
+    // crosses the existing open marker.
+    const res = addThreadFromAnchor(
+      source,
+      { text: "brown fox jumps over", contextBefore: "quick ", contextAfter: " the lazy" },
+      { author: "ron", body: "c2" },
+    );
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    for (const t of parse(res.source).threads) {
+      expect(t.quote).not.toMatch(/<!--mc/);
+    }
+    for (const c of commentsOf(res.source)) {
+      expect(c.anchor.text).not.toMatch(/<!--mc/);
+    }
+  });
+
+  it("commentsOf strips markers from a legacy marker-laden quote", () => {
+    // A thread whose stored quote captured another thread's marker (from
+    // before the source fix) and is unanchored in the body.
+    const src = withThreads(DOC, [
+      {
+        id: "xx111",
+        quote: "river bank <!--mc:/a:zz999--> today",
+        status: "open",
+        comments: [{ id: "c1", author: "r", ts: "2026-01-01T00:00:00Z", body: "b" }],
+      },
+    ]);
+    const c = commentsOf(src)[0]!;
+    expect(c.anchor.text).not.toMatch(/<!--mc/);
+    expect(c.anchor.text).toBe("river bank  today");
   });
 });
 

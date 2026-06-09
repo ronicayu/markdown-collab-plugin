@@ -421,7 +421,11 @@ export function addThread(
   if (selEnd < selStart) throw new Error("selEnd must be >= selStart");
   const parsed = parse(source);
   const id = mintThreadId(parsed.threads.map((t) => t.id));
-  const quote = source.slice(selStart, selEnd);
+  // Strip any *other* thread's markers the selection happens to span — a quote
+  // is the verbatim anchored text, never embedded `<!--mc:...-->` markup. A
+  // marker-laden quote would otherwise show up raw in comment UIs and break
+  // re-anchoring (it can't be found in the marker-free rendered text).
+  const quote = source.slice(selStart, selEnd).replace(OPEN_RE, "").replace(CLOSE_RE, "");
   const openMarker = `<!--mc:a:${id}-->`;
   const closeMarker = `<!--mc:/a:${id}-->`;
   const ts = comment.ts ?? new Date().toISOString();

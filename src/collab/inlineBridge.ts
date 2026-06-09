@@ -80,6 +80,10 @@ function locate(
 const openMarker = (id: string): string => `<!--mc:a:${id}-->`;
 const closeMarker = (id: string): string => `<!--mc:/a:${id}-->`;
 
+/** Remove any embedded anchor markers from a string (e.g. a quote that captured another thread's markers). */
+const stripMarkerComments = (s: string): string =>
+  s.replace(/<!--mc:a:[a-z0-9]{1,12}-->/g, "").replace(/<!--mc:\/a:[a-z0-9]{1,12}-->/g, "");
+
 interface Bridge {
   prose: string;
   parsed: ParsedDocument;
@@ -182,7 +186,9 @@ export function commentsOf(source: string): CollabComment[] {
           contextBefore: prose.slice(Math.max(0, span.proseStart - CONTEXT_CHARS), span.proseStart),
           contextAfter: prose.slice(span.proseEnd, span.proseEnd + CONTEXT_CHARS),
         }
-      : { text: thread.quote, contextBefore: "", contextAfter: "" };
+      : // Defensive: a legacy quote may have captured another thread's markers;
+        // strip them so the panel shows clean text and the highlight can match.
+        { text: stripMarkerComments(thread.quote), contextBefore: "", contextAfter: "" };
     out.push({
       id: thread.id,
       body: root.body,

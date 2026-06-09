@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.33.13 — 2026-06-09 (trial)
+
+### Fixed: raw `<!--mc:...-->` marks showing in comment cards + broken highlights
+
+When you commented on text next to an existing comment, the new comment's
+stored quote could swallow the neighbor's invisible marker. That raw marker
+then showed up in the comment card's "commenting on" preview, and — because
+the marker text isn't present in the rendered document — the comment's
+highlight could no longer be located, so the anchored text stopped
+highlighting.
+
+Quotes are now kept free of embedded markers when a comment is created, and
+existing marker-laden quotes are cleaned up when displayed. This also makes
+the inline comments view's quotes cleaner.
+
 ## 0.33.12 — 2026-06-08 (trial)
 
 ### Fixed: live editor jumping to the top of the file
