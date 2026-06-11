@@ -83,11 +83,6 @@ interface DeleteDraftRequest {
   id: string;
 }
 
-interface JumpToLineRequest {
-  type: "jump";
-  line: number;
-}
-
 interface ReadyMessage {
   type: "ready";
 }
@@ -97,7 +92,6 @@ type ClientToHost =
   | AddDraftRequest
   | EditDraftRequest
   | DeleteDraftRequest
-  | JumpToLineRequest
   | SubmitRequest;
 
 const VIEW_TYPE = "markdownCollab.prReviewView";
@@ -246,20 +240,9 @@ export class PrReviewPanel {
       case "delete-draft":
         await this.host.deleteDraft(msg.id);
         return this.pushDrafts(this.host);
-      case "jump":
-        return this.openSourceAt(msg.line);
       case "submit":
         return this.host.submit(msg.verdict, msg.body);
     }
-  }
-
-  private async openSourceAt(line: number): Promise<void> {
-    const doc = await vscode.workspace.openTextDocument(this.fileUri);
-    await vscode.window.showTextDocument(doc, {
-      selection: new vscode.Range(line - 1, 0, line - 1, 0),
-      preview: false,
-      viewColumn: vscode.ViewColumn.Beside,
-    });
   }
 
   private renderHtml(): string {

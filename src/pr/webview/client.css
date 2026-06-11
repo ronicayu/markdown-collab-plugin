@@ -89,6 +89,17 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
   background: var(--diff-add-bg);
 }
 
+/* Flash a block when a comment's line button scrolls the preview to it —
+   a brief accent ring + tint so the eye lands on the right place. */
+#preview .pr-jump-flash {
+  animation: pr-jump-flash 1.5s ease-out;
+  border-radius: 3px;
+}
+@keyframes pr-jump-flash {
+  0% { background: var(--diff-add-bg-strong); box-shadow: 0 0 0 2px var(--accent); }
+  100% { background: transparent; box-shadow: 0 0 0 2px transparent; }
+}
+
 #floating-add {
   position: fixed;
   z-index: 20;

@@ -75,10 +75,9 @@ interface ReadyMessage { type: "ready"; }
 interface AddDraftRequest { type: "add-draft"; startLine: number; endLine: number; body: string; }
 interface EditDraftRequest { type: "edit-draft"; id: string; body: string; }
 interface DeleteDraftRequest { type: "delete-draft"; id: string; }
-interface JumpRequest { type: "jump"; line: number; }
 type ReviewVerdict = "comment" | "approve" | "request-changes";
 interface SubmitRequest { type: "submit"; verdict: ReviewVerdict; body?: string; }
-type ClientToHost = ReadyMessage | AddDraftRequest | EditDraftRequest | DeleteDraftRequest | JumpRequest | SubmitRequest;
+type ClientToHost = ReadyMessage | AddDraftRequest | EditDraftRequest | DeleteDraftRequest | SubmitRequest;
 
 const vscode = window.acquireVsCodeApi();
 
@@ -257,6 +256,55 @@ function nearestBlock(start: Element): HTMLElement | null {
   return null;
 }
 
+/**
+ * Scroll the preview pane to the rendered block covering a 1-based source
+ * line and flash it. Used by the draft / existing-comment line buttons so a
+ * click lands inside the review preview rather than popping the raw text
+ * editor. Prefers the most specific block that contains the line; falls back
+ * to the nearest block starting at or before it.
+ */
+function scrollPreviewToLine(line: number): void {
+  let containing: HTMLElement | null = null;
+  let containingStart = -1;
+  let before: HTMLElement | null = null;
+  let beforeStart = -1;
+  for (const el of dom.preview.querySelectorAll<HTMLElement>("[data-mc-src]")) {
+    const m = /^(\d+)\.(\d+)$/.exec(el.dataset.mcSrc || "");
+    if (!m) continue;
+    const start = Number(m[1]);
+    const end = Number(m[2]);
+    const startLine = lineFromOffset(start);
+    const endLine = lineFromOffset(Math.max(start, end - 1));
+    const block = nearestBlock(el);
+    if (!block) continue;
+    if (startLine <= line && line <= endLine && startLine > containingStart) {
+      containing = block;
+      containingStart = startLine;
+    }
+    if (startLine <= line && startLine > beforeStart) {
+      before = block;
+      beforeStart = startLine;
+    }
+  }
+  const target = containing ?? before;
+  if (!target) return;
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+  flashBlock(target);
+}
+
+let flashTimer: number | undefined;
+function flashBlock(el: HTMLElement): void {
+  for (const prev of dom.preview.querySelectorAll(".pr-jump-flash")) {
+    prev.classList.remove("pr-jump-flash");
+  }
+  // Force reflow so re-adding the class restarts the animation when the same
+  // line button is clicked twice in a row.
+  void el.offsetWidth;
+  el.classList.add("pr-jump-flash");
+  if (flashTimer !== undefined) clearTimeout(flashTimer);
+  flashTimer = window.setTimeout(() => el.classList.remove("pr-jump-flash"), 1500);
+}
+
 let mermaidInitialized = false;
 async function runMermaid(): Promise<void> {
   const m = window.mermaid;
@@ -428,8 +476,8 @@ function renderDraftCard(d: PrDraft): HTMLElement {
   lineLabel.textContent = d.startLine && d.startLine !== d.line
     ? `Lines ${d.startLine}–${d.line}`
     : `Line ${d.line}`;
-  lineLabel.title = "Jump to this line in the source editor";
-  lineLabel.addEventListener("click", () => vscode.postMessage({ type: "jump", line: d.startLine ?? d.line }));
+  lineLabel.title = "Jump to this line in the preview";
+  lineLabel.addEventListener("click", () => scrollPreviewToLine(d.startLine ?? d.line));
   head.appendChild(lineLabel);
   card.appendChild(head);
 
@@ -531,8 +579,8 @@ function renderExistingThread(thread: ExistingPrComment[]): HTMLElement {
   const lineBtn = document.createElement("button");
   lineBtn.className = "draft-line btn-link";
   lineBtn.textContent = `Line ${head.line}`;
-  lineBtn.title = "Jump to this line in the source editor";
-  lineBtn.addEventListener("click", () => vscode.postMessage({ type: "jump", line: head.line }));
+  lineBtn.title = "Jump to this line in the preview";
+  lineBtn.addEventListener("click", () => scrollPreviewToLine(head.line));
   meta.appendChild(lineBtn);
   if (head.resolved) {
     const tag = document.createElement("span");

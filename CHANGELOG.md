@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.33.14 — 2026-06-11 (trial)
+
+### Fixed: comment line numbers now jump within the review view, not the raw file
+
+In the PR/MR review view, clicking a comment's line number opened the raw
+`.md` text editor and pulled you out of the review. It now scrolls the
+rendered review preview to that line and briefly flashes the block, so you
+stay in the review while you look at what a comment refers to. Both your draft
+comments and existing platform comments behave this way.
+
 ## 0.33.13 — 2026-06-09 (trial)
 
 ### Fixed: raw `<!--mc:...-->` marks showing in comment cards + broken highlights
