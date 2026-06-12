@@ -18,6 +18,7 @@ import {
   addedLineRanges,
   type LineRange,
 } from "./diff";
+import { stripAllInlineMarkup } from "../inlineComments/format";
 import type {
   ExistingPrComment,
   PrContext,
@@ -181,7 +182,13 @@ export class PrReviewPanel {
 
   private async pushInit(): Promise<void> {
     const sourceBytes = await vscode.workspace.fs.readFile(this.fileUri);
-    const source = Buffer.from(sourceBytes).toString("utf8");
+    const raw = Buffer.from(sourceBytes).toString("utf8");
+    // Strip inline-comment anchor markers and the threads region before
+    // rendering — otherwise the raw `<!--mc:a:ID-->` comments leak into the
+    // preview (and, under `html:false`, break heading/prose parsing). Markers
+    // are inline and the threads region is trailing, so prose line numbers are
+    // unchanged: the diff stripes and line-jump mapping stay aligned.
+    const source = stripAllInlineMarkup(raw);
     const ranges = await addedLineRanges(
       this.host.ctx.repoRoot,
       `origin/${this.host.ctx.baseRef}`,

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.33.15 — 2026-06-12 (trial)
+
+### Fixed: raw comment markers showing in the PR/MR review view
+
+The PR/MR review view rendered the file's raw bytes, so the invisible
+inline-comment markers (`<!--mc:a:…-->`) and the threads block leaked into
+the preview as literal text — and a marker sitting in front of a heading
+stopped it from rendering as a heading (`## How to use this template` showed
+as plain text with the markers). The review preview now strips those markers
+before rendering, the same way the live editor does. Headings, body prose,
+and the diff highlight stripes are unaffected.
+
 ## 0.33.14 — 2026-06-11 (trial)
 
 ### Fixed: comment line numbers now jump within the review view, not the raw file

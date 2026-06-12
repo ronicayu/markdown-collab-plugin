@@ -165,6 +165,26 @@ describe("inlineComments/format - replaceThread / appendReply / stripAnchorMarke
     const cleaned = stripAllInlineMarkup(md);
     expect(cleaned.trim()).toBe("Hello world.");
   });
+
+  it("stripAllInlineMarkup unwraps nested markers around a heading (PR-preview regression)", () => {
+    // The PR review preview rendered raw markers, so a heading wrapped by two
+    // overlapping anchors showed as literal `<!--mc:a:...-->` text and lost its
+    // `## ` heading parse. Stripping must restore the bare heading.
+    const md =
+      "<!--mc:a:199b4--><!--mc:a:9b11a-->## How to use this template" +
+      "<!--mc:/a:9b11a--><!--mc:/a:199b4-->\n\n" +
+      "Body with an <!--mc:a:abc12-->inline note<!--mc:/a:abc12--> here.\n\n" +
+      "<!--mc:threads:begin-->\n" +
+      '<!--mc:t {"id":"199b4","quote":"## How to use this template","status":"open","comments":[]}-->\n' +
+      "<!--mc:threads:end-->\n";
+    const cleaned = stripAllInlineMarkup(md);
+    expect(cleaned).toContain("## How to use this template");
+    expect(cleaned).not.toContain("mc:a:");
+    expect(cleaned).not.toContain("mc:threads");
+    // Inline markers carry no newline and the threads region is trailing, so
+    // the heading stays on line 1 — the property the diff stripes rely on.
+    expect(cleaned.split("\n")[0]).toBe("## How to use this template");
+  });
 });
 
 describe("inlineComments/format - HTML-comment safety", () => {
