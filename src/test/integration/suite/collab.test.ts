@@ -97,7 +97,13 @@ function roomFor(uri: vscode.Uri): string {
   return crypto.createHash("sha1").update(uri.fsPath).digest("hex").slice(0, 16);
 }
 
-suite("Collab editor integration", () => {
+// The real-time collaborative editor (custom editor + y-websocket relay) is
+// disabled: its contribution and activation were removed from the extension,
+// though the implementation (CollabEditorProvider, src/collab/server.ts) is
+// kept. These end-to-end assertions can't pass while the feature is off — they
+// expect the customEditor to be registered and the relay to answer on :1234.
+// Re-enable this suite if the feature is wired back up.
+suite.skip("Collab editor integration", () => {
   suiteSetup(async () => {
     const ext = vscode.extensions.getExtension(EXT_ID);
     assert.ok(ext, `${EXT_ID} is not loaded; check publisher/name in package.json`);

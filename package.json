@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.34.5",
+  "version": "0.34.6",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -38,8 +38,6 @@
     "onCommand:markdownCollab.startClaudeTerminal",
     "onCommand:markdownCollab.resetSendMode",
     "onView:markdownCollab.review",
-    "onCommand:markdownCollab.openCollabEditor",
-    "onCustomEditor:markdownCollab.collabEditor",
     "onCommand:markdownCollab.openInlineCommentsView",
     "onCommand:markdownCollab.askClaudeToReview",
     "onCommand:markdownCollab.startPrReview",
@@ -75,11 +73,6 @@
       {
         "command": "markdownCollab.resetSendMode",
         "title": "Markdown Collab: Reset Send Mode"
-      },
-      {
-        "command": "markdownCollab.openCollabEditor",
-        "title": "Markdown Collab: Open Collaborative Editor (experimental)",
-        "category": "Markdown Collab"
       },
       {
         "command": "markdownCollab.openInlineCommentsView",
@@ -150,26 +143,6 @@
           ],
           "default": "ask",
           "markdownDescription": "How the **Send to Claude** button delivers unresolved comments to Claude Code.\n\n- `ask` — quick-pick on first use per workspace; remembers the choice (run **Markdown Collab: Reset Send Mode** to clear).\n- `terminal` — bracketed-paste into a running `claude` REPL. No MCP required.\n- `channel` — append to `.markdown-collab/.events.jsonl` for a `tail` + `Monitor` watch loop. No MCP required, but needs a streaming-tool harness.\n- `mcp-channel` — native MCP channel: events arrive as `<channel source=\"markdown-collab\">` tags. Requires Claude Code v2.1.80+, claude.ai login, and a one-time `.mcp.json` setup.\n- `clipboard` — copy the prompt for manual paste."
-        },
-        "markdownCollab.collab.serverUrl": {
-          "type": "string",
-          "default": "ws://localhost:1234",
-          "description": "y-websocket server URL the collaborative editor connects to. The extension can also spawn a local server on activation (see startLocalServer/port). Point this at a remote URL to share with other machines."
-        },
-        "markdownCollab.collab.startLocalServer": {
-          "type": "boolean",
-          "default": true,
-          "description": "Spawn a local y-websocket server on activation (uses markdownCollab.collab.port)."
-        },
-        "markdownCollab.collab.port": {
-          "type": "number",
-          "default": 1234,
-          "description": "Port the local y-websocket server binds to. Change if 1234 is in use by another tool. The webview connects to markdownCollab.collab.serverUrl, so update both if you change this."
-        },
-        "markdownCollab.collab.userName": {
-          "type": "string",
-          "default": "",
-          "description": "Display name shown to other collaborators. Defaults to OS username."
         },
         "markdownCollab.plantuml.serverUrl": {
           "type": "string",
@@ -304,19 +277,7 @@
           "name": "PR Review (markdown files)"
         }
       ]
-    },
-    "customEditors": [
-      {
-        "viewType": "markdownCollab.collabEditor",
-        "displayName": "Markdown Collab (real-time, experimental)",
-        "selector": [
-          {
-            "filenamePattern": "*.md"
-          }
-        ],
-        "priority": "option"
-      }
-    ]
+    }
   },
   "scripts": {
     "compile": "tsc -p . && tsc -p tsconfig.webview.json && npm run bundle:extension && npm run bundle:webview && npm run bundle:inline-comments && npm run bundle:pr-review && npm run copy:fixtures",

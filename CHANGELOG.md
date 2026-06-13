@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.34.6 — 2026-06-13 (trial)
+
+### Removed: real-time collaborative editor (disabled)
+
+The experimental real-time collaborative editor (Milkdown + Yjs over a local
+y-websocket relay) is turned off. Gone from the UI: the **"Reopen with → Markdown
+Collab (real-time, experimental)"** custom editor, the **Open Collaborative
+Editor** command, and the `markdownCollab.collab.*` settings. The extension no
+longer spawns a y-websocket relay on activation.
+
+Inline comments, Ask Claude to Review, and PR/MR review are unaffected. The
+editor's implementation stays in the source tree, so it can be wired back up
+later.
+
 ## 0.34.5 — 2026-06-13 (trial)
 
 ### Fixed: review follow-ups in the comment panels
