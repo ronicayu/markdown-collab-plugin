@@ -1,5 +1,8 @@
 # Markdown Collab
 
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/markdown-collab.markdown-collab-plugin?label=VS%20Code%20Marketplace&color=4F46E5)](https://marketplace.visualstudio.com/items?itemName=markdown-collab.markdown-collab-plugin)
+[![Open VSX](https://img.shields.io/open-vsx/v/markdown-collab/markdown-collab-plugin?label=Open%20VSX&color=4F46E5)](https://open-vsx.org/extension/markdown-collab/markdown-collab-plugin)
+
 A VS Code extension that lets you leave review comments on Markdown files in a format Claude Code (and other agentic AIs) can read and act on.
 
 Highlight a passage, drop a review comment in the sidebar, click **Send to Claude** — Claude reads the comment, edits the doc, and replies. Loop until you mark the thread resolved.
@@ -8,10 +11,13 @@ You can also flip the direction and ask Claude to act as the reviewer (v0.29+): 
 
 ## Quick start
 
-1. **Install the extension.** Either build it from source (see [Development](#development)) or grab the latest `.vsix` from the [GitHub Releases page](https://github.com/ronicayu/markdown-collab-plugin/releases) and install it:
-   ```bash
-   code --install-extension markdown-collab-plugin-*.vsix
-   ```
+1. **Install the extension.**
+   - **VS Code** — open Extensions (`Cmd-Shift-X`), search **Markdown Collab**, click Install. Or from the [Marketplace listing](https://marketplace.visualstudio.com/items?itemName=markdown-collab.markdown-collab-plugin), or the CLI:
+     ```bash
+     code --install-extension markdown-collab.markdown-collab-plugin
+     ```
+   - **Cursor / Windsurf / VSCodium / Gitpod** (Open VSX) — search **Markdown Collab** in Extensions, or install from the [Open VSX listing](https://open-vsx.org/extension/markdown-collab/markdown-collab-plugin).
+   - **Manual / fallback** — grab the latest `.vsix` from the [GitHub Releases page](https://github.com/ronicayu/markdown-collab-plugin/releases) (`code --install-extension markdown-collab-plugin-*.vsix`), or build from source (see [Development](#development)).
 2. **Install the Claude skill (one-time per machine).** In VS Code: `Cmd-Shift-P` → **Markdown Collab: Install Claude Skill**. This drops the skill instructions and bundled helpers into `~/.claude/skills/vs-markdown-collab/`.
 3. **Open a Markdown file** in a folder/workspace. Right-click the file → **Markdown Collab: Open Inline Comments View**, or use the command palette.
 4. **Highlight a passage in the rendered view** → click the **Comment** popup → write your review note → submit.
