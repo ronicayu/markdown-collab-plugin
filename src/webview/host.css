@@ -545,6 +545,18 @@ body { overflow: hidden; }
 .mdc-reply-author { font-weight: 600; font-size: 12px; }
 .mdc-reply-body { font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
 
+/* Always-on reply box at the bottom of each thread. */
+.mdc-reply-box {
+  margin-top: var(--mdc-space-2);
+  padding-top: var(--mdc-space-2);
+  border-top: 1px dashed var(--mc-border);
+}
+.mdc-reply-box-actions {
+  margin-top: var(--mdc-space-1);
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* ===========================================================
    Composer (new comment + reply + delete-confirm)
    =========================================================== */

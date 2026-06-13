@@ -152,6 +152,9 @@ let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 // an incoming external (Claude) change can cancel a still-pending stale post —
 // otherwise that post would fire after the external change and overwrite it.
 let editDebounce: ReturnType<typeof setTimeout> | null = null;
+// In-progress reply text per thread, so an always-on reply box keeps what the
+// user typed across sidebar re-renders.
+const pendingReplies = new Map<string, string>();
 
 const sidebarState: {
   comments: CommentSummary[];
@@ -446,7 +449,8 @@ function renderCommentCard(c: CommentSummary): string {
       <div class="mdc-thread-head">
         <button type="button" class="mdc-thread-quote" data-comment-action="jump" title="Click to scroll to the highlighted passage">${anchorText}</button>
         <div class="mdc-thread-actions">
-          <button type="button" class="mc-btn mc-btn--link" data-comment-action="reply">Reply</button>
+          <button type="button" class="mc-btn mc-btn--link" data-comment-action="send-thread-claude" title="Send this thread to Claude">→ Claude</button>
+          <button type="button" class="mc-btn mc-btn--link" data-comment-action="copy-thread-claude" title="Copy this thread's prompt to the clipboard">Copy</button>
           <button type="button" class="mc-btn mc-btn--link" data-comment-action="resolve">${c.resolved ? "Unresolve" : "Resolve"}</button>
           <button type="button" class="mc-btn mc-btn--link mc-btn--danger" data-comment-action="delete">Delete</button>
         </div>
@@ -454,6 +458,12 @@ function renderCommentCard(c: CommentSummary): string {
       ${commentCard(c.author, c.createdAt, c.body, false)}
       ${replies}
       <div class="mdc-reply-slot"></div>
+      <div class="mdc-reply-box">
+        <textarea class="mdc-reply-input" rows="2" placeholder="Reply…" aria-label="Reply to this thread"></textarea>
+        <div class="mdc-reply-box-actions">
+          <button type="button" class="mc-btn mc-btn--primary mdc-reply-submit" disabled>Reply</button>
+        </div>
+      </div>
     </article>
   `;
 }
@@ -515,17 +525,53 @@ function attachCommentHandlers(): void {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         const action = btn.dataset.commentAction;
-        if (action === "reply") openReplyComposer(card, id);
-        else if (action === "resolve")
+        if (action === "resolve")
           vscode.postMessage({ type: "toggle-resolve-comment", commentId: id });
         else if (action === "delete") openDeleteConfirm(card, id);
+        else if (action === "send-thread-claude") {
+          vscode.postMessage({ type: "invoke-command", command: "send-thread-claude", commentId: id });
+          showNotice("Sent this thread to Claude — your edits are saved");
+        } else if (action === "copy-thread-claude")
+          vscode.postMessage({ type: "invoke-command", command: "copy-thread-claude", commentId: id });
         else if (action === "jump") {
           const comment = sidebarState.comments.find((c) => c.id === id);
           if (comment) jumpToAnchor(comment);
         }
       });
     }
+    attachReplyBox(card, id);
   }
+}
+
+// Wire the always-on reply box at the bottom of a thread. Typing here is
+// posted directly (no "Reply" button to open a composer first); in-progress
+// text is kept in `pendingReplies` so a sidebar re-render doesn't lose it.
+function attachReplyBox(card: HTMLElement, id: string): void {
+  const input = card.querySelector<HTMLTextAreaElement>(".mdc-reply-input");
+  const submit = card.querySelector<HTMLButtonElement>(".mdc-reply-submit");
+  if (!input || !submit) return;
+  input.value = pendingReplies.get(id) ?? "";
+  submit.disabled = input.value.trim().length === 0;
+  const send = (): void => {
+    const body = input.value.trim();
+    if (!body) return;
+    submit.disabled = true;
+    submit.textContent = "Sending…";
+    vscode.postMessage({ type: "reply-comment", commentId: id, body, author: userName });
+  };
+  input.addEventListener("click", (e) => e.stopPropagation());
+  input.addEventListener("mousedown", (e) => e.stopPropagation());
+  input.addEventListener("input", () => {
+    pendingReplies.set(id, input.value);
+    submit.disabled = input.value.trim().length === 0;
+  });
+  input.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      send();
+    }
+  });
+  submit.addEventListener("click", send);
 }
 
 function openDeleteConfirm(card: HTMLElement, commentId: string): void {
@@ -551,39 +597,6 @@ function openDeleteConfirm(card: HTMLElement, commentId: string): void {
     confirm.disabled = true;
     confirm.textContent = "Deleting…";
     vscode.postMessage({ type: "delete-comment", commentId });
-  });
-}
-
-function openReplyComposer(card: HTMLElement, commentId: string): void {
-  const slot = card.querySelector<HTMLElement>(".mdc-reply-slot");
-  if (!slot) return;
-  if (slot.querySelector(".mdc-reply-composer")) {
-    slot.innerHTML = "";
-    return;
-  }
-  slot.innerHTML = `
-    <div class="mdc-reply-composer">
-      <textarea class="mdc-reply-input" rows="2" placeholder="Reply…"></textarea>
-      <div class="mdc-reply-actions">
-        <button type="button" class="mdc-reply-cancel">Cancel</button>
-        <button type="button" class="mdc-reply-submit">Send reply</button>
-      </div>
-    </div>
-  `;
-  const textarea = slot.querySelector<HTMLTextAreaElement>(".mdc-reply-input")!;
-  const cancel = slot.querySelector<HTMLButtonElement>(".mdc-reply-cancel")!;
-  const submit = slot.querySelector<HTMLButtonElement>(".mdc-reply-submit")!;
-  textarea.focus();
-  cancel.addEventListener("click", () => (slot.innerHTML = ""));
-  submit.addEventListener("click", () => {
-    const body = textarea.value.trim();
-    if (!body) {
-      textarea.focus();
-      return;
-    }
-    submit.disabled = true;
-    submit.textContent = "Sending…";
-    vscode.postMessage({ type: "reply-comment", commentId, body, author: userName });
   });
 }
 
@@ -1587,6 +1600,9 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     }
   } else if (msg.type === "reply-comment-result") {
     if (msg.ok) {
+      // The reply landed; drop the in-progress text so the upcoming re-render
+      // shows an empty reply box for this thread.
+      pendingReplies.delete(msg.commentId);
       showToast("Reply sent.");
     } else {
       const submit = document.querySelector<HTMLButtonElement>(
@@ -1594,7 +1610,7 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
       );
       if (submit) {
         submit.disabled = false;
-        submit.textContent = "Send reply";
+        submit.textContent = "Reply";
       }
       showToast(`Reply failed: ${msg.error ?? "unknown error"}`);
     }

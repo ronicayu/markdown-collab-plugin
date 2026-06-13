@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.34.11 — 2026-06-13 (trial)
+
+### Added: per-thread Send to Claude in the live editor
+
+Each comment thread in the live editor now has its own **→ Claude** and **Copy**
+actions (matching the inline view), so you can send a single thread to Claude
+instead of the whole file. Both save your edits to disk first.
+
+### Changed: replying in the live editor is an always-on box
+
+The "Reply" button (which opened a composer) is gone — each thread now has an
+always-visible reply box at the bottom. Type and hit **Reply** (or
+Cmd/Ctrl+Enter). In-progress reply text survives sidebar re-renders.
+
 ## 0.34.10 — 2026-06-13 (trial)
 
 ### Changed: live editor comment panel matches the inline view

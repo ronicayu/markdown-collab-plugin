@@ -11,7 +11,7 @@ import {
   type ReviewPayload,
   type SendMode,
 } from "./sendToClaude";
-import { buildInlinePayload } from "./inlineComments/sendToClaude";
+import { buildInlinePayload, buildSingleThreadPayload } from "./inlineComments/sendToClaude";
 import { installClaudeSkill } from "./skill";
 import { EVENT_LOG_REL, EventLog } from "./transports/eventLog";
 import { sendViaMcpChannel } from "./transports/mcpChannel";
@@ -123,6 +123,72 @@ export function activate(context: vscode.ExtensionContext): void {
           terminalTracker,
           eventLogs,
           context.workspaceState,
+        );
+      },
+    ),
+    // Per-thread send/copy — invoked by the live editor's "→ Claude" / "Copy"
+    // thread actions (and reusable elsewhere). Internal commands: not in the
+    // command palette.
+    vscode.commands.registerCommand(
+      "markdownCollab.sendThreadToClaude",
+      async (uri?: vscode.Uri, threadId?: string) => {
+        if (!(uri instanceof vscode.Uri) || !threadId) return;
+        let doc: vscode.TextDocument;
+        try {
+          doc = await vscode.workspace.openTextDocument(uri);
+        } catch (e) {
+          void vscode.window.showErrorMessage(
+            `Failed to open ${uri.fsPath}: ${(e as Error).message}`,
+          );
+          return;
+        }
+        const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
+        if (!folder) {
+          void vscode.window.showWarningMessage(
+            "Markdown file is outside any workspace folder.",
+          );
+          return;
+        }
+        const payload = buildSingleThreadPayload(doc, threadId);
+        if (!payload) {
+          void vscode.window.showInformationMessage(
+            "Thread not found or already resolved.",
+          );
+          return;
+        }
+        await dispatchReviewPayload(
+          payload,
+          output,
+          terminalTracker,
+          eventLogs,
+          context.workspaceState,
+          folder,
+        );
+      },
+    ),
+    vscode.commands.registerCommand(
+      "markdownCollab.copyThreadToClaude",
+      async (uri?: vscode.Uri, threadId?: string) => {
+        if (!(uri instanceof vscode.Uri) || !threadId) return;
+        let doc: vscode.TextDocument;
+        try {
+          doc = await vscode.workspace.openTextDocument(uri);
+        } catch (e) {
+          void vscode.window.showErrorMessage(
+            `Failed to open ${uri.fsPath}: ${(e as Error).message}`,
+          );
+          return;
+        }
+        const payload = buildSingleThreadPayload(doc, threadId);
+        if (!payload) {
+          void vscode.window.showInformationMessage(
+            "Thread not found or already resolved.",
+          );
+          return;
+        }
+        await vscode.env.clipboard.writeText(payload.prompt);
+        void vscode.window.showInformationMessage(
+          "Thread prompt copied — paste into Claude Code.",
         );
       },
     ),

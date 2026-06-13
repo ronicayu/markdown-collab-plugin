@@ -106,7 +106,9 @@ interface OpenLinkMessage {
 
 interface InvokeCommandMessage {
   type: "invoke-command";
-  command: "send-to-claude" | "copy-prompt";
+  command: "send-to-claude" | "copy-prompt" | "send-thread-claude" | "copy-thread-claude";
+  /** Thread/comment id for the per-thread `*-thread-claude` commands. */
+  commentId?: string;
 }
 
 interface DrawioReadMessage {
@@ -651,6 +653,30 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       } catch (e) {
         this.output.appendLine(
           `CollabEditor: copy-prompt failed: ${(e as Error).message}`,
+        );
+      }
+    } else if (msg.command === "send-thread-claude" && msg.commentId) {
+      try {
+        await vscode.commands.executeCommand(
+          "markdownCollab.sendThreadToClaude",
+          document.uri,
+          msg.commentId,
+        );
+      } catch (e) {
+        this.output.appendLine(
+          `CollabEditor: sendThreadToClaude failed: ${(e as Error).message}`,
+        );
+      }
+    } else if (msg.command === "copy-thread-claude" && msg.commentId) {
+      try {
+        await vscode.commands.executeCommand(
+          "markdownCollab.copyThreadToClaude",
+          document.uri,
+          msg.commentId,
+        );
+      } catch (e) {
+        this.output.appendLine(
+          `CollabEditor: copyThreadToClaude failed: ${(e as Error).message}`,
         );
       }
     }
