@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.33.16 — 2026-06-13 (trial)
+
+### Added: extension icon + first Marketplace / Open VSX publish
+
+Markdown Collab now ships with an icon (a review-comment bubble around the
+markdown mark), so it has a proper tile on the listing. This is also the first
+build published to the VS Code Marketplace and to Open VSX, so the extension
+can be installed directly from your editor rather than from a downloaded
+`.vsix`.
+
 ## 0.33.15 — 2026-06-12 (trial)
 
 ### Fixed: raw comment markers showing in the PR/MR review view
