@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.34.4 — 2026-06-13 (trial)
+
+### Changed: live editor comments match the other panels visually
+
+The live editor's comment cards now use the same design tokens as the inline and
+PR/MR comment panels — consistent card background, border, spacing, timestamp
+color, and indented replies — so all three comment panels look alike.
+
 ## 0.34.3 — 2026-06-13 (trial)
 
 ### Added: in-doc section ("fragment") links work in every view

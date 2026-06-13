@@ -382,16 +382,18 @@ body { overflow: hidden; }
 .mdc-comment-list {
   padding: var(--mdc-space-2);
 }
+/* Card chrome shares the design tokens from comments-shared.css so the live
+   editor's comments match the inline + PR comment panels. */
 .mdc-comment {
-  padding: var(--mdc-space-3);
-  margin-bottom: var(--mdc-space-2);
-  border-radius: var(--mdc-radius);
-  background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.05));
-  border: 1px solid transparent;
-  transition: border-color 0.12s ease, background-color 0.12s ease;
+  padding: 8px 10px;
+  margin-bottom: var(--mc-gap);
+  border-radius: var(--mc-radius);
+  background: var(--mc-card-bg);
+  border: 1px solid var(--mc-border);
+  transition: background-color 0.12s ease;
 }
 .mdc-comment:hover {
-  border-color: var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+  background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.08));
 }
 .mdc-comment--resolved { opacity: 0.6; }
 .mdc-comment--flash {
@@ -424,8 +426,8 @@ body { overflow: hidden; }
 }
 .mdc-comment-time,
 .mdc-reply-time {
-  font-size: 11px;
-  opacity: 0.7;
+  font-size: 12px;
+  color: var(--mc-muted);
   white-space: nowrap;
 }
 .mdc-comment-actions {
@@ -463,16 +465,21 @@ body { overflow: hidden; }
 
 .mdc-comment-body {
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.45;
   white-space: pre-wrap;
 }
 
 .mdc-replies {
   margin-top: var(--mdc-space-2);
   padding-top: var(--mdc-space-2);
-  border-top: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.18));
+  border-top: 1px solid var(--mc-border);
 }
-.mdc-reply { margin-bottom: var(--mdc-space-2); }
+/* Indented left-border to match the shared `.mc-card--reply` look. */
+.mdc-reply {
+  margin: 0 0 var(--mdc-space-2) 14px;
+  padding-left: 10px;
+  border-left: 2px solid var(--mc-border);
+}
 .mdc-reply:last-child { margin-bottom: 0; }
 .mdc-reply-meta {
   display: flex;
