@@ -3,6 +3,7 @@ import {
   addThreadAtOffsets,
   addThreadFromAnchor,
   commentsOf,
+  deleteComment,
   deleteThread,
   frontmatterOf,
   mergeProseEdit,
@@ -342,5 +343,46 @@ describe("mergeProseEdit", () => {
   it("produces clean prose (no markers) when there are no threads", () => {
     const merged = mergeProseEdit(DOC, "Totally new content.\n");
     expect(merged).toBe("Totally new content.\n");
+  });
+});
+
+describe("deleteComment", () => {
+  const REPLY = { author: "alex", body: "a reply", ts: "2026-01-02T00:00:00.000Z" };
+
+  it("drops a reply, keeping the thread and its root comment", () => {
+    const { source, id } = seed();
+    const withReply = replyToThread(source, id, REPLY);
+    expect(withReply).not.toBeNull();
+    const replyId = commentsOf(withReply!)[0]!.replies[0]!.id;
+    const next = deleteComment(withReply!, id, replyId);
+    expect(next).not.toBeNull();
+    const after = commentsOf(next!)[0]!;
+    expect(after.body).toBe("first");
+    expect(after.replies).toHaveLength(0);
+  });
+
+  it("removes the whole thread when its only comment is deleted", () => {
+    const { source, id } = seed();
+    const rootId = commentsOf(source)[0]!.rootCommentId;
+    const next = deleteComment(source, id, rootId);
+    expect(next).not.toBeNull();
+    expect(commentsOf(next!)).toHaveLength(0);
+  });
+
+  it("tombstones the root when it has replies, so the reply shows as the root", () => {
+    const { source, id } = seed();
+    const withReply = replyToThread(source, id, REPLY);
+    const rootId = commentsOf(withReply!)[0]!.rootCommentId;
+    const next = deleteComment(withReply!, id, rootId);
+    expect(next).not.toBeNull();
+    const after = commentsOf(next!)[0]!;
+    expect(after.body).toBe("a reply");
+    expect(after.replies).toHaveLength(0);
+  });
+
+  it("returns null for an unknown thread or comment id", () => {
+    const { source, id } = seed();
+    expect(deleteComment(source, "no-such-thread", "c1")).toBeNull();
+    expect(deleteComment(source, id, "no-such-comment")).toBeNull();
   });
 });

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.34.13 — 2026-06-13 (trial)
+
+### Added: delete a single comment in the live editor
+
+Each comment (and reply) in a live-editor thread now has its own **Delete**,
+separate from the thread-level **Delete thread**. Deleting a comment that has
+replies tombstones it so the replies survive; deleting the last comment removes
+the whole thread.
+
+### Changed: delete confirmation lives on the button
+
+Both "Delete thread" and the per-comment Delete now confirm in place — the
+button becomes **Confirm?** for a few seconds and a second click deletes. No
+more scrolling to a confirm dialog at the bottom of the thread.
+
 ## 0.34.12 — 2026-06-13 (trial)
 
 ### Fixed: typing a reply in the live editor no longer loses focus

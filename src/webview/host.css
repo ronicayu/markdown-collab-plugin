@@ -545,6 +545,17 @@ body { overflow: hidden; }
 .mdc-reply-author { font-weight: 600; font-size: 12px; }
 .mdc-reply-body { font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
 
+/* Per-comment Delete is subtle until you hover that comment, to keep the
+   thread from looking like a wall of Delete buttons. */
+.mdc-comment .mc-card__actions {
+  opacity: 0.5;
+  transition: opacity 0.12s ease;
+}
+.mdc-comment .mc-card:hover .mc-card__actions,
+.mdc-comment .mc-card:focus-within .mc-card__actions {
+  opacity: 1;
+}
+
 /* Always-on reply box at the bottom of each thread. */
 .mdc-reply-box {
   margin-top: var(--mdc-space-2);

@@ -40,12 +40,14 @@ export interface CollabCommentAnchor {
 /** Flat per-thread comment the webview sidebar renders. `id` is the thread id. */
 export interface CollabComment {
   id: string;
+  /** Id of the thread's root comment (distinct from the thread/anchor id). */
+  rootCommentId: string;
   body: string;
   author: string;
   createdAt: string;
   resolved: boolean;
   anchor: CollabCommentAnchor;
-  replies: Array<{ author: string; body: string; createdAt: string }>;
+  replies: Array<{ id: string; author: string; body: string; createdAt: string }>;
 }
 
 /** How many chars of surrounding prose to capture as anchor context. */
@@ -192,12 +194,13 @@ export function commentsOf(source: string): CollabComment[] {
         { text: stripMarkerComments(thread.quote), contextBefore: "", contextAfter: "" };
     out.push({
       id: thread.id,
+      rootCommentId: root.id,
       body: root.body,
       author: root.author,
       createdAt: root.ts,
       resolved: thread.status === "resolved",
       anchor,
-      replies: visible.slice(1).map((r) => ({ author: r.author, body: r.body, createdAt: r.ts })),
+      replies: visible.slice(1).map((r) => ({ id: r.id, author: r.author, body: r.body, createdAt: r.ts })),
     });
   }
   return out;
@@ -359,6 +362,32 @@ export function deleteThread(source: string, threadId: string): string | null {
   const parsed = parse(source);
   if (!parsed.threads.some((t) => t.id === threadId)) return null;
   return replaceThread(source, threadId, null);
+}
+
+/**
+ * Delete a single comment within a thread. If the comment has replies, it is
+ * tombstoned (kept as a deleted placeholder so the reply tree survives);
+ * otherwise it is dropped outright. If that leaves no live comments, the whole
+ * thread (and its anchor) is removed. Returns the rewritten source, or null
+ * when the thread or comment isn't found.
+ */
+export function deleteComment(
+  source: string,
+  threadId: string,
+  commentId: string,
+): string | null {
+  const parsed = parse(source);
+  const thread = parsed.threads.find((t) => t.id === threadId);
+  if (!thread) return null;
+  if (!thread.comments.some((c) => c.id === commentId)) return null;
+  const hasChildren = thread.comments.some((c) => c.parent === commentId && !c.deleted);
+  const nextComments = hasChildren
+    ? thread.comments.map((c) => (c.id === commentId ? { ...c, deleted: true, body: "" } : c))
+    : thread.comments.filter((c) => c.id !== commentId);
+  if (nextComments.filter((c) => !c.deleted).length === 0) {
+    return replaceThread(source, thread.id, null);
+  }
+  return replaceThread(source, thread.id, { ...thread, comments: nextComments });
 }
 
 /**

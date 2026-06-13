@@ -7,6 +7,7 @@ import {
   addThreadFromAnchor,
   commentsOf,
   deleteThread,
+  deleteComment as deleteCommentFromThread,
   frontmatterOf,
   mergeProseEdit,
   proseOf,
@@ -99,6 +100,12 @@ interface DeleteCommentMessage {
   commentId: string;
 }
 
+interface DeleteSingleCommentMessage {
+  type: "delete-single-comment";
+  threadId: string;
+  commentId: string;
+}
+
 interface OpenLinkMessage {
   type: "open-link";
   href: string;
@@ -136,6 +143,7 @@ type ClientMessage =
   | ReplyCommentMessage
   | ToggleResolveCommentMessage
   | DeleteCommentMessage
+  | DeleteSingleCommentMessage
   | OpenLinkMessage
   | InvokeCommandMessage
   | DrawioReadMessage;
@@ -375,6 +383,12 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
           void panel.webview.postMessage(result);
           if (result.ok) pushComments();
         })();
+      } else if (msg.type === "delete-single-comment") {
+        void (async () => {
+          const result = await this.deleteSingleComment(document, msg, writeDocument);
+          void panel.webview.postMessage(result);
+          if (result.ok) pushComments();
+        })();
       } else if (msg.type === "open-link") {
         void this.handleOpenLink(msg, panel, document);
       } else if (msg.type === "invoke-command") {
@@ -548,6 +562,22 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     const next = deleteThread(document.getText(), commentId);
     if (next === null) {
       return { type: "delete-comment-result", ok: false, commentId, error: "comment id not found" };
+    }
+    const wrote = await writeDocument(next, { save: true });
+    return wrote
+      ? { type: "delete-comment-result", ok: true, commentId }
+      : { type: "delete-comment-result", ok: false, commentId, error: "could not write deletion" };
+  }
+
+  private async deleteSingleComment(
+    document: vscode.TextDocument,
+    msg: DeleteSingleCommentMessage,
+    writeDocument: (next: string, opts?: { save?: boolean }) => Promise<boolean>,
+  ): Promise<{ type: "delete-comment-result"; ok: boolean; commentId: string; error?: string }> {
+    const commentId = msg.commentId;
+    const next = deleteCommentFromThread(document.getText(), msg.threadId, commentId);
+    if (next === null) {
+      return { type: "delete-comment-result", ok: false, commentId, error: "comment not found" };
     }
     const wrote = await writeDocument(next, { save: true });
     return wrote

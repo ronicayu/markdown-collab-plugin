@@ -51,12 +51,13 @@ declare function acquireVsCodeApi(): {
 
 interface CommentSummary {
   id: string;
+  rootCommentId: string;
   body: string;
   author: string;
   createdAt: string;
   resolved: boolean;
   anchor: { text: string; contextBefore: string; contextAfter: string };
-  replies: Array<{ author: string; body: string; createdAt: string }>;
+  replies: Array<{ id: string; author: string; body: string; createdAt: string }>;
 }
 
 interface InitMessage {
@@ -545,13 +546,16 @@ function reconcileComments(): void {
 function renderCommentCard(c: CommentSummary): string {
   const anchorText = escapeHtml(c.anchor.text.length > 80 ? c.anchor.text.slice(0, 77) + "…" : c.anchor.text);
   // Each comment/reply is the same shared `.mc-card` the inline + PR panels
-  // use, so all three views render identical comment chrome.
-  const commentCard = (author: string, ts: string, body: string, reply: boolean): string =>
+  // use, so all three views render identical comment chrome. Each carries its
+  // own Delete (a single comment), separate from the thread-level "Delete
+  // thread" action in the header.
+  const commentCard = (commentId: string, author: string, ts: string, body: string, reply: boolean): string =>
     `<div class="mc-card${reply ? " mc-card--reply" : ""}">
       <div class="mc-card__meta"><span class="mc-card__author">${escapeHtml(author)}</span><span class="mc-card__time">${escapeHtml(formatRelativeTime(ts))}</span></div>
       <div class="mc-card__body">${renderBodyWithLinks(body)}</div>
+      <div class="mc-card__actions"><button type="button" class="mc-btn mc-btn--link mc-btn--danger" data-del-comment="${escapeAttr(commentId)}" title="Delete this comment">Delete</button></div>
     </div>`;
-  const replies = c.replies.map((r) => commentCard(r.author, r.createdAt, r.body, true)).join("");
+  const replies = c.replies.map((r) => commentCard(r.id, r.author, r.createdAt, r.body, true)).join("");
   return `
     <article class="mdc-comment ${c.resolved ? "mdc-comment--resolved" : ""}" data-id="${escapeAttr(c.id)}" data-sig="${escapeAttr(threadSignature(c))}">
       <div class="mdc-thread-head">
@@ -560,12 +564,11 @@ function renderCommentCard(c: CommentSummary): string {
           <button type="button" class="mc-btn mc-btn--link" data-comment-action="send-thread-claude" title="Send this thread to Claude">→ Claude</button>
           <button type="button" class="mc-btn mc-btn--link" data-comment-action="copy-thread-claude" title="Copy this thread's prompt to the clipboard">Copy</button>
           <button type="button" class="mc-btn mc-btn--link" data-comment-action="resolve">${c.resolved ? "Unresolve" : "Resolve"}</button>
-          <button type="button" class="mc-btn mc-btn--link mc-btn--danger" data-comment-action="delete">Delete</button>
+          <button type="button" class="mc-btn mc-btn--link mc-btn--danger" data-comment-action="delete" title="Delete the whole thread">Delete thread</button>
         </div>
       </div>
-      ${commentCard(c.author, c.createdAt, c.body, false)}
+      ${commentCard(c.rootCommentId, c.author, c.createdAt, c.body, false)}
       ${replies}
-      <div class="mdc-reply-slot"></div>
       <div class="mdc-reply-box">
         <textarea class="mdc-reply-input" rows="2" placeholder="Reply…" aria-label="Reply to this thread"></textarea>
         <div class="mdc-reply-box-actions">
@@ -639,7 +642,8 @@ function attachCardHandlers(card: HTMLElement, id: string): void {
       const action = btn.dataset.commentAction;
       if (action === "resolve")
         vscode.postMessage({ type: "toggle-resolve-comment", commentId: id });
-      else if (action === "delete") openDeleteConfirm(card, id);
+      else if (action === "delete")
+        armDelete(btn, () => vscode.postMessage({ type: "delete-comment", commentId: id }));
       else if (action === "send-thread-claude") {
         vscode.postMessage({ type: "invoke-command", command: "send-thread-claude", commentId: id });
         showNotice("Sent this thread to Claude — your edits are saved");
@@ -649,6 +653,17 @@ function attachCardHandlers(card: HTMLElement, id: string): void {
         const comment = sidebarState.comments.find((c) => c.id === id);
         if (comment) jumpToAnchor(comment);
       }
+    });
+  }
+  // Per-comment delete (each `.mc-card`), separate from the thread-level delete.
+  for (const del of Array.from(card.querySelectorAll<HTMLButtonElement>("[data-del-comment]"))) {
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const commentId = del.dataset.delComment;
+      if (!commentId) return;
+      armDelete(del, () =>
+        vscode.postMessage({ type: "delete-single-comment", threadId: id, commentId }),
+      );
     });
   }
   attachReplyBox(card, id);
@@ -685,30 +700,25 @@ function attachReplyBox(card: HTMLElement, id: string): void {
   submit.addEventListener("click", send);
 }
 
-function openDeleteConfirm(card: HTMLElement, commentId: string): void {
-  const slot = card.querySelector<HTMLElement>(".mdc-reply-slot");
-  if (!slot) return;
-  if (slot.querySelector(".mdc-delete-confirm")) {
-    slot.innerHTML = "";
+// Inline two-step delete: the first click arms the button ("Confirm?"), a
+// second click within 3s confirms. Keeps the confirmation on the button itself
+// (next to where you clicked) instead of a dialog at the bottom of the thread.
+function armDelete(btn: HTMLButtonElement, confirm: () => void): void {
+  if (btn.dataset.armed === "1") {
+    confirm();
+    btn.textContent = "Deleting…";
+    btn.disabled = true;
     return;
   }
-  slot.innerHTML = `
-    <div class="mdc-delete-confirm" role="alertdialog" aria-label="Confirm delete">
-      <div class="mdc-delete-confirm-text">Delete this thread? Replies are deleted with it.</div>
-      <div class="mdc-delete-confirm-actions">
-        <button type="button" class="mdc-delete-confirm-cancel">Cancel</button>
-        <button type="button" class="mdc-delete-confirm-confirm">Delete</button>
-      </div>
-    </div>
-  `;
-  const cancel = slot.querySelector<HTMLButtonElement>(".mdc-delete-confirm-cancel")!;
-  const confirm = slot.querySelector<HTMLButtonElement>(".mdc-delete-confirm-confirm")!;
-  cancel.addEventListener("click", () => (slot.innerHTML = ""));
-  confirm.addEventListener("click", () => {
-    confirm.disabled = true;
-    confirm.textContent = "Deleting…";
-    vscode.postMessage({ type: "delete-comment", commentId });
-  });
+  const original = btn.textContent;
+  btn.dataset.armed = "1";
+  btn.textContent = "Confirm?";
+  setTimeout(() => {
+    if (btn.isConnected && btn.dataset.armed === "1") {
+      btn.dataset.armed = "";
+      btn.textContent = original;
+    }
+  }, 3000);
 }
 
 // ---------------------------------------------------------------------------
