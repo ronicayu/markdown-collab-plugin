@@ -225,6 +225,45 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       }
     };
 
+    // Autosave-through. Claude reads the .md from disk, so the human's edits
+    // have to reach disk for Claude to see them — and the longer the in-editor
+    // buffer stays unsaved, the bigger the window where a Claude write and the
+    // human's edits can collide. So we flush to disk shortly after the human
+    // stops typing. The save is echo-guarded (pendingApply) so its own change —
+    // including any format-on-save rewrite — isn't mistaken for an external
+    // (Claude) edit and bounced back into the editor; afterwards we re-baseline
+    // `lastWebviewProse` to whatever actually landed on disk.
+    let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+    const performAutosave = async (): Promise<void> => {
+      if (!document.isDirty) return;
+      pendingApply = true;
+      try {
+        await document.save();
+      } catch (e) {
+        this.output.appendLine(`CollabEditor autosave failed: ${(e as Error).message}`);
+      } finally {
+        lastWebviewProse = proseOf(document.getText());
+        lastFrontmatter = frontmatterOf(document.getText());
+        pendingApply = false;
+      }
+    };
+    const scheduleAutosave = (): void => {
+      if (autosaveTimer) clearTimeout(autosaveTimer);
+      autosaveTimer = setTimeout(() => {
+        autosaveTimer = null;
+        void performAutosave();
+      }, 800);
+    };
+    // Force the pending autosave now — used at hand-off so Claude reads the
+    // human's latest the instant they ask for a review.
+    const flushAutosave = async (): Promise<void> => {
+      if (autosaveTimer) {
+        clearTimeout(autosaveTimer);
+        autosaveTimer = null;
+      }
+      await performAutosave();
+    };
+
     // `opts.save` persists the file after writing. Comment ops (add / reply /
     // resolve / delete) are review actions the user expects to stick, so they
     // pass it; prose-edit reconciliation (which fires while typing) does not.
@@ -267,6 +306,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       const current = document.getText();
       if (proseOf(current) === newProse) return; // prose unchanged — nothing to merge
       await writeDocument(mergeProseEdit(current, newProse));
+      scheduleAutosave(); // flush the edit to disk so Claude can see it
     };
 
     const pushComments = (): void => {
@@ -336,7 +376,12 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       } else if (msg.type === "open-link") {
         void this.handleOpenLink(msg, panel, document);
       } else if (msg.type === "invoke-command") {
-        void this.handleInvokeCommand(msg, document);
+        // Flush any unsaved edits before handing off so Claude reads the
+        // human's latest, not a stale on-disk copy.
+        void (async () => {
+          await flushAutosave();
+          await this.handleInvokeCommand(msg, document);
+        })();
       } else if (msg.type === "drawio-read") {
         void (async () => {
           const result = await this.handleDrawioRead(msg, document);
@@ -378,6 +423,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     });
 
     panel.onDidDispose(() => {
+      if (autosaveTimer) clearTimeout(autosaveTimer);
       messageSub.dispose();
       docSub.dispose();
     });

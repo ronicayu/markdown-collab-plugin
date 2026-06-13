@@ -148,6 +148,10 @@ let awareness: Awareness | null = null;
 let suppressNextPost = false;
 let userName: string = "user";
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+// Debounces the human's edits before posting them to the host. Module-scoped so
+// an incoming external (Claude) change can cancel a still-pending stale post —
+// otherwise that post would fire after the external change and overwrite it.
+let editDebounce: ReturnType<typeof setTimeout> | null = null;
 
 const sidebarState: {
   comments: CommentSummary[];
@@ -226,8 +230,6 @@ async function init(msg: InitMessage): Promise<void> {
   renderFrontmatter(msg.frontmatter ?? "");
   renderSidebar();
 
-  let saveTimer: ReturnType<typeof setTimeout> | null = null;
-
   editor = await Editor.make()
     .config((ctx) => {
       ctx.set(rootCtx, editorContainer!);
@@ -247,8 +249,9 @@ async function init(msg: InitMessage): Promise<void> {
         }
         if (markdown === prevMarkdown) return;
         cachedMarkdown = markdown;
-        if (saveTimer) clearTimeout(saveTimer);
-        saveTimer = setTimeout(() => {
+        if (editDebounce) clearTimeout(editDebounce);
+        editDebounce = setTimeout(() => {
+          editDebounce = null;
           vscode.postMessage({ type: "edit", text: markdown });
         }, 250);
         // Doc structure changed → recompute anchor highlights so they
@@ -507,6 +510,7 @@ function attachToolbarHandlers(): void {
       if (btn.disabled) return;
       if (action === "send-to-claude") {
         vscode.postMessage({ type: "invoke-command", command: "send-to-claude" });
+        showNotice("Sent to Claude — your edits are saved to disk");
         closeOverflow();
       } else if (action === "copy-prompt") {
         vscode.postMessage({ type: "invoke-command", command: "copy-prompt" });
@@ -1417,6 +1421,13 @@ function reportReady(synced: boolean): void {
 
 function applyExternalChange(text: string): void {
   if (!editor) return;
+  // Cancel a still-pending local edit post. The keystroke that scheduled it
+  // predates this external (Claude) change, so letting it fire would overwrite
+  // Claude's edit with our stale text.
+  if (editDebounce) {
+    clearTimeout(editDebounce);
+    editDebounce = null;
+  }
   // `applyTemplate` replaces the whole document, which otherwise snaps the
   // view back to the top and drops the cursor. Capture the scroll position
   // and selection first, then restore them — so an external edit, or a

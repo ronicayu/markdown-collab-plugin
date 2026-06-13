@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.34.8 — 2026-06-13 (trial)
+
+### Added: guards so the human and Claude don't overwrite each other
+
+The live editor (single human + Claude) now keeps the two from clobbering each
+other's edits in the normal turn-based flow:
+
+- **Autosave-through.** Your edits flush to disk ~0.8s after you stop typing
+  (echo-guarded, so a format-on-save rewrite doesn't bounce back into the
+  editor). Claude reads the `.md` from disk, so it always sees your latest
+  instead of a stale copy — no more "save first or Claude misses it".
+- **Save on hand-off.** Send to Claude / Copy prompt now saves first, so the
+  review Claude runs is against exactly what you see.
+- **No stale overwrite.** When Claude's change lands in the editor, a
+  still-pending keystroke post is cancelled so it can't fire afterward and
+  revert Claude's edit.
+- A brief "Sent to Claude — your edits are saved" note confirms the hand-off.
+
+This is turn-based safety: you write, hand off, Claude revises, you watch it
+land. It does not merge truly simultaneous edits — if you and Claude write in
+the same instant, that one tick is still last-writer-wins.
+
 ## 0.34.7 — 2026-06-13 (trial)
 
 ### Changed: the live editor is now single-human + AI, no relay
