@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.34.12 — 2026-06-13 (trial)
+
+### Fixed: typing a reply in the live editor no longer loses focus
+
+When Claude (or another tool) edited the file while you were mid-reply, the
+comment panel rebuilt itself and dropped your cursor. Comment updates now patch
+only the threads that actually changed — unchanged threads, including the one
+you're replying in, are left untouched — and the transient "Updated from disk"
+notice updates just the banner instead of re-rendering the whole list.
+
 ## 0.34.11 — 2026-06-13 (trial)
 
 ### Added: per-thread Send to Claude in the live editor

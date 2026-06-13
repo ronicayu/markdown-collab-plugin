@@ -367,7 +367,7 @@ function renderSidebar(): void {
     : `${open} open · ${total} total`;
 
   const header = `
-    ${banner}
+    <div class="mdc-banner-slot">${banner}</div>
     <div class="mdc-sidebar-header">
       <div class="mdc-sidebar-header-row">
         <div class="mdc-sidebar-titles">
@@ -404,22 +404,9 @@ function renderSidebar(): void {
 
   let body: string;
   if (total === 0) {
-    body = `
-      <div class="mdc-sidebar-empty">
-        <div class="mdc-sidebar-empty-title">No comments yet</div>
-        <div class="mdc-sidebar-empty-body">
-          Select text in the editor, then:
-          <ul>
-            <li>Press <span class="mdc-kbd">${isMac() ? "⌘" : "Ctrl"}+Shift+M</span></li>
-            <li>Or click <strong>+ Add comment</strong> at the top of this panel</li>
-            <li>Or use the floating button that appears next to your selection</li>
-          </ul>
-          Comments are saved inside the Markdown file itself, so they travel with it and show up in the Inline Comments view.
-        </div>
-      </div>
-    `;
+    body = emptyNoCommentsHtml();
   } else if (visibleComments.length === 0) {
-    body = `<div class="mdc-sidebar-empty"><div class="mdc-sidebar-empty-title">All comments resolved</div><div class="mdc-sidebar-empty-body">${resolvedCount} resolved · 0 open. Click "Showing open" above to see resolved threads.</div></div>`;
+    body = emptyAllResolvedHtml(resolvedCount);
   } else {
     body = visibleComments
       .slice()
@@ -434,6 +421,127 @@ function renderSidebar(): void {
   attachCommentHandlers();
 }
 
+function emptyNoCommentsHtml(): string {
+  return `
+    <div class="mdc-sidebar-empty">
+      <div class="mdc-sidebar-empty-title">No comments yet</div>
+      <div class="mdc-sidebar-empty-body">
+        Select text in the editor, then:
+        <ul>
+          <li>Press <span class="mdc-kbd">${isMac() ? "⌘" : "Ctrl"}+Shift+M</span></li>
+          <li>Or click <strong>+ Add comment</strong> at the top of this panel</li>
+          <li>Or use the floating button that appears next to your selection</li>
+        </ul>
+        Comments are saved inside the Markdown file itself, so they travel with it and show up in the Inline Comments view.
+      </div>
+    </div>
+  `;
+}
+
+function emptyAllResolvedHtml(resolvedCount: number): string {
+  return `<div class="mdc-sidebar-empty"><div class="mdc-sidebar-empty-title">All comments resolved</div><div class="mdc-sidebar-empty-body">${resolvedCount} resolved · 0 open. Click "Showing open" above to see resolved threads.</div></div>`;
+}
+
+// Update only the transient notice banner — used by showNotice so a "Updated
+// from disk" flash doesn't rebuild the whole comment list (which would drop
+// focus from an in-progress reply).
+function renderNotice(): void {
+  if (!sidebarEl) return;
+  const slot = sidebarEl.querySelector<HTMLElement>(".mdc-banner-slot");
+  if (!slot) {
+    renderSidebar();
+    return;
+  }
+  slot.innerHTML = sidebarState.notice
+    ? `<div class="mdc-banner mdc-banner--info" role="status">${escapeHtml(sidebarState.notice)}</div>`
+    : "";
+}
+
+// Refresh the header's count + Send-to-Claude enabled state in place.
+function updateSidebarCounts(): void {
+  if (!sidebarEl) return;
+  const total = sidebarState.comments.length;
+  const open = sidebarState.comments.filter((c) => !c.resolved).length;
+  const filterBtn = sidebarEl.querySelector<HTMLButtonElement>("[data-action='toggle-filter']");
+  if (filterBtn) {
+    filterBtn.textContent = sidebarState.hideResolved
+      ? `Showing open · ${open}`
+      : `${open} open · ${total} total`;
+  }
+  const sendBtn = sidebarEl.querySelector<HTMLButtonElement>("[data-action='send-to-claude']");
+  if (sendBtn) sendBtn.disabled = open === 0;
+}
+
+// A stable identity for a thread's rendered content. Two renders with the same
+// signature are byte-identical, so reconciliation can leave that card's DOM
+// untouched — preserving its always-on reply box's focus and caret.
+function threadSignature(c: CommentSummary): string {
+  return JSON.stringify({
+    a: c.author,
+    t: c.createdAt,
+    b: c.body,
+    r: c.resolved,
+    an: c.anchor.text,
+    rep: c.replies.map((x) => [x.author, x.createdAt, x.body]),
+  });
+}
+
+function buildCardElement(c: CommentSummary): HTMLElement {
+  const tmp = document.createElement("div");
+  tmp.innerHTML = renderCommentCard(c);
+  const card = tmp.firstElementChild as HTMLElement;
+  attachCardHandlers(card, c.id);
+  return card;
+}
+
+// Patch the comment list in place: keep unchanged thread cards (so a reply
+// you're typing isn't interrupted), rebuild only the threads whose content
+// changed, insert new ones, and drop removed ones.
+function reconcileComments(): void {
+  if (!sidebarEl) return;
+  const list = sidebarEl.querySelector<HTMLElement>(".mdc-comment-list");
+  if (!list) {
+    renderSidebar();
+    return;
+  }
+  updateSidebarCounts();
+  const total = sidebarState.comments.length;
+  const visible = sidebarState.comments
+    .filter((c) => (sidebarState.hideResolved ? !c.resolved : true))
+    .slice()
+    .sort((a, b) => Number(a.resolved) - Number(b.resolved));
+  if (visible.length === 0) {
+    list.innerHTML = total === 0 ? emptyNoCommentsHtml() : emptyAllResolvedHtml(total);
+    return;
+  }
+  if (list.querySelector(".mdc-sidebar-empty")) list.innerHTML = "";
+
+  const seen = new Set<string>();
+  let prev: HTMLElement | null = null;
+  for (const c of visible) {
+    seen.add(c.id);
+    const existing = list.querySelector<HTMLElement>(
+      `.mdc-comment[data-id="${cssEscape(c.id)}"]`,
+    );
+    let card: HTMLElement;
+    if (existing && existing.dataset.sig === threadSignature(c)) {
+      card = existing; // unchanged — leave the DOM (and any focused reply) alone
+    } else {
+      card = buildCardElement(c);
+      if (existing) existing.replaceWith(card);
+    }
+    const desired: Element | null = prev ? prev.nextElementSibling : list.firstElementChild;
+    if (desired !== card) {
+      if (prev) prev.after(card);
+      else list.prepend(card);
+    }
+    prev = card;
+  }
+  for (const card of Array.from(list.querySelectorAll<HTMLElement>(".mdc-comment"))) {
+    if (!seen.has(card.dataset.id ?? "")) card.remove();
+  }
+}
+
 function renderCommentCard(c: CommentSummary): string {
   const anchorText = escapeHtml(c.anchor.text.length > 80 ? c.anchor.text.slice(0, 77) + "…" : c.anchor.text);
   // Each comment/reply is the same shared `.mc-card` the inline + PR panels
@@ -445,7 +553,7 @@ function renderCommentCard(c: CommentSummary): string {
     </div>`;
   const replies = c.replies.map((r) => commentCard(r.author, r.createdAt, r.body, true)).join("");
   return `
-    <article class="mdc-comment ${c.resolved ? "mdc-comment--resolved" : ""}" data-id="${escapeAttr(c.id)}">
+    <article class="mdc-comment ${c.resolved ? "mdc-comment--resolved" : ""}" data-id="${escapeAttr(c.id)}" data-sig="${escapeAttr(threadSignature(c))}">
       <div class="mdc-thread-head">
         <button type="button" class="mdc-thread-quote" data-comment-action="jump" title="Click to scroll to the highlighted passage">${anchorText}</button>
         <div class="mdc-thread-actions">
@@ -520,27 +628,30 @@ function attachCommentHandlers(): void {
   if (!sidebarEl) return;
   for (const card of Array.from(sidebarEl.querySelectorAll<HTMLElement>(".mdc-comment"))) {
     const id = card.dataset.id;
-    if (!id) continue;
-    for (const btn of Array.from(card.querySelectorAll<HTMLButtonElement>("[data-comment-action]"))) {
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const action = btn.dataset.commentAction;
-        if (action === "resolve")
-          vscode.postMessage({ type: "toggle-resolve-comment", commentId: id });
-        else if (action === "delete") openDeleteConfirm(card, id);
-        else if (action === "send-thread-claude") {
-          vscode.postMessage({ type: "invoke-command", command: "send-thread-claude", commentId: id });
-          showNotice("Sent this thread to Claude — your edits are saved");
-        } else if (action === "copy-thread-claude")
-          vscode.postMessage({ type: "invoke-command", command: "copy-thread-claude", commentId: id });
-        else if (action === "jump") {
-          const comment = sidebarState.comments.find((c) => c.id === id);
-          if (comment) jumpToAnchor(comment);
-        }
-      });
-    }
-    attachReplyBox(card, id);
+    if (id) attachCardHandlers(card, id);
   }
+}
+
+function attachCardHandlers(card: HTMLElement, id: string): void {
+  for (const btn of Array.from(card.querySelectorAll<HTMLButtonElement>("[data-comment-action]"))) {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const action = btn.dataset.commentAction;
+      if (action === "resolve")
+        vscode.postMessage({ type: "toggle-resolve-comment", commentId: id });
+      else if (action === "delete") openDeleteConfirm(card, id);
+      else if (action === "send-thread-claude") {
+        vscode.postMessage({ type: "invoke-command", command: "send-thread-claude", commentId: id });
+        showNotice("Sent this thread to Claude — your edits are saved");
+      } else if (action === "copy-thread-claude")
+        vscode.postMessage({ type: "invoke-command", command: "copy-thread-claude", commentId: id });
+      else if (action === "jump") {
+        const comment = sidebarState.comments.find((c) => c.id === id);
+        if (comment) jumpToAnchor(comment);
+      }
+    });
+  }
+  attachReplyBox(card, id);
 }
 
 // Wire the always-on reply box at the bottom of a thread. Typing here is
@@ -1447,12 +1558,12 @@ function applyExternalChange(text: string): void {
 // from another window, git) so the change isn't silent.
 function showNotice(text: string): void {
   sidebarState.notice = text;
-  renderSidebar();
+  renderNotice();
   if (noticeTimer) clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => {
     sidebarState.notice = null;
     noticeTimer = null;
-    renderSidebar();
+    renderNotice();
   }, 2500);
 }
 
@@ -1584,7 +1695,7 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     renderFrontmatter(msg.frontmatter);
   } else if (msg.type === "sidecar-changed") {
     sidebarState.comments = msg.comments ?? [];
-    renderSidebar();
+    reconcileComments();
     forceHighlightRefresh();
   } else if (msg.type === "add-comment-result") {
     if (msg.ok) {
