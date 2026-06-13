@@ -18,7 +18,7 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
-import { isInsideRoot } from "../previewPanel";
+import { isInsideRoot } from "../pathUtils";
 import { detectUrlScheme, parseLinkHref, slugifyHeading } from "./linkParse";
 import {
   addThread,
@@ -579,7 +579,7 @@ export class InlineCommentsPanel {
     if (!parsed.path) return; // pure fragment — webview already handled
 
     // Resolve against the .md file's directory. Block paths outside the
-    // workspace root, matching the legacy PreviewPanel safeguard.
+    // workspace root (link-routing must stay inside the workspace).
     const folder = vscode.workspace.getWorkspaceFolder(this.doc.uri);
     const baseDir = path.dirname(this.doc.uri.fsPath);
     const resolved = path.resolve(baseDir, parsed.path);

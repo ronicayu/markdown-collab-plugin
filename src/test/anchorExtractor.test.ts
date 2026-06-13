@@ -19,11 +19,20 @@ import { resolve } from "../anchor";
 import { buildAnchorFromSelection } from "../collab/anchorExtractor";
 
 describe("buildAnchorFromSelection", () => {
-  it("returns null when the selection is too short", () => {
+  it("anchors a short selection (no minimum length)", () => {
     const md = "Click here please";
-    const r = buildAnchorFromSelection(md, 6, 10, md);
-    // "here" is only 4 non-whitespace chars; below MIN_ANCHOR_NON_WS_CHARS.
-    expect(r).toBeNull();
+    const anchor = buildAnchorFromSelection(md, 6, 10, md);
+    // "here" is only 4 non-whitespace chars — short selections now anchor;
+    // inline markers store exact offsets, so there's no length minimum.
+    expect(anchor).not.toBeNull();
+    const resolved = resolve(md, anchor!);
+    expect(resolved).not.toBeNull();
+    expect(md.slice(resolved!.start, resolved!.end)).toBe("here");
+  });
+
+  it("returns null for a whitespace-only selection", () => {
+    const md = "abc    def";
+    expect(buildAnchorFromSelection(md, 3, 7, md)).toBeNull();
   });
 
   it("anchors plain selection with no markup", () => {
@@ -289,12 +298,12 @@ describe("buildAnchorFromSelection", () => {
     expect(buildAnchorFromSelection(md, -1, 5, md)).toBeNull();
   });
 
-  it("rejects selections that are exactly 7 non-whitespace chars (just under threshold)", () => {
+  it("anchors selections under the old 8-char threshold", () => {
     const md = "before abc defg after";
-    // "abc defg" = 7 non-WS chars, length 8 incl. space.
+    // "abc defg" = 7 non-WS chars — previously rejected, now anchors fine.
     const start = md.indexOf("abc defg");
     const r = buildAnchorFromSelection(md, start, start + 8, md);
-    expect(r).toBeNull();
+    expect(r).not.toBeNull();
   });
 
   it("accepts selections at exactly 8 non-whitespace chars", () => {

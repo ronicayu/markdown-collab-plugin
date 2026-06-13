@@ -72,14 +72,28 @@ jobs:
           name: vsix
           path: markdown-collab-plugin.vsix
 
+      # Lets a tag ship a GitHub Release (with the .vsix) WITHOUT publishing to
+      # the marketplaces — put `[skip-publish]` in the release commit message.
+      # Useful for validating a build before going public. Normal commits publish.
+      - name: Gate marketplace publish
+        id: gate
+        run: |
+          MSG="$(git log -1 --pretty=%B)"
+          if printf '%s' "$MSG" | grep -q '\[skip-publish\]'; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Release commit requests [skip-publish] — skipping marketplace publish."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to VS Code Marketplace
-        if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true && env.VSCE_PAT != ''
+        if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true && env.VSCE_PAT != '' && steps.gate.outputs.publish == 'true'
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: npx --yes @vscode/vsce publish --packagePath markdown-collab-plugin.vsix --pat "$VSCE_PAT"
 
       - name: Publish to Open VSX
-        if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true && env.OVSX_PAT != ''
+        if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true && env.OVSX_PAT != '' && steps.gate.outputs.publish == 'true'
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: npx --yes ovsx publish markdown-collab-plugin.vsix --pat "$OVSX_PAT"

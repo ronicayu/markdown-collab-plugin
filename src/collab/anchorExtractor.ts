@@ -23,7 +23,6 @@
 import type { Anchor } from "../types";
 
 const ANCHOR_CONTEXT_LEN = 24;
-const MIN_ANCHOR_NON_WS_CHARS = 8;
 
 function nonWsLength(s: string): number {
   let n = 0;
@@ -584,7 +583,7 @@ export interface BuildResult {
       | "strip-and-map"
       | "rendered-fallback"
       | "plain-fallback"
-      | "rejected-too-short"
+      | "rejected-empty"
       | "rejected-not-found";
   };
 }
@@ -608,7 +607,7 @@ export function buildAnchorWithDebug(
     selectedTrimmed: "",
     selectedNonWs: 0,
     strippedHits: 0,
-    chosenStrategy: "rejected-too-short",
+    chosenStrategy: "rejected-empty",
   };
   if (selStart < 0 || selEnd <= selStart) {
     return { anchor: null, debug };
@@ -616,8 +615,11 @@ export function buildAnchorWithDebug(
   const selected = renderedText.slice(selStart, selEnd).trim();
   debug.selectedTrimmed = selected;
   debug.selectedNonWs = nonWsLength(selected);
-  if (debug.selectedNonWs < MIN_ANCHOR_NON_WS_CHARS) {
-    debug.chosenStrategy = "rejected-too-short";
+  // Reject only an empty / whitespace-only selection. Any real selection —
+  // even a single character — can be anchored; inline markers store the exact
+  // offsets, so there's no fuzzy-locate reason to demand a minimum length.
+  if (debug.selectedNonWs === 0) {
+    debug.chosenStrategy = "rejected-empty";
     return { anchor: null, debug };
   }
 

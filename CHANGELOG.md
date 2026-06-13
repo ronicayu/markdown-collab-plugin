@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.34.0 — 2026-06-13 (trial)
+
+### Removed: the legacy JSON sidecar storage and its UI
+
+Comments now live only inline in the `.md` file itself. The old sidecar
+solution — comments stored in `.markdown-collab/<file>.md.json` — is gone,
+along with everything that only served it: the **Open Preview with Comments**
+view, the native VS Code gutter Comments UI, the **Orphaned Comments** view and
+re-attach flow, the **Validate Sidecars** and **Reload Comments** commands, and
+the `mdc.mjs` sidecar CLI + `SIDECAR.md` reference from the installed Claude
+skill. The installed skill now documents inline mode only.
+
+### Changed: the cross-file Markdown Review tree reads inline comments
+
+The **Markdown Review** sidebar — the workspace-wide list of files with open
+review threads — now scans the inline comment markers in each `.md` instead of
+JSON sidecars, and refreshes as files change.
+
+### Changed: short selections can be commented on
+
+Commenting no longer requires selecting 8+ non-whitespace characters. Any
+selection works — even a single word — in both the inline view and the live
+editor; only empty/whitespace-only selections are ignored.
+
 ## 0.33.16 — 2026-06-13 (trial)
 
 ### Added: extension icon + first Marketplace / Open VSX publish

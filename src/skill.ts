@@ -2,328 +2,8 @@ import * as fs from "fs/promises";
 import * as path from "path";
 
 export const SKILL_REL_PATH = ".claude/skills/vs-markdown-collab/SKILL.md";
-export const SIDECAR_REF_REL = ".claude/skills/vs-markdown-collab/SIDECAR.md";
-export const CLI_SCRIPT_REL = ".claude/skills/vs-markdown-collab/mdc.mjs";
 export const TAIL_SCRIPT_REL = ".claude/skills/vs-markdown-collab/mdc-tail.mjs";
 export const CHANNEL_SCRIPT_REL = ".claude/skills/vs-markdown-collab/mdc-channel.mjs";
-
-export const CLI_SCRIPT_CONTENT = `#!/usr/bin/env node
-// Markdown Collab agent helper.
-//
-// Filters sidecars to actionable comments only and applies targeted
-// mutations (reply / delete / set-anchor / validate). Lets the agent
-// operate on a large corpus of resolved comments without loading any
-// of them into context. Writes are atomic (temp + rename) with cleanup
-// on rename failure. Schema validation runs on every read.
-//
-// Usage:
-//   node mdc.mjs list [--workspace <ws>] [--file <rel-md-path>]
-//   node mdc.mjs reply <sidecar> <commentId> --body <text>
-//   node mdc.mjs add --workspace <ws> --file <rel-md> --text <anchor> [--before <s>] [--after <s>] --body <text> [--author <name>]
-//   node mdc.mjs delete <sidecar> <commentId>
-//   node mdc.mjs set-anchor <sidecar> <commentId> --text <s> [--before <s>] [--after <s>]
-//   node mdc.mjs validate <sidecar>
-//
-// Argv: positional args (subcommand <pos1> <pos2>) come first; flags
-// (--name value) follow. Use \`--\` to terminate flag parsing if a
-// positional value happens to start with \`--\`.
-
-import {
-  readFileSync,
-  writeFileSync,
-  mkdirSync,
-  renameSync,
-  unlinkSync,
-  readdirSync,
-  statSync,
-  existsSync,
-} from "node:fs";
-import { dirname, join } from "node:path";
-import { randomBytes } from "node:crypto";
-
-function fail(msg, code = 1) {
-  process.stderr.write(\`mdc: \${msg}\\n\`);
-  process.exit(code);
-  throw new Error(msg); // unreachable in practice; satisfies static control-flow analysis
-}
-
-// Split argv into positional and flag arrays. \`--\` terminates flag parsing
-// so a positional that legitimately starts with \`--\` can be passed verbatim.
-function splitArgs(argv) {
-  const positional = [];
-  const flags = new Map();
-  let i = 0;
-  let endOfFlags = false;
-  while (i < argv.length) {
-    const a = argv[i];
-    if (!endOfFlags && a === "--") { endOfFlags = true; i++; continue; }
-    if (!endOfFlags && a.startsWith("--")) {
-      const name = a.slice(2);
-      const val = argv[i + 1];
-      if (val === undefined || (val.startsWith("--") && val !== "--")) {
-        // Bare flag with no value — treat as boolean true (none of our
-        // current commands use this, so we just store true for forward use).
-        flags.set(name, true);
-        i++;
-      } else {
-        flags.set(name, val);
-        i += 2;
-      }
-    } else {
-      positional.push(a);
-      i++;
-    }
-  }
-  return { positional, flags };
-}
-
-const { positional, flags } = splitArgs(process.argv.slice(2));
-const cmd = positional[0];
-const pos = positional.slice(1);
-
-function flag(name, def) {
-  return flags.has(name) ? flags.get(name) : def;
-}
-
-const ID_RE = /^c_[0-9a-f]{8}$/;
-function validateComment(c, i) {
-  if (!c || typeof c !== "object" || Array.isArray(c)) return \`comment[\${i}] must be an object\`;
-  if (typeof c.id !== "string" || !ID_RE.test(c.id)) return \`comment[\${i}].id invalid\`;
-  if (!c.anchor || typeof c.anchor !== "object") return \`comment[\${i}].anchor must be an object\`;
-  for (const k of ["text", "contextBefore", "contextAfter"]) {
-    if (typeof c.anchor[k] !== "string") return \`comment[\${i}].anchor.\${k} must be a string\`;
-  }
-  if (typeof c.body !== "string") return \`comment[\${i}].body must be a string\`;
-  if (typeof c.author !== "string") return \`comment[\${i}].author must be a string\`;
-  if (typeof c.createdAt !== "string") return \`comment[\${i}].createdAt must be a string\`;
-  if (typeof c.resolved !== "boolean") return \`comment[\${i}].resolved must be a boolean\`;
-  if (!Array.isArray(c.replies)) return \`comment[\${i}].replies must be an array\`;
-  for (let j = 0; j < c.replies.length; j++) {
-    const r = c.replies[j];
-    if (!r || typeof r !== "object") return \`comment[\${i}].replies[\${j}] must be an object\`;
-    if (typeof r.author !== "string") return \`comment[\${i}].replies[\${j}].author must be a string\`;
-    if (typeof r.body !== "string") return \`comment[\${i}].replies[\${j}].body must be a string\`;
-    if (typeof r.createdAt !== "string") return \`comment[\${i}].replies[\${j}].createdAt must be a string\`;
-  }
-  return null;
-}
-
-function readSidecar(p, opts) {
-  const strict = !!(opts && opts.strict);
-  if (!existsSync(p)) fail(\`sidecar not found: \${p}\`, 2);
-  let raw;
-  try { raw = readFileSync(p, "utf8"); }
-  catch (e) { fail(\`read failed: \${p}: \${e.message}\`, 2); }
-  let data;
-  try { data = JSON.parse(raw); }
-  catch (e) { fail(\`invalid JSON in \${p}: \${e.message}\`, 2); }
-  if (!data || data.version !== 1 || typeof data.file !== "string" || !Array.isArray(data.comments)) {
-    fail(\`schema mismatch in \${p} (need version=1)\`, 2);
-  }
-  if (strict) {
-    for (let i = 0; i < data.comments.length; i++) {
-      const err = validateComment(data.comments[i], i);
-      if (err) fail(\`schema mismatch in \${p}: \${err}\`, 2);
-    }
-  }
-  return data;
-}
-
-function writeSidecar(p, data) {
-  mkdirSync(dirname(p), { recursive: true });
-  const tmp = \`\${p}.tmp.\${randomBytes(8).toString("hex")}\`;
-  try {
-    writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
-  } catch (e) {
-    try { unlinkSync(tmp); } catch (_) {}
-    fail(\`write failed: \${p}: \${e.message}\`, 2);
-  }
-  try {
-    renameSync(tmp, p);
-  } catch (e) {
-    try { unlinkSync(tmp); } catch (_) {}
-    fail(\`rename failed: \${p}: \${e.message}\`, 2);
-  }
-}
-
-function nowZ() {
-  // Strip sub-second precision so display formatters don't show ms.
-  return new Date().toISOString().replace(/\\.\\d+Z$/, "Z");
-}
-
-function isActionable(c) {
-  if (c.resolved) return false;
-  const replies = c.replies || [];
-  if (replies.length === 0) return true;
-  return replies[replies.length - 1].author !== "ai";
-}
-
-function findSidecars(workspaceRoot, mdRel) {
-  if (mdRel) {
-    const sc = join(workspaceRoot, ".markdown-collab", \`\${mdRel}.json\`);
-    return existsSync(sc) ? [sc] : [];
-  }
-  const root = join(workspaceRoot, ".markdown-collab");
-  if (!existsSync(root)) return [];
-  const out = [];
-  function walk(dir) {
-    let entries;
-    try { entries = readdirSync(dir); }
-    catch (e) {
-      // A single unreadable subdir shouldn't blank the agent's worklist.
-      // Surface the failure on stderr and keep walking siblings.
-      process.stderr.write(\`mdc: skipping unreadable dir \${dir}: \${e.message}\\n\`);
-      return;
-    }
-    for (const e of entries) {
-      const p = join(dir, e);
-      let st;
-      try { st = statSync(p); }
-      catch (err) {
-        process.stderr.write(\`mdc: skipping unreadable entry \${p}: \${err.message}\\n\`);
-        continue;
-      }
-      if (st.isDirectory()) walk(p);
-      else if (e.endsWith(".md.json")) out.push(p);
-    }
-  }
-  walk(root);
-  return out;
-}
-
-if (cmd === "list") {
-  const ws = flag("workspace", process.cwd());
-  const md = flag("file");
-  const sidecars = findSidecars(ws, md);
-  const out = [];
-  for (const sc of sidecars) {
-    const data = readSidecar(sc);
-    for (const c of data.comments) {
-      if (!isActionable(c)) continue;
-      out.push({
-        sidecar: sc,
-        file: data.file,
-        id: c.id,
-        anchor: c.anchor,
-        body: c.body,
-        author: c.author,
-        createdAt: c.createdAt,
-        replies: c.replies,
-      });
-    }
-  }
-  process.stdout.write(JSON.stringify(out, null, 2) + "\\n");
-  process.exit(0);
-}
-
-if (cmd === "reply") {
-  const sc = pos[0];
-  const id = pos[1];
-  const body = flag("body");
-  if (!sc || !id || body == null || body === true) fail("usage: reply <sidecar> <id> --body <text>");
-  if (typeof body !== "string" || body.trim() === "") fail("--body cannot be empty", 4);
-  const data = readSidecar(sc);
-  const c = data.comments.find((x) => x.id === id);
-  if (!c) fail(\`comment \${id} not found\`, 3);
-  c.replies.push({ author: "ai", body, createdAt: nowZ() });
-  writeSidecar(sc, data);
-  process.stdout.write(\`ok: replied to \${id}\\n\`);
-  process.exit(0);
-}
-
-if (cmd === "delete") {
-  const sc = pos[0];
-  const id = pos[1];
-  if (!sc || !id) fail("usage: delete <sidecar> <id>");
-  const data = readSidecar(sc);
-  const before = data.comments.length;
-  data.comments = data.comments.filter((c) => c.id !== id);
-  if (data.comments.length === before) fail(\`comment \${id} not found\`, 3);
-  writeSidecar(sc, data);
-  process.stdout.write(\`ok: deleted \${id}\\n\`);
-  process.exit(0);
-}
-
-if (cmd === "set-anchor") {
-  const sc = pos[0];
-  const id = pos[1];
-  const text = flag("text");
-  const before = flag("before", "");
-  const after = flag("after", "");
-  if (!sc || !id || text == null || text === true) fail("usage: set-anchor <sidecar> <id> --text <s> [--before <s>] [--after <s>]");
-  if (typeof text !== "string") fail("--text must be a string", 4);
-  if (text.replace(/\\s/g, "").length < 8) fail("anchor.text needs >= 8 non-whitespace chars", 4);
-  const data = readSidecar(sc);
-  const c = data.comments.find((x) => x.id === id);
-  if (!c) fail(\`comment \${id} not found\`, 3);
-  c.anchor = {
-    text,
-    contextBefore: typeof before === "string" ? before : "",
-    contextAfter: typeof after === "string" ? after : "",
-  };
-  writeSidecar(sc, data);
-  process.stdout.write(\`ok: anchor updated for \${id}\\n\`);
-  process.exit(0);
-}
-
-if (cmd === "add") {
-  const ws = flag("workspace", process.cwd());
-  const rel = flag("file");
-  const text = flag("text");
-  const before = flag("before", "");
-  const after = flag("after", "");
-  const body = flag("body");
-  const author = flag("author", "claude");
-  if (rel == null || rel === true) fail("usage: add --workspace <ws> --file <rel-md> --text <s> [--before <s>] [--after <s>] --body <s> [--author <s>]");
-  if (typeof rel !== "string" || rel === "") fail("--file must be a non-empty string", 4);
-  if (text == null || text === true || typeof text !== "string") fail("--text must be a string", 4);
-  if (text.replace(/\\s/g, "").length < 8) fail("anchor.text needs >= 8 non-whitespace chars", 4);
-  if (body == null || body === true || typeof body !== "string" || body.trim() === "") fail("--body cannot be empty", 4);
-  if (typeof author !== "string" || author === "") fail("--author must be a non-empty string", 4);
-  const sidecarPath = join(ws, ".markdown-collab", \`\${rel}.json\`);
-  let data;
-  if (existsSync(sidecarPath)) {
-    data = readSidecar(sidecarPath);
-    if (data.file !== rel) fail(\`sidecar.file (\${data.file}) does not match --file (\${rel})\`, 4);
-  } else {
-    data = { version: 1, file: rel, comments: [] };
-  }
-  let id;
-  for (let attempt = 0; attempt < 16; attempt++) {
-    id = "c_" + randomBytes(4).toString("hex");
-    if (!data.comments.find((c) => c.id === id)) break;
-    id = null;
-  }
-  if (!id) fail("failed to generate a unique comment id", 5);
-  const newComment = {
-    id,
-    anchor: {
-      text,
-      contextBefore: typeof before === "string" ? before : "",
-      contextAfter: typeof after === "string" ? after : "",
-    },
-    body,
-    author,
-    createdAt: nowZ(),
-    resolved: false,
-    replies: [],
-  };
-  data.comments.push(newComment);
-  writeSidecar(sidecarPath, data);
-  process.stdout.write(\`ok: added \${id} to \${sidecarPath}\\n\`);
-  process.exit(0);
-}
-
-if (cmd === "validate") {
-  const sc = pos[0];
-  if (!sc) fail("usage: validate <sidecar>");
-  const data = readSidecar(sc, { strict: true });
-  process.stdout.write(\`ok: version=\${data.version} comments=\${data.comments.length}\\n\`);
-  process.exit(0);
-}
-
-fail("unknown command. supported: list | reply | add | delete | set-anchor | validate");
-`;
 
 export const TAIL_SCRIPT_CONTENT = `#!/usr/bin/env node
 // Markdown Collab event-log tailer for Claude Code's Monitor tool.
@@ -338,10 +18,9 @@ export const TAIL_SCRIPT_CONTENT = `#!/usr/bin/env node
 //   the same problem.
 //
 // Acked-event suppression:
-//   The VS Code extension writes a sibling \`.events.acked.jsonl\` whenever
-//   every comment in a previously-emitted event has been addressed (last
-//   reply is \`ai\`, or the comment was resolved/deleted). The tailer reads
-//   that file on startup and watches it; any event whose id is already
+//   After addressing a batch, Claude appends \`{"id":"<event-id>"}\` to a
+//   sibling \`.events.acked.jsonl\` (see SKILL.md → channel modes). The tailer
+//   reads that file on startup and watches it; any event whose id is already
 //   acked is silently skipped on emit. This makes \`--from-start\` safe to
 //   re-run without re-bothering Claude with already-addressed batches.
 //
@@ -712,189 +391,18 @@ process.on("SIGTERM", () => { cleanup(); process.exit(0); });
 process.on("exit", cleanup);
 `;
 
-export const SIDECAR_CONTENT = `# Markdown Collab — sidecar-mode reference (legacy)
-
-This file is the on-demand reference for the **legacy sidecar storage format**. SKILL.md only loads inline-mode instructions by default; load this file when the target \`.md\` does NOT contain \`<!--mc:threads:begin-->\` but a sidecar exists at \`<workspaceRoot>/.markdown-collab/<rel>.md.json\`.
-
-Inline mode is the v0.27+ format of record. Do NOT create a fresh sidecar to host a brand-new thread — for a file that has neither inline markers nor a sidecar, fall back to inline-mode initiation per SKILL.md.
-
-## Sidecar format
-
-For a file at \`<workspaceRoot>/<rel>/<name>.md\`:
-- Sidecar path: \`<workspaceRoot>/.markdown-collab/<rel>/<name>.md.json\`
-- Schema: \`{ "version": 1, "file": "<rel>/<name>.md", "comments": Comment[] }\`
-- \`Comment\`: \`{ "id", "anchor": { "text", "contextBefore", "contextAfter" }, "body", "author", "createdAt", "resolved", "replies": Reply[] }\`
-- \`Reply\`: \`{ "author", "body", "createdAt" }\`
-
-Anchors are resolved against the \`.md\` text by exact match → context match → whitespace-normalized match. \`anchor.text\` must contain at least **8 non-whitespace characters** to remain valid.
-
-## CLI helper — \`mdc.mjs\`
-
-Always drive sidecar-mode work through the bundled CLI at \`~/.claude/skills/vs-markdown-collab/mdc.mjs\`. The CLI filters resolved comments and AI-replied threads at the source so your context only sees the actionable subset, and applies mutations atomically with the right schema. Hand-editing the JSON is a last resort and must preserve the schema.
-
-\`\`\`
-node ~/.claude/skills/vs-markdown-collab/mdc.mjs <subcommand> [...args]
-\`\`\`
-
-Subcommands:
-
-- \`list [--workspace <ws>] [--file <rel-md>]\` — print JSON of **actionable** comments only (unresolved AND last reply not from \`"ai"\`). Default workspace is \`pwd\`. Use \`--file\` to scope to one .md path (relative to workspace root). Each entry has \`{sidecar, file, id, anchor, body, author, createdAt, replies}\` so you have everything you need without reading the whole file.
-- \`reply <sidecar> <commentId> --body "<text>"\` — append a reply with \`author: "ai"\` and a current UTC timestamp. The CLI handles the \`Z\` suffix correctly; do not pre-compute a timestamp.
-- \`add --workspace <ws> --file <rel-md> --text "<anchor>" [--before "<s>"] [--after "<s>"] --body "<text>" [--author "<name>"]\` — create a brand-new comment thread. Generates a unique \`c_<8 hex>\` id, defaults \`author\` to \`"claude"\`, creates the sidecar with \`version: 1\` if it doesn't exist yet. **Only when the human has explicitly asked.** See Phase 5 below.
-- \`set-anchor <sidecar> <commentId> --text "<s>" [--before "<s>"] [--after "<s>"]\` — overwrite the anchor (used only when you rewrote the anchored passage in place; see Phase 3).
-- \`delete <sidecar> <commentId>\` — remove the comment (and its replies) from the sidecar entirely. **Only when the human has explicitly asked.** See Phase 4.
-- \`validate <sidecar>\` — light sanity check (parses, version=1, returns count).
-
-The CLI writes atomically (temp file + rename) and validates the schema before committing.
-
-## Sidecar phases
-
-### Phase 1 — Discover
-
-1. Confirm the workspace has \`.markdown-collab/\` (check via \`ls\` or by running the CLI; an empty list means nothing to do).
-2. Run \`mdc.mjs list\` (with \`--file <path>\` if the user scoped to a particular doc). The output is the only context you need — do NOT read raw sidecars unless \`list\` returns something inconsistent.
-
-### Phase 2 — Plan
-
-Group the actionable entries by \`file\`. For each file, sort the entries by anchor location (top of file first) so later edits don't invalidate earlier offsets. For each entry, write down:
-- The user's intent (from \`body\` and the trailing human reply, if any).
-- The concrete edit you will apply (rewrite / append / delete).
-- Whether the anchored passage will be rewritten in place (anchor will be updated) or removed (anchor will orphan).
-
-If two entries target overlapping or adjacent passages, decide an order that preserves both intents. Prefer combining edits in a single rewrite over sequential conflicting edits.
-
-### Phase 3 — Edit & sync
-
-For each entry, in order:
-
-1. **Edit the \`.md\` file first.** This invariant is critical — if interrupted between writes, a stale sidecar pointing at old text is recoverable; a fresh sidecar pointing at vanished text is not.
-
-2. **Update the anchor** ONLY when you rewrote the anchored passage in place. If you DELETED the anchored passage (the comment said "remove this", "drop this section", "cut", etc.), leave the anchor untouched — the comment will correctly surface as an orphan in the UI, and the human can then resolve or delete it. Never re-anchor a deleted comment to neighbouring text; that produces a misleading link to content the comment was never about.
-
-   When you DID rewrite the passage: update the anchor SURGICALLY using the **Edit** tool — not \`mdc.mjs set-anchor\`, which rewrites the entire sidecar file and races with concurrent writers (the webview, the standard editor's CommentController). Steps:
-   1. Read the sidecar JSON.
-   2. Locate the comment by its \`"id"\`.
-   3. Issue a separate Edit call for each of the three anchor strings (\`text\`, \`contextBefore\`, \`contextAfter\`) — \`old_string\` = the literal current line (including indentation, quoting, and trailing comma), \`new_string\` = the same shape with the new value.
-   4. Preserve the surrounding JSON structure exactly. Do not reformat, re-key, or change ordering.
-
-   Constraints on the new anchor:
-   - \`text\` must be a verbatim substring of the new passage, ≥ 8 non-whitespace chars.
-   - \`text\` must occur exactly once in the new file (use grep to verify before committing the Edit).
-   - \`text\` must quote the new wording of the same idea, not an unrelated nearby sentence.
-
-   If you cannot honestly say the new anchor points to a rewritten version of the same idea, leave the anchor untouched and let the comment orphan.
-
-   The CLI fallback \`mdc.mjs set-anchor\` is a churn-prone fallback only — it touches the whole file and races with concurrent writers (the webview, the standard editor) that may also be holding the sidecar open. Use it only when the Edit-based approach is blocked (e.g. a one-shot batch script with no Edit tool available). Default to Edit.
-
-3. **Append your reply:**
-   \`\`\`
-   node ~/.claude/skills/vs-markdown-collab/mdc.mjs reply <sidecar> <id> \\
-     --body "<one or two sentences quoting the new wording, naming the section, etc.>"
-   \`\`\`
-   Be specific. Don't say "done" with no detail.
-
-4. **For comments you cannot fully address** (ambiguous request, missing information, conflicting with another comment), still reply via the CLI with what you tried and what you need from the human. Do not pretend it's done.
-
-### Phase 4 — Deletion (opt-in)
-
-You only delete a thread when the human's body or trailing reply unambiguously asks for it:
-- "delete this comment", "remove this thread", "drop this", "this comment is no longer relevant"
-
-When deleting:
-\`\`\`
-node ~/.claude/skills/vs-markdown-collab/mdc.mjs delete <sidecar> <id>
-\`\`\`
-
-Do not delete to "clean up" resolved threads, do not delete after you addressed a comment (the human resolves), and do not delete because the anchor orphaned.
-
-### Phase 5 — Initiate a new thread (opt-in)
-
-You only **create** a new review thread when the human explicitly asks you to ("leave a comment on X", "add a review note about Y", "flag this section for follow-up", "drop a TODO comment here"). Never spontaneously seed threads while addressing existing ones or while doing maintenance edits.
-
-**Use this sidecar path ONLY when the file already has a sidecar.** On a file with no sidecar AND no inline markers, fall back to inline-mode initiation per SKILL.md. Don't create a fresh sidecar to host a brand-new thread — inline is the v0.27+ format of record.
-
-When asked to add a thread to a file that already has a sidecar:
-
-1. **Pick the anchor.** It must be a verbatim substring of the current \`.md\` text, ≥ 8 non-whitespace chars, and occur exactly once in the file. Grep to confirm uniqueness before committing.
-2. **Compute optional context.** \`--before\` = up to ~40 chars immediately preceding the anchor (helpful for disambiguation if the anchor's uniqueness is borderline). \`--after\` = up to ~40 chars immediately following. Pass empty strings when uniqueness is already strong.
-3. **Run the CLI:**
-   \`\`\`
-   node ~/.claude/skills/vs-markdown-collab/mdc.mjs add \\
-     --workspace <abs-workspace> \\
-     --file <rel-md-path> \\
-     --text "<anchor text>" \\
-     [--before "<≤40 chars before>"] \\
-     [--after "<≤40 chars after>"] \\
-     --body "<your note, markdown OK>" \\
-     [--author "<name, defaults to claude>"]
-   \`\`\`
-   The CLI generates a unique \`c_<8 hex>\` id, sets \`resolved: false\`, sets \`createdAt\` to current UTC, and creates the sidecar with \`version: 1\` if it didn't exist yet. It refuses an anchor with < 8 non-whitespace chars and refuses an empty body.
-4. **Do NOT also edit the \`.md\` file** when initiating a thread — sidecar-mode anchors are stored separately and the \`.md\` text is not modified by thread creation. (Contrast with inline mode, where wrapping markers is required.)
-5. **Verify** by running \`mdc.mjs validate <sidecar>\`, then \`mdc.mjs list --file <rel>\` and confirming the new id appears.
-
-If you need to add multiple threads in one turn, run \`add\` once per thread. The CLI is atomic per call.
-
-### Phase 6 — Invariants
-
-You MUST NOT:
-- Change \`comment.resolved\`. Only the human resolves comments.
-- Delete a comment that the human has not explicitly asked to delete (Phase 4).
-- Modify \`anchor\` for comments whose target text was unchanged or deleted (only rewrites trigger anchor updates — see Phase 3 step 2).
-- Re-anchor a comment to nearby unrelated text after a deletion. Let it orphan.
-- Touch \`comment.id\`, \`comment.author\`, \`comment.createdAt\`, or any reply's existing fields.
-- Bump \`sidecar.version\`.
-- Edit a sidecar whose \`.md\` file you have not just modified (no speculative anchor "cleanups").
-- Initiate a new thread (Phase 5) unless the human explicitly asked.
-
-### Phase 7 — Verify
-
-Before reporting done:
-- Run \`mdc.mjs list\` again. Confirm the entries you addressed are gone from the actionable list (because your reply was the last and now \`author === "ai"\`).
-- For any anchor you updated, grep the \`.md\` file to confirm \`anchor.text\` plus its surrounding context occurs exactly once.
-- For any comment you deleted, run \`mdc.mjs validate <sidecar>\` and confirm the count decreased by one.
-- For any thread you initiated (opt-in): \`mdc.mjs list --file <rel>\` shows the new id, the sidecar passes \`validate\`, and \`anchor.text\` (plus context) resolves to exactly one location in the \`.md\`.
-
-If any check fails, fix it before reporting.
-
-## Anchor maintenance applies on EVERY \`.md\` edit, not just comment-driven ones
-
-Whenever you modify a \`.md\` file in a sidecar-mode workspace — for any reason, not only when addressing review comments — you MUST also reconcile that file's sidecar after the edit. Rewording a sentence, refactoring a heading, fixing a typo: any of these can break an existing anchor.
-
-1. Compute the sidecar path: \`<workspace-root>/.markdown-collab/<rel-path-to-md>.json\`. If it does not exist, you are done — there are no anchors to maintain.
-2. Run \`mdc.mjs validate <sidecar>\` to surface any anchor whose stored \`text\` no longer occurs (or no longer occurs uniquely) in the new \`.md\` content.
-3. For each anchor flagged as broken or ambiguous:
-   - If the passage was **rewritten** — the same idea is still there in different words — update the anchor SURGICALLY with the **Edit** tool. **Do NOT use \`mdc.mjs set-anchor\` and do NOT rewrite the whole sidecar JSON.** Locate the offending comment's \`"anchor": { ... }\` object inside the sidecar file by its \`"id"\` and replace ONLY the three string fields (\`text\`, \`contextBefore\`, \`contextAfter\`). Read the sidecar with the Read tool, find the unique \`"text": "<old anchor text>"\` line plus its sibling \`contextBefore\` / \`contextAfter\` lines, then issue separate Edit calls — one per field — with old\\_string set to the literal current line and new\\_string to the new value. Preserve indentation, quoting, trailing commas, and the surrounding JSON structure exactly.
-   - The new \`text\` must be a verbatim substring of the new \`.md\` content, ≥ 8 non-whitespace chars, and must occur exactly once after applying. Verify with a grep before committing the Edit.
-   - If the passage was **deleted** — the comment's target is gone — leave the anchor untouched. The comment will surface as an orphan in the editor; the human resolves or deletes it.
-   - If you are uncertain whether the passage was rewritten or deleted, leave the anchor untouched. Re-anchoring to nearby unrelated text creates a misleading link to content the comment was never about.
-4. Do NOT change \`comment.body\`, \`comment.replies\`, \`comment.resolved\`, or any other field while doing this maintenance pass — only the three \`anchor.*\` strings of comments whose target was rewritten, and only via the Edit tool.
-
-## Anti-patterns (sidecar)
-
-- Don't read whole sidecars when \`mdc.mjs list\` will give you exactly the actionable subset.
-- Don't write the sidecar before the \`.md\`.
-- Don't hand-edit JSON when a CLI subcommand exists for the same operation.
-- Don't update an anchor unless you actually rewrote its target.
-- Don't initiate a new thread unless the human explicitly asked.
-- Don't create a sidecar from scratch — inline is the v0.27+ format of record. Fall back to inline-mode initiation in SKILL.md.
-`;
-
 export const SKILL_CONTENT = `---
 name: vs-markdown-collab
-description: Agentic workflow for addressing review comments on Markdown (.md) files in a Markdown Collab workspace, AND for reviewing Markdown docs by leaving review comments for the human. Comments are stored INLINE in the .md file itself (default in v0.27+, look for \`<!--mc:threads:begin-->\`); a legacy sidecar format (\`.markdown-collab/<rel>.md.json\`) is documented separately in SIDECAR.md, loaded on demand. TRIGGER when the user asks to address, resolve, respond to, incorporate, or act on review comments, notes, suggestions, or feedback on any Markdown document — trigger phrases include "address the comments on foo.md", "apply the review feedback", "respond to the notes in README", "incorporate the suggestions", "fix the markdown collab comments", "work through the review on docs/spec.md". ALSO TRIGGER on review-mode requests where the user asks YOU to play reviewer — "review this doc", "leave your thoughts on README", "do a review pass on docs/spec.md", "second pair of eyes on this", "what would you flag in this file", "review the markdown collab doc on X".
+description: Agentic workflow for addressing review comments on Markdown (.md) files in a Markdown Collab workspace, AND for reviewing Markdown docs by leaving review comments for the human. Comments are stored INLINE in the .md file itself (look for \`<!--mc:threads:begin-->\`). TRIGGER when the user asks to address, resolve, respond to, incorporate, or act on review comments, notes, suggestions, or feedback on any Markdown document — trigger phrases include "address the comments on foo.md", "apply the review feedback", "respond to the notes in README", "incorporate the suggestions", "fix the markdown collab comments", "work through the review on docs/spec.md". ALSO TRIGGER on review-mode requests where the user asks YOU to play reviewer — "review this doc", "leave your thoughts on README", "do a review pass on docs/spec.md", "second pair of eyes on this", "what would you flag in this file", "review the markdown collab doc on X".
 ---
 
 # Markdown Collab — agentic review-address skill
 
 You are addressing human review comments left on Markdown files via the Markdown Collab VS Code extension. The user runs the IDE; you do the writing.
 
-## Two storage formats — detect first, act second
+## Storage format
 
-Markdown Collab supports two coexisting on-disk formats. Detect which one applies **per file** before acting.
-
-### Inline format (default in v0.27+)
-
-Threads live inside the \`.md\` file itself.
+Comments are stored INLINE in the \`.md\` file itself — there is no sidecar.
 
 - Anchored spans are wrapped in paired HTML comments:
   \`<!--mc:a:ID-->anchored text<!--mc:/a:ID-->\` (ID = 1–12 char base36).
@@ -904,25 +412,13 @@ Threads live inside the \`.md\` file itself.
 - Each \`Comment\`:
   \`{"id":"c<N>","parent"?:"c<N>","author":"<name>","ts":"<ISO-8601 UTC>","body":"<markdown>","editedTs"?:"<ISO-8601 UTC>","deleted"?:true}\`.
 
-**Detection:** the \`.md\` file contains the literal string \`<!--mc:threads:begin-->\`. If yes → inline mode. Skip the sidecar pipeline for this file even if a sidecar happens to coexist.
+**Detection:** the \`.md\` file contains the literal string \`<!--mc:threads:begin-->\`. A file without that block simply has no comments yet.
 
-### Sidecar format (legacy)
-
-Each \`.md\` file's comments live in a sibling sidecar JSON under \`<workspaceRoot>/.markdown-collab/<rel>.md.json\`.
-
-- Schema: \`{ "version": 1, "file": "<rel>/<name>.md", "comments": Comment[] }\`.
-- \`Comment\`: \`{ "id", "anchor": { "text", "contextBefore", "contextAfter" }, "body", "author", "createdAt", "resolved", "replies": Reply[] }\`.
-- \`Reply\`: \`{ "author", "body", "createdAt" }\`.
-
-**Detection:** the \`.md\` file does NOT contain \`<!--mc:threads:begin-->\`, but \`<workspaceRoot>/.markdown-collab/<rel>.md.json\` exists.
-
-If neither marker nor sidecar exists for a named file:
+If a named file has no threads region:
 - If the user is asking you to **address** comments, there are none — tell the user and stop.
-- If the user is asking you to **initiate** a thread (opt-in, see Phase 5), default to **inline mode**. Inline is the format of record in v0.27+; sidecar is the legacy path retained only for workspaces with existing \`.markdown-collab/*.md.json\` history. Don't create a sidecar from scratch.
+- If the user is asking you to **initiate** a thread (opt-in, see Phase 5), create the inline threads region.
 
-## Inline-mode workflow (default path)
-
-This is the path you take when the target \`.md\` contains \`<!--mc:threads:begin-->\`.
+## Workflow
 
 ### Phase 1 — Discover
 
@@ -972,15 +468,15 @@ You only delete or tombstone a thread when the human's body or trailing reply un
 
 You only **create** a new review thread when the human explicitly asks you to — "leave a comment on X", "add a review note about Y", "flag this section for follow-up", "drop a TODO comment here". Never initiate threads spontaneously while addressing existing ones, while doing maintenance edits, or to leave yourself a reminder.
 
-This is the **default path** for thread creation. Use it when:
-- the target \`.md\` is already in inline mode (contains \`<!--mc:threads:begin-->\`), OR
-- the target \`.md\` has neither inline markers nor a sidecar (a fresh file). Inline is the v0.27+ format of record; don't fall back to creating a sidecar.
+Use it when:
+- the target \`.md\` already contains \`<!--mc:threads:begin-->\`, OR
+- the target \`.md\` has no threads region yet (a fresh file) — create one.
 
-When asked to add a thread to a file in inline mode:
+When asked to add a thread:
 
 1. **Pick the passage to anchor.** It must:
    - Be a verbatim substring of the current \`.md\` text.
-   - Contain at least **8 non-whitespace characters**.
+   - Be a meaningful span (at least a word) — markers store exact offsets, so there's no minimum length, but a one-character anchor is rarely useful.
    - Sit OUTSIDE fenced code blocks and inline code spans (markers inside code are deliberately ignored by the parser, so a thread anchored there would be invisible).
    - Occur in a location where adding the marker pair won't break neighbouring markdown syntax (don't split a link target, an image alt, a table cell delimiter, or a heading underline).
 
@@ -1054,14 +550,14 @@ Without a focus directive, do a general review against the rubric below.
 
 - The anchor should be the **smallest passage that makes the comment make sense**. Prefer one sentence over a paragraph. Prefer one phrase over a sentence when the issue is local.
 - Avoid wrapping a whole section. If the issue is structural ("this section is in the wrong place"), anchor the section heading line, not the body.
-- Anchors must still satisfy Phase 5 constraints: 8+ non-whitespace chars, outside code spans, marker-safe location.
+- Anchors must still satisfy Phase 5 constraints: a meaningful span, outside code spans, marker-safe location.
 
 #### Thread body — specificity rule
 
 Every \`c1\` body must name the concern concretely.
 
 - **Good:** *"The claim that \`X\` implies \`Y\` skips intermediate step \`Z\`. Either justify the jump or add the step."*
-- **Good:** *"Example uses \`--all\` but the CLI flag is \`--include-deleted\` per \`mdc.mjs\` line 142. Update the flag or update the CLI."*
+- **Good:** *"Example uses \`--all\` but the CLI flag is \`--include-deleted\` per \`cli.ts\` line 142. Update the flag or update the CLI."*
 - **Bad:** *"This could be clearer."*
 - **Bad:** *"The whole section needs work."*
 - **Bad:** *Restating the anchored text with no analysis.*
@@ -1072,7 +568,7 @@ The body should fit in 1–3 sentences. If you need more, split into separate th
 
 These calibrate the rubric. Mirror the *shape* of the good examples; avoid the failure modes in the bad ones.
 
-**Good — concrete factual correction.** Doc says: *"The CLI accepts \`--all\` to include resolved comments."* Code says the flag is \`--include-resolved\`. Anchor the literal \`--all\` token only (smallest meaningful span). Body: *"CLI flag is \`--include-resolved\` per \`mdc.mjs:142\`, not \`--all\`. Either rename the doc or update the CLI."*
+**Good — concrete factual correction.** Doc says: *"The CLI accepts \`--all\` to include resolved comments."* Code says the flag is \`--include-resolved\`. Anchor the literal \`--all\` token only (smallest meaningful span). Body: *"CLI flag is \`--include-resolved\` per \`cli.ts:142\`, not \`--all\`. Either rename the doc or update the CLI."*
 
 **Good — unclear claim with a named ambiguity.** Doc says: *"The skill triggers on review-mode phrases."* Anchor the sentence. Body: *"\\'Review-mode phrases\\' isn't defined here — the rubric for what counts as one is in Phase 5+. Either inline a one-line definition or link to the Review Mode section."*
 
@@ -1105,7 +601,7 @@ If you read the doc carefully and find no concerns that match the focus (or no g
 1. **Read the doc end to end** before opening any threads. Cross-referencing the focus directive against the whole doc avoids redundant or contradictory threads.
 2. **List concerns mentally** with anchor candidate, severity (in your head — do not encode it in JSON), and one-sentence body. Discard anything that fails the specificity rule.
 3. **Initiate threads one at a time**, in document order (earlier anchors first). Use the Phase 5 mechanics:
-   - Verbatim anchor passage (8+ non-whitespace chars, outside code fences).
+   - Verbatim anchor passage (a meaningful span, outside code fences).
    - 5-char lowercase base36 id, unique against existing markers and \`<!--mc:t …-->\` ids.
    - Paired markers wrap the passage; \`<!--mc:t {…}-->\` line appended in the threads region (create the region if absent).
    - \`c1\` comment: \`author:"claude"\`, current UTC ISO-8601 \`ts\`, body following the specificity rule.
@@ -1113,11 +609,7 @@ If you read the doc carefully and find no concerns that match the focus (or no g
 5. **Do not edit prose.** Even if the fix is obvious. Open a thread; the human decides.
 6. **Verify.** Re-read the file. Confirm every new thread has a paired marker, a \`<!--mc:t …-->\` line with valid JSON, \`status:"open"\`, and a single \`c1\` from \`"claude"\`. Confirm no existing thread or prose was disturbed.
 
-#### Sidecar mode in review
-
-If the target file is in sidecar mode (no \`<!--mc:threads:begin-->\`, but \`<workspaceRoot>/.markdown-collab/<rel>.md.json\` exists), apply the same rubric (focus, no cap, no prose edits, anchor sizing, specificity) but use the sidecar mechanics from SIDECAR.md to create the comments. If the file has neither inline markers nor a sidecar, default to inline mode and create the threads region.
-
-### Phase 7 — Verify (inline mode)
+### Phase 7 — Verify
 
 Before reporting done:
 - Re-read the threads region. Confirm each addressed thread now ends with a comment authored by you and \`"status":"open"\`.
@@ -1127,18 +619,6 @@ Before reporting done:
 - For each thread you initiated (opt-in): confirm a paired marker exists, the new \`<!--mc:t …-->\` line parses as valid JSON with \`status:"open"\` and a single \`c1\` comment, and the id is unique in the file.
 
 If any check fails, fix it before reporting.
-
-## Sidecar-mode workflow (legacy path) — load on demand
-
-When the target \`.md\` does NOT contain \`<!--mc:threads:begin-->\` but a sidecar exists at \`<workspaceRoot>/.markdown-collab/<rel>.md.json\`, you are in **sidecar mode**. This is a legacy path retained for workspaces with existing \`.markdown-collab/*.md.json\` history.
-
-**The full sidecar workflow lives in a separate reference file to keep this SKILL.md lean.** Before acting in sidecar mode, READ the reference:
-
-\`\`\`
-~/.claude/skills/vs-markdown-collab/SIDECAR.md
-\`\`\`
-
-That file covers: the sidecar format spec, the \`mdc.mjs\` CLI (\`list\`, \`reply\`, \`add\`, \`delete\`, \`set-anchor\`, \`validate\`), the seven-phase sidecar workflow (Discover / Plan / Edit / Delete / Initiate / Invariants / Verify), sidecar anchor maintenance after any \`.md\` edit, and sidecar-specific anti-patterns. Do not act in sidecar mode without first loading it.
 
 ## When this skill applies
 
@@ -1152,17 +632,11 @@ Invoke when:
 
 Whenever you modify a \`.md\` file in a Markdown Collab workspace — for any reason, not only when addressing review comments — you MUST also reconcile that file's anchors after the edit. Rewording a sentence, refactoring a heading, fixing a typo: any of these can break an existing anchor.
 
-### Inline mode (default)
-
 1. After your Edit, search the \`.md\` text for \`<!--mc:a:\` and \`<!--mc:/a:\` markers. Each opener must have a matching closer with the same id; mismatched, dropped, or duplicated markers are a bug you just introduced.
 2. For each thread id whose markers are still paired, confirm the wrapped text still reflects the same idea the reviewer commented on:
    - **You rewrote the passage in place** → keep the markers wrapping the new wording (this should already be the case if you used surgical Edits).
    - **You removed the passage** → both markers should now be gone; the thread will surface as unanchored in the UI. That is the correct outcome. Do NOT re-add markers to wrap unrelated nearby text.
 3. Do NOT change any \`<!--mc:t {…}-->\` line during maintenance — only the human reviewer and the inline-mode reply workflow append to threads.
-
-### Sidecar mode (legacy)
-
-If you're operating on a sidecar-mode file (see "Sidecar-mode workflow" above for detection), the maintenance procedure is in SIDECAR.md → "Anchor maintenance applies on EVERY \`.md\` edit". Load SIDECAR.md before doing maintenance in sidecar mode; do not try to recall the rules from this file.
 
 The maintenance pass applies in addition to the comment-driven workflows above; do not skip it just because no review batch was active.
 
@@ -1191,13 +665,13 @@ Claude Code v2.1.80+ supports first-party MCP channels: events arrive natively a
 4. Set \`markdownCollab.sendMode\` to \`mcp-channel\` in VS Code, or pick it from the quick-pick.
 
 **Runtime:**
-The button click POSTs to the running channel server, which fires \`notifications/claude/channel\`. The body of the \`<channel>\` tag is the same JSON payload \`{prompt, file, unresolvedCount, comments}\`. The payload's \`prompt\` field self-documents the format (inline or sidecar). Address each comment per the matching mode's phases above, then append \`{"id": "<id-from-tag>"}\` to \`<workspace>/.markdown-collab/.events.acked.jsonl\` so the extension knows the batch is done.
+The button click POSTs to the running channel server, which fires \`notifications/claude/channel\`. The body of the \`<channel>\` tag is the same JSON payload \`{prompt, file, unresolvedCount, comments}\`. The payload's \`prompt\` field self-documents the format. Address each comment per the phases above, then append \`{"id": "<id-from-tag>"}\` to \`<workspace>/.markdown-collab/.events.acked.jsonl\` so the tailer stops re-surfacing that batch on restart.
 
 **Caveats:** channels require claude.ai login (no API keys / Console), and the protocol is research preview — Anthropic warns it may change. If channels aren't supported in your harness or version, fall back to one of the modes below.
 
 ## Channel watch loop (button-driven)
 
-The VS Code extension exposes a "Send to Claude" button in both the Inline Comments View and the legacy Preview comments sidebar. When configured for channel mode it appends one JSON line per click to \`<workspace>/.markdown-collab/.events.jsonl\`. The event payload itself encodes whether the comments came from inline markers or a sidecar, so you can branch on it. To watch for the next click:
+The VS Code extension exposes a "Send to Claude" button in the Inline Comments View. When configured for channel mode it appends one JSON line per click to \`<workspace>/.markdown-collab/.events.jsonl\`. To watch for the next click:
 
 1. **Start the tailer in background** using the Bash tool with \`run_in_background: true\`:
    \`\`\`
@@ -1212,18 +686,18 @@ The VS Code extension exposes a "Send to Claude" button in both the Inline Comme
    - Or fall back to polling: call \`TaskOutput block=false\` on the bash periodically, diff against the last-seen offset of stdout, process any new JSON lines. Functional but consumes one iteration per poll.
    - Or skip the tailer entirely and \`Read\` \`.markdown-collab/.events.jsonl\` directly each turn, tracking the highest line you've already addressed.
 
-3. **Per notification**, parse the JSON line as \`{prompt, file, unresolvedCount, comments, ts}\`. Detect the storage mode for \`<workspace>/<file>\` (inline markers in the .md vs sidecar JSON) and address the batch using the matching mode's phases above, then return to the Monitor stream for the next event.
+3. **Per notification**, parse the JSON line as \`{prompt, file, unresolvedCount, comments, ts}\`. Address the batch using the phases above, then return to the Monitor stream for the next event.
 
 4. **Stopping**: the user ends the session, or you exit the watch when they say "stop watching." Kill the background tailer process when done.
 
 Skip / abort if:
 - The user is asking for a general edit unrelated to review comments.
-- Neither the target \`.md\` file contains \`<!--mc:threads:begin-->\` nor a matching sidecar exists — there is nothing to act on.
+- The target \`.md\` file contains no \`<!--mc:threads:begin-->\` block — there is nothing to act on.
 
 
 ## Reporting
 
-Tell the user, per file, what storage mode was in play (inline / sidecar) plus:
+Tell the user, per file:
 - Threads addressed (id + one-line summary of each change).
 - Threads initiated on explicit request (id + anchored passage + the note you left).
 - Threads deleted on explicit request (id).
@@ -1231,27 +705,21 @@ Tell the user, per file, what storage mode was in play (inline / sidecar) plus:
 - Threads answered without a prose change (id + the question / clarification you replied with).
 - Anything you skipped and why.
 
-Use the thread id so the human can find each thread in VS Code (inline IDs are 1–12 char base36; sidecar IDs are \`c_xxxxxxxx\`).
+Use the thread id so the human can find each thread in VS Code (thread IDs are 1–12 char base36).
 
 ## Anti-patterns
 
-Inline mode:
 - Don't change any thread's \`"status"\` field. Only the human resolves.
 - Don't mutate or reorder existing comment objects. Append only.
 - Don't move or duplicate anchor markers without moving the passage they wrap.
 - Don't re-add markers to wrap unrelated nearby text after a deletion.
 - Don't reformat the threads region (newlines, key order, escaping).
-
-Sidecar mode: see SIDECAR.md → "Anti-patterns (sidecar)".
-
-Both modes:
 - Don't reply with vague "applied" — say what you applied, quoting the new wording.
 - Don't fabricate that you handled a comment you couldn't actually address.
 - Don't re-anchor a deleted passage to nearby unrelated text. Deletions become orphans by design.
 - Don't delete a thread the human didn't explicitly tell you to delete.
 - Don't initiate a new thread the human didn't explicitly ask for. The skill is reply-driven by default.
-- Don't operate on a file with neither inline markers nor a sidecar — surface this rather than invent state.
-- Don't act in sidecar mode without first reading SIDECAR.md.
+- Don't operate on a file with no \`<!--mc:threads:begin-->\` block — surface this rather than invent state.
 `;
 
 export async function installClaudeSkill(
@@ -1288,10 +756,8 @@ export async function installClaudeSkill(
 }
 
 async function syncCliScript(homeDir: string): Promise<void> {
-  await syncScript(path.join(homeDir, CLI_SCRIPT_REL), CLI_SCRIPT_CONTENT);
   await syncScript(path.join(homeDir, TAIL_SCRIPT_REL), TAIL_SCRIPT_CONTENT);
   await syncScript(path.join(homeDir, CHANNEL_SCRIPT_REL), CHANNEL_SCRIPT_CONTENT);
-  await syncScript(path.join(homeDir, SIDECAR_REF_REL), SIDECAR_CONTENT);
 }
 
 async function syncScript(target: string, content: string): Promise<void> {

@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.33.16",
+  "version": "0.34.0",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -33,10 +33,7 @@
     "onLanguage:markdown",
     "onCommand:markdownCollab.installClaudeSkill",
     "onCommand:markdownCollab.initializeAgents",
-    "onCommand:markdownCollab.validate",
     "onCommand:markdownCollab.copyClaudePrompt",
-    "onCommand:markdownCollab.reloadComments",
-    "onCommand:markdownCollab.openPreview",
     "onCommand:markdownCollab.sendAllToClaude",
     "onCommand:markdownCollab.startClaudeTerminal",
     "onCommand:markdownCollab.resetSendMode",
@@ -64,55 +61,8 @@
         "title": "Markdown Collab: Copy Claude Prompt"
       },
       {
-        "command": "markdownCollab.reloadComments",
-        "title": "Markdown Collab: Reload Comments"
-      },
-      {
-        "command": "markdownCollab.validate",
-        "title": "Markdown Collab: Validate Sidecars"
-      },
-      {
-        "command": "markdownCollab.openPreview",
-        "title": "Markdown Collab: Open Preview with Comments",
-        "category": "Markdown Collab"
-      },
-      {
-        "command": "markdownCollab.reattachOrphan",
-        "title": "Re-attach Orphaned Comment"
-      },
-      {
         "command": "markdownCollab.revealComment",
         "title": "Reveal Markdown Comment"
-      },
-      {
-        "command": "markdownCollab.createThread",
-        "title": "Add Comment"
-      },
-      {
-        "command": "markdownCollab.addReply",
-        "title": "Reply"
-      },
-      {
-        "command": "markdownCollab.toggleResolve",
-        "title": "Toggle Resolved"
-      },
-      {
-        "command": "markdownCollab.deleteThread",
-        "title": "Delete Comment",
-        "icon": "$(trash)"
-      },
-      {
-        "command": "markdownCollab.editComment",
-        "title": "Edit",
-        "icon": "$(edit)"
-      },
-      {
-        "command": "markdownCollab.saveEdit",
-        "title": "Save"
-      },
-      {
-        "command": "markdownCollab.cancelEdit",
-        "title": "Cancel"
       },
       {
         "command": "markdownCollab.sendAllToClaude",
@@ -237,38 +187,6 @@
     "menus": {
       "commandPalette": [
         {
-          "command": "markdownCollab.createThread",
-          "when": "false"
-        },
-        {
-          "command": "markdownCollab.addReply",
-          "when": "false"
-        },
-        {
-          "command": "markdownCollab.toggleResolve",
-          "when": "false"
-        },
-        {
-          "command": "markdownCollab.deleteThread",
-          "when": "false"
-        },
-        {
-          "command": "markdownCollab.editComment",
-          "when": "false"
-        },
-        {
-          "command": "markdownCollab.saveEdit",
-          "when": "false"
-        },
-        {
-          "command": "markdownCollab.cancelEdit",
-          "when": "false"
-        },
-        {
-          "command": "markdownCollab.reattachOrphan",
-          "when": "false"
-        },
-        {
           "command": "markdownCollab.revealComment",
           "when": "false"
         },
@@ -299,32 +217,12 @@
       ],
       "comments/commentThread/context": [
         {
-          "command": "markdownCollab.createThread",
-          "group": "inline",
-          "when": "commentController == markdown-collab && commentThreadIsEmpty"
-        },
-        {
-          "command": "markdownCollab.addReply",
-          "group": "inline",
-          "when": "commentController == markdown-collab && !commentThreadIsEmpty && commentThread != markdown-collab-readonly"
-        },
-        {
           "command": "markdownCollab.prReviewAddComment",
           "group": "inline",
           "when": "commentController == markdown-collab-pr && commentThreadIsEmpty"
         }
       ],
       "comments/commentThread/title": [
-        {
-          "command": "markdownCollab.toggleResolve",
-          "group": "inline@1",
-          "when": "commentController == markdown-collab && !commentThreadIsEmpty && commentThread != markdown-collab-readonly"
-        },
-        {
-          "command": "markdownCollab.deleteThread",
-          "group": "inline@2",
-          "when": "commentController == markdown-collab && !commentThreadIsEmpty && commentThread != markdown-collab-readonly"
-        },
         {
           "command": "markdownCollab.prReviewDeleteComment",
           "group": "inline@1",
@@ -333,27 +231,12 @@
       ],
       "comments/comment/title": [
         {
-          "command": "markdownCollab.editComment",
-          "group": "group@1",
-          "when": "commentController == markdown-collab && comment == markdown-collab-editable"
-        },
-        {
           "command": "markdownCollab.prReviewEditComment",
           "group": "group@1",
           "when": "commentController == markdown-collab-pr && comment == prDraft"
         }
       ],
       "comments/comment/context": [
-        {
-          "command": "markdownCollab.saveEdit",
-          "group": "inline@1",
-          "when": "commentController == markdown-collab && comment == markdown-collab-editing"
-        },
-        {
-          "command": "markdownCollab.cancelEdit",
-          "group": "inline@2",
-          "when": "commentController == markdown-collab && comment == markdown-collab-editing"
-        },
         {
           "command": "markdownCollab.prReviewSaveEdit",
           "group": "inline@1",
@@ -370,13 +253,6 @@
           "command": "markdownCollab.prReviewRefresh",
           "when": "view == markdownCollab.prReviewFiles",
           "group": "navigation"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "markdownCollab.reattachOrphan",
-          "when": "view == markdownCollab.orphanedComments && viewItem == markdownCollab.orphanComment",
-          "group": "inline"
         }
       ],
       "explorer/context": [
@@ -418,11 +294,6 @@
     },
     "views": {
       "explorer": [
-        {
-          "id": "markdownCollab.orphanedComments",
-          "name": "Orphaned Markdown Comments",
-          "when": "markdownCollab.hasOrphans"
-        },
         {
           "id": "markdownCollab.review",
           "name": "Markdown Review",

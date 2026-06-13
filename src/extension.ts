@@ -3,37 +3,26 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import { ensureAgentsSnippet } from "./agents";
-import { resolve as resolveAnchor } from "./anchor";
 import { CollabEditorProvider } from "./collab/collabEditorProvider";
 import { startCollabServer, type CollabServerHandle } from "./collab/server";
 import { InlineCommentsPanel } from "./inlineComments/inlineCommentsPanel";
-import { MarkdownCollabController, extractAnchor } from "./commentController";
-import { OrphanView } from "./orphanView";
 import { PrReviewController } from "./pr/prReviewController";
-import { PreviewPanel } from "./previewPanel";
 import { ReviewView, type ReviewNode } from "./reviewView";
 import {
-  buildReviewPayload,
   buildReviewRequestPayload,
   type ReviewPayload,
   type SendMode,
 } from "./sendToClaude";
 import { buildInlinePayload } from "./inlineComments/sendToClaude";
-import { SidecarWatcher } from "./sidecarWatcher";
 import { installClaudeSkill } from "./skill";
 import { EVENT_LOG_REL, EventLog } from "./transports/eventLog";
 import { sendViaMcpChannel } from "./transports/mcpChannel";
 import { sendViaTerminal, startClaudeTerminal } from "./transports/terminal";
 import { TerminalTracker } from "./transports/terminalTracker";
-import { runValidate } from "./validate";
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("Markdown Collab");
   context.subscriptions.push(output);
-
-  const controller = new MarkdownCollabController(output);
-  controller.activate(context.subscriptions);
-  context.subscriptions.push(controller);
 
   // PR review init is wrapped because it pulls in the comments API in a
   // configuration the legacy controller doesn't use; any failure here must
@@ -57,49 +46,11 @@ export function activate(context: vscode.ExtensionContext): void {
   // Claude reads it via `tail -f` + Monitor.
   const eventLogs = new Map<string, EventLog>();
 
-  function reconcileAllEventLogs(): void {
-    for (const log of eventLogs.values()) {
-      log.reconcile().catch((e) => {
-        output.appendLine(
-          `EventLog.reconcile failed: ${(e as Error).message}`,
-        );
-      });
-    }
-  }
-
-  // Live sidecar watcher — routes external .markdown-collab/*.md.json edits
-  // back into the controller. The watcher is decoupled from the controller's
-  // internals via a minimal host interface so it can be unit-tested against
-  // a fake; hence the bespoke passthrough rather than passing `controller`
-  // directly.
-  const sidecarWatcher = new SidecarWatcher(
-    {
-      reload: async (d) => {
-        await controller.reloadDoc(d);
-        PreviewPanel.notifySidecarChange(d.uri.fsPath);
-        reconcileAllEventLogs();
-      },
-      isReloading: (p) => controller.isReloading(p),
-      onExternalChange: (p) => {
-        controller.onExternalChange(p);
-        PreviewPanel.notifySidecarChange(p);
-        reconcileAllEventLogs();
-      },
-    },
-    output,
-  );
-  context.subscriptions.push(sidecarWatcher);
-
-  const orphanView = new OrphanView(controller);
-  const tree = vscode.window.createTreeView("markdownCollab.orphanedComments", {
-    treeDataProvider: orphanView,
-  });
-  context.subscriptions.push(tree, orphanView);
-
-  // F3: cross-file Markdown Review tree. Constructor does NOT walk the FS —
-  // the scan fires on first root-level getChildren when the user expands the
-  // view, keeping activation cheap.
-  const reviewView = new ReviewView(controller, output);
+  // Cross-file Markdown Review tree. Constructor does NOT walk the FS — the
+  // scan fires on first root-level getChildren when the user expands the view,
+  // keeping activation cheap. It reads inline-comment threads straight from
+  // each `.md` and refreshes single files via a `**/*.md` watcher.
+  const reviewView = new ReviewView(output);
   const reviewTree = vscode.window.createTreeView("markdownCollab.review", {
     treeDataProvider: reviewView,
   });
@@ -122,47 +73,6 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("markdownCollab.copyClaudePrompt", async () => {
       await invokeCopyClaudePrompt();
     }),
-    vscode.commands.registerCommand("markdownCollab.reloadComments", async () => {
-      await controller.reloadActive();
-    }),
-    vscode.commands.registerCommand(
-      "markdownCollab.openPreview",
-      async (arg?: vscode.Uri) => {
-        // Right-click invocations from explorer/context, editor/title/context,
-        // and editor/context all pass the resource as the first argument.
-        // The command palette path passes nothing — fall back to the active
-        // editor in that case.
-        const uri =
-          arg instanceof vscode.Uri
-            ? arg
-            : vscode.window.activeTextEditor?.document.uri;
-        if (!uri) {
-          void vscode.window.showWarningMessage(
-            "Open a Markdown file first, then run this command.",
-          );
-          return;
-        }
-        let doc: vscode.TextDocument;
-        try {
-          doc = await vscode.workspace.openTextDocument(uri);
-        } catch (e) {
-          void vscode.window.showErrorMessage(
-            `Failed to open ${uri.fsPath}: ${(e as Error).message}`,
-          );
-          return;
-        }
-        if (doc.languageId !== "markdown" && !uri.fsPath.toLowerCase().endsWith(".md")) {
-          void vscode.window.showWarningMessage(
-            "Markdown Collab preview only supports .md files.",
-          );
-          return;
-        }
-        PreviewPanel.show(doc, output, context.extensionUri);
-      },
-    ),
-    vscode.commands.registerCommand("markdownCollab.validate", async () => {
-      await runValidate(output);
-    }),
     vscode.commands.registerCommand(
       "markdownCollab.revealComment",
       async (node: ReviewNode | undefined) => {
@@ -172,10 +82,8 @@ export function activate(context: vscode.ExtensionContext): void {
             vscode.Uri.file(node.docPath),
           );
           await vscode.window.showTextDocument(doc);
-          // No scroll — opening the doc triggers the controller's
-          // loadAndAttach, which renders threads. A robust reveal would need
-          // to await thread registration; the spec explicitly says that's
-          // non-critical, so we skip it.
+          // Opening the doc is enough — the inline markers travel with the
+          // file. Scrolling to the exact thread is non-critical, so skip it.
         } catch (e) {
           output.appendLine(
             `revealComment failed for ${node.docPath}: ${(e as Error).message}`,
@@ -226,42 +134,6 @@ export function activate(context: vscode.ExtensionContext): void {
         "Markdown Collab: Send mode reset. Next click will prompt again.",
       );
     }),
-    vscode.commands.registerCommand(
-      "markdownCollab.reattachOrphan",
-      async (arg1: unknown, arg2?: vscode.Uri) => {
-        // Two invocation paths feed this command:
-        //   1. Right-click on an orphan tree item (view/item/context) — VS Code
-        //      passes the tree Node as the single argument.
-        //   2. Programmatic / legacy (commentId, fileUri) positional args.
-        let commentId: string | undefined;
-        let fileUri: vscode.Uri | undefined;
-        if (typeof arg1 === "string") {
-          commentId = arg1;
-          fileUri = arg2;
-        } else if (arg1 && typeof arg1 === "object") {
-          const node = arg1 as {
-            kind?: string;
-            comment?: { id?: string };
-            docPath?: string;
-          };
-          if (
-            node.kind === "orphan" &&
-            node.comment?.id &&
-            typeof node.docPath === "string"
-          ) {
-            commentId = node.comment.id;
-            fileUri = vscode.Uri.file(node.docPath);
-          }
-        }
-        if (!commentId || !fileUri) {
-          void vscode.window.showWarningMessage(
-            "Re-attach requires an orphan selection.",
-          );
-          return;
-        }
-        await invokeReattachOrphan(controller, output, commentId, fileUri);
-      },
-    ),
   );
 
   // Experimental real-time collaborative editor: CodeMirror 6 + Yjs in a
@@ -408,10 +280,6 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     ),
   );
-
-  // Any docs already open at activation must be dispatched explicitly —
-  // `onDidOpenTextDocument` only fires for opens *after* registration.
-  void controller.handleInitialDocs(vscode.workspace.textDocuments);
 }
 
 export function deactivate(): void {
@@ -532,80 +400,6 @@ async function invokeCopyClaudePrompt(): Promise<void> {
   );
 }
 
-async function invokeReattachOrphan(
-  controller: MarkdownCollabController,
-  output: vscode.OutputChannel,
-  commentId: string,
-  fileUri: vscode.Uri,
-): Promise<void> {
-  const doc = await vscode.workspace.openTextDocument(fileUri);
-  const editor = await vscode.window.showTextDocument(doc);
-  const pick = await vscode.window.showInformationMessage(
-    "Select the text in the editor to re-attach this comment to, then click the button.",
-    { modal: false },
-    "I've selected the new text",
-    "Cancel",
-  );
-  if (pick !== "I've selected the new text") return;
-
-  const latestEditor = vscode.window.activeTextEditor ?? editor;
-  // If the user has switched to a different file between clicking the button
-  // and responding to the dialog, do not write against that other file.
-  if (latestEditor.document.uri.fsPath !== fileUri.fsPath) {
-    void vscode.window.showWarningMessage(
-      "Switch back to the file with the orphaned comment and select there.",
-    );
-    return;
-  }
-  const sel = latestEditor.selection;
-  if (sel.isEmpty) {
-    void vscode.window.showWarningMessage(
-      "No text selected — re-attach cancelled.",
-    );
-    return;
-  }
-  const fullText = latestEditor.document.getText();
-  const selStart = latestEditor.document.offsetAt(sel.start);
-  const selEnd = latestEditor.document.offsetAt(sel.end);
-  const { anchor, valid } = extractAnchor(fullText, selStart, selEnd);
-  if (!valid) {
-    void vscode.window.showWarningMessage(
-      "Selection too short — need at least 8 non-whitespace characters.",
-    );
-    return;
-  }
-  // Guard against edits between selection and write. Re-resolve the anchor
-  // against the current document text and require it to point back at the
-  // exact selected range. If the text shifted or the anchor is ambiguous,
-  // cancel rather than persist a subtly-wrong anchor.
-  const resolved = resolveAnchor(fullText, anchor);
-  if (!resolved || resolved.start !== selStart || resolved.end !== selEnd) {
-    void vscode.window.showWarningMessage(
-      "Re-attach cancelled — selection changed or is ambiguous.",
-    );
-    return;
-  }
-  try {
-    const ok = await controller.updateCommentAnchor(
-      latestEditor.document,
-      commentId,
-      anchor,
-    );
-    if (!ok) {
-      void vscode.window.showWarningMessage(
-        "Could not re-attach: sidecar unavailable or comment id not found.",
-      );
-    } else {
-      void vscode.window.showInformationMessage("Comment re-attached.");
-    }
-  } catch (e) {
-    output.appendLine(`reattachOrphan failed: ${(e as Error).message}`);
-    void vscode.window.showErrorMessage(
-      `Failed to re-attach: ${(e as Error).message}`,
-    );
-  }
-}
-
 const REMEMBERED_SEND_MODE_KEY = "markdownCollab.rememberedSendMode";
 
 function isConcreteSendMode(v: unknown): v is Exclude<SendMode, "ask"> {
@@ -636,43 +430,17 @@ async function invokeSendAllToClaude(
     );
     return;
   }
-  // Inline-mode docs (those with a `<!--mc:threads:begin-->` block — the
-  // default storage and what the live editor now writes) keep their comments
-  // in the file itself, not a sidecar. Detect that and build the payload from
-  // the inline threads; fall back to the sidecar otherwise. Mirrors the
-  // skill's own inline-vs-sidecar detection.
-  if (doc.getText().includes("<!--mc:threads:begin-->")) {
-    const inlinePayload = buildInlinePayload(doc);
-    if (!inlinePayload) {
-      void vscode.window.showInformationMessage(
-        "No unresolved comments on this file.",
-      );
-      return;
-    }
-    await dispatchReviewPayload(inlinePayload, output, tracker, eventLogs, workspaceState, folder);
-    return;
-  }
-  const result = await buildReviewPayload(doc, output);
-  if (result.kind === "no-workspace") {
-    void vscode.window.showWarningMessage(
-      "Markdown file is outside any workspace folder.",
-    );
-    return;
-  }
-  if (result.kind === "no-sidecar") {
-    void vscode.window.showWarningMessage(
-      "No comments to send — this file has no sidecar yet.",
-    );
-    return;
-  }
-  if (result.kind === "empty") {
+  // Comments live inline in the `.md` itself (in the `<!--mc:threads:begin-->`
+  // block). Build the payload from the open inline threads.
+  const inlinePayload = buildInlinePayload(doc);
+  if (!inlinePayload) {
     void vscode.window.showInformationMessage(
       "No unresolved comments on this file.",
     );
     return;
   }
   await dispatchReviewPayload(
-    result.payload,
+    inlinePayload,
     output,
     tracker,
     eventLogs,
@@ -687,8 +455,8 @@ type DispatchIntent =
 
 /**
  * Route a ReviewPayload through the user-configured sendMode (or prompt
- * if unset). Extracted so both the sidecar-based command and the inline-
- * comments command share the same delivery logic.
+ * if unset). Shared by the "send unresolved comments" and "ask Claude to
+ * review" commands so both use the same delivery logic.
  *
  * `intent` shapes the UI strings (placeholder, toast) without forking the
  * transport logic — review-request payloads carry `unresolvedCount: 0`

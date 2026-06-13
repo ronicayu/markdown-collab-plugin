@@ -1,8 +1,4 @@
-import { Anchor, MIN_ANCHOR_CHARS } from "./types";
-
-export function isAnchorTextValid(anchorText: string): boolean {
-  return anchorText.replace(/\s/g, "").length >= MIN_ANCHOR_CHARS;
-}
+import { Anchor } from "./types";
 
 function findAllOccurrences(text: string, needle: string): number[] {
   if (needle.length === 0) return [];

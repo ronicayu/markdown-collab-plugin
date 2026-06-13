@@ -22,11 +22,3 @@ export interface Comment {
   replies: Reply[];
 }
 
-export interface Sidecar {
-  version: 1;
-  file: string;
-  comments: Comment[];
-}
-
-export const MIN_ANCHOR_CHARS = 8;
-export const CURRENT_SCHEMA_VERSION = 1;

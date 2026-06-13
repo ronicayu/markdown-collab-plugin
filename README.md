@@ -23,7 +23,7 @@ You can also flip the direction and ask Claude to act as the reviewer (v0.29+): 
 4. **Highlight a passage in the rendered view** → click the **Comment** popup → write your review note → submit.
 5. **Click Send to Claude** in the comments sidebar. The first time, you'll be asked which delivery mode to use; the answer is remembered. **For most users, pick `terminal`** (see [Choosing a send mode](#choosing-a-send-mode)).
 
-> Comments are stored **inline** in the `.md` file itself — anchored spans are wrapped in `<!--mc:a:ID-->…<!--mc:/a:ID-->` markers and threads live in a single `<!--mc:threads:begin-->`…`<!--mc:threads:end-->` block at the end of the file. Everything ships with the document; no sidecar to commit. The older sidecar-based **Open Preview with Comments** view (writes to `.markdown-collab/<rel>.md.json`) is still available from the command palette but no longer in the right-click menu.
+> Comments are stored **inline** in the `.md` file itself — anchored spans are wrapped in `<!--mc:a:ID-->…<!--mc:/a:ID-->` markers and threads live in a single `<!--mc:threads:begin-->`…`<!--mc:threads:end-->` block at the end of the file. Everything ships with the document; no sidecar to commit.
 
 That's it — Claude reads the comments, edits the doc, posts a reply per thread. You toggle resolved when you're satisfied.
 
@@ -31,13 +31,9 @@ That's it — Claude reads the comments, edits the doc, posts a reply per thread
 
 ### Adding a comment
 
-Three ways, in order of preference:
+Open the **Inline Comments view** (`Markdown Collab: Open Inline Comments View`, or right-click a `.md` file), highlight rendered text, click the floating **Comment** button, type your note, submit. The thread is written into the `.md` file itself as inline marker comments — everything travels with the document.
 
-- **Inline Comments view (default).** Open it (`Markdown Collab: Open Inline Comments View`), highlight rendered text, click the floating **Comment** button, type your note, submit. The thread is written into the `.md` file itself as inline marker comments — no sidecar, everything travels with the document.
-- **Preview with Comments (legacy sidecar).** Same UX, but threads are written to `.markdown-collab/<rel>.md.json`. As of v0.28 this view is **palette-only** (`Cmd-Shift-P` → `Markdown Collab: Open Preview with Comments`) — it's no longer in the right-click menu. Useful if you already have sidecar history or prefer comment state out of the prose.
-- **Native VS Code Comments UI.** Highlight text in the editor, click the `+` in the gutter, type the comment. Writes to the sidecar.
-
-Selections must contain at least **8 non-whitespace characters**. Shorter selections are rejected.
+Any selection works — even a single word. Only empty or whitespace-only selections are ignored.
 
 ### Sending the batch to Claude
 
@@ -66,7 +62,7 @@ Files larger than 50 KB prompt a soft confirm before sending (Claude's review ca
 
 Comments are anchored to a text selection, not a line number. When Claude rewrites a passage that has a comment, the skill instructs it to update the anchor text to match — so comments survive revisions.
 
-If a rewrite is drastic enough that the anchor can't be located, the comment moves to the **Orphaned Markdown Comments** TreeView (only visible when orphans exist) where you can click to re-attach it to a new selection.
+If a rewrite removes the anchored passage entirely, the thread's markers go with it and the thread surfaces as **unanchored** in the Inline Comments view — re-anchor it by selecting fresh text and leaving the note again.
 
 ## Choosing a send mode
 
@@ -149,17 +145,14 @@ Copies the prompt to the clipboard. Paste into Claude however you like.
 
 | Command | Purpose |
 |---|---|
-| `Markdown Collab: Install Claude Skill` | Write `~/.claude/skills/vs-markdown-collab/SKILL.md` (inline-by-default), the on-demand `SIDECAR.md` reference (legacy sidecar workflow), and bundled helpers (`mdc.mjs`, `mdc-tail.mjs`, `mdc-channel.mjs`). |
+| `Markdown Collab: Install Claude Skill` | Write `~/.claude/skills/vs-markdown-collab/SKILL.md` and the bundled helpers (`mdc-tail.mjs`, `mdc-channel.mjs`). |
 | `Markdown Collab: Initialize AGENTS.md` | Append a convention block to `<workspace>/AGENTS.md` (for non–Claude-Code agents). |
-| `Markdown Collab: Open Inline Comments View` | Open the rendered view with an inline-threads sidebar. Comments are stored inside the `.md` file. **The only right-click action on `.md` files** as of v0.28. |
+| `Markdown Collab: Open Inline Comments View` | Open the rendered view with an inline-threads sidebar. Comments are stored inside the `.md` file. The right-click action on `.md` files. |
 | `Markdown Collab: Ask Claude to Review This Doc` | Ask Claude to act as the reviewer (v0.29+). Prompts for an optional focus directive, then sends a Review Mode payload through the configured send mode. Claude opens one thread per concern; you triage in the sidebar. |
-| `Markdown Collab: Open Preview with Comments` | Open the rendered preview with the legacy sidecar-based comments sidebar (writes to `.markdown-collab/<rel>.md.json`). **Palette-only** as of v0.28 — no right-click entry. |
 | `Markdown Collab: Send Unresolved Comments to Claude` | Same as the **Send to Claude** button — usable from palette. |
 | `Markdown Collab: Start Claude Review Terminal` | Spawn a fresh integrated terminal and launch `claude`. |
 | `Markdown Collab: Copy Claude Prompt` | Copy a short "address the comments on this file" prompt to clipboard. |
 | `Markdown Collab: Reset Send Mode` | Clear the remembered `ask` choice for the current workspace. |
-| `Markdown Collab: Reload Comments` | Re-read the active file's sidecar from disk. |
-| `Markdown Collab: Validate Sidecars` | Scan the workspace for schema violations and would-be-orphans. |
 
 ## Settings
 
@@ -181,29 +174,19 @@ The <!--mc:a:k7q3p-->quick brown fox<!--mc:/a:k7q3p--> jumps…
 
 The markers are invisible in any rendered preview (they're HTML comments). Commit the `.md` file as-is — review state ships with the document.
 
-**Legacy sidecar view.** Used by `Open Preview with Comments` and the native VS Code Comments UI. Threads live in JSON sidecars under `.markdown-collab/`:
+The only files Markdown Collab writes under `.markdown-collab/` are runtime state for the channel send modes. Add them to `.gitignore`:
 
 ```
 <workspace>/
-├── docs/guide.md
-├── README.md
-├── AGENTS.md                     ← optional (run "Initialize AGENTS.md")
 └── .markdown-collab/
-    ├── docs/guide.md.json        ← review comments for docs/guide.md
-    ├── README.md.json
-    ├── .events.jsonl             ← channel-mode event log (gitignore)
-    ├── .events.acked.jsonl       ← addressed-event ids (gitignore)
-    └── .channel.json             ← mcp-channel endpoint descriptor (gitignore)
+    ├── .events.jsonl         ← channel-mode event log (gitignore)
+    ├── .events.acked.jsonl   ← addressed-event ids (gitignore)
+    └── .channel.json         ← mcp-channel endpoint descriptor (gitignore)
 ```
-
-Commit `.markdown-collab/*.md.json` to version control. The dotfiles (`.events*.jsonl`, `.channel.json`) are runtime state; add them to `.gitignore`:
 
 ```gitignore
-.markdown-collab/.events*.jsonl
-.markdown-collab/.channel.json
+.markdown-collab/
 ```
-
-Both formats can coexist in a workspace; the skill detects which one to act on per-file by looking for `<!--mc:threads:begin-->` in the `.md` text.
 
 ## Troubleshooting
 
@@ -216,13 +199,7 @@ Both formats can coexist in a workspace; the skill detects which one to act on p
 
 **`mcp-channel`: "Channels are not currently available."** One of: Claude Code <v2.1.80, logged in with API key / Bedrock / Vertex (not `claude.ai`), or your org has `channelsEnabled: false`. Diagnose with `claude /status` and `claude --version`. Otherwise, use `terminal`.
 
-**Comment shows up in the Orphaned Comments view.** The doc text moved or got rewritten and the anchor no longer matches. Right-click the orphan → **Re-attach Orphaned Comment** → select the new anchor text in the editor.
-
-**Multiple gutter icons on a wrapped line.** VS Code renders a gutter icon on each visual wrap row; the sidecar still has exactly one comment. Either disable wrap for Markdown:
-```json
-"[markdown]": { "editor.wordWrap": "off" }
-```
-or use the preview, which renders anchors as inline spans (no gutter).
+**A thread shows up as unanchored.** The anchored passage was deleted or rewritten beyond recognition, so its markers are gone. Re-anchor it by selecting fresh text in the Inline Comments view and leaving the note again.
 
 ## Development
 
@@ -246,5 +223,3 @@ Releases: bump the version in `package.json`, prepend a `## X.Y.Z — <date>` bl
 ## Out of scope (v1)
 
 - Multi-user collaboration with author attribution.
-- Fuzzy anchor matching (exact + context + whitespace-normalized only; everything else → orphan).
-- Cross-file overview panel.

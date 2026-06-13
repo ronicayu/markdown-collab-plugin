@@ -1,46 +1,55 @@
 import * as path from "path";
 import * as vscode from "vscode";
-import type { MarkdownCollabController } from "./commentController";
-import {
-  loadSidecar as defaultLoadSidecar,
-  mdPathForSidecar,
-  sidecarPathFor,
-  type LoadResult,
-} from "./sidecar";
-import type { Comment } from "./types";
+import { parse, type InlineThread } from "./inlineComments/format";
 
 export type ReviewNode =
-  | { kind: "file"; docPath: string; unresolvedCount: number; readOnly: boolean }
-  | { kind: "comment"; docPath: string; comment: Comment; readOnly: boolean };
+  | { kind: "file"; docPath: string; unresolvedCount: number }
+  | { kind: "comment"; docPath: string; thread: InlineThread };
 
 interface CacheEntry {
-  unresolved: Comment[];
-  readOnly: boolean;
+  /** Open (unresolved) inline threads in document order. */
+  openThreads: InlineThread[];
 }
 
 /** Dependency-injected hooks — the defaults talk to the real filesystem/vscode. */
 export interface ReviewViewDeps {
-  loadSidecar?: (
-    sidecarPath: string,
-    onError?: (msg: string) => void,
-  ) => Promise<LoadResult>;
-  findFiles?: (pattern: vscode.RelativePattern) => Promise<vscode.Uri[]>;
+  /** Return every `.md` URI under a workspace folder. */
+  findFiles?: (folder: vscode.WorkspaceFolder) => Promise<vscode.Uri[]>;
+  /** Read a file's text, or null when it can't be read. */
+  readFile?: (fsPath: string) => Promise<string | null>;
+  /**
+   * Install change/delete listeners and return a disposable. The default wires
+   * a `**​/*.md` filesystem watcher plus save events. Tests inject a fake so
+   * they can drive change/delete deterministically.
+   */
+  watch?: (handlers: {
+    onChange: (fsPath: string) => void;
+    onDelete: (fsPath: string) => void;
+  }) => vscode.Disposable;
 }
 
 const CONCURRENCY = 8;
-const ORPHAN_REFRESH_DEBOUNCE_MS = 100;
-// Per-path debounce for external-sidecar-change events. F2's watcher already
-// debounces at 250ms per-path, but bursts that slip through (e.g., staggered
-// writes from multiple tools) should still coalesce into a single re-read here
-// rather than hammering the disk.
-const EXTERNAL_CHANGE_DEBOUNCE_MS = 100;
+const FILE_CHANGE_DEBOUNCE_MS = 100;
+const MARKDOWN_GLOB = "**/*.{md,markdown}";
+const THREADS_MARKER = "<!--mc:threads:begin-->";
+
+function isMarkdownPath(p: string): boolean {
+  const lower = p.toLowerCase();
+  return lower.endsWith(".md") || lower.endsWith(".markdown");
+}
+
+/** Skip vendored trees the full scan also excludes, so the watcher and scan agree. */
+function isVendored(p: string): boolean {
+  return /(^|[\\/])node_modules[\\/]/.test(p);
+}
 
 /**
- * Cross-file overview of every sidecar in the workspace that has at least one
- * unresolved comment. Root nodes are files; leaf nodes are individual
- * unresolved comments. The scan is lazy — the filesystem isn't walked until the
- * user first expands the view — and the cache is invalidated granularly on F2
- * external-change events so rapid reply/resolve sequences don't thrash.
+ * Cross-file overview of every `.md` in the workspace that has at least one
+ * unresolved inline-comment thread (`<!--mc:t ...-->` with `status:"open"`).
+ * Root nodes are files; leaf nodes are individual open threads. The scan is
+ * lazy — the filesystem isn't walked until the user first expands the view —
+ * and a `.md` filesystem watcher refreshes single files as they change so
+ * rapid reply/resolve sequences don't trigger a full rescan.
  */
 export class ReviewView
   implements vscode.TreeDataProvider<ReviewNode>, vscode.Disposable
@@ -48,50 +57,39 @@ export class ReviewView
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<void>();
   public readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-  /** docPath (md fsPath) -> cached unresolved summary */
+  /** docPath (md fsPath) -> cached open-thread summary */
   private readonly cache = new Map<string, CacheEntry>();
 
   private scanStarted = false;
   private scanComplete = false;
-
   private lastHasAny = false;
 
-  private readonly loadSidecar: NonNullable<ReviewViewDeps["loadSidecar"]>;
   private readonly findFiles: NonNullable<ReviewViewDeps["findFiles"]>;
+  private readonly readFile: NonNullable<ReviewViewDeps["readFile"]>;
 
   private readonly subs: vscode.Disposable[] = [];
-  private orphanRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-  /** mdPath -> pending external-change timer, for per-path coalescing. */
-  private readonly externalChangeTimers = new Map<
-    string,
-    ReturnType<typeof setTimeout>
-  >();
+  /** mdPath -> pending change timer, for per-path coalescing. */
+  private readonly changeTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private disposed = false;
 
   constructor(
-    private readonly controller: MarkdownCollabController,
     private readonly output: vscode.OutputChannel,
     deps: ReviewViewDeps = {},
   ) {
-    this.loadSidecar = deps.loadSidecar ?? defaultLoadSidecar;
     this.findFiles =
       deps.findFiles ??
-      (async (pattern: vscode.RelativePattern) =>
-        await vscode.workspace.findFiles(pattern));
+      (async (folder: vscode.WorkspaceFolder) =>
+        await vscode.workspace.findFiles(
+          new vscode.RelativePattern(folder, MARKDOWN_GLOB),
+          "**/node_modules/**",
+        ));
+    this.readFile = deps.readFile ?? defaultReadFile;
 
-    // External sidecar change: re-read the single sidecar and refresh.
-    // Per-path debounced so bursts for the same file coalesce into one re-read.
+    const watch = deps.watch ?? defaultWatch;
     this.subs.push(
-      this.controller.onDidExternalSidecarChange((mdPath) => {
-        this.scheduleExternalChange(mdPath);
-      }),
-    );
-
-    // Orphan-change events may fire many times during a reply/resolve burst;
-    // coalesce to a single refresh at the trailing edge.
-    this.subs.push(
-      this.controller.onDidChangeOrphans(() => {
-        this.scheduleOrphanRefresh();
+      watch({
+        onChange: (p) => this.scheduleFileChange(p),
+        onDelete: (p) => this.removeFile(p),
       }),
     );
 
@@ -119,37 +117,26 @@ export class ReviewView
       );
       item.resourceUri = vscode.Uri.file(element.docPath);
       item.description = `${this.relativeDocPath(element.docPath)} (${element.unresolvedCount})`;
-      item.contextValue = element.readOnly
-        ? "markdownCollab.reviewFileReadOnly"
-        : "markdownCollab.reviewFile";
-      if (element.readOnly) {
-        item.iconPath = new vscode.ThemeIcon("lock");
-      }
+      item.contextValue = "markdownCollab.reviewFile";
       return item;
     }
     // kind === "comment"
-    const snippet = truncate(element.comment.anchor.text, 40);
-    const item = new vscode.TreeItem(
-      snippet,
-      vscode.TreeItemCollapsibleState.None,
-    );
-    item.description = truncate(element.comment.body, 60);
+    const head = headComment(element.thread);
+    const snippet = truncate(element.thread.quote || "(unanchored)", 40);
+    const item = new vscode.TreeItem(snippet, vscode.TreeItemCollapsibleState.None);
+    item.description = truncate(head.body, 60);
     item.tooltip = new vscode.MarkdownString(
-      `**Body:** ${element.comment.body}\n\n` +
-        `**Anchor:** \`${element.comment.anchor.text}\`\n\n` +
-        `**Author:** ${element.comment.author}\n\n` +
-        `**Created:** ${element.comment.createdAt}`,
+      `**Body:** ${head.body}\n\n` +
+        `**Anchor:** \`${element.thread.quote}\`\n\n` +
+        `**Author:** ${head.author}\n\n` +
+        `**Created:** ${head.ts}`,
     );
-    item.contextValue = element.readOnly
-      ? "markdownCollab.reviewCommentReadOnly"
-      : "markdownCollab.reviewComment";
-    if (!element.readOnly) {
-      item.command = {
-        command: "markdownCollab.revealComment",
-        title: "Reveal Markdown Comment",
-        arguments: [element],
-      };
-    }
+    item.contextValue = "markdownCollab.reviewComment";
+    item.command = {
+      command: "markdownCollab.revealComment",
+      title: "Reveal Markdown Comment",
+      arguments: [element],
+    };
     return item;
   }
 
@@ -166,11 +153,10 @@ export class ReviewView
     if (element.kind === "file") {
       const entry = this.cache.get(element.docPath);
       if (!entry) return [];
-      return entry.unresolved.map((comment) => ({
+      return entry.openThreads.map((thread) => ({
         kind: "comment" as const,
         docPath: element.docPath,
-        comment,
-        readOnly: entry.readOnly,
+        thread,
       }));
     }
     return [];
@@ -178,14 +164,8 @@ export class ReviewView
 
   public dispose(): void {
     this.disposed = true;
-    if (this.orphanRefreshTimer) {
-      clearTimeout(this.orphanRefreshTimer);
-      this.orphanRefreshTimer = null;
-    }
-    for (const timer of this.externalChangeTimers.values()) {
-      clearTimeout(timer);
-    }
-    this.externalChangeTimers.clear();
+    for (const timer of this.changeTimers.values()) clearTimeout(timer);
+    this.changeTimers.clear();
     for (const d of this.subs) {
       try {
         d.dispose();
@@ -210,12 +190,11 @@ export class ReviewView
   private buildFileNodes(): ReviewNode[] {
     const nodes: ReviewNode[] = [];
     for (const [docPath, entry] of this.cache) {
-      if (entry.unresolved.length === 0) continue;
+      if (entry.openThreads.length === 0) continue;
       nodes.push({
         kind: "file",
         docPath,
-        unresolvedCount: entry.unresolved.length,
-        readOnly: entry.readOnly,
+        unresolvedCount: entry.openThreads.length,
       });
     }
     nodes.sort((a, b) => a.docPath.localeCompare(b.docPath));
@@ -228,27 +207,20 @@ export class ReviewView
       const tasks: Array<() => Promise<{ mdPath: string; entry: CacheEntry } | null>> = [];
 
       for (const folder of folders) {
-        const pattern = new vscode.RelativePattern(
-          folder,
-          ".markdown-collab/**/*.md.json",
-        );
-        let sidecarUris: vscode.Uri[];
+        let uris: vscode.Uri[];
         try {
-          sidecarUris = await this.findFiles(pattern);
+          uris = await this.findFiles(folder);
         } catch (e) {
           this.output.appendLine(
             `ReviewView findFiles failed for ${folder.uri.fsPath}: ${(e as Error).message}`,
           );
           continue;
         }
-        for (const uri of sidecarUris) {
-          const wsRoot = folder.uri.fsPath;
-          const sidecarPath = uri.fsPath;
+        for (const uri of uris) {
+          const mdPath = uri.fsPath;
           tasks.push(async () => {
-            const mdPath = mdPathForSidecar(sidecarPath, wsRoot);
-            if (!mdPath) return null;
-            const entry = await this.readEntry(sidecarPath);
-            if (!entry || entry.unresolved.length === 0) return null;
+            const entry = await this.readEntry(mdPath);
+            if (!entry || entry.openThreads.length === 0) return null;
             return { mdPath, entry };
           });
         }
@@ -266,36 +238,47 @@ export class ReviewView
       this.syncHasReviewContext();
       this._onDidChangeTreeData.fire();
     } catch (e) {
-      this.output.appendLine(
-        `ReviewView scan failed: ${(e as Error).message}`,
-      );
+      this.output.appendLine(`ReviewView scan failed: ${(e as Error).message}`);
     }
   }
 
-  private async readEntry(sidecarPath: string): Promise<CacheEntry | null> {
-    const loaded = await this.loadSidecar(sidecarPath, (msg) =>
-      this.output.appendLine(msg),
+  /** Parse a `.md` file and collect its open inline threads. */
+  private async readEntry(mdPath: string): Promise<CacheEntry | null> {
+    const text = await this.readFile(mdPath);
+    if (text === null) return null;
+    // Fast-path: skip the full code-mask/marker parse for the overwhelming
+    // majority of docs that carry no threads region at all.
+    if (!text.includes(THREADS_MARKER)) return { openThreads: [] };
+    const open = parse(text).threads.filter(
+      (t) => t.status === "open" && t.comments.some((c) => !c.deleted),
     );
-    if (!loaded) return null;
-    const readOnly = loaded.mode === "read-only-unknown-version";
-    const unresolved = loaded.sidecar.comments.filter((c) => !c.resolved);
-    return { unresolved, readOnly };
+    return { openThreads: open };
   }
 
-  /**
-   * Re-read a single sidecar (keyed by md path) and update the cache. Used by
-   * both onDidExternalSidecarChange (directly) and the orphan-event debounced
-   * refresh (per open doc).
-   */
+  private scheduleFileChange(mdPath: string): void {
+    // Ignore until the first scan has started (the lazy scan will pick up the
+    // current state on expand) and skip non-markdown / vendored paths the scan
+    // itself excludes, so the watcher and scan never disagree.
+    if (this.disposed || !this.scanStarted || !isMarkdownPath(mdPath) || isVendored(mdPath)) {
+      return;
+    }
+    const existing = this.changeTimers.get(mdPath);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.changeTimers.delete(mdPath);
+      void this.invalidateOne(mdPath);
+    }, FILE_CHANGE_DEBOUNCE_MS);
+    timer.unref?.();
+    this.changeTimers.set(mdPath, timer);
+  }
+
+  /** Re-read a single `.md` (keyed by path) and update the cache. */
   private async invalidateOne(mdPath: string): Promise<void> {
     if (this.disposed) return;
-    const folder = this.folderForPath(mdPath);
-    if (!folder) return;
-    const sidecarPath = sidecarPathFor(mdPath, folder);
-    if (!sidecarPath) return;
-    const entry = await this.readEntry(sidecarPath);
+    if (!this.folderForPath(mdPath)) return;
+    const entry = await this.readEntry(mdPath);
     const existed = this.cache.has(mdPath);
-    if (!entry || entry.unresolved.length === 0) {
+    if (!entry || entry.openThreads.length === 0) {
       if (existed) {
         this.cache.delete(mdPath);
         this.syncHasReviewContext();
@@ -308,72 +291,27 @@ export class ReviewView
     this._onDidChangeTreeData.fire();
   }
 
+  private removeFile(mdPath: string): void {
+    if (this.disposed || !this.scanStarted) return;
+    const t = this.changeTimers.get(mdPath);
+    if (t) {
+      clearTimeout(t);
+      this.changeTimers.delete(mdPath);
+    }
+    if (this.cache.delete(mdPath)) {
+      this.syncHasReviewContext();
+      this._onDidChangeTreeData.fire();
+    }
+  }
+
   private folderForPath(mdPath: string): string | null {
     const folders = vscode.workspace.workspaceFolders ?? [];
     for (const f of folders) {
       const root = f.uri.fsPath;
       const rel = path.relative(root, mdPath);
-      if (!rel.startsWith("..") && !path.isAbsolute(rel)) {
-        return root;
-      }
+      if (!rel.startsWith("..") && !path.isAbsolute(rel)) return root;
     }
     return null;
-  }
-
-  /**
-   * Debounced refresh for reply/resolve bursts. Collects currently-open md docs
-   * that have a resolvable sidecar path, re-reads each, and fires a single
-   * tree-data change event.
-   */
-  private scheduleOrphanRefresh(): void {
-    if (this.disposed) return;
-    if (this.orphanRefreshTimer) clearTimeout(this.orphanRefreshTimer);
-    this.orphanRefreshTimer = setTimeout(() => {
-      this.orphanRefreshTimer = null;
-      void this.refreshOpenDocs();
-    }, ORPHAN_REFRESH_DEBOUNCE_MS);
-    this.orphanRefreshTimer.unref?.();
-  }
-
-  private scheduleExternalChange(mdPath: string): void {
-    if (this.disposed) return;
-    const existing = this.externalChangeTimers.get(mdPath);
-    if (existing) clearTimeout(existing);
-    const timer = setTimeout(() => {
-      this.externalChangeTimers.delete(mdPath);
-      void this.invalidateOne(mdPath);
-    }, EXTERNAL_CHANGE_DEBOUNCE_MS);
-    timer.unref?.();
-    this.externalChangeTimers.set(mdPath, timer);
-  }
-
-  private async refreshOpenDocs(): Promise<void> {
-    if (this.disposed) return;
-    const docs = vscode.workspace.textDocuments ?? [];
-    const targets: Array<{ mdPath: string; sidecarPath: string }> = [];
-    for (const d of docs) {
-      const mdPath = d.uri.fsPath;
-      const folder = this.folderForPath(mdPath);
-      if (!folder) continue;
-      const sidecarPath = sidecarPathFor(mdPath, folder);
-      if (!sidecarPath) continue;
-      targets.push({ mdPath, sidecarPath });
-    }
-    if (targets.length === 0) return;
-    let mutated = false;
-    for (const t of targets) {
-      const entry = await this.readEntry(t.sidecarPath);
-      if (!entry || entry.unresolved.length === 0) {
-        if (this.cache.delete(t.mdPath)) mutated = true;
-      } else {
-        this.cache.set(t.mdPath, entry);
-        mutated = true;
-      }
-    }
-    if (mutated && !this.disposed) {
-      this.syncHasReviewContext();
-      this._onDidChangeTreeData.fire();
-    }
   }
 
   private relativeDocPath(docPath: string): string {
@@ -387,14 +325,10 @@ export class ReviewView
   }
 
   private syncHasReviewContext(): void {
-    // Before the first scan completes there are no entries by construction.
-    // Only flip the key to `true` after the scan has actually run, else we'd
-    // report "false" on startup correctly but then fail to flip true after
-    // the cache is populated on the first reply.
     let hasAny = false;
     if (this.scanComplete || this.cache.size > 0) {
       for (const [, entry] of this.cache) {
-        if (entry.unresolved.length > 0) {
+        if (entry.openThreads.length > 0) {
           hasAny = true;
           break;
         }
@@ -409,6 +343,68 @@ export class ReviewView
       );
     }
   }
+}
+
+interface HeadComment {
+  body: string;
+  author: string;
+  ts: string;
+}
+
+/** First non-deleted comment of a thread, with safe fallbacks. */
+function headComment(thread: InlineThread): HeadComment {
+  const live = thread.comments.filter((c) => !c.deleted);
+  const root = live[0];
+  return {
+    body: root?.body ?? "",
+    author: root?.author ?? "unknown",
+    ts: root?.ts ?? "",
+  };
+}
+
+/** Default file reader: prefer an open editor's live text, else read from disk. */
+async function defaultReadFile(fsPath: string): Promise<string | null> {
+  const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === fsPath);
+  if (open) return open.getText();
+  try {
+    const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(fsPath));
+    return Buffer.from(bytes).toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** Default watcher: a `**​/*.md` filesystem watcher plus markdown save events. */
+function defaultWatch(handlers: {
+  onChange: (fsPath: string) => void;
+  onDelete: (fsPath: string) => void;
+}): vscode.Disposable {
+  const disps: vscode.Disposable[] = [];
+  if (typeof vscode.workspace.createFileSystemWatcher === "function") {
+    const w = vscode.workspace.createFileSystemWatcher(MARKDOWN_GLOB);
+    disps.push(
+      w,
+      w.onDidChange((u) => handlers.onChange(u.fsPath)),
+      w.onDidCreate((u) => handlers.onChange(u.fsPath)),
+      w.onDidDelete((u) => handlers.onDelete(u.fsPath)),
+    );
+  }
+  if (typeof vscode.workspace.onDidSaveTextDocument === "function") {
+    disps.push(
+      vscode.workspace.onDidSaveTextDocument((d) => handlers.onChange(d.uri.fsPath)),
+    );
+  }
+  return {
+    dispose: () => {
+      for (const d of disps) {
+        try {
+          d.dispose();
+        } catch {
+          /* swallow */
+        }
+      }
+    },
+  };
 }
 
 function truncate(s: string, n: number): string {

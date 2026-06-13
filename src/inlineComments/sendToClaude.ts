@@ -1,16 +1,12 @@
 // Send-to-Claude support for the inline-comments view.
 //
-// The existing sidecar-based pipeline (`src/sendToClaude.ts`) reads
-// comments from a JSON sidecar. Inline comments live inside the .md
-// file itself, so we build the payload directly from the parser output
-// and shim it into the same `ReviewPayload` shape so the existing
-// transports (terminal / channel / mcp-channel / clipboard) can handle
-// delivery without modification.
+// Inline comments live inside the .md file itself, so we build the payload
+// directly from the parser output and shim it into the `ReviewPayload` shape
+// the transports (terminal / channel / mcp-channel / clipboard) expect.
 //
-// The prompt explicitly documents the on-disk format so Claude (which
-// today only knows the sidecar shape via the vs-markdown-collab skill)
-// can parse and update threads in place — set `"status":"resolved"` on
-// the relevant `<!--mc:t {...}-->` line after addressing each thread.
+// The prompt explicitly documents the on-disk inline format so Claude can
+// parse and update threads in place — replying on the relevant
+// `<!--mc:t {...}-->` line after addressing each thread.
 
 import * as path from "path";
 import * as vscode from "vscode";

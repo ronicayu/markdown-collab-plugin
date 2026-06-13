@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isAnchorTextValid, resolve } from "../anchor";
+import { resolve } from "../anchor";
 import type { Anchor } from "../types";
 
 function anchor(
@@ -9,21 +9,6 @@ function anchor(
 ): Anchor {
   return { text, contextBefore, contextAfter };
 }
-
-describe("isAnchorTextValid", () => {
-  it("returns false for a whitespace-only anchor text", () => {
-    expect(isAnchorTextValid("   \t\n  ")).toBe(false);
-  });
-
-  it("returns false when there are only 7 non-whitespace chars buried in whitespace", () => {
-    // "abc def1" = 7 non-ws chars spread across whitespace
-    expect(isAnchorTextValid("  abc  def1  ")).toBe(false);
-  });
-
-  it("returns true when there are exactly 8 non-whitespace chars", () => {
-    expect(isAnchorTextValid("  abcd efgh  ")).toBe(true);
-  });
-});
 
 describe("resolve", () => {
   it("returns start/end for a single exact match", () => {
