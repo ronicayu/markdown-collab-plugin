@@ -127,6 +127,31 @@ export const githubPlatform: PrPlatform = {
     return { url: parsed.html_url ?? ctx.prUrl };
   },
 
+  async replyToComment(ctx, threadId, body) {
+    const runner = getCliRunner();
+    const env = ghEnvForHost(ctx.host);
+    // `…/comments/{comment_id}/replies` threads the new note under the
+    // existing review comment. `threadId` is the root comment id (set in
+    // listExistingComments), which is what this endpoint expects.
+    const res = await runner(
+      GH,
+      [
+        "api",
+        `repos/${ctx.owner}/${ctx.repo}/pulls/${ctx.prNumber}/comments/${threadId}/replies`,
+        "--method",
+        "POST",
+        "--input",
+        "-",
+      ],
+      { cwd: ctx.repoRoot, env, stdin: JSON.stringify({ body }) },
+    );
+    if (res.code !== 0) {
+      throw new Error(`gh api reply failed: ${res.stderr.trim() || res.stdout.trim()}`);
+    }
+    const parsed = JSON.parse(res.stdout) as { html_url?: string };
+    return { url: parsed.html_url ?? ctx.prUrl };
+  },
+
   async listExistingComments(ctx) {
     const runner = getCliRunner();
     const env = ghEnvForHost(ctx.host);

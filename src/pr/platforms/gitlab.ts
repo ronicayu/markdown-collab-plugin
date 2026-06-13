@@ -202,6 +202,32 @@ export const gitlabPlatform: PrPlatform = {
     return { url: ctx.prUrl };
   },
 
+  async replyToComment(ctx, threadId, body) {
+    const runner = getCliRunner();
+    const env = glabEnvForHost(ctx.host);
+    if (!ctx.projectId) throw new Error("GitLab context missing projectId");
+    // `threadId` is the discussion id; POST a note to add a reply to it.
+    const res = await runner(
+      GLAB,
+      [
+        "api",
+        `projects/${ctx.projectId}/merge_requests/${ctx.prNumber}/discussions/${threadId}/notes`,
+        "--method",
+        "POST",
+        "--header",
+        "Content-Type: application/json",
+        "--input",
+        "-",
+      ],
+      { cwd: ctx.repoRoot, env, stdin: JSON.stringify({ body }) },
+    );
+    if (res.code !== 0) {
+      throw new Error(`glab api reply failed: ${res.stderr.trim() || res.stdout.trim()}`);
+    }
+    const parsed = JSON.parse(res.stdout) as { id?: number };
+    return { url: parsed.id ? `${ctx.prUrl}#note_${parsed.id}` : ctx.prUrl };
+  },
+
   async listExistingComments(ctx) {
     const runner = getCliRunner();
     const env = glabEnvForHost(ctx.host);

@@ -99,4 +99,11 @@ export interface PrPlatform {
   submitReview(ctx: PrContext, input: SubmitReviewInput): Promise<{ url: string }>;
   /** Fetch every existing line-anchored review comment on the PR/MR. */
   listExistingComments(ctx: PrContext): Promise<ExistingPrComment[]>;
+  /**
+   * Post a reply to an existing comment thread, identified by the
+   * `ExistingPrComment.threadId` (GitHub root review-comment id; GitLab
+   * discussion id). Posts immediately — replies are not batched into a
+   * review. Returns the URL of the new reply.
+   */
+  replyToComment(ctx: PrContext, threadId: string, body: string): Promise<{ url: string }>;
 }

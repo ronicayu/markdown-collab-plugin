@@ -106,11 +106,24 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
   const srcIdx = tok.attrIndex("src");
   if (srcIdx >= 0 && tok.attrs) {
     const original = tok.attrs[srcIdx][1];
+    if (isDrawioSrc(original)) {
+      // .drawio files aren't a browser image format. Emit a placeholder;
+      // processDrawioPlaceholders() asks the host for the XML and renders
+      // it to an inline SVG. Carry the original href + alt for the swap.
+      const alt = tok.children ? self.renderInlineAsText(tok.children, options, env) : "";
+      return `<span class="mc-drawio" data-drawio-href="${md.utils.escapeHtml(original)}" title="${md.utils.escapeHtml(alt)}">Loading diagram…</span>`;
+    }
     const resolved = resolveImageSrc(original);
     if (resolved !== original) tok.attrs[srcIdx][1] = resolved;
   }
   return defaultImageRule(tokens, idx, options, env, self);
 };
+
+/** True for hrefs a browser can't render as an image but the host can read + render. */
+function isDrawioSrc(src: string): boolean {
+  const clean = (src || "").split(/[?#]/)[0].toLowerCase();
+  return clean.endsWith(".drawio") || clean.endsWith(".drawio.xml") || clean.endsWith(".xml");
+}
 
 /**
  * Map a markdown image src to something the webview can load:
@@ -526,6 +539,7 @@ function renderPreview(state: SerializedState): void {
   dom.preview.innerHTML = md.render(state.prose);
   applyAnchorHighlights(state);
   void runMermaid();
+  processDrawioPlaceholders();
   // The rerender just blew away any <mark> nodes we'd inserted. Reset
   // find state, and if the bar is still open re-run against the new DOM
   // so the user doesn't lose their query.
@@ -568,6 +582,86 @@ async function runMermaid(): Promise<void> {
   } catch (e) {
     console.error("mermaid render failed", e);
   }
+}
+
+// --- drawio diagrams ------------------------------------------------------
+// `.drawio` files aren't a browser image format. The host reads the XML and
+// we render it to an inline SVG here. Cache by href so frequent preview
+// re-renders reuse a rendered diagram instead of re-fetching, and so a result
+// arriving after a re-render still paints the current placeholders.
+
+interface DrawioReadResult {
+  type: "drawio-read-result";
+  requestId: string;
+  href: string;
+  ok: boolean;
+  content?: string;
+  error?: string;
+}
+interface DrawioEntry { status: "pending" | "ready" | "error"; svg?: SVGSVGElement; error?: string; }
+const drawioCache = new Map<string, DrawioEntry>();
+const drawioPending = new Map<string, string>(); // requestId -> href
+let drawioReqCounter = 0;
+
+function processDrawioPlaceholders(): void {
+  for (const el of Array.from(dom.preview.querySelectorAll<HTMLElement>(".mc-drawio[data-drawio-href]"))) {
+    const href = el.dataset.drawioHref ?? "";
+    const cached = drawioCache.get(href);
+    if (cached?.status === "ready" && cached.svg) { paintDrawio(el, cached.svg); continue; }
+    if (cached?.status === "error") { paintDrawioError(el, cached.error); continue; }
+    if (cached?.status === "pending") continue; // request in flight — repaints on result
+    drawioCache.set(href, { status: "pending" });
+    const requestId = `drawio-${++drawioReqCounter}`;
+    drawioPending.set(requestId, href);
+    vscode.postMessage({ type: "drawio-read", requestId, href });
+  }
+}
+
+function handleDrawioResult(msg: DrawioReadResult): void {
+  const href = drawioPending.get(msg.requestId) ?? msg.href;
+  drawioPending.delete(msg.requestId);
+  if (!msg.ok || typeof msg.content !== "string") {
+    drawioCache.set(href, { status: "error", error: msg.error ?? "Could not load diagram." });
+    repaintDrawio(href);
+    return;
+  }
+  void (async () => {
+    try {
+      const { renderDrawioToSvg } = await import("../../webview/drawioRenderer");
+      const result = await renderDrawioToSvg(msg.content!);
+      drawioCache.set(
+        href,
+        result.ok ? { status: "ready", svg: result.svg } : { status: "error", error: result.message },
+      );
+    } catch (e) {
+      drawioCache.set(href, { status: "error", error: (e as Error).message });
+    }
+    repaintDrawio(href);
+  })();
+}
+
+function repaintDrawio(href: string): void {
+  const entry = drawioCache.get(href);
+  if (!entry) return;
+  for (const el of Array.from(dom.preview.querySelectorAll<HTMLElement>(".mc-drawio[data-drawio-href]"))) {
+    if ((el.dataset.drawioHref ?? "") !== href) continue;
+    if (entry.status === "ready" && entry.svg) paintDrawio(el, entry.svg);
+    else if (entry.status === "error") paintDrawioError(el, entry.error);
+  }
+}
+
+function paintDrawio(el: HTMLElement, svg: SVGSVGElement): void {
+  el.classList.add("ready");
+  el.classList.remove("error");
+  // Clone — one cached SVG element may paint several placeholders (and fresh
+  // ones after each preview re-render); a node can only live in one parent.
+  el.replaceChildren(svg.cloneNode(true));
+}
+
+function paintDrawioError(el: HTMLElement, error?: string): void {
+  el.classList.add("error");
+  el.classList.remove("ready");
+  el.textContent = `⚠ Diagram failed to load${error ? `: ${error}` : ""}`;
 }
 
 interface ProseSpan {
@@ -1282,8 +1376,12 @@ dom.filterRadios.forEach((r) =>
 );
 
 window.addEventListener("message", (ev) => {
-  const msg = ev.data as InitMsg | UpdateMsg | ReviewPendingMsg | ScrollToMsg;
+  const msg = ev.data as InitMsg | UpdateMsg | ReviewPendingMsg | ScrollToMsg | DrawioReadResult;
   if (!msg) return;
+  if (msg.type === "drawio-read-result") {
+    handleDrawioResult(msg);
+    return;
+  }
   if (msg.type === "init") {
     dom.fileName.textContent = msg.fileName;
     user = msg.user;

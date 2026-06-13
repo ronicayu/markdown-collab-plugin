@@ -379,6 +379,7 @@ export class PrReviewController implements vscode.Disposable {
     deleteDraft: (id: string) => Promise<void>;
     submit: (verdict: ReviewVerdict, body: string | undefined) => Promise<void>;
     getExistingCommentsFor: (rel: string) => Promise<ExistingPrComment[]>;
+    replyToExisting: (threadId: string, body: string) => Promise<{ url: string }>;
   } {
     if (!this.session) throw new Error("PR review session not active");
     const session = this.session;
@@ -408,6 +409,14 @@ export class PrReviewController implements vscode.Disposable {
       getExistingCommentsFor: async (rel) => {
         const all = await this.getExistingComments();
         return all.filter((c) => c.path === rel);
+      },
+      replyToExisting: async (threadId, body) => {
+        const result = await session.platform.replyToComment(session.ctx, threadId, body);
+        // Drop the cache so the next existing-comments read includes the
+        // reply we just posted (the panel re-fetches right after).
+        session.existingComments = null;
+        session.existingCommentsLoading = null;
+        return result;
       },
     };
   }

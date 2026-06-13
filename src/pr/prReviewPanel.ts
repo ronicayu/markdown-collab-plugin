@@ -35,6 +35,7 @@ interface DraftHost {
   deleteDraft(id: string): Promise<void>;
   submit(verdict: ReviewVerdict, body: string | undefined): Promise<void>;
   getExistingCommentsFor(relPath: string): Promise<ExistingPrComment[]>;
+  replyToExisting(threadId: string, body: string): Promise<{ url: string }>;
 }
 
 interface InitMessage {
@@ -57,6 +58,12 @@ interface UpdateDraftsMessage {
 interface ExistingCommentsMessage {
   type: "existing-comments";
   comments: ExistingPrComment[];
+}
+
+interface ReplyErrorMessage {
+  type: "reply-error";
+  threadId: string;
+  error: string;
 }
 
 interface SubmitRequest {
@@ -88,12 +95,19 @@ interface ReadyMessage {
   type: "ready";
 }
 
+interface ReplyRequest {
+  type: "reply";
+  threadId: string;
+  body: string;
+}
+
 type ClientToHost =
   | ReadyMessage
   | AddDraftRequest
   | EditDraftRequest
   | DeleteDraftRequest
-  | SubmitRequest;
+  | SubmitRequest
+  | ReplyRequest;
 
 const VIEW_TYPE = "markdownCollab.prReviewView";
 const panels = new Map<string, PrReviewPanel>();
@@ -249,6 +263,28 @@ export class PrReviewPanel {
         return this.pushDrafts(this.host);
       case "submit":
         return this.host.submit(msg.verdict, msg.body);
+      case "reply":
+        return this.handleReply(msg.threadId, msg.body);
+    }
+  }
+
+  /**
+   * Post a reply to an existing comment thread, then re-fetch this file's
+   * comments and push them so the reply shows nested under its thread. On
+   * failure, tell the webview (so it re-enables the composer) and surface
+   * the error to the user.
+   */
+  private async handleReply(threadId: string, body: string): Promise<void> {
+    try {
+      await this.host.replyToExisting(threadId, body);
+      const comments = await this.host.getExistingCommentsFor(this.relPath);
+      const m: ExistingCommentsMessage = { type: "existing-comments", comments };
+      await this.panel.webview.postMessage(m);
+    } catch (e) {
+      const error = (e as Error).message ?? String(e);
+      const m: ReplyErrorMessage = { type: "reply-error", threadId, error };
+      await this.panel.webview.postMessage(m);
+      void vscode.window.showErrorMessage(`Failed to post reply: ${error}`);
     }
   }
 

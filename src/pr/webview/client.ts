@@ -69,7 +69,8 @@ interface ExistingPrComment {
   resolved?: boolean;
 }
 interface ExistingMessage { type: "existing-comments"; comments: ExistingPrComment[]; }
-type HostMessage = InitMessage | DraftsMessage | ExistingMessage;
+interface ReplyErrorMessage { type: "reply-error"; threadId: string; error: string; }
+type HostMessage = InitMessage | DraftsMessage | ExistingMessage | ReplyErrorMessage;
 
 interface ReadyMessage { type: "ready"; }
 interface AddDraftRequest { type: "add-draft"; startLine: number; endLine: number; body: string; }
@@ -77,7 +78,8 @@ interface EditDraftRequest { type: "edit-draft"; id: string; body: string; }
 interface DeleteDraftRequest { type: "delete-draft"; id: string; }
 type ReviewVerdict = "comment" | "approve" | "request-changes";
 interface SubmitRequest { type: "submit"; verdict: ReviewVerdict; body?: string; }
-type ClientToHost = ReadyMessage | AddDraftRequest | EditDraftRequest | DeleteDraftRequest | SubmitRequest;
+interface ReplyRequest { type: "reply"; threadId: string; body: string; }
+type ClientToHost = ReadyMessage | AddDraftRequest | EditDraftRequest | DeleteDraftRequest | SubmitRequest | ReplyRequest;
 
 const vscode = window.acquireVsCodeApi();
 
@@ -141,6 +143,8 @@ window.addEventListener("message", (ev) => {
   } else if (msg.type === "existing-comments") {
     existingComments = msg.comments;
     renderExisting();
+  } else if (msg.type === "reply-error") {
+    failPendingReply(msg.threadId, msg.error);
   }
 });
 
@@ -536,7 +540,16 @@ function renderDraftCard(d: PrDraft): HTMLElement {
 
 // --- existing comments (read-only) ----------------------------------------
 
+/** Open reply composers, keyed by threadId, so a reply-error can re-enable them. */
+const pendingReplies = new Map<
+  string,
+  { ta: HTMLTextAreaElement; send: HTMLButtonElement; cancel: HTMLButtonElement; status: HTMLElement }
+>();
+
 function renderExisting(): void {
+  // A fresh render replaces every thread card, so any in-flight composer DOM
+  // is gone — drop the stale references.
+  pendingReplies.clear();
   dom.existingSection.hidden = false;
   if (existingComments === null) {
     dom.existingStatus.textContent = "Loading existing comments…";
@@ -593,7 +606,78 @@ function renderExistingThread(thread: ExistingPrComment[]): HTMLElement {
   for (const c of thread) {
     card.appendChild(renderExistingComment(c, c === head));
   }
+  card.appendChild(renderReplyArea(head.threadId ?? head.id));
   return card;
+}
+
+/**
+ * Reply affordance for an existing thread. Shows a "Reply" link that swaps to
+ * a composer; submitting posts a `reply` to the host, which posts it to the
+ * platform and pushes refreshed comments (re-rendering this thread with the
+ * new reply nested). A `reply-error` re-enables the composer in place.
+ */
+function renderReplyArea(threadId: string): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "existing-reply";
+
+  const showButton = (): void => {
+    wrap.innerHTML = "";
+    const openBtn = document.createElement("button");
+    openBtn.className = "btn-link";
+    openBtn.textContent = "Reply";
+    openBtn.addEventListener("click", showComposer);
+    wrap.appendChild(openBtn);
+  };
+
+  const showComposer = (): void => {
+    wrap.innerHTML = "";
+    const ta = document.createElement("textarea");
+    ta.placeholder = "Reply… (markdown supported by GitHub / GitLab)";
+    ta.rows = 3;
+    const row = document.createElement("div");
+    row.className = "composer-actions";
+    const send = document.createElement("button");
+    send.textContent = "Reply";
+    send.disabled = true;
+    const cancel = document.createElement("button");
+    cancel.className = "btn-ghost";
+    cancel.textContent = "Cancel";
+    const status = document.createElement("span");
+    status.className = "reply-status";
+    ta.addEventListener("input", () => { send.disabled = ta.value.trim().length === 0; });
+    send.addEventListener("click", () => {
+      const body = ta.value.trim();
+      if (!body) return;
+      send.disabled = true;
+      cancel.disabled = true;
+      ta.disabled = true;
+      status.classList.remove("error");
+      status.textContent = "Posting…";
+      pendingReplies.set(threadId, { ta, send, cancel, status });
+      vscode.postMessage({ type: "reply", threadId, body });
+    });
+    cancel.addEventListener("click", () => {
+      pendingReplies.delete(threadId);
+      showButton();
+    });
+    row.append(send, cancel, status);
+    wrap.append(ta, row);
+    requestAnimationFrame(() => ta.focus());
+  };
+
+  showButton();
+  return wrap;
+}
+
+/** A reply POST failed — re-enable the composer and show the error inline. */
+function failPendingReply(threadId: string, error: string): void {
+  const p = pendingReplies.get(threadId);
+  if (!p) return;
+  p.ta.disabled = false;
+  p.send.disabled = p.ta.value.trim().length === 0;
+  p.cancel.disabled = false;
+  p.status.textContent = error;
+  p.status.classList.add("error");
 }
 
 function renderExistingComment(c: ExistingPrComment, isHead: boolean): HTMLElement {

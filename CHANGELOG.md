@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.34.1 — 2026-06-13 (trial)
+
+### Added: reply to existing comments in the PR/MR review view
+
+Each existing comment thread in the PR/MR review now has a **Reply** affordance.
+Type a reply and it posts straight to the thread on GitHub (review-comment
+reply) or GitLab (discussion note), then the thread refreshes to show it nested.
+
+### Fixed: inline comments viewer now renders `.drawio` diagrams
+
+A `![…](diagram.drawio)` image showed a broken-image icon in the inline comments
+viewer, because `.drawio` isn't a browser image format. The viewer now reads the
+diagram (confined to the workspace, same as the live editor) and renders it to an
+inline SVG, matching how the real-time editor already handled drawio links.
+
 ## 0.34.0 — 2026-06-13 (trial)
 
 ### Removed: the legacy JSON sidecar storage and its UI

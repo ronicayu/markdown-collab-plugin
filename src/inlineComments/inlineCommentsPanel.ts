@@ -19,6 +19,7 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import { isInsideRoot } from "../pathUtils";
+import { CollabEditorProvider } from "../collab/collabEditorProvider";
 import { detectUrlScheme, parseLinkHref, slugifyHeading } from "./linkParse";
 import {
   addThread,
@@ -140,6 +141,12 @@ interface OpenLinkRequest {
   href: string;
 }
 
+interface DrawioReadRequest {
+  type: "drawio-read";
+  requestId: string;
+  href: string;
+}
+
 type ClientMessage =
   | ReadyMessage
   | AddCommentRequest
@@ -152,7 +159,8 @@ type ClientMessage =
   | CopyPromptRequest
   | SendToClaudeCommentRequest
   | CopyClaudeCommentRequest
-  | OpenLinkRequest;
+  | OpenLinkRequest
+  | DrawioReadRequest;
 
 /** Dependencies the panel needs from the extension host (kept narrow so tests can stub them). */
 export interface InlinePanelDeps {
@@ -452,6 +460,8 @@ export class InlineCommentsPanel {
         return this.handleCopyClaudeComment(msg.threadId);
       case "open-link":
         return this.handleOpenLink(msg.href);
+      case "drawio-read":
+        return this.handleDrawioRead(msg.requestId, msg.href);
       case "delete-thread":
         return this.applyMutation((parsed) => replaceThread(parsed.source, msg.threadId, null));
       case "delete-comment":
@@ -651,6 +661,27 @@ export class InlineCommentsPanel {
         `Could not open ${resolved}: ${(e as Error).message}`,
       );
     }
+  }
+
+  /**
+   * Read a `.drawio` file the webview wants to render inline. Reuses the
+   * collab editor's resolver (path confined to the workspace) so both
+   * surfaces apply the same security checks, and posts the XML back for the
+   * webview to render to SVG.
+   */
+  private async handleDrawioRead(requestId: string, href: string): Promise<void> {
+    const folder = vscode.workspace.getWorkspaceFolder(this.doc.uri);
+    const result = await CollabEditorProvider.runDrawioRead(
+      requestId,
+      href,
+      this.doc.uri.fsPath,
+      folder?.uri.fsPath ?? null,
+      async (absPath) => {
+        const buf = await vscode.workspace.fs.readFile(vscode.Uri.file(absPath));
+        return Buffer.from(buf).toString("utf8");
+      },
+    );
+    await this.panel.webview.postMessage(result);
   }
 
   private resolveAuthor(): string {

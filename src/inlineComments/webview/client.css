@@ -146,6 +146,26 @@ html, body {
 #preview pre.mermaid svg { max-width: 100%; height: auto; }
 #preview figure.mc-plantuml { margin: 12px 0; text-align: center; }
 #preview figure.mc-plantuml img { max-width: 100%; height: auto; background: white; padding: 4px; border-radius: 3px; }
+/* .drawio diagrams: a placeholder while the host reads + renders the file,
+   then an inline SVG. */
+#preview .mc-drawio {
+  display: block;
+  margin: 12px 0;
+  padding: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+#preview .mc-drawio.ready {
+  border: none;
+  padding: 4px;
+  background: white;
+  border-radius: 3px;
+}
+#preview .mc-drawio.ready svg { max-width: 100%; height: auto; }
+#preview .mc-drawio.error { color: var(--vscode-errorForeground, #f48771); border-color: currentColor; }
 #preview blockquote { border-left: 3px solid var(--border); padding-left: 12px; color: var(--muted); margin-left: 0; }
 #preview a { color: var(--accent); }
 #preview table { border-collapse: collapse; }
