@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.34.5 — 2026-06-13 (trial)
+
+### Fixed: review follow-ups in the comment panels
+
+- Inline `` `code` `` inside comment bodies is styled again (it lost its
+  background/mono treatment when the cards moved to the shared design system).
+- The "update skill" banner no longer flags an update on a transient or
+  permission read error of a helper script — only when a script is genuinely
+  missing, matching how the `SKILL.md` check already behaves.
+- Editing an existing inline comment no longer re-grabs focus on a re-render,
+  matching the add/reply composers.
+- Skill doc wording corrected: the channel payload's `prompt` field points at
+  this skill rather than claiming to "self-document the format".
+
 ## 0.34.4 — 2026-06-13 (trial)
 
 ### Changed: live editor comments match the other panels visually

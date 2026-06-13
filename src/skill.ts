@@ -665,7 +665,7 @@ Claude Code v2.1.80+ supports first-party MCP channels: events arrive natively a
 4. Set \`markdownCollab.sendMode\` to \`mcp-channel\` in VS Code, or pick it from the quick-pick.
 
 **Runtime:**
-The button click POSTs to the running channel server, which fires \`notifications/claude/channel\`. The body of the \`<channel>\` tag is the same JSON payload \`{prompt, file, unresolvedCount, comments}\`. The payload's \`prompt\` field self-documents the format. Address each comment per the phases above, then append \`{"id": "<id-from-tag>"}\` to \`<workspace>/.markdown-collab/.events.acked.jsonl\` so the tailer stops re-surfacing that batch on restart.
+The button click POSTs to the running channel server, which fires \`notifications/claude/channel\`. The body of the \`<channel>\` tag is the same JSON payload \`{prompt, file, unresolvedCount, comments}\`. The \`prompt\` field tells you to follow this skill. Address each comment per the phases above, then append \`{"id": "<id-from-tag>"}\` to \`<workspace>/.markdown-collab/.events.acked.jsonl\` so the tailer stops re-surfacing that batch on restart.
 
 **Caveats:** channels require claude.ai login (no API keys / Console), and the protocol is research preview — Anthropic warns it may change. If channels aren't supported in your harness or version, fall back to one of the modes below.
 
@@ -779,8 +779,11 @@ export async function checkClaudeSkill(homeDir: string): Promise<SkillStatus> {
   ] as const) {
     try {
       if ((await fs.readFile(path.join(homeDir, rel), "utf8")) !== content) return "outdated";
-    } catch {
-      return "outdated";
+    } catch (e) {
+      // A missing helper script means the install is incomplete → outdated.
+      // Other read errors (permission, transient) shouldn't nag — same posture
+      // as the SKILL.md read above.
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return "outdated";
     }
   }
   return "current";

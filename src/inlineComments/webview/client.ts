@@ -1023,6 +1023,7 @@ function renderComment(thread: ThreadState, c: InlineComment): HTMLElement {
       initialValue: c.body,
       submitLabel: "Save",
       rows: Math.max(2, Math.min(8, c.body.split("\n").length)),
+      autofocus: false,
       onSubmit: (body) => {
         vscode.postMessage({ type: "edit-comment", threadId: thread.id, commentId: c.id, body });
         editingCommentId = null;
