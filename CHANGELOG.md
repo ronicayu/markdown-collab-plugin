@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.34.10 — 2026-06-13 (trial)
+
+### Changed: live editor comment panel matches the inline view
+
+The live editor renders each comment as the same shared comment card the inline
+and PR/MR panels use — quoted text + actions on top, then the comment (and
+replies) as identical cards. Replaced the bespoke card layout and the icon-only
+actions with the shared card + text actions, so the three comment panels look
+the same.
+
+### Fixed: document links inside comments opened as web links
+
+A link in a comment body — a `#section` fragment or a relative `other.md` path —
+was treated as an external web link, because the link interceptor only covered
+the rendered preview, not the comment panel. It's now document-level: a fragment
+link scrolls to that section and a relative link opens that document, the same
+as links in the preview.
+
 ## 0.34.9 — 2026-06-13 (trial)
 
 ### Fixed: comment-panel bugs

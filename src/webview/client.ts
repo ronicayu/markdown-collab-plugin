@@ -433,39 +433,26 @@ function renderSidebar(): void {
 
 function renderCommentCard(c: CommentSummary): string {
   const anchorText = escapeHtml(c.anchor.text.length > 80 ? c.anchor.text.slice(0, 77) + "…" : c.anchor.text);
-  const bodyHtml = renderBodyWithLinks(c.body);
-  const replies = c.replies
-    .map(
-      (r) =>
-        `<div class="mdc-reply"><div class="mdc-reply-meta"><span class="mdc-reply-author">${escapeHtml(r.author)}</span><span class="mdc-reply-time">${escapeHtml(formatRelativeTime(r.createdAt))}</span></div><div class="mdc-reply-body">${renderBodyWithLinks(r.body)}</div></div>`,
-    )
-    .join("");
-  const resolveTitle = c.resolved ? "Mark as unresolved" : "Mark as resolved";
-  const resolveIcon = c.resolved
-    ? `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M2 8a6 6 0 1 1 12 0A6 6 0 0 1 2 8zm6-5a5 5 0 1 0 0 10A5 5 0 0 0 8 3z"/></svg>`
-    : `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M13.5 4 6 11.5 2.5 8l1-1L6 9.5 12.5 3z"/></svg>`;
+  // Each comment/reply is the same shared `.mc-card` the inline + PR panels
+  // use, so all three views render identical comment chrome.
+  const commentCard = (author: string, ts: string, body: string, reply: boolean): string =>
+    `<div class="mc-card${reply ? " mc-card--reply" : ""}">
+      <div class="mc-card__meta"><span class="mc-card__author">${escapeHtml(author)}</span><span class="mc-card__time">${escapeHtml(formatRelativeTime(ts))}</span></div>
+      <div class="mc-card__body">${renderBodyWithLinks(body)}</div>
+    </div>`;
+  const replies = c.replies.map((r) => commentCard(r.author, r.createdAt, r.body, true)).join("");
   return `
     <article class="mdc-comment ${c.resolved ? "mdc-comment--resolved" : ""}" data-id="${escapeAttr(c.id)}">
-      <header class="mdc-comment-header">
-        <div class="mdc-comment-meta-left">
-          <span class="mdc-comment-author">${escapeHtml(c.author)}</span>
-          <span class="mdc-comment-time">${escapeHtml(formatRelativeTime(c.createdAt))}</span>
+      <div class="mdc-thread-head">
+        <button type="button" class="mdc-thread-quote" data-comment-action="jump" title="Click to scroll to the highlighted passage">${anchorText}</button>
+        <div class="mdc-thread-actions">
+          <button type="button" class="mc-btn mc-btn--link" data-comment-action="reply">Reply</button>
+          <button type="button" class="mc-btn mc-btn--link" data-comment-action="resolve">${c.resolved ? "Unresolve" : "Resolve"}</button>
+          <button type="button" class="mc-btn mc-btn--link mc-btn--danger" data-comment-action="delete">Delete</button>
         </div>
-        <div class="mdc-comment-actions">
-          <button type="button" class="mdc-icon-btn mdc-icon-btn--small" data-comment-action="reply" title="Reply">
-            <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M8 2.5 5 5.5l3 3v-2c2 0 3.5 1 4 3 .2-3.4-2-5-4-5v-2z"/></svg>
-          </button>
-          <button type="button" class="mdc-icon-btn mdc-icon-btn--small" data-comment-action="resolve" title="${resolveTitle}">
-            ${resolveIcon}
-          </button>
-          <button type="button" class="mdc-icon-btn mdc-icon-btn--small mdc-icon-btn--danger" data-comment-action="delete" title="Delete this thread">
-            <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M5.5 2v1H2v1h1l1 9.5a1 1 0 0 0 1 .9h6a1 1 0 0 0 1-.9L13 4h1V3h-3.5V2h-5zM6 5h1v7H6V5zm3 0h1v7H9V5z"/></svg>
-          </button>
-        </div>
-      </header>
-      <button type="button" class="mdc-comment-anchor" data-comment-action="jump" title="Click to scroll to the highlighted passage">${anchorText}</button>
-      <div class="mdc-comment-body">${bodyHtml}</div>
-      ${replies ? `<div class="mdc-replies">${replies}</div>` : ""}
+      </div>
+      ${commentCard(c.author, c.createdAt, c.body, false)}
+      ${replies}
       <div class="mdc-reply-slot"></div>
     </article>
   `;

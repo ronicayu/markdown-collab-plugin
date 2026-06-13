@@ -437,9 +437,12 @@ function renderSkillWarning(status: SkillStatus | undefined): void {
 // Intercept anchor clicks inside the rendered preview. Without this
 // markdown links are inert (the webview sandbox swallows navigation).
 // Same-doc `#fragment` links scroll within the preview; everything else
-// is handed to the extension host for resolution + opening.
-dom.preview.addEventListener("click", (e) => {
-  const target = e.target instanceof Element ? e.target.closest("a") : null;
+// is handed to the extension host for resolution + opening. Document-level so
+// links inside comment bodies are routed the same way — otherwise a comment
+// link (a `#section` or a relative `other.md`) falls through to the webview's
+// default and gets treated as an external web link.
+document.addEventListener("click", (e) => {
+  const target = e.target instanceof Element ? e.target.closest("a[href]") : null;
   if (!target) return;
   const href = target.getAttribute("href");
   if (!href) return;

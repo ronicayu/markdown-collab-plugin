@@ -408,20 +408,49 @@ body { overflow: hidden; }
 .mdc-comment-list {
   padding: var(--mdc-space-2);
 }
-/* Card chrome shares the design tokens from comments-shared.css so the live
-   editor's comments match the inline + PR comment panels. */
+/* A thread frame matching the inline view's `.thread-card`: the quote + thread
+   actions sit on top, then each comment renders as a shared `.mc-card` (from
+   comments-shared.css) so all three comment panels look identical. */
 .mdc-comment {
-  padding: 8px 10px;
-  margin-bottom: var(--mc-gap);
-  border-radius: var(--mc-radius);
-  background: var(--mc-card-bg);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border-radius: 6px;
+  background: var(--vscode-editor-background);
   border: 1px solid var(--mc-border);
-  transition: background-color 0.12s ease;
+  transition: border-color 0.15s ease;
 }
-.mdc-comment:hover {
-  background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.08));
+.mdc-comment:hover { border-color: var(--mc-accent); }
+.mdc-comment--resolved { opacity: 0.7; }
+.mdc-thread-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
 }
-.mdc-comment--resolved { opacity: 0.6; }
+.mdc-thread-quote {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-left: 2px solid rgba(255, 209, 102, 0.35);
+  border-radius: 0;
+  margin: 0;
+  padding: 0 0 0 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--mc-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.mdc-comment--resolved .mdc-thread-quote { text-decoration: line-through; }
+.mdc-thread-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-left: 8px;
+}
 .mdc-comment--flash {
   animation: mdc-card-flash 1.2s ease;
 }
