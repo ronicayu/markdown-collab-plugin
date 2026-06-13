@@ -97,12 +97,13 @@ function roomFor(uri: vscode.Uri): string {
   return crypto.createHash("sha1").update(uri.fsPath).digest("hex").slice(0, 16);
 }
 
-// The real-time collaborative editor (custom editor + y-websocket relay) is
-// disabled: its contribution and activation were removed from the extension,
-// though the implementation (CollabEditorProvider, src/collab/server.ts) is
-// kept. These end-to-end assertions can't pass while the feature is off — they
-// expect the customEditor to be registered and the relay to answer on :1234.
-// Re-enable this suite if the feature is wired back up.
+// Skipped: this suite asserts the *multi-human relay* path — it expects a
+// y-websocket server answering on :1234 and a second peer seeing the seed.
+// That relay is gone (v0.34.7): the live editor is now single-human + Claude,
+// where the human edits here and Claude edits the .md on disk (no relay, no
+// second peer). The custom editor itself IS registered again, but these
+// relay/seed/peer assertions no longer apply. Rewrite against the file-based
+// externalChange bridge if you want end-to-end coverage of the new model.
 suite.skip("Collab editor integration", () => {
   suiteSetup(async () => {
     const ext = vscode.extensions.getExtension(EXT_ID);

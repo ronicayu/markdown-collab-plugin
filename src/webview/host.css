@@ -179,6 +179,11 @@ body { overflow: hidden; }
   color: var(--vscode-inputValidation-errorForeground, var(--vscode-editor-foreground));
   border-bottom-color: var(--vscode-inputValidation-errorBorder, rgba(220, 60, 60, 0.4));
 }
+.mdc-banner--info {
+  background: var(--vscode-inputValidation-infoBackground, rgba(60, 140, 220, 0.16));
+  color: var(--vscode-inputValidation-infoForeground, var(--vscode-editor-foreground));
+  border-bottom-color: var(--vscode-inputValidation-infoBorder, rgba(60, 140, 220, 0.4));
+}
 
 /* ===========================================================
    Sidebar header (title, filter chip, peer stack, toolbar)

@@ -34,6 +34,7 @@ const ALL_COMMANDS = [
   "markdownCollab.sendAllToClaude",
   "markdownCollab.startClaudeTerminal",
   "markdownCollab.resetSendMode",
+  "markdownCollab.openCollabEditor",
 ];
 
 function fixturePath(name: string): string {
@@ -325,6 +326,22 @@ suite("All extension commands", () => {
   // ---------------------------------------------------------------------
   test("resetSendMode is callable and does not throw", async () => {
     await vscode.commands.executeCommand("markdownCollab.resetSendMode");
+  });
+
+  // ---------------------------------------------------------------------
+  // openCollabEditor
+  // ---------------------------------------------------------------------
+  test("openCollabEditor opens the live editor for the active .md", async () => {
+    const uri = await writeFixtureMd("cmd-collab-target.md", "# Hi\n\nbody\n");
+    try {
+      const doc = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(doc);
+      await vscode.commands.executeCommand("markdownCollab.openCollabEditor", uri);
+      // Single-human + AI editor (no relay); here we just confirm the command
+      // resolves the custom editor without throwing.
+    } finally {
+      await rmIfExists(uri.fsPath);
+    }
   });
 
   // ---------------------------------------------------------------------

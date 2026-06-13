@@ -36,7 +36,7 @@ import "./host.css";
 import { Plugin, PluginKey, TextSelection } from "prosemirror-state";
 import { CellSelection } from "@milkdown/prose/tables";
 import { Decoration, DecorationSet } from "prosemirror-view";
-import { WebsocketProvider } from "y-websocket";
+import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { locateAnchorInLiveText } from "../collab/liveAnchorLocator";
 import { renderedRangeToPmRange } from "../collab/pmPositionMapper";
@@ -144,22 +144,23 @@ const vscode = acquireVsCodeApi();
 
 let editor: Editor | null = null;
 let ydoc: Y.Doc | null = null;
-let provider: WebsocketProvider | null = null;
+let awareness: Awareness | null = null;
 let suppressNextPost = false;
 let userName: string = "user";
+let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 
 const sidebarState: {
   comments: CommentSummary[];
   hideResolved: boolean;
   collapsed: boolean;
-  connection: "connected" | "connecting" | "offline";
-  peers: Array<{ name: string; color: string }>;
+  // Transient one-line status (e.g. "Updated from disk" when Claude edits the
+  // file). null when nothing to show.
+  notice: string | null;
 } = {
   comments: [],
   hideResolved: false,
   collapsed: false,
-  connection: "connecting",
-  peers: [],
+  notice: null,
 };
 
 let sidebarEl: HTMLElement | null = null;
@@ -213,8 +214,11 @@ const HIGHLIGHT_PLUGIN_KEY = new PluginKey("mdc-anchor-highlight");
 async function init(msg: InitMessage): Promise<void> {
   userName = msg.user.name || "user";
   ydoc = new Y.Doc();
-  provider = new WebsocketProvider(msg.serverUrl, msg.room, ydoc, { connect: true });
-  provider.awareness.setLocalStateField("user", msg.user);
+  // Local-only awareness: there is no network relay and no second human. The
+  // collab plugin still wants an Awareness, so we give it a doc-local one that
+  // never syncs to anyone. Claude collaborates via the file, not via Yjs.
+  awareness = new Awareness(ydoc);
+  awareness.setLocalStateField("user", msg.user);
 
   buildLayout();
   sidebarState.comments = msg.comments ?? [];
@@ -260,60 +264,22 @@ async function init(msg: InitMessage): Promise<void> {
     .use(collab)
     .create();
 
-  const startCollab = (synced: boolean): void => {
+  const startCollab = (): void => {
     if (!editor) return;
     editor.action((ctx) => {
       const collabService = ctx.get(collabServiceCtx);
       collabService
         .bindDoc(ydoc!)
-        .setAwareness(provider!.awareness)
+        .setAwareness(awareness!)
         .applyTemplate(msg.text)
         .connect();
     });
     forceHighlightRefresh();
-    reportReady(synced);
+    reportReady(true);
   };
 
-  let started = false;
-  const startOnce = (synced: boolean): void => {
-    if (started) return;
-    started = true;
-    startCollab(synced);
-  };
-  provider.once("sync", (synced: boolean) => startOnce(synced));
-  setTimeout(() => startOnce(false), 1500);
-
-  // Connection state — drives the prominent header banner now, not the
-  // tiny corner badge.
-  const refreshConnection = (): void => {
-    const next: typeof sidebarState.connection = provider?.wsconnected
-      ? "connected"
-      : provider?.wsconnecting
-        ? "connecting"
-        : "offline";
-    if (sidebarState.connection !== next) {
-      sidebarState.connection = next;
-      renderSidebar();
-    }
-  };
-  refreshConnection();
-  provider.on("status", refreshConnection);
-
-  // Peer awareness → social presence in the header.
-  const refreshPeers = (): void => {
-    const states = provider?.awareness.getStates() ?? new Map();
-    const myId = ydoc?.clientID;
-    const peers: typeof sidebarState.peers = [];
-    states.forEach((state, clientId) => {
-      if (clientId === myId) return;
-      const u = (state as { user?: { name?: string; color?: string } }).user;
-      if (u && u.name) peers.push({ name: u.name, color: u.color ?? "#888" });
-    });
-    sidebarState.peers = peers;
-    renderSidebar();
-  };
-  refreshPeers();
-  provider.awareness.on("change", refreshPeers);
+  // No relay to wait on — start the editor immediately as a solo editor.
+  startCollab();
 
   installAddCommentAffordance();
 }
@@ -383,16 +349,11 @@ function renderSidebar(): void {
     sidebarState.hideResolved ? !c.resolved : true,
   );
 
-  // Connection banner — only shown when not connected.
-  let banner = "";
-  if (sidebarState.connection !== "connected") {
-    const label = sidebarState.connection === "connecting" ? "Reconnecting…" : "Offline — your edits aren't syncing";
-    const cls = sidebarState.connection === "connecting" ? "mdc-banner--warn" : "mdc-banner--err";
-    banner = `<div class="mdc-banner ${cls}" role="status">${escapeHtml(label)}</div>`;
-  }
-
-  // Peer presence — colored initials in a stack.
-  const peerStack = renderPeerStack(sidebarState.peers);
+  // Transient notice — e.g. "Updated from disk" when Claude (or another tool)
+  // edits the .md while the editor is open and the change lands here.
+  const banner = sidebarState.notice
+    ? `<div class="mdc-banner mdc-banner--info" role="status">${escapeHtml(sidebarState.notice)}</div>`
+    : "";
 
   const filterClass = sidebarState.hideResolved ? "mdc-filter-chip mdc-filter-chip--active" : "mdc-filter-chip";
   const filterLabel = sidebarState.hideResolved
@@ -411,7 +372,6 @@ function renderSidebar(): void {
             ${escapeHtml(filterLabel)}
           </button>
         </div>
-        ${peerStack}
         <div class="mdc-sidebar-toolbar">
           <button type="button" class="mdc-icon-btn mdc-icon-btn--primary" data-action="add-comment" title="Add a comment on the current selection (Cmd/Ctrl+Shift+M)">
             <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 1.5v5h5v1H8v5H7v-5H2v-1h5v-5h1z"/></svg>
@@ -471,20 +431,6 @@ function renderSidebar(): void {
   composerEl = sidebarEl.querySelector(".mdc-composer-slot");
   attachToolbarHandlers();
   attachCommentHandlers();
-}
-
-function renderPeerStack(peers: Array<{ name: string; color: string }>): string {
-  if (peers.length === 0) return "";
-  const dots = peers
-    .slice(0, 4)
-    .map((p) => {
-      const initial = (p.name?.[0] ?? "?").toUpperCase();
-      const safeName = escapeHtml(p.name);
-      return `<span class="mdc-peer-dot" style="background:${escapeAttr(p.color)}" title="${safeName}" aria-label="${safeName}">${escapeHtml(initial)}</span>`;
-    })
-    .join("");
-  const overflow = peers.length > 4 ? `<span class="mdc-peer-dot mdc-peer-dot--more" title="${peers.length - 4} more">+${peers.length - 4}</span>` : "";
-  return `<div class="mdc-peer-stack" aria-label="${peers.length} other peer${peers.length === 1 ? "" : "s"} present">${dots}${overflow}</div>`;
 }
 
 function renderCommentCard(c: CommentSummary): string {
@@ -1509,6 +1455,21 @@ function applyExternalChange(text: string): void {
     });
   }
   forceHighlightRefresh();
+  showNotice("Updated from disk");
+}
+
+// Flash a transient one-line notice in the sidebar header, then clear it. Used
+// when an edit arrives from outside the editor (Claude editing the .md, a save
+// from another window, git) so the change isn't silent.
+function showNotice(text: string): void {
+  sidebarState.notice = text;
+  renderSidebar();
+  if (noticeTimer) clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => {
+    sidebarState.notice = null;
+    noticeTimer = null;
+    renderSidebar();
+  }, 2500);
 }
 
 // Render the read-only frontmatter panel above the editor. Milkdown would

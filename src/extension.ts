@@ -2,6 +2,7 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import { ensureAgentsSnippet } from "./agents";
+import { CollabEditorProvider } from "./collab/collabEditorProvider";
 import { InlineCommentsPanel } from "./inlineComments/inlineCommentsPanel";
 import { PrReviewController } from "./pr/prReviewController";
 import { ReviewView, type ReviewNode } from "./reviewView";
@@ -131,6 +132,35 @@ export function activate(context: vscode.ExtensionContext): void {
         "Markdown Collab: Send mode reset. Next click will prompt again.",
       );
     }),
+  );
+
+  // Live WYSIWYG editor for a single human + Claude on the same machine. There
+  // is no multi-human relay: the human edits here, Claude edits the .md on
+  // disk, and the two converge through the file (the provider pushes external
+  // file changes into the editor, and writes the editor's edits back to disk).
+  context.subscriptions.push(CollabEditorProvider.register(context, output));
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "markdownCollab.openCollabEditor",
+      async (arg?: vscode.Uri) => {
+        const uri =
+          arg instanceof vscode.Uri
+            ? arg
+            : vscode.window.activeTextEditor?.document.uri;
+        if (!uri) {
+          void vscode.window.showWarningMessage(
+            "Open a Markdown file first, then run this command.",
+          );
+          return;
+        }
+        await vscode.commands.executeCommand(
+          "vscode.openWith",
+          uri,
+          CollabEditorProvider.viewType,
+        );
+      },
+    ),
   );
 
   context.subscriptions.push(

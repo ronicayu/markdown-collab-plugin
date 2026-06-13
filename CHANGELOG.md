@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.34.7 — 2026-06-13 (trial)
+
+### Changed: the live editor is now single-human + AI, no relay
+
+The live WYSIWYG editor is back (0.34.6 had turned it off with the rest of the
+collaboration feature), but reworked around the actual use case: **one human and
+Claude on the same machine**, not multiple humans over a network.
+
+- **No y-websocket relay.** The editor no longer spawns or connects to a relay,
+  and there are no `markdownCollab.collab.serverUrl/port/startLocalServer`
+  settings. It opens instantly instead of waiting on a connection.
+- **The file is the shared canvas.** You edit in the live editor; Claude edits
+  the `.md` on disk with its normal tools. The editor pushes your changes to the
+  file and applies Claude's file changes back into the view live — a brief
+  "Updated from disk" note appears when that happens.
+- Removed the multi-human chrome (connection banner, peer-presence avatars)
+  since the collaborator is Claude-via-file, not another person.
+- The editor is reached the same way: **Open Live Editor** command, or
+  **Reopen with → Markdown Collab (live editor)**.
+
+This is turn-based co-editing (you ask, Claude revises, you see it land), not
+character-level co-typing.
+
 ## 0.34.6 — 2026-06-13 (trial)
 
 ### Removed: real-time collaborative editor (disabled)
