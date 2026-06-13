@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.34.14 — 2026-06-13
+
+First public release of the 0.34 line — published to the VS Code Marketplace and
+Open VSX. Rolls up everything since 0.33.16 (the prior entries below shipped as
+GitHub-only trial builds):
+
+- **Sidecar removed** — comments live inline in the `.md` itself; the
+  "8 non-whitespace characters" selection rule is gone.
+- **Live editor reworked** — single human + Claude on one machine (no relay).
+  Edits autosave to disk so Claude reads the latest; guards keep the human and
+  Claude from overwriting each other; the panel patches only changed threads.
+- **Unified comment panels** across the inline, PR/MR, and live-editor views,
+  with per-thread Send to Claude, an always-on reply box, per-comment delete
+  (inline confirm), and collapsible threads.
+- **PR/MR review** — reply to existing comments; jump to a comment's line within
+  the review.
+- **Quality of life** — drawio diagrams in the inline view, a skill-update
+  banner with one-click install, in-doc fragment links in every view, and
+  heading-safe comment markers.
+
 ## 0.34.13 — 2026-06-13 (trial)
 
 ### Added: delete a single comment in the live editor
