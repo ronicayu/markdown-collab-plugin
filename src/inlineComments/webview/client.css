@@ -249,6 +249,11 @@ mark.mc-hl:hover { filter: brightness(1.15); }
   border: 1px solid var(--vscode-inputValidation-warningBorder, rgba(255, 196, 0, 0.45));
   color: var(--vscode-inputValidation-warningForeground, var(--fg));
 }
+/* `display: flex` above outranks the UA `[hidden]` rule, so without this the
+   banner stays visible (an empty yellow box) even when hidden=true is set. */
+.skill-warning[hidden] {
+  display: none;
+}
 .skill-warning #skill-warning-text { flex: 1; }
 .skill-warning #skill-install { white-space: nowrap; }
 .skill-warning #skill-install:disabled { opacity: 0.6; cursor: default; }
@@ -276,12 +281,38 @@ mark.mc-hl:hover { filter: brightness(1.15); }
   color: var(--accent, #6c8eef);
   font-weight: bold;
 }
-#threads-list.collapse-claude-unread .thread-card.claude-unread > :not(.thread-head) {
+/* A collapsed thread shows only the quote header; comment bodies, the action
+   buttons, and the reply box are hidden until it's expanded again. */
+.thread-card.collapsed > :not(.thread-head) {
   display: none;
 }
-#threads-list.collapse-claude-unread .thread-card.claude-unread .thread-head {
+.thread-card.collapsed .thread-head {
   margin-bottom: 0;
 }
+.thread-card.collapsed .thread-actions {
+  display: none;
+}
+.thread-head-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+.thread-head-row .thread-quote {
+  flex: 1;
+  min-width: 0;
+}
+.thread-collapse {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 2px;
+  margin-top: 1px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+.thread-collapse:hover { color: var(--fg); }
 
 #threads-list {
   flex: 1;

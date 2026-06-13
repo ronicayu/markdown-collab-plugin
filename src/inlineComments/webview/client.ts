@@ -189,7 +189,7 @@ const dom = {
   claudeSummary: document.getElementById("claude-summary") as HTMLElement,
   claudeSummaryText: document.getElementById("claude-summary-text") as HTMLElement,
   claudeNext: document.getElementById("claude-next") as HTMLButtonElement,
-  claudeToggleCollapse: document.getElementById("claude-toggle-collapse") as HTMLButtonElement,
+  collapseAll: document.getElementById("collapse-all") as HTMLButtonElement,
   claudeFilterLabel: document.getElementById("filter-claude-label") as HTMLLabelElement,
   findBar: document.getElementById("find-bar") as HTMLElement,
   findInput: document.getElementById("find-input") as HTMLInputElement,
@@ -199,10 +199,18 @@ const dom = {
   findClose: document.getElementById("find-close") as HTMLButtonElement,
 };
 
-let claudeUnreadCollapsed = ((): boolean => {
-  const saved = vscode.getState() as { claudeUnreadCollapsed?: boolean } | undefined;
-  return saved?.claudeUnreadCollapsed === true;
+// Thread IDs the user has collapsed (folded to just the quote). Persisted so
+// the choice survives a webview reload.
+const collapsedThreads: Set<string> = ((): Set<string> => {
+  const saved = vscode.getState() as { collapsedThreadIds?: string[] } | undefined;
+  return new Set(saved?.collapsedThreadIds ?? []);
 })();
+function saveCollapsedThreads(): void {
+  vscode.setState({
+    ...(vscode.getState() as Record<string, unknown> | undefined),
+    collapsedThreadIds: Array.from(collapsedThreads),
+  });
+}
 
 /**
  * Set when the user fires "Ask Claude to Review This Doc". Holds the
@@ -472,18 +480,32 @@ function scrollPreviewToFragment(fragment: string): void {
 }
 
 
-function applyClaudeUnreadCollapsed(): void {
-  dom.threadsList.classList.toggle("collapse-claude-unread", claudeUnreadCollapsed);
-  dom.claudeToggleCollapse.textContent = claudeUnreadCollapsed ? "Expand all" : "Collapse all";
+// "Collapse all" / "Expand all" — operates on every thread, and its label
+// reflects whether they're all currently collapsed.
+function updateCollapseAllLabel(): void {
+  const threads = currentState?.threads ?? [];
+  const allCollapsed = threads.length > 0 && threads.every((t) => collapsedThreads.has(t.id));
+  dom.collapseAll.textContent = allCollapsed ? "Expand all" : "Collapse all";
+  dom.collapseAll.disabled = threads.length === 0;
 }
-applyClaudeUnreadCollapsed();
-dom.claudeToggleCollapse.addEventListener("click", () => {
-  claudeUnreadCollapsed = !claudeUnreadCollapsed;
-  applyClaudeUnreadCollapsed();
-  vscode.setState({
-    ...(vscode.getState() as Record<string, unknown> | undefined),
-    claudeUnreadCollapsed,
-  });
+// Fold/unfold a single thread in place (no re-render, so an in-progress reply
+// textarea on another card isn't wiped).
+function setThreadCollapsed(id: string, collapsed: boolean): void {
+  if (collapsed) collapsedThreads.add(id);
+  else collapsedThreads.delete(id);
+  saveCollapsedThreads();
+  const card = dom.threadsList.querySelector<HTMLElement>(
+    `.thread-card[data-thread="${cssEscape(id)}"]`,
+  );
+  card?.classList.toggle("collapsed", collapsed);
+  const chevron = card?.querySelector<HTMLButtonElement>(".thread-collapse");
+  if (chevron) chevron.textContent = collapsed ? "▸" : "▾";
+  updateCollapseAllLabel();
+}
+dom.collapseAll.addEventListener("click", () => {
+  const threads = currentState?.threads ?? [];
+  const collapse = !(threads.length > 0 && threads.every((t) => collapsedThreads.has(t.id)));
+  for (const t of threads) setThreadCollapsed(t.id, collapse);
 });
 
 dom.claudeNext.addEventListener("click", () => {
@@ -531,6 +553,7 @@ function render(state: SerializedState): void {
   currentState = state;
   renderPreview(state);
   renderThreads(state);
+  updateCollapseAllLabel();
   positionFloatingButton();
   maybeScrollToNewReview(state);
 }
@@ -866,7 +889,6 @@ function renderClaudeSummary(state: SerializedState): void {
   const reviewedLabel = reviewed === 1 ? "1 reviewed" : `${reviewed} reviewed`;
   dom.claudeSummaryText.textContent = `${unreadLabel} · ${reviewedLabel}`;
   dom.claudeNext.disabled = unread === 0;
-  dom.claudeToggleCollapse.disabled = unread === 0;
 }
 
 function renderThreadCard(t: ThreadState): HTMLElement {
@@ -875,6 +897,7 @@ function renderThreadCard(t: ThreadState): HTMLElement {
   if (t.status === "resolved") card.classList.add("resolved");
   if (t.id === highlightedThreadId) card.classList.add("highlighted");
   if (isClaudeUnread(t)) card.classList.add("claude-unread");
+  if (collapsedThreads.has(t.id)) card.classList.add("collapsed");
   card.dataset.thread = t.id;
   card.addEventListener("click", () => {
     highlightedThreadId = t.id;
@@ -889,6 +912,19 @@ function renderThreadCard(t: ThreadState): HTMLElement {
 
   const head = document.createElement("header");
   head.className = "thread-head";
+  const headRow = document.createElement("div");
+  headRow.className = "thread-head-row";
+  const chevron = document.createElement("button");
+  chevron.type = "button";
+  chevron.className = "thread-collapse";
+  chevron.textContent = collapsedThreads.has(t.id) ? "▸" : "▾";
+  chevron.title = "Collapse / expand this thread";
+  chevron.setAttribute("aria-label", "Collapse or expand this comment thread");
+  chevron.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setThreadCollapsed(t.id, !collapsedThreads.has(t.id));
+  });
+  headRow.appendChild(chevron);
   const quote = document.createElement("blockquote");
   quote.className = "thread-quote";
   quote.textContent = t.quote || "(no quote)";
@@ -899,7 +935,8 @@ function renderThreadCard(t: ThreadState): HTMLElement {
     badge.title = "Anchor marker missing from prose. Fix by re-anchoring.";
     quote.appendChild(badge);
   }
-  head.appendChild(quote);
+  headRow.appendChild(quote);
+  head.appendChild(headRow);
 
   const actions = document.createElement("div");
   actions.className = "thread-actions";

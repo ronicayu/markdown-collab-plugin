@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.34.9 — 2026-06-13 (trial)
+
+### Fixed: comment-panel bugs
+
+- **Skill banner stuck on "Installing…".** The "update skill" banner never hid
+  after the skill updated (and showed an empty yellow box on reopen) — its
+  `display: flex` was overriding the `hidden` attribute. It now disappears as
+  soon as the skill is current.
+- **Live editor: Send to Claude was buried in a "⋯" menu.** Send to Claude and
+  Copy are now direct buttons under the panel header, matching the inline
+  comments view. The overflow menu is gone.
+- **Comments wouldn't collapse.** The only fold control was scoped to unread
+  Claude threads and hidden outside a review. Every thread now has a collapse
+  chevron (folds to just its quote), and a **Collapse all / Expand all** toggle
+  in the header works on all threads. The collapsed set persists across reloads.
+
 ## 0.34.8 — 2026-06-13 (trial)
 
 ### Added: guards so the human and Claude don't overwrite each other

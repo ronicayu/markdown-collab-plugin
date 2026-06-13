@@ -380,24 +380,19 @@ function renderSidebar(): void {
             <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 1.5v5h5v1H8v5H7v-5H2v-1h5v-5h1z"/></svg>
             <span>Add comment</span>
           </button>
-          <div class="mdc-overflow-menu">
-            <button type="button" class="mdc-icon-btn" data-action="overflow" title="More actions" aria-haspopup="true" aria-expanded="false">
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><circle cx="3" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="13" cy="8" r="1.4"/></svg>
-            </button>
-            <div class="mdc-overflow-popup" hidden>
-              <button type="button" data-action="copy-prompt">
-                <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M4 1.5h7a1 1 0 0 1 1 1V12h-1V2.5H4v-1zM2 4.5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4.5zm1 0V14h7V4.5H3z"/></svg>
-                <span>Copy prompt</span>
-              </button>
-              <button type="button" data-action="send-to-claude" ${open === 0 ? "disabled" : ""} title="${
-                open === 0 ? "No unresolved comments to send" : "Send unresolved comments to Claude Code"
-              }">
-                <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M1.7 14.3 14.4 8 1.7 1.7v4.7L10 8l-8.3 1.6v4.7z"/></svg>
-                <span>Send to Claude</span>
-              </button>
-            </div>
-          </div>
         </div>
+      </div>
+      <div class="mdc-sidebar-actions">
+        <button type="button" class="mdc-icon-btn mdc-sidebar-action mdc-sidebar-action--primary" data-action="send-to-claude" ${open === 0 ? "disabled" : ""} title="${
+          open === 0 ? "No unresolved comments to send" : "Send unresolved comments to Claude Code"
+        }">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M1.7 14.3 14.4 8 1.7 1.7v4.7L10 8l-8.3 1.6v4.7z"/></svg>
+          <span>Send to Claude</span>
+        </button>
+        <button type="button" class="mdc-icon-btn mdc-sidebar-action" data-action="copy-prompt" title="Copy the prompt to your clipboard.">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M4 1.5h7a1 1 0 0 1 1 1V12h-1V2.5H4v-1zM2 4.5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4.5zm1 0V14h7V4.5H3z"/></svg>
+          <span>Copy</span>
+        </button>
       </div>
     </div>
   `;
@@ -492,8 +487,12 @@ function attachToolbarHandlers(): void {
     sidebarState.hideResolved = !sidebarState.hideResolved;
     renderSidebar();
   });
-  // Toolbar buttons
-  for (const btn of Array.from(sidebarEl.querySelectorAll<HTMLButtonElement>(".mdc-sidebar-toolbar [data-action]"))) {
+  // Toolbar + action-row buttons (Add comment, Send to Claude, Copy).
+  for (const btn of Array.from(
+    sidebarEl.querySelectorAll<HTMLButtonElement>(
+      ".mdc-sidebar-toolbar [data-action], .mdc-sidebar-actions [data-action]",
+    ),
+  )) {
     const action = btn.dataset.action;
     btn.addEventListener("mousedown", (e) => {
       // preventDefault on mousedown stops the click from blurring the
@@ -506,44 +505,18 @@ function attachToolbarHandlers(): void {
       e.preventDefault();
       if (action === "add-comment") captureCurrentSelection();
     });
-    btn.addEventListener("click", (e) => {
+    btn.addEventListener("click", () => {
       if (btn.disabled) return;
       if (action === "send-to-claude") {
         vscode.postMessage({ type: "invoke-command", command: "send-to-claude" });
         showNotice("Sent to Claude — your edits are saved to disk");
-        closeOverflow();
       } else if (action === "copy-prompt") {
         vscode.postMessage({ type: "invoke-command", command: "copy-prompt" });
-        closeOverflow();
       } else if (action === "add-comment") {
         openComposerForCurrentSelection();
-      } else if (action === "overflow") {
-        e.stopPropagation();
-        toggleOverflow(btn);
       }
     });
   }
-}
-
-function toggleOverflow(trigger: HTMLButtonElement): void {
-  const popup = trigger.parentElement?.querySelector<HTMLElement>(".mdc-overflow-popup");
-  if (!popup) return;
-  const open = popup.hasAttribute("hidden");
-  if (open) {
-    popup.removeAttribute("hidden");
-    trigger.setAttribute("aria-expanded", "true");
-  } else {
-    popup.setAttribute("hidden", "");
-    trigger.setAttribute("aria-expanded", "false");
-  }
-}
-
-function closeOverflow(): void {
-  if (!sidebarEl) return;
-  const popup = sidebarEl.querySelector<HTMLElement>(".mdc-overflow-popup");
-  popup?.setAttribute("hidden", "");
-  const trigger = sidebarEl.querySelector<HTMLElement>("[data-action='overflow']");
-  trigger?.setAttribute("aria-expanded", "false");
 }
 
 function attachCommentHandlers(): void {
@@ -1548,13 +1521,6 @@ document.addEventListener("keydown", (e) => {
     e.stopPropagation();
     openComposerForCurrentSelection();
   }
-});
-
-// Click outside overflow menu closes it.
-document.addEventListener("click", (e) => {
-  if (!sidebarEl) return;
-  const target = e.target as HTMLElement | null;
-  if (!target?.closest(".mdc-overflow-menu")) closeOverflow();
 });
 
 // Link click interceptor — route to extension's openExternal/vscode.open.

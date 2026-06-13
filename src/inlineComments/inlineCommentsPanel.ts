@@ -381,12 +381,12 @@ export class InlineCommentsPanel {
       <div class="title-row">
         <h2>Comments</h2>
         <span id="thread-count"></span>
+        <button id="collapse-all" class="btn-link" title="Collapse / expand all comment threads">Collapse all</button>
         <button id="collapse-threads" class="btn-link" title="Hide comments panel" aria-label="Hide comments panel">›</button>
       </div>
       <div id="claude-summary" hidden>
         <span id="claude-summary-text"></span>
         <button id="claude-next" class="btn-link" title="Jump to the next unread thread from Claude.">Next</button>
-        <button id="claude-toggle-collapse" class="btn-link" title="Collapse / expand all unread Claude threads.">Collapse all</button>
       </div>
       <div class="filter-row">
         <label><input type="radio" name="filter" value="open" checked> Open</label>
