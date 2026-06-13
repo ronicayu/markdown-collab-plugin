@@ -19,6 +19,7 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import { isInsideRoot } from "../pathUtils";
+import { checkClaudeSkill, type SkillStatus } from "../skill";
 import { CollabEditorProvider } from "../collab/collabEditorProvider";
 import { detectUrlScheme, parseLinkHref, slugifyHeading } from "./linkParse";
 import {
@@ -51,11 +52,18 @@ interface InitMessage {
     workspaceFolder: string | null;
   };
   plantuml: { serverUrl: string; format: "svg" | "png" };
+  /** Whether the installed Claude skill is missing / outdated / current. */
+  skillStatus: SkillStatus;
 }
 
 interface UpdateMessage {
   type: "update";
   state: SerializedState;
+}
+
+interface SkillStatusMessage {
+  type: "skill-status";
+  status: SkillStatus;
 }
 
 interface ReviewPendingMessage {
@@ -147,6 +155,10 @@ interface DrawioReadRequest {
   href: string;
 }
 
+interface InstallSkillRequest {
+  type: "install-skill";
+}
+
 type ClientMessage =
   | ReadyMessage
   | AddCommentRequest
@@ -160,7 +172,8 @@ type ClientMessage =
   | SendToClaudeCommentRequest
   | CopyClaudeCommentRequest
   | OpenLinkRequest
-  | DrawioReadRequest;
+  | DrawioReadRequest
+  | InstallSkillRequest;
 
 /** Dependencies the panel needs from the extension host (kept narrow so tests can stub them). */
 export interface InlinePanelDeps {
@@ -379,6 +392,10 @@ export class InlineCommentsPanel {
         <button id="send-to-claude" title="Send the prompt to a running Claude terminal (or your configured send mode).">Send to Claude</button>
         <button id="copy-prompt" class="btn-ghost" title="Copy the prompt to your clipboard.">Copy</button>
       </div>
+      <div id="skill-warning" class="skill-warning" hidden>
+        <span id="skill-warning-text"></span>
+        <button id="skill-install" class="btn-link"></button>
+      </div>
     </header>
     <div id="threads-list"></div>
     <div id="composer" hidden></div>
@@ -462,6 +479,8 @@ export class InlineCommentsPanel {
         return this.handleOpenLink(msg.href);
       case "drawio-read":
         return this.handleDrawioRead(msg.requestId, msg.href);
+      case "install-skill":
+        return this.handleInstallSkill();
       case "delete-thread":
         return this.applyMutation((parsed) => replaceThread(parsed.source, msg.threadId, null));
       case "delete-comment":
@@ -744,6 +763,19 @@ export class InlineCommentsPanel {
         workspaceFolder: folder ? this.panel.webview.asWebviewUri(folder.uri).toString() : null,
       },
       plantuml: readPlantumlConfig(),
+      skillStatus: await checkClaudeSkill(os.homedir()),
+    };
+    await this.panel.webview.postMessage(msg);
+  }
+
+  /** Install / update the bundled Claude skill, then refresh the panel's banner. */
+  private async handleInstallSkill(): Promise<void> {
+    // Route through the existing command so the "a customized SKILL.md exists"
+    // overwrite confirmation + toasts are reused rather than duplicated.
+    await vscode.commands.executeCommand("markdownCollab.installClaudeSkill");
+    const msg: SkillStatusMessage = {
+      type: "skill-status",
+      status: await checkClaudeSkill(os.homedir()),
     };
     await this.panel.webview.postMessage(msg);
   }

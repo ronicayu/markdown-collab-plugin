@@ -64,6 +64,14 @@ interface InitMsg {
     workspaceFolder: string | null;
   };
   plantuml?: { serverUrl: string; format: "svg" | "png" };
+  skillStatus?: SkillStatus;
+}
+
+type SkillStatus = "missing" | "outdated" | "current";
+
+interface SkillStatusMsg {
+  type: "skill-status";
+  status: SkillStatus;
 }
 
 interface UpdateMsg {
@@ -171,6 +179,9 @@ const dom = {
   filterRadios: document.querySelectorAll<HTMLInputElement>('input[name="filter"]'),
   sendToClaude: document.getElementById("send-to-claude") as HTMLButtonElement,
   copyPrompt: document.getElementById("copy-prompt") as HTMLButtonElement,
+  skillWarning: document.getElementById("skill-warning") as HTMLElement,
+  skillWarningText: document.getElementById("skill-warning-text") as HTMLElement,
+  skillInstall: document.getElementById("skill-install") as HTMLButtonElement,
   app: document.getElementById("app") as HTMLElement,
   collapseThreads: document.getElementById("collapse-threads") as HTMLButtonElement,
   expandThreads: document.getElementById("expand-threads") as HTMLButtonElement,
@@ -389,6 +400,30 @@ dom.sendToClaude.addEventListener("click", () => {
 dom.copyPrompt.addEventListener("click", () => {
   vscode.postMessage({ type: "copy-prompt" });
 });
+
+dom.skillInstall.addEventListener("click", () => {
+  dom.skillInstall.disabled = true;
+  dom.skillInstall.textContent = "Installing…";
+  vscode.postMessage({ type: "install-skill" });
+});
+
+/**
+ * Show / hide the "skill out of date" banner. `current` hides it; `outdated`
+ * and `missing` show a one-line warning with an install button.
+ */
+function renderSkillWarning(status: SkillStatus | undefined): void {
+  if (!status || status === "current") {
+    dom.skillWarning.hidden = true;
+    return;
+  }
+  dom.skillWarning.hidden = false;
+  dom.skillWarningText.textContent =
+    status === "missing"
+      ? "The Markdown Collab Claude skill isn't installed — Claude won't know how to act on these comments."
+      : "The Markdown Collab Claude skill is out of date.";
+  dom.skillInstall.disabled = false;
+  dom.skillInstall.textContent = status === "missing" ? "Install skill" : "Update skill";
+}
 
 // Intercept anchor clicks inside the rendered preview. Without this
 // markdown links are inert (the webview sandbox swallows navigation).
@@ -1376,7 +1411,7 @@ dom.filterRadios.forEach((r) =>
 );
 
 window.addEventListener("message", (ev) => {
-  const msg = ev.data as InitMsg | UpdateMsg | ReviewPendingMsg | ScrollToMsg | DrawioReadResult;
+  const msg = ev.data as InitMsg | UpdateMsg | ReviewPendingMsg | ScrollToMsg | DrawioReadResult | SkillStatusMsg;
   if (!msg) return;
   if (msg.type === "drawio-read-result") {
     handleDrawioResult(msg);
@@ -1387,6 +1422,7 @@ window.addEventListener("message", (ev) => {
     user = msg.user;
     imageBaseUris = msg.imageBaseUris;
     ensurePlantumlInstalled(msg.plantuml);
+    renderSkillWarning(msg.skillStatus);
     render(msg.state);
   } else if (msg.type === "update") {
     render(msg.state);
@@ -1395,6 +1431,8 @@ window.addEventListener("message", (ev) => {
     savePendingReviewSnapshot();
   } else if (msg.type === "scroll-to") {
     scrollPreviewToProseOffset(msg.proseOffset);
+  } else if (msg.type === "skill-status") {
+    renderSkillWarning(msg.status);
   }
 });
 

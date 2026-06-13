@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.34.2 — 2026-06-13 (trial)
+
+### Added: a warning + one-click update when the Claude skill is out of date
+
+The inline comments panel now checks whether the installed `vs-markdown-collab`
+Claude skill matches the version this build ships. If it's missing or out of
+date, a banner appears at the top of the comments panel with an **Install
+skill** / **Update skill** button. Installing a customized skill still asks
+before overwriting. The banner clears itself once the skill is current.
+
 ## 0.34.1 — 2026-06-13 (trial)
 
 ### Added: reply to existing comments in the PR/MR review view

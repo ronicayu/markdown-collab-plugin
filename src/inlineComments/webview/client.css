@@ -237,6 +237,22 @@ mark.mc-hl:hover { filter: brightness(1.15); }
 .filter-row #send-to-claude { margin-left: auto; font-size: 11px; padding: 3px 8px; }
 .filter-row #copy-prompt { font-size: 11px; padding: 3px 8px; }
 
+.skill-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  border-radius: 3px;
+  background: var(--vscode-inputValidation-warningBackground, rgba(255, 196, 0, 0.12));
+  border: 1px solid var(--vscode-inputValidation-warningBorder, rgba(255, 196, 0, 0.45));
+  color: var(--vscode-inputValidation-warningForeground, var(--fg));
+}
+.skill-warning #skill-warning-text { flex: 1; }
+.skill-warning #skill-install { white-space: nowrap; }
+.skill-warning #skill-install:disabled { opacity: 0.6; cursor: default; }
+
 #claude-summary {
   margin-top: 8px;
   padding: 6px 8px;

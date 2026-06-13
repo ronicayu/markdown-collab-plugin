@@ -755,6 +755,37 @@ export async function installClaudeSkill(
   return { action: "installed", path: target };
 }
 
+export type SkillStatus = "missing" | "outdated" | "current";
+
+/**
+ * Compare the installed Claude skill against what this extension bundles:
+ *   - "missing"  — SKILL.md isn't installed.
+ *   - "outdated" — SKILL.md or a bundled helper script differs from this build.
+ *   - "current"  — everything matches.
+ * Read errors other than "not found" report "current" so a transient or
+ * permission issue never nags the user.
+ */
+export async function checkClaudeSkill(homeDir: string): Promise<SkillStatus> {
+  let skill: string | null = null;
+  try {
+    skill = await fs.readFile(path.join(homeDir, SKILL_REL_PATH), "utf8");
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "current";
+  }
+  if (skill !== SKILL_CONTENT) return "outdated";
+  for (const [rel, content] of [
+    [TAIL_SCRIPT_REL, TAIL_SCRIPT_CONTENT],
+    [CHANNEL_SCRIPT_REL, CHANNEL_SCRIPT_CONTENT],
+  ] as const) {
+    try {
+      if ((await fs.readFile(path.join(homeDir, rel), "utf8")) !== content) return "outdated";
+    } catch {
+      return "outdated";
+    }
+  }
+  return "current";
+}
+
 async function syncCliScript(homeDir: string): Promise<void> {
   await syncScript(path.join(homeDir, TAIL_SCRIPT_REL), TAIL_SCRIPT_CONTENT);
   await syncScript(path.join(homeDir, CHANNEL_SCRIPT_REL), CHANNEL_SCRIPT_CONTENT);

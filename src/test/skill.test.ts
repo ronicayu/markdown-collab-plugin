@@ -9,6 +9,7 @@ import {
   SKILL_REL_PATH,
   TAIL_SCRIPT_CONTENT,
   TAIL_SCRIPT_REL,
+  checkClaudeSkill,
   installClaudeSkill,
 } from "../skill";
 
@@ -110,5 +111,36 @@ describe("installClaudeSkill", () => {
     expect(result.action).toBe("already-present");
     const tail = await fs.readFile(tailTarget, "utf8");
     expect(tail).toBe(TAIL_SCRIPT_CONTENT);
+  });
+});
+
+describe("checkClaudeSkill", () => {
+  it("reports 'missing' when nothing is installed", async () => {
+    expect(await checkClaudeSkill(tmpHome)).toBe("missing");
+  });
+
+  it("reports 'current' right after a fresh install", async () => {
+    await installClaudeSkill(tmpHome);
+    expect(await checkClaudeSkill(tmpHome)).toBe("current");
+  });
+
+  it("reports 'outdated' when the installed SKILL.md differs", async () => {
+    await installClaudeSkill(tmpHome);
+    await fs.writeFile(path.join(tmpHome, SKILL_REL_PATH), SKILL_CONTENT + "\nstale\n", "utf8");
+    expect(await checkClaudeSkill(tmpHome)).toBe("outdated");
+  });
+
+  it("reports 'outdated' when a bundled helper script differs", async () => {
+    await installClaudeSkill(tmpHome);
+    await fs.writeFile(path.join(tmpHome, CHANNEL_SCRIPT_REL), "#!/usr/bin/env node\n// stale\n", "utf8");
+    expect(await checkClaudeSkill(tmpHome)).toBe("outdated");
+  });
+
+  it("reports 'outdated' when a helper script is missing entirely", async () => {
+    const skillTarget = path.join(tmpHome, SKILL_REL_PATH);
+    await fs.mkdir(path.dirname(skillTarget), { recursive: true });
+    await fs.writeFile(skillTarget, SKILL_CONTENT, "utf8");
+    // SKILL.md matches but the tail/channel scripts were never written.
+    expect(await checkClaudeSkill(tmpHome)).toBe("outdated");
   });
 });
