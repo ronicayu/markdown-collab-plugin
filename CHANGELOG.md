@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.34.3 — 2026-06-13 (trial)
+
+### Added: in-doc section ("fragment") links work in every view
+
+A link to a heading in the same doc — `[Setup](#setup)` — now scrolls to that
+section in the inline comments view, the PR/MR review view, and the live editor
+(matched by heading id or slug).
+
+### Fixed: commenting on a heading keeps it a heading
+
+Anchoring a comment on `## Heading` now puts the marker *after* the hashes
+(`## <!--mc:a:…-->Heading<!--mc:/a:…-->`) so the line still renders as a heading,
+in both the inline view and the live editor.
+
+### Fixed: live editor saves the file when you act on a comment
+
+Adding, replying to, resolving, or deleting a comment in the live editor now
+saves the file (typing still doesn't auto-save).
+
+### Changed: every "Send to Claude" prompt invokes the `vs-markdown-collab` skill
+
+All send paths now consistently tell Claude to use the skill (the source of
+truth for the comment format) rather than re-documenting the format inline.
+
+### Changed: shared comment-panel UX
+
+The inline comments and PR/MR review panels now render comment cards and
+composers from one shared component + design system (consistent styling,
+buttons, and keyboard shortcuts — Cmd/Ctrl+Enter to submit, Esc to cancel).
+
 ## 0.34.2 — 2026-06-13 (trial)
 
 ### Added: a warning + one-click update when the Claude skill is out of date

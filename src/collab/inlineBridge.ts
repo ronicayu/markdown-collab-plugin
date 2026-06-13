@@ -23,6 +23,7 @@ import {
   mintThreadId,
   parse,
   replaceThread,
+  startPastHeadingPrefix,
   withThreads,
   type InlineThread,
   type ParsedDocument,
@@ -273,6 +274,9 @@ export function addThreadAtOffsets(
   ) {
     return { ok: false, error: "selection offsets out of range" };
   }
+
+  // Keep the open marker out of a heading's `#` prefix so the line stays a heading.
+  selStart = startPastHeadingPrefix(newBody, selStart, selEnd);
 
   const { parsed, prose: oldProse, anchorsInProse } = buildBridge(oldSource);
   const newId = mintThreadId(parsed.threads.map((t) => t.id));

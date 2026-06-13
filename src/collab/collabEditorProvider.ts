@@ -216,8 +216,26 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     let lastFrontmatter = frontmatterOf(document.getText());
 
     /** Replace the whole document with `next`. Guards against echo. */
-    const writeDocument = async (next: string): Promise<boolean> => {
-      if (document.getText() === next) return true;
+    const saveDocument = async (): Promise<void> => {
+      if (!document.isDirty) return;
+      try {
+        await document.save();
+      } catch (e) {
+        this.output.appendLine(`CollabEditor save failed: ${(e as Error).message}`);
+      }
+    };
+
+    // `opts.save` persists the file after writing. Comment ops (add / reply /
+    // resolve / delete) are review actions the user expects to stick, so they
+    // pass it; prose-edit reconciliation (which fires while typing) does not.
+    const writeDocument = async (
+      next: string,
+      opts?: { save?: boolean },
+    ): Promise<boolean> => {
+      if (document.getText() === next) {
+        if (opts?.save) await saveDocument();
+        return true;
+      }
       const edit = new vscode.WorkspaceEdit();
       const fullRange = new vscode.Range(
         document.positionAt(0),
@@ -231,6 +249,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         // op can adopt the editor's body), so a later doc-change echo isn't
         // mistaken for an external edit and doesn't revert the editor.
         if (ok) lastWebviewProse = proseOf(next);
+        if (ok && opts?.save) await saveDocument();
         return ok;
       } catch (e) {
         this.output.appendLine(`CollabEditor applyEdit failed: ${(e as Error).message}`);
@@ -372,7 +391,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
   private async addComment(
     document: vscode.TextDocument,
     msg: AddCommentMessage,
-    writeDocument: (next: string) => Promise<boolean>,
+    writeDocument: (next: string, opts?: { save?: boolean }) => Promise<boolean>,
   ): Promise<{ type: "add-comment-result"; ok: boolean; error?: string }> {
     if (!vscode.workspace.getWorkspaceFolder(document.uri)) {
       return { type: "add-comment-result", ok: false, error: "File is outside any workspace folder." };
@@ -413,7 +432,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       this.output.appendLine(`CollabEditor: addComment failed for ${document.uri.fsPath}: ${result.error}`);
       return { type: "add-comment-result", ok: false, error: result.error };
     }
-    const wrote = await writeDocument(result.source);
+    const wrote = await writeDocument(result.source, { save: true });
     if (!wrote) {
       return { type: "add-comment-result", ok: false, error: "Could not write the comment into the document." };
     }
@@ -426,7 +445,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
   private async replyComment(
     document: vscode.TextDocument,
     msg: ReplyCommentMessage,
-    writeDocument: (next: string) => Promise<boolean>,
+    writeDocument: (next: string, opts?: { save?: boolean }) => Promise<boolean>,
   ): Promise<{ type: "reply-comment-result"; ok: boolean; commentId: string; error?: string }> {
     const commentId = msg.commentId;
     if (!msg.body || !msg.body.trim()) {
@@ -440,7 +459,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     if (next === null) {
       return { type: "reply-comment-result", ok: false, commentId, error: "comment not found" };
     }
-    const wrote = await writeDocument(next);
+    const wrote = await writeDocument(next, { save: true });
     return wrote
       ? { type: "reply-comment-result", ok: true, commentId }
       : { type: "reply-comment-result", ok: false, commentId, error: "could not write reply" };
@@ -449,7 +468,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
   private async toggleResolve(
     document: vscode.TextDocument,
     msg: ToggleResolveCommentMessage,
-    writeDocument: (next: string) => Promise<boolean>,
+    writeDocument: (next: string, opts?: { save?: boolean }) => Promise<boolean>,
   ): Promise<{ type: "toggle-resolve-result"; ok: boolean; commentId: string; resolved?: boolean; error?: string }> {
     const commentId = msg.commentId;
     const current = commentsOf(document.getText()).find((c) => c.id === commentId);
@@ -466,7 +485,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     if (next === null) {
       return { type: "toggle-resolve-result", ok: false, commentId, error: "comment not found" };
     }
-    const wrote = await writeDocument(next);
+    const wrote = await writeDocument(next, { save: true });
     return wrote
       ? { type: "toggle-resolve-result", ok: true, commentId, resolved: nextResolved }
       : { type: "toggle-resolve-result", ok: false, commentId, error: "could not write resolve state" };
@@ -475,14 +494,14 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
   private async deleteComment(
     document: vscode.TextDocument,
     msg: DeleteCommentMessage,
-    writeDocument: (next: string) => Promise<boolean>,
+    writeDocument: (next: string, opts?: { save?: boolean }) => Promise<boolean>,
   ): Promise<{ type: "delete-comment-result"; ok: boolean; commentId: string; error?: string }> {
     const commentId = msg.commentId;
     const next = deleteThread(document.getText(), commentId);
     if (next === null) {
       return { type: "delete-comment-result", ok: false, commentId, error: "comment id not found" };
     }
-    const wrote = await writeDocument(next);
+    const wrote = await writeDocument(next, { save: true });
     return wrote
       ? { type: "delete-comment-result", ok: true, commentId }
       : { type: "delete-comment-result", ok: false, commentId, error: "could not write deletion" };
@@ -578,7 +597,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
           return;
         }
         const rel = path.relative(folder.uri.fsPath, document.uri.fsPath);
-        const prompt = `Use the markdown-collab skill to address the unresolved review comments on ${rel}.`;
+        const prompt = `Use the vs-markdown-collab skill to address the unresolved review comments on ${rel}.`;
         await vscode.env.clipboard.writeText(prompt);
         void vscode.window.showInformationMessage(
           "Prompt copied — paste into Claude Code.",
@@ -665,6 +684,9 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     const styleUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.extensionUri, "out", "webview", "client.css"),
     );
+    const sharedStyleUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, "out", "webview", "comments-shared.css"),
+    );
     const nonce = crypto.randomBytes(16).toString("base64");
     const csp = [
       `default-src 'none'`,
@@ -687,6 +709,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
+<link rel="stylesheet" href="${sharedStyleUri}">
 <link rel="stylesheet" href="${styleUri}">
 </head>
 <body>

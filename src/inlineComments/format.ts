@@ -411,6 +411,26 @@ export function mintThreadId(existing: Iterable<string>): string {
   throw new Error("Could not mint a unique thread id after 50 attempts");
 }
 
+/**
+ * If `start` lands on the leading `#`/whitespace prefix of an ATX heading
+ * line, return the offset of the first character after that prefix. An open
+ * anchor marker placed before the `#`s would push them off the line start so
+ * the line stops rendering as a heading; `## <!--mc:a-->Heading<!--mc:/a-->`
+ * keeps it a heading. No-op when the line isn't a heading or `start` is
+ * already past the prefix; never moves past `limit` (the selection end).
+ */
+export function startPastHeadingPrefix(text: string, start: number, limit: number): number {
+  let lineStart = start;
+  while (lineStart > 0 && text[lineStart - 1] !== "\n") lineStart--;
+  const lineEnd = text.indexOf("\n", lineStart);
+  const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
+  const m = /^[ \t]{0,3}#{1,6}[ \t]+/.exec(line);
+  if (!m) return start;
+  const contentStart = lineStart + m[0].length;
+  if (start >= contentStart) return start; // already past the prefix
+  return Math.min(contentStart, limit); // bump, but don't cross the selection end
+}
+
 /** Wrap `[selStart, selEnd)` in `source` with anchor markers and append a thread. */
 export function addThread(
   source: string,
@@ -419,6 +439,8 @@ export function addThread(
   comment: { author: string; body: string; ts?: string },
 ): { source: string; thread: InlineThread } {
   if (selEnd < selStart) throw new Error("selEnd must be >= selStart");
+  // Keep the open marker out of a heading's `#` prefix so the line stays a heading.
+  selStart = startPastHeadingPrefix(source, selStart, selEnd);
   const parsed = parse(source);
   const id = mintThreadId(parsed.threads.map((t) => t.id));
   // Strip any *other* thread's markers the selection happens to span — a quote

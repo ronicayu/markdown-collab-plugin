@@ -91,44 +91,19 @@ function threadToComment(t: InlineThread): Comment {
 }
 
 function buildPrompt(rel: string, threads: InlineThread[]): string {
-  const lines: string[] = [];
-  lines.push(
-    `Respond to the following review threads in ${rel}.`,
+  // Invoke the vs-markdown-collab skill — it is the source of truth for the
+  // inline format and the reply/resolve rules, so we don't re-document them
+  // here. A concise thread listing follows for context.
+  const n = threads.length;
+  const lines: string[] = [
+    `Use the vs-markdown-collab skill to address the ${n} unresolved review comment${n === 1 ? "" : "s"} on \`${rel}\`.`,
     "",
-    "These comments are stored INLINE in the markdown file itself, not in a sidecar.",
-    "Format:",
-    "  - Each anchored span is wrapped in paired HTML comments:",
-    "      <!--mc:a:ID-->anchored text<!--mc:/a:ID-->",
-    "  - Threads live in a block at the end of the file:",
-    "      <!--mc:threads:begin-->",
-    "      <!--mc:t {\"id\":\"ID\",\"quote\":\"...\",\"status\":\"open\",\"comments\":[...]}-->",
-    "      <!--mc:threads:end-->",
-    "",
-    "Do NOT mark threads resolved — the human reviewer decides when a",
-    "thread is resolved. Instead, REPLY to each thread by appending a new",
-    "comment to its `comments` array on the matching <!--mc:t ...--> line.",
-    "Each reply object looks like:",
-    '  {"id":"cN","parent":"<last-comment-id>","author":"claude","ts":"<ISO-8601>","body":"<your response>"}',
-    "where `id` is the next sequential `c<n>` for that thread, `parent`",
-    "points at the last live comment id in the thread (the one you are",
-    "replying to), and `ts` is the current UTC time in ISO-8601.",
-    "",
-    "Make the prose / code edits needed to address the reviewer's feedback,",
-    "then add your reply explaining what you changed (or why you didn't).",
-    "Keep `\"status\":\"open\"` — do not change it.",
-    "",
-    `Open threads (${threads.length}):`,
-    "",
-  );
+    "Open threads:",
+  ];
   for (const t of threads) {
-    lines.push(`— ID ${t.id} | anchored: ${JSON.stringify(t.quote)}`);
     const live = t.comments.filter((c) => !c.deleted);
-    for (const c of live) {
-      lines.push(`  [${c.author}${c.parent ? ` → ${c.parent}` : ""}] (id ${c.id}) ${oneLine(c.body)}`);
-    }
-    const lastId = live.length > 0 ? live[live.length - 1].id : "c1";
-    lines.push(`  → reply with: parent="${lastId}"`);
-    lines.push("");
+    const latest = live.length > 0 ? ` | latest: ${oneLine(live[live.length - 1].body)}` : "";
+    lines.push(`— ${t.id} | anchored: ${JSON.stringify(t.quote)}${latest}`);
   }
   return lines.join("\n");
 }

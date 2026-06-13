@@ -1,0 +1,133 @@
+/*
+ * Shared comment-panel design system.
+ *
+ * Loaded by the inline-comments, PR/MR review, and live-collab webviews so
+ * comment cards, composers, badges, and buttons look and behave the same in
+ * every view. Each webview links this file alongside its own (layout-only)
+ * stylesheet. Class names are namespaced `mc-` to avoid clashing with the
+ * views' existing selectors during migration.
+ */
+
+:root {
+  --mc-gap: 8px;
+  --mc-radius: 4px;
+  --mc-border: var(--vscode-panel-border, rgba(128, 128, 128, 0.3));
+  --mc-card-bg: var(--vscode-editorWidget-background, rgba(128, 128, 128, 0.08));
+  --mc-muted: var(--vscode-descriptionForeground, #888);
+  --mc-accent: var(--vscode-textLink-foreground, #3794ff);
+  --mc-danger: var(--vscode-errorForeground, #f48771);
+}
+
+/* --- buttons ------------------------------------------------------------- */
+.mc-btn {
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--mc-radius);
+  padding: 4px 12px;
+  border: 1px solid transparent;
+  line-height: 1.4;
+}
+.mc-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.mc-btn--primary {
+  background: var(--vscode-button-background, var(--mc-accent));
+  color: var(--vscode-button-foreground, #fff);
+  border: none;
+}
+.mc-btn--primary:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground, var(--mc-accent));
+}
+.mc-btn--ghost {
+  background: transparent;
+  border: 1px solid var(--mc-border);
+  color: var(--vscode-foreground);
+}
+.mc-btn--ghost:hover:not(:disabled) {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.12));
+}
+.mc-btn--link {
+  background: none;
+  border: none;
+  color: var(--mc-accent);
+  padding: 2px 6px;
+}
+.mc-btn--link:hover:not(:disabled) { text-decoration: underline; }
+.mc-btn--danger { color: var(--mc-danger); }
+
+/* --- comment card -------------------------------------------------------- */
+.mc-card {
+  background: var(--mc-card-bg);
+  border: 1px solid var(--mc-border);
+  border-radius: var(--mc-radius);
+  padding: 8px 10px;
+  margin-bottom: var(--mc-gap);
+}
+.mc-card--reply {
+  margin-left: 14px;
+  background: transparent;
+  border: none;
+  border-left: 2px solid var(--mc-border);
+  border-radius: 0;
+  padding: 4px 0 4px 10px;
+  margin-bottom: 4px;
+}
+.mc-card__meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--mc-muted);
+  margin-bottom: 4px;
+}
+.mc-card__author { font-weight: 600; color: var(--vscode-foreground); }
+.mc-card__time { color: var(--mc-muted); }
+.mc-card__body {
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+.mc-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+/* --- badges -------------------------------------------------------------- */
+.mc-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--mc-border);
+  color: var(--mc-muted);
+}
+.mc-badge--resolved {
+  background: color-mix(in srgb, var(--vscode-charts-green, #4caf50) 25%, transparent);
+  color: var(--vscode-foreground);
+}
+
+/* --- composer ------------------------------------------------------------ */
+.mc-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mc-composer__meta { font-size: 12px; color: var(--mc-muted); }
+.mc-composer textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  resize: vertical;
+  padding: 6px 8px;
+  border-radius: var(--mc-radius);
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, var(--mc-border));
+}
+.mc-composer__actions {
+  display: flex;
+  gap: var(--mc-gap);
+  align-items: center;
+}
+.mc-composer__status { font-size: 12px; color: var(--mc-muted); }
+.mc-composer__status--error { color: var(--mc-danger); }

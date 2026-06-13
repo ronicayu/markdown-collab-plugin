@@ -49,36 +49,34 @@ describe("inlineComments/sendToClaude - threadToComment", () => {
 });
 
 describe("inlineComments/sendToClaude - buildPrompt", () => {
-  it("includes file path, format reminder, and each open thread", () => {
+  it("invokes the vs-markdown-collab skill and lists each open thread", () => {
     const src = addThread("Hello world.", 6, 11, { author: "r", body: "fix?", ts: TS }).source;
     const prompt = _internal.buildPrompt("docs/foo.md", [parseFirst(src)]);
+    expect(prompt).toContain("vs-markdown-collab skill");
+    expect(prompt).toContain("1 unresolved review comment on");
     expect(prompt).toContain("docs/foo.md");
-    expect(prompt).toContain("<!--mc:a:ID-->");
-    expect(prompt).toContain("<!--mc:threads:begin-->");
-    expect(prompt).toContain("fix?");
-    expect(prompt).toContain("world");
+    expect(prompt).toContain("world"); // the anchored quote
+    expect(prompt).toContain("fix?"); // the latest comment body
   });
 
-  it("instructs the AI to reply, not resolve", () => {
+  it("delegates the format / reply rules to the skill rather than re-documenting them", () => {
     const src = addThread("Hello world.", 6, 11, { author: "r", body: "fix?", ts: TS }).source;
     const prompt = _internal.buildPrompt("docs/foo.md", [parseFirst(src)]);
-    expect(prompt.toLowerCase()).toContain("reply");
-    expect(prompt).toContain('Do NOT mark threads resolved');
-    // Must not tell the AI to change status to resolved.
+    expect(prompt).not.toContain("<!--mc:threads:begin-->");
     expect(prompt).not.toContain('"status":"resolved"');
   });
 
-  it("tells the AI which parent id to reply to (last live comment in each thread)", () => {
+  it("shows the latest comment body for a thread with replies", () => {
     let src = addThread("Hello world.", 6, 11, { author: "r", body: "fix?", ts: TS }).source;
     src = replaceThread(src, parseFirst(src).id, {
       ...parseFirst(src),
       comments: [
         ...parseFirst(src).comments,
-        { id: "c2", parent: "c1", author: "a", ts: TS, body: "I disagree" },
+        { id: "c2", parent: "c1", author: "a", ts: TS, body: "still broken" },
       ],
     });
     const prompt = _internal.buildPrompt("docs/foo.md", [parseFirst(src)]);
-    expect(prompt).toContain('parent="c2"');
+    expect(prompt).toContain("latest: still broken");
   });
 });
 

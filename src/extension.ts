@@ -393,7 +393,7 @@ async function invokeCopyClaudePrompt(): Promise<void> {
     return;
   }
   const rel = path.relative(folder.uri.fsPath, doc.uri.fsPath);
-  const prompt = `Use the markdown-collab skill to address the unresolved review comments on ${rel}.`;
+  const prompt = `Use the vs-markdown-collab skill to address the unresolved review comments on ${rel}.`;
   await vscode.env.clipboard.writeText(prompt);
   void vscode.window.showInformationMessage(
     "Prompt copied — paste into Claude Code.",

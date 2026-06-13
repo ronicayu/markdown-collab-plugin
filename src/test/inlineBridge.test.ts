@@ -180,6 +180,19 @@ describe("addThreadAtOffsets (exact placement, no text search)", () => {
     expect(proseOf(res.source)).toBe(DOC);
   });
 
+  it("places the open marker after the heading hashes (keeps the line a heading)", () => {
+    const body = "## Section Title\n\nSome body text.";
+    // Select from line start (before the `##`) through the heading text.
+    const res = addThreadAtOffsets(body, body, 0, "## Section Title".length, {
+      author: "ron",
+      body: "c",
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const id = parse(res.source).threads[0]!.id;
+    expect(res.source).toContain(`## <!--mc:a:${id}-->Section Title<!--mc:/a:${id}-->`);
+  });
+
   it("succeeds even when the stored doc has drifted from the editor body", () => {
     // Existing comment in the stored doc; the editor's body is a reformatted
     // version (heading changed) the stored prose never had verbatim.

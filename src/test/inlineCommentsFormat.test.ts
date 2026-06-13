@@ -5,6 +5,7 @@ import {
   parse,
   renderThreadsRegion,
   replaceThread,
+  startPastHeadingPrefix,
   stripAllInlineMarkup,
   stripAnchorMarkers,
   withThreads,
@@ -237,5 +238,53 @@ describe("inlineComments/format - round-trip", () => {
     expect(renderThreadsRegion([])).toBe("");
     const md = "body\n\n<!--mc:threads:begin-->\n<!--mc:threads:end-->\n";
     expect(withThreads(md, []).includes("mc:threads")).toBe(false);
+  });
+});
+
+describe("startPastHeadingPrefix", () => {
+  it("bumps a start on the `#` prefix to just after `## `", () => {
+    expect(startPastHeadingPrefix("## Heading 2", 0, 12)).toBe(3);
+  });
+
+  it("is a no-op when start is already past the prefix", () => {
+    expect(startPastHeadingPrefix("## Heading 2", 3, 12)).toBe(3);
+    expect(startPastHeadingPrefix("## Heading 2", 7, 12)).toBe(7);
+  });
+
+  it("handles all heading depths and up to 3 leading spaces", () => {
+    expect(startPastHeadingPrefix("###### Deep", 0, 11)).toBe(7);
+    expect(startPastHeadingPrefix("   ## Indented", 0, 14)).toBe(6);
+  });
+
+  it("is a no-op on non-heading lines", () => {
+    expect(startPastHeadingPrefix("plain text", 0, 5)).toBe(0);
+    expect(startPastHeadingPrefix("    ## indented 4 = code block", 0, 10)).toBe(0);
+    expect(startPastHeadingPrefix("#nospace", 0, 5)).toBe(0);
+  });
+
+  it("operates on the start's own line in a multi-line doc", () => {
+    const md = "intro\n\n## Section\n\nbody";
+    const lineStart = md.indexOf("## Section");
+    expect(startPastHeadingPrefix(md, lineStart, lineStart + 10)).toBe(lineStart + 3);
+  });
+
+  it("never moves past the selection end", () => {
+    // Selection covers only the prefix — bumping would invert, so clamp to limit.
+    expect(startPastHeadingPrefix("## Heading", 0, 2)).toBe(2);
+  });
+});
+
+describe("addThread — heading anchors", () => {
+  it("places the open marker after the heading hashes, keeping the line a heading", () => {
+    const md = "## Heading 2\n\nbody";
+    const { source, thread } = addThread(md, 0, 12, { author: "ron", body: "fix", ts: TS });
+    expect(source).toContain(`## <!--mc:a:${thread.id}-->Heading 2<!--mc:/a:${thread.id}-->`);
+    // The quote is the heading text without the `## ` prefix or markers.
+    expect(thread.quote).toBe("Heading 2");
+    // It still parses as one open thread anchored on the heading text.
+    const parsed = parse(source);
+    expect(parsed.threads).toHaveLength(1);
+    const a = parsed.anchors.get(thread.id)!;
+    expect(source.slice(a.openEnd, a.closeStart)).toBe("Heading 2");
   });
 });

@@ -16,6 +16,8 @@
 
 import MarkdownIt from "markdown-it";
 import { installSourceOffsetPlugin } from "../../inlineComments/webview/renderWithOffsets";
+import { slugifyHeading } from "../../inlineComments/linkParse";
+import { buildComposer, buildCommentCard, type ComposerHandle } from "../../webviewShared/commentUi";
 import { installPlantumlPlugin } from "../../plantumlPlugin";
 
 interface VsCodeApi {
@@ -329,6 +331,38 @@ document.addEventListener("selectionchange", () => positionFloatingButton());
 dom.preview.addEventListener("scroll", () => positionFloatingButton());
 window.addEventListener("resize", () => positionFloatingButton());
 
+// In-doc fragment links (e.g. `[Setup](#setup)`) scroll the preview to the
+// matching heading. Non-fragment links keep their default behavior.
+dom.preview.addEventListener("click", (e) => {
+  const anchor = e.target instanceof Element ? e.target.closest("a") : null;
+  const href = anchor?.getAttribute("href");
+  if (!href || !href.startsWith("#")) return;
+  e.preventDefault();
+  scrollPreviewToFragment(href.slice(1));
+});
+
+/** Scroll the preview to a heading matching `fragment` (by id, else by slug). */
+function scrollPreviewToFragment(fragment: string): void {
+  if (!fragment) return;
+  let decoded = fragment;
+  try {
+    decoded = decodeURIComponent(fragment);
+  } catch {
+    /* malformed escape — match the raw form */
+  }
+  const byId = dom.preview.querySelector<HTMLElement>(`[id="${CSS.escape(decoded)}"]`);
+  if (byId) {
+    byId.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+  for (const h of dom.preview.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6")) {
+    if (slugifyHeading(h.textContent || "") === decoded) {
+      h.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+  }
+}
+
 function positionFloatingButton(): void {
   const sel = document.getSelection();
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
@@ -415,39 +449,25 @@ function openComposer(sel: PendingSelection): void {
   editingDraftId = null;
   dom.composer.hidden = false;
   dom.composer.innerHTML = "";
-  const meta = document.createElement("div");
-  meta.className = "composer-meta";
-  meta.textContent = sel.startLine === sel.endLine
-    ? `Comment on line ${sel.startLine}`
-    : `Comment on lines ${sel.startLine}–${sel.endLine}`;
-  const ta = document.createElement("textarea");
-  ta.placeholder = "Your review comment (markdown supported by GitHub / GitLab)";
-  ta.rows = 4;
-  const row = document.createElement("div");
-  row.className = "composer-actions";
-  const save = document.createElement("button");
-  save.textContent = "Add draft";
-  save.disabled = true;
-  ta.addEventListener("input", () => { save.disabled = ta.value.trim().length === 0; });
-  save.addEventListener("click", () => {
-    const body = ta.value.trim();
-    if (!body) return;
-    vscode.postMessage({ type: "add-draft", startLine: sel.startLine, endLine: sel.endLine, body });
-    dom.composer.hidden = true;
-    dom.floating.hidden = true;
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    pendingSelection = null;
+  const composer = buildComposer({
+    meta: sel.startLine === sel.endLine
+      ? `Comment on line ${sel.startLine}`
+      : `Comment on lines ${sel.startLine}–${sel.endLine}`,
+    placeholder: "Your review comment (markdown supported by GitHub / GitLab)",
+    submitLabel: "Add draft",
+    rows: 4,
+    onSubmit: (body) => {
+      vscode.postMessage({ type: "add-draft", startLine: sel.startLine, endLine: sel.endLine, body });
+      dom.composer.hidden = true;
+      dom.floating.hidden = true;
+      window.getSelection()?.removeAllRanges();
+      pendingSelection = null;
+    },
+    onCancel: () => {
+      dom.composer.hidden = true;
+    },
   });
-  const cancel = document.createElement("button");
-  cancel.className = "btn-ghost";
-  cancel.textContent = "Cancel";
-  cancel.addEventListener("click", () => {
-    dom.composer.hidden = true;
-  });
-  row.append(save, cancel);
-  dom.composer.append(meta, ta, row);
-  requestAnimationFrame(() => ta.focus());
+  dom.composer.appendChild(composer.el);
 }
 
 // --- drafts sidebar -------------------------------------------------------
@@ -470,81 +490,49 @@ function renderDrafts(): void {
 }
 
 function renderDraftCard(d: PrDraft): HTMLElement {
-  const card = document.createElement("section");
-  card.className = "draft-card";
-
-  const head = document.createElement("header");
-  head.className = "draft-head";
-  const lineLabel = document.createElement("button");
-  lineLabel.className = "draft-line btn-link";
-  lineLabel.textContent = d.startLine && d.startLine !== d.line
+  const lineLabel = d.startLine && d.startLine !== d.line
     ? `Lines ${d.startLine}–${d.line}`
     : `Line ${d.line}`;
-  lineLabel.title = "Jump to this line in the preview";
-  lineLabel.addEventListener("click", () => scrollPreviewToLine(d.startLine ?? d.line));
-  head.appendChild(lineLabel);
-  card.appendChild(head);
 
   if (editingDraftId === d.id) {
-    const ta = document.createElement("textarea");
-    ta.value = d.body;
-    ta.rows = Math.max(2, Math.min(8, d.body.split("\n").length));
-    card.appendChild(ta);
-    const row = document.createElement("div");
-    row.className = "composer-actions";
-    const save = document.createElement("button");
-    save.textContent = "Save";
-    save.addEventListener("click", () => {
-      const body = ta.value.trim();
-      if (!body) return;
-      vscode.postMessage({ type: "edit-draft", id: d.id, body });
-      editingDraftId = null;
+    const composer = buildComposer({
+      meta: lineLabel,
+      initialValue: d.body,
+      submitLabel: "Save",
+      rows: Math.max(2, Math.min(8, d.body.split("\n").length)),
+      onSubmit: (body) => {
+        vscode.postMessage({ type: "edit-draft", id: d.id, body });
+        editingDraftId = null;
+      },
+      onCancel: () => {
+        editingDraftId = null;
+        renderDrafts();
+      },
     });
-    const cancel = document.createElement("button");
-    cancel.className = "btn-ghost";
-    cancel.textContent = "Cancel";
-    cancel.addEventListener("click", () => {
-      editingDraftId = null;
-      renderDrafts();
-    });
-    row.append(save, cancel);
-    card.appendChild(row);
-    requestAnimationFrame(() => ta.focus());
-    return card;
+    return buildCommentCard({ author: "Your draft", bodyEl: composer.el });
   }
 
-  const body = document.createElement("div");
-  body.className = "draft-body";
-  body.textContent = d.body;
-  card.appendChild(body);
-
-  const tools = document.createElement("div");
-  tools.className = "draft-tools";
-  const editBtn = document.createElement("button");
-  editBtn.className = "btn-link";
-  editBtn.textContent = "Edit";
-  editBtn.addEventListener("click", () => {
-    editingDraftId = d.id;
-    renderDrafts();
+  const bodyEl = document.createElement("div");
+  bodyEl.textContent = d.body;
+  return buildCommentCard({
+    author: "Your draft",
+    bodyEl,
+    actions: [
+      {
+        label: lineLabel,
+        title: "Jump to this line in the preview",
+        onClick: () => scrollPreviewToLine(d.startLine ?? d.line),
+      },
+      { label: "Edit", onClick: () => { editingDraftId = d.id; renderDrafts(); } },
+      { label: "Delete", variant: "danger", onClick: () => vscode.postMessage({ type: "delete-draft", id: d.id }) },
+    ],
   });
-  const delBtn = document.createElement("button");
-  delBtn.className = "btn-link danger";
-  delBtn.textContent = "Delete";
-  delBtn.addEventListener("click", () => {
-    vscode.postMessage({ type: "delete-draft", id: d.id });
-  });
-  tools.append(editBtn, delBtn);
-  card.appendChild(tools);
-  return card;
 }
 
 // --- existing comments (read-only) ----------------------------------------
 
 /** Open reply composers, keyed by threadId, so a reply-error can re-enable them. */
-const pendingReplies = new Map<
-  string,
-  { ta: HTMLTextAreaElement; send: HTMLButtonElement; cancel: HTMLButtonElement; status: HTMLElement }
->();
+const pendingReplies = new Map<string, ComposerHandle>();
 
 function renderExisting(): void {
   // A fresh render replaces every thread card, so any in-flight composer DOM
@@ -623,7 +611,7 @@ function renderReplyArea(threadId: string): HTMLElement {
   const showButton = (): void => {
     wrap.innerHTML = "";
     const openBtn = document.createElement("button");
-    openBtn.className = "btn-link";
+    openBtn.className = "mc-btn mc-btn--link";
     openBtn.textContent = "Reply";
     openBtn.addEventListener("click", showComposer);
     wrap.appendChild(openBtn);
@@ -631,38 +619,21 @@ function renderReplyArea(threadId: string): HTMLElement {
 
   const showComposer = (): void => {
     wrap.innerHTML = "";
-    const ta = document.createElement("textarea");
-    ta.placeholder = "Reply… (markdown supported by GitHub / GitLab)";
-    ta.rows = 3;
-    const row = document.createElement("div");
-    row.className = "composer-actions";
-    const send = document.createElement("button");
-    send.textContent = "Reply";
-    send.disabled = true;
-    const cancel = document.createElement("button");
-    cancel.className = "btn-ghost";
-    cancel.textContent = "Cancel";
-    const status = document.createElement("span");
-    status.className = "reply-status";
-    ta.addEventListener("input", () => { send.disabled = ta.value.trim().length === 0; });
-    send.addEventListener("click", () => {
-      const body = ta.value.trim();
-      if (!body) return;
-      send.disabled = true;
-      cancel.disabled = true;
-      ta.disabled = true;
-      status.classList.remove("error");
-      status.textContent = "Posting…";
-      pendingReplies.set(threadId, { ta, send, cancel, status });
-      vscode.postMessage({ type: "reply", threadId, body });
+    const composer = buildComposer({
+      placeholder: "Reply… (markdown supported by GitHub / GitLab)",
+      submitLabel: "Reply",
+      rows: 3,
+      onSubmit: (body) => {
+        composer.setBusy("Posting…");
+        pendingReplies.set(threadId, composer);
+        vscode.postMessage({ type: "reply", threadId, body });
+      },
+      onCancel: () => {
+        pendingReplies.delete(threadId);
+        showButton();
+      },
     });
-    cancel.addEventListener("click", () => {
-      pendingReplies.delete(threadId);
-      showButton();
-    });
-    row.append(send, cancel, status);
-    wrap.append(ta, row);
-    requestAnimationFrame(() => ta.focus());
+    wrap.appendChild(composer.el);
   };
 
   showButton();
@@ -671,59 +642,22 @@ function renderReplyArea(threadId: string): HTMLElement {
 
 /** A reply POST failed — re-enable the composer and show the error inline. */
 function failPendingReply(threadId: string, error: string): void {
-  const p = pendingReplies.get(threadId);
-  if (!p) return;
-  p.ta.disabled = false;
-  p.send.disabled = p.ta.value.trim().length === 0;
-  p.cancel.disabled = false;
-  p.status.textContent = error;
-  p.status.classList.add("error");
+  pendingReplies.get(threadId)?.setError(error);
 }
 
 function renderExistingComment(c: ExistingPrComment, isHead: boolean): HTMLElement {
-  const el = document.createElement("article");
-  el.className = "existing-comment";
-  if (!isHead) el.classList.add("reply");
-
-  const meta = document.createElement("header");
-  meta.className = "existing-meta";
-  const author = document.createElement("strong");
-  author.textContent = c.author;
-  const ts = document.createElement("time");
-  ts.textContent = " · " + formatTs(c.createdAt);
-  const linkOut = document.createElement("a");
-  linkOut.href = c.url;
-  linkOut.className = "btn-link existing-link";
-  linkOut.textContent = "↗";
-  linkOut.title = "Open this comment on the platform";
-  linkOut.addEventListener("click", (e) => {
-    e.preventDefault();
-    // Open via the same path the markdown links use — handled in pr review
-    // we don't have an open-link handler yet, so just rely on the anchor
-    // navigation the webview will perform when href is a real URL. VS Code's
-    // webview will hand http(s) to openExternal automatically.
-    window.open(c.url, "_blank");
+  return buildCommentCard({
+    author: c.author,
+    timestamp: c.createdAt,
+    body: c.body,
+    reply: !isHead,
+    actions: [
+      {
+        label: "↗ Open",
+        title: "Open this comment on the platform",
+        onClick: () => window.open(c.url, "_blank"),
+      },
+    ],
   });
-  meta.append(author, ts, linkOut);
-  el.appendChild(meta);
-
-  const body = document.createElement("div");
-  body.className = "existing-body";
-  body.textContent = c.body;
-  el.appendChild(body);
-  return el;
 }
 
-function formatTs(ts: string): string {
-  const t = new Date(ts);
-  if (isNaN(t.getTime())) return ts;
-  const diff = Date.now() - t.getTime();
-  const min = Math.round(diff / 60_000);
-  if (min < 1) return "just now";
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.round(hr / 24);
-  if (day < 7) return `${day}d ago`;
-  return t.toLocaleDateString();
-}

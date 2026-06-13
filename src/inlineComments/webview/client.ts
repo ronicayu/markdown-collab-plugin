@@ -9,6 +9,7 @@
 import MarkdownIt from "markdown-it";
 import { isClaudeReviewed, isClaudeUnread } from "../claudeUnread";
 import { slugifyHeading } from "../linkParse";
+import { buildComposer, buildCommentCard, type CardAction } from "../../webviewShared/commentUi";
 import { installSourceOffsetPlugin } from "./renderWithOffsets";
 import { installPlantumlPlugin } from "../../plantumlPlugin";
 
@@ -971,40 +972,32 @@ function renderThreadCard(t: ThreadState): HTMLElement {
   replyBox.className = "reply-box";
   replyBox.addEventListener("click", (e) => e.stopPropagation());
   replyBox.addEventListener("mousedown", (e) => e.stopPropagation());
-  const replyTa = document.createElement("textarea");
-  replyTa.placeholder = "Reply…";
-  replyTa.rows = 1;
-  // Restore in-progress text captured before the most recent re-render.
-  const restoredText = pendingReplyText.get(t.id) ?? "";
-  if (restoredText) {
-    replyTa.value = restoredText;
-    requestAnimationFrame(() => autoresize(replyTa));
-  }
-  replyTa.addEventListener("input", () => {
-    autoresize(replyTa);
-    replyBtn.disabled = replyTa.value.trim().length === 0;
-    if (replyTa.value.length === 0) pendingReplyText.delete(t.id);
-    else pendingReplyText.set(t.id, replyTa.value);
+  const composer = buildComposer({
+    placeholder: "Reply…",
+    submitLabel: "Reply",
+    rows: 2,
+    // Restore in-progress text captured before the most recent re-render.
+    initialValue: pendingReplyText.get(t.id) ?? "",
+    // Always-on reply box — don't grab focus on every thread re-render.
+    autofocus: false,
+    onSubmit: (body) => {
+      vscode.postMessage({ type: "reply", threadId: t.id, body });
+      composer.textarea.value = "";
+      pendingReplyText.delete(t.id);
+    },
   });
-  replyBox.appendChild(replyTa);
-  const replyBtn = document.createElement("button");
-  replyBtn.textContent = "Reply";
-  replyBtn.disabled = restoredText.trim().length === 0;
-  replyBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const body = replyTa.value.trim();
-    if (!body) return;
-    vscode.postMessage({ type: "reply", threadId: t.id, body });
-    replyTa.value = "";
-    replyBtn.disabled = true;
-    pendingReplyText.delete(t.id);
+  // Persist what's typed so a re-render (e.g. highlight refresh) doesn't lose it.
+  composer.textarea.addEventListener("input", () => {
+    const v = composer.textarea.value;
+    if (v.length === 0) pendingReplyText.delete(t.id);
+    else pendingReplyText.set(t.id, v);
   });
-  replyBox.appendChild(replyBtn);
+  replyBox.appendChild(composer.el);
   card.appendChild(replyBox);
   if (focusedReplyThreadId === t.id) {
     requestAnimationFrame(() => {
-      replyTa.focus();
-      replyTa.selectionStart = replyTa.selectionEnd = replyTa.value.length;
+      composer.textarea.focus();
+      composer.textarea.selectionStart = composer.textarea.selectionEnd = composer.textarea.value.length;
     });
     focusedReplyThreadId = null;
   }
@@ -1013,123 +1006,92 @@ function renderThreadCard(t: ThreadState): HTMLElement {
 }
 
 function renderComment(thread: ThreadState, c: InlineComment): HTMLElement {
-  const el = document.createElement("article");
-  el.className = "comment";
-  if (c.deleted) el.classList.add("tombstone");
-  if (c.parent) el.classList.add("reply");
-
-  const meta = document.createElement("header");
-  meta.className = "comment-meta";
-  const author = document.createElement("strong");
-  author.textContent = c.author;
-  const ts = document.createElement("time");
-  ts.textContent = " · " + formatTs(c.ts) + (c.editedTs ? " · edited" : "");
-  meta.append(author, ts);
-  el.appendChild(meta);
-
   if (c.deleted) {
-    const body = document.createElement("p");
-    body.className = "comment-body deleted";
-    body.textContent = "(comment deleted)";
-    el.appendChild(body);
-    return el;
+    const card = buildCommentCard({
+      author: c.author,
+      timestamp: c.ts,
+      body: "(comment deleted)",
+      reply: !!c.parent,
+    });
+    card.classList.add("tombstone");
+    return card;
   }
 
   const editingKey = `${thread.id}:${c.id}`;
   if (editingCommentId === editingKey) {
-    const ta = document.createElement("textarea");
-    ta.value = c.body;
-    ta.rows = Math.max(2, Math.min(8, c.body.split("\n").length));
-    el.appendChild(ta);
-    const row = document.createElement("div");
-    row.className = "edit-actions";
-    const save = document.createElement("button");
-    save.textContent = "Save";
-    save.addEventListener("click", (e) => {
-      e.stopPropagation();
-      vscode.postMessage({ type: "edit-comment", threadId: thread.id, commentId: c.id, body: ta.value });
-      editingCommentId = null;
+    const composer = buildComposer({
+      initialValue: c.body,
+      submitLabel: "Save",
+      rows: Math.max(2, Math.min(8, c.body.split("\n").length)),
+      onSubmit: (body) => {
+        vscode.postMessage({ type: "edit-comment", threadId: thread.id, commentId: c.id, body });
+        editingCommentId = null;
+      },
+      onCancel: () => {
+        editingCommentId = null;
+        renderThreads(currentState!);
+      },
     });
-    const cancel = document.createElement("button");
-    cancel.className = "btn-ghost";
-    cancel.textContent = "Cancel";
-    cancel.addEventListener("click", (e) => {
-      e.stopPropagation();
-      editingCommentId = null;
-      renderThreads(currentState!);
+    return buildCommentCard({
+      author: c.author,
+      timestamp: c.ts,
+      note: c.editedTs ? "edited" : undefined,
+      bodyEl: composer.el,
+      reply: !!c.parent,
     });
-    row.append(save, cancel);
-    el.appendChild(row);
-    return el;
   }
 
-  const body = document.createElement("div");
-  body.className = "comment-body";
-  body.innerHTML = md.renderInline(c.body);
-  el.appendChild(body);
+  const bodyEl = document.createElement("div");
+  bodyEl.innerHTML = md.renderInline(c.body);
 
-  const tools = document.createElement("div");
-  tools.className = "comment-tools";
-  const editBtn = document.createElement("button");
-  editBtn.className = "btn-link";
-  editBtn.textContent = "Edit";
-  editBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    editingCommentId = editingKey;
-    renderThreads(currentState!);
-  });
-  const cmtKey = `${thread.id}:${c.id}`;
+  const cmtKey = editingKey;
   const cmtArmed = pendingDeleteComment.has(cmtKey);
-  const delBtn = document.createElement("button");
-  delBtn.className = "btn-link danger";
-  delBtn.textContent = cmtArmed ? "Confirm" : "Delete";
-  delBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (pendingDeleteComment.has(cmtKey)) {
-      pendingDeleteComment.delete(cmtKey);
-      vscode.postMessage({ type: "delete-comment", threadId: thread.id, commentId: c.id });
-    } else {
-      pendingDeleteComment.add(cmtKey);
-      setTimeout(() => {
-        if (pendingDeleteComment.delete(cmtKey) && currentState) renderThreads(currentState);
-      }, 4000);
-      renderThreads(currentState!);
-    }
-  });
-  tools.append(editBtn, delBtn);
+  const actions: CardAction[] = [
+    {
+      label: "Edit",
+      onClick: () => {
+        editingCommentId = editingKey;
+        renderThreads(currentState!);
+      },
+    },
+    {
+      label: cmtArmed ? "Confirm" : "Delete",
+      variant: "danger",
+      onClick: () => {
+        if (pendingDeleteComment.has(cmtKey)) {
+          pendingDeleteComment.delete(cmtKey);
+          vscode.postMessage({ type: "delete-comment", threadId: thread.id, commentId: c.id });
+        } else {
+          pendingDeleteComment.add(cmtKey);
+          setTimeout(() => {
+            if (pendingDeleteComment.delete(cmtKey) && currentState) renderThreads(currentState);
+          }, 4000);
+          renderThreads(currentState!);
+        }
+      },
+    },
+  ];
   if (cmtArmed) {
-    const cancel = document.createElement("button");
-    cancel.className = "btn-link";
-    cancel.textContent = "Cancel";
-    cancel.addEventListener("click", (e) => {
-      e.stopPropagation();
-      pendingDeleteComment.delete(cmtKey);
-      renderThreads(currentState!);
+    actions.push({
+      label: "Cancel",
+      onClick: () => {
+        pendingDeleteComment.delete(cmtKey);
+        renderThreads(currentState!);
+      },
     });
-    tools.append(cancel);
   }
-  el.appendChild(tools);
-  return el;
+
+  return buildCommentCard({
+    author: c.author,
+    timestamp: c.ts,
+    note: c.editedTs ? "edited" : undefined,
+    bodyEl,
+    reply: !!c.parent,
+    actions,
+  });
 }
 
-function formatTs(ts: string): string {
-  const t = new Date(ts);
-  if (isNaN(t.getTime())) return ts;
-  const diff = Date.now() - t.getTime();
-  const min = Math.round(diff / 60_000);
-  if (min < 1) return "just now";
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.round(hr / 24);
-  if (day < 7) return `${day}d ago`;
-  return t.toLocaleDateString();
-}
 
-function autoresize(ta: HTMLTextAreaElement): void {
-  ta.style.height = "auto";
-  ta.style.height = Math.min(ta.scrollHeight, 240) + "px";
-}
 
 function scrollSidebarTo(id: string): void {
   const el = dom.threadsList.querySelector<HTMLElement>(`[data-thread="${id}"]`);
@@ -1346,51 +1308,28 @@ dom.floating.addEventListener("click", () => {
 function openComposer(sel: { proseStart: number; proseEnd: number }): void {
   dom.composer.hidden = false;
   dom.composer.innerHTML = "";
-  const header = document.createElement("div");
-  header.className = "composer-header";
-  header.textContent = "New comment";
-  const ta = document.createElement("textarea");
-  ta.placeholder = "Leave a comment… (Cmd/Ctrl+Enter to submit)";
-  ta.rows = 4;
-  setTimeout(() => ta.focus(), 0);
-  const actions = document.createElement("div");
-  actions.className = "composer-actions";
-  const submit = document.createElement("button");
-  submit.textContent = "Comment";
-  submit.disabled = true;
-  ta.addEventListener("input", () => {
-    submit.disabled = ta.value.trim().length === 0;
-    autoresize(ta);
+  const composer = buildComposer({
+    meta: "New comment",
+    placeholder: "Leave a comment… (Cmd/Ctrl+Enter to submit)",
+    submitLabel: "Comment",
+    rows: 4,
+    onSubmit: (body) => {
+      vscode.postMessage({
+        type: "add-comment",
+        selStart: sel.proseStart,
+        selEnd: sel.proseEnd,
+        body,
+      });
+      dom.composer.hidden = true;
+      pendingSelection = null;
+      dom.floating.hidden = true;
+      window.getSelection()?.removeAllRanges();
+    },
+    onCancel: () => {
+      dom.composer.hidden = true;
+    },
   });
-  ta.addEventListener("keydown", (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !submit.disabled) {
-      submit.click();
-    } else if (e.key === "Escape") {
-      cancel.click();
-    }
-  });
-  submit.addEventListener("click", () => {
-    const body = ta.value.trim();
-    if (!body) return;
-    vscode.postMessage({
-      type: "add-comment",
-      selStart: sel.proseStart,
-      selEnd: sel.proseEnd,
-      body,
-    });
-    dom.composer.hidden = true;
-    pendingSelection = null;
-    dom.floating.hidden = true;
-    window.getSelection()?.removeAllRanges();
-  });
-  const cancel = document.createElement("button");
-  cancel.className = "btn-ghost";
-  cancel.textContent = "Cancel";
-  cancel.addEventListener("click", () => {
-    dom.composer.hidden = true;
-  });
-  actions.append(submit, cancel);
-  dom.composer.append(header, ta, actions);
+  dom.composer.appendChild(composer.el);
 }
 
 document.addEventListener("selectionchange", () => positionFloatingButton());

@@ -295,6 +295,9 @@ export class PrReviewPanel {
     const styleUri = this.panel.webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, "out", "pr", "webview", "client.css"),
     );
+    const sharedStyleUri = this.panel.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, "out", "pr", "webview", "comments-shared.css"),
+    );
     const mermaidUri = this.panel.webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, "node_modules", "mermaid", "dist", "mermaid.min.js"),
     );
@@ -310,6 +313,7 @@ export class PrReviewPanel {
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
+<link rel="stylesheet" href="${sharedStyleUri}">
 <link rel="stylesheet" href="${styleUri}">
 <title>PR review</title>
 </head>

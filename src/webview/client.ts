@@ -41,6 +41,7 @@ import * as Y from "yjs";
 import { locateAnchorInLiveText } from "../collab/liveAnchorLocator";
 import { renderedRangeToPmRange } from "../collab/pmPositionMapper";
 import { formatRelativeTime } from "../collab/relativeTime";
+import { slugifyHeading } from "../inlineComments/linkParse";
 
 declare function acquireVsCodeApi(): {
   postMessage: (msg: unknown) => void;
@@ -1595,8 +1596,39 @@ document.addEventListener("click", (e) => {
   if (!href) return;
   e.preventDefault();
   e.stopPropagation();
+  // In-doc fragment links scroll the editor to the heading; everything else
+  // is routed to the host for opening.
+  if (href.startsWith("#")) {
+    scrollEditorToFragment(href.slice(1));
+    return;
+  }
   vscode.postMessage({ type: "open-link", href });
 });
+
+/** Scroll the editor to a heading matching `fragment` (by id, else by slug). */
+function scrollEditorToFragment(fragment: string): void {
+  if (!fragment || !editor) return;
+  let decoded = fragment;
+  try {
+    decoded = decodeURIComponent(fragment);
+  } catch {
+    /* malformed escape — match the raw form */
+  }
+  editor.action((ctx) => {
+    const root = ctx.get(editorViewCtx).dom as HTMLElement;
+    const byId = root.querySelector<HTMLElement>(`[id="${cssEscape(decoded)}"]`);
+    if (byId) {
+      byId.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    for (const h of Array.from(root.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6"))) {
+      if (slugifyHeading(h.textContent || "") === decoded) {
+        h.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+    }
+  });
+}
 
 window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
   const msg = e.data;
