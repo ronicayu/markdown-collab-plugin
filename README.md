@@ -3,11 +3,15 @@
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/markdown-collab.markdown-collab-plugin?label=VS%20Code%20Marketplace&color=4F46E5)](https://marketplace.visualstudio.com/items?itemName=markdown-collab.markdown-collab-plugin)
 [![Open VSX](https://img.shields.io/open-vsx/v/markdown-collab/markdown-collab-plugin?label=Open%20VSX&color=4F46E5)](https://open-vsx.org/extension/markdown-collab/markdown-collab-plugin)
 
-A VS Code extension that lets you leave review comments on Markdown files in a format Claude Code (and other agentic AIs) can read and act on.
+A VS Code extension for reviewing Markdown *with* Claude Code (and other agentic AIs). Comments are anchored to the text and stored **inline in the `.md` file itself**, so review state travels with the document — no sidecar to commit.
 
-Highlight a passage, drop a review comment in the sidebar, click **Send to Claude** — Claude reads the comment, edits the doc, and replies. Loop until you mark the thread resolved.
+**Three ways to use it:**
 
-You can also flip the direction and ask Claude to act as the reviewer (v0.29+): right-click a `.md` file → **Markdown Collab: Ask Claude to Review This Doc**, optionally tell Claude what to focus on, and Claude opens one inline-comment thread per substantive concern for you to triage in the sidebar.
+- **Inline comments** — highlight a passage in the rendered preview, drop a review comment, click **Send to Claude**. Claude reads the comment, edits the doc, and replies. Loop until you resolve the thread.
+- **Live editor** — a WYSIWYG Markdown editor where you and Claude co-edit the same file: you type, Claude edits the file on disk, and each side's changes show up live. Comment, reply, resolve, and send threads to Claude without leaving the editor.
+- **PR / MR review** — review the Markdown files changed in a GitHub Pull Request or GitLab Merge Request, comment on the diff, reply to existing comments, and post back to the platform.
+
+You can also flip the direction and **ask Claude to be the reviewer**: right-click a `.md` file → **Markdown Collab: Ask Claude to Review This Doc**, optionally tell Claude what to focus on, and Claude opens one inline-comment thread per substantive concern for you to triage in the sidebar.
 
 ## Quick start
 
@@ -63,6 +67,30 @@ Files larger than 50 KB prompt a soft confirm before sending (Claude's review ca
 Comments are anchored to a text selection, not a line number. When Claude rewrites a passage that has a comment, the skill instructs it to update the anchor text to match — so comments survive revisions.
 
 If a rewrite removes the anchored passage entirely, the thread's markers go with it and the thread surfaces as **unanchored** in the Inline Comments view — re-anchor it by selecting fresh text and leaving the note again.
+
+### The live editor (WYSIWYG + AI co-editing)
+
+Prefer editing rendered Markdown directly? Right-click a `.md` file → **Markdown Collab: Open Live Editor** (or **Reopen with → Markdown Collab (live editor)**). It's a WYSIWYG editor with the same comment panel alongside it.
+
+It's built for **one human + Claude on the same machine** — not multi-user network sync:
+
+- You edit in the editor; your changes autosave to the `.md` on disk.
+- Claude edits the same `.md` with its normal tools; those edits land back in the editor live (a brief *"Updated from disk"* note appears when they do).
+- Guards keep you and Claude from overwriting each other in the normal turn-based flow.
+
+The comment panel matches the inline view: collapse threads, an always-on reply box, resolve, delete a single comment or a whole thread, and **send one thread (or the whole file) to Claude**.
+
+## Reviewing pull requests / merge requests
+
+Run **Markdown Collab: Review PR / MR** to review the Markdown files changed in a GitHub Pull Request or GitLab Merge Request. It uses your existing `gh` (GitHub) or `glab` (GitLab) CLI authentication — no extra tokens to configure.
+
+- Pick the PR/MR; its changed `.md` files appear in a **PR Review** tree in the Explorer.
+- Open a file to see the rendered view with the existing review comments inline.
+- Add comments, **reply** to existing threads, and edit or delete your drafts before posting.
+- Click a comment's line number to jump straight to it within the review.
+- Post your comments back to the PR/MR, or hand them to Claude like any other thread.
+
+**Requires** the `gh` or `glab` CLI installed and signed in.
 
 ## Choosing a send mode
 
@@ -148,6 +176,8 @@ Copies the prompt to the clipboard. Paste into Claude however you like.
 | `Markdown Collab: Install Claude Skill` | Write `~/.claude/skills/vs-markdown-collab/SKILL.md` and the bundled helpers (`mdc-tail.mjs`, `mdc-channel.mjs`). |
 | `Markdown Collab: Initialize AGENTS.md` | Append a convention block to `<workspace>/AGENTS.md` (for non–Claude-Code agents). |
 | `Markdown Collab: Open Inline Comments View` | Open the rendered view with an inline-threads sidebar. Comments are stored inside the `.md` file. The right-click action on `.md` files. |
+| `Markdown Collab: Open Live Editor` | Open the WYSIWYG live editor with the comment panel — you and Claude co-edit the same `.md` (single human + Claude, no relay). |
+| `Markdown Collab: Review PR / MR` | Review the Markdown files changed in a GitHub PR or GitLab MR via the `gh` / `glab` CLI. |
 | `Markdown Collab: Ask Claude to Review This Doc` | Ask Claude to act as the reviewer (v0.29+). Prompts for an optional focus directive, then sends a Review Mode payload through the configured send mode. Claude opens one thread per concern; you triage in the sidebar. |
 | `Markdown Collab: Send Unresolved Comments to Claude` | Same as the **Send to Claude** button — usable from palette. |
 | `Markdown Collab: Start Claude Review Terminal` | Spawn a fresh integrated terminal and launch `claude`. |
@@ -222,4 +252,4 @@ Releases: bump the version in `package.json`, prepend a `## X.Y.Z — <date>` bl
 
 ## Out of scope (v1)
 
-- Multi-user collaboration with author attribution.
+- Real-time **multi-user** (multi-human) collaboration. The live editor is single human + Claude; "collab" here means human ↔ AI, not multiple people editing at once.

@@ -1,8 +1,8 @@
 {
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
-  "description": "Review comments on Markdown files that Claude Code can read and act on.",
-  "version": "0.34.14",
+  "description": "Review Markdown with Claude Code — inline comments, a live AI co-editor, and GitHub/GitLab PR review, all anchored in the file.",
+  "version": "0.34.15",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -27,7 +27,11 @@
     "comments",
     "claude",
     "ai",
-    "collaboration"
+    "collaboration",
+    "pull request",
+    "code review",
+    "wysiwyg",
+    "gitlab"
   ],
   "activationEvents": [
     "onLanguage:markdown",

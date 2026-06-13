@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.34.15 — 2026-06-13
+
+Docs: refresh the marketplace listing. The README and the extension description
+now cover all three surfaces — inline comments, the live editor (single human +
+Claude co-editing), and GitHub/GitLab PR/MR review — and the keywords were
+expanded. No code changes.
+
 ## 0.34.14 — 2026-06-13
 
 First public release of the 0.34 line — published to the VS Code Marketplace and
