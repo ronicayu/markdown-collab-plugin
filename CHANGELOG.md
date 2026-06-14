@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.34.17 — 2026-06-14 (trial, diagnostic)
+
+Diagnostic build for the heading-comment highlight issue: the live editor's
+anchor highlighter now reports each anchor's locate/map outcome to the
+**Markdown Collab** output channel, so we can see why a heading anchor isn't
+highlighted in the running editor (the logic checks out in isolation). No
+behavior change beyond the logging.
+
 ## 0.34.16 — 2026-06-14
 
 ### Fixed: a new live-editor comment's highlight now shows immediately
