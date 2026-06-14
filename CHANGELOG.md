@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.34.18 — 2026-06-14 (trial)
+
+### Fixed: short selections can be commented on in the live editor
+
+A leftover minimum-length gate in the live editor (the last remnant of the old
+"at least 8 non-whitespace characters" rule) silently refused to open the
+composer for selections under 3 non-whitespace characters. Any non-whitespace
+selection can now be commented on. (The heading-highlight diagnostic logging
+from 0.34.17 is still active.)
+
 ## 0.34.17 — 2026-06-14 (trial, diagnostic)
 
 Diagnostic build for the heading-comment highlight issue: the live editor's

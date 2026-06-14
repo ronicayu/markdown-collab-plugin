@@ -1410,8 +1410,8 @@ function openComposerForCurrentSelection(): void {
         : sliceMd;
 
     const anchorText = displayText || sliceMd;
-    if (anchorText.replace(/\s/g, "").length < 3) {
-      failureReason = "Selection is too short. Highlight a few more characters.";
+    if (anchorText.replace(/\s/g, "").length === 0) {
+      failureReason = "Select some non-whitespace text to comment on.";
       return;
     }
     anchor = {
