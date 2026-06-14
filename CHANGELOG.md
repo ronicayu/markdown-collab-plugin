@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.34.16 — 2026-06-14
+
+### Fixed: a new live-editor comment's highlight now shows immediately
+
+Adding a comment in the live editor didn't highlight the anchored text until the
+next external change (e.g. Claude editing the file). When the comment was saved,
+a save participant (format-on-save / trim-trailing-whitespace /
+insert-final-newline) could rewrite the prose, leaving the editor out of sync
+with the saved `.md` so the anchor couldn't be located. The editor now re-syncs
+to the saved file, and the highlight is re-applied once the doc settles.
+
 ## 0.34.15 — 2026-06-13
 
 Docs: refresh the marketplace listing. The README and the extension description

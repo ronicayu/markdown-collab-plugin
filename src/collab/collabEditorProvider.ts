@@ -225,13 +225,34 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     // change it while the body prose stays identical.
     let lastFrontmatter = frontmatterOf(document.getText());
 
-    /** Replace the whole document with `next`. Guards against echo. */
+    /** Persist the file. Guards against echo, then re-seeds the editor if a
+     * save participant rewrote the prose. */
     const saveDocument = async (): Promise<void> => {
       if (!document.isDirty) return;
       try {
         await document.save();
       } catch (e) {
         this.output.appendLine(`CollabEditor save failed: ${(e as Error).message}`);
+        return;
+      }
+      // A save participant (format-on-save, trim-trailing-whitespace,
+      // insert-final-newline) may have rewritten the prose. The editor still
+      // shows the pre-save text, so push the saved version back — otherwise a
+      // just-added comment's anchor (which `commentsOf` derives from the saved
+      // `.md`) won't locate in the editor and its highlight won't appear until
+      // the next external change.
+      const savedProse = proseOf(document.getText());
+      if (savedProse !== lastWebviewProse) {
+        lastWebviewProse = savedProse;
+        void panel.webview.postMessage({ type: "externalChange", text: savedProse });
+      }
+      const savedFrontmatter = frontmatterOf(document.getText());
+      if (savedFrontmatter !== lastFrontmatter) {
+        lastFrontmatter = savedFrontmatter;
+        void panel.webview.postMessage({
+          type: "frontmatter",
+          frontmatter: savedFrontmatter,
+        } satisfies FrontmatterChangedPayload);
       }
     };
 

@@ -1711,6 +1711,10 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     if (msg.ok) {
       if (composerEl) composerEl.innerHTML = "";
       showToast("Comment added.");
+      // Belt-and-suspenders: re-run the anchor highlight once the doc has
+      // settled (the sidecar-changed refresh can fire before a save-participant
+      // re-seed lands), so a fresh comment's highlight shows immediately.
+      requestAnimationFrame(() => forceHighlightRefresh());
     } else {
       const submitBtn = composerEl?.querySelector<HTMLButtonElement>(".mdc-composer-submit");
       if (submitBtn) {
