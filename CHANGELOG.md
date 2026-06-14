@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.34.20 — 2026-06-14 (trial)
+
+### Changed: live editor tables size columns to their content
+
+Tables in the live editor used an even, fixed column layout, so a one-character
+"#" / No. column got the same width as a prose column. Columns now size to their
+content (auto table layout) and the table only takes the width it needs — short
+columns stay narrow. (Trade-off: drag-to-resize column handles stop taking
+effect.) The inline and PR/MR views already auto-sized table columns.
+
 ## 0.34.19 — 2026-06-14 (trial)
 
 ### Changed: the Claude skill now spells out how to migrate anchor markers

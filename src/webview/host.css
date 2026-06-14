@@ -60,6 +60,25 @@ body { overflow: hidden; }
   background-color: rgba(127, 127, 127, 0.12) !important;
   font-weight: 600;
 }
+/* Size columns to their content instead of splitting every column to an equal
+   width. Milkdown (prosemirror-tables) defaults to `table-layout: fixed` with a
+   100%-wide colgroup, so a 1-char "#"/No. column gets the same width as a prose
+   column. Switch to auto layout + content width and drop the equal colgroup
+   widths. (Trade-off: drag-to-resize column handles stop taking effect.) */
+.milkdown table {
+  table-layout: auto !important;
+  width: auto !important;
+  max-width: 100%;
+}
+.milkdown table col {
+  width: auto !important;
+}
+.milkdown table th,
+.milkdown table td {
+  /* Let short cells stay narrow; only wrap genuinely long content. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 
 /* ===========================================================
    Layout
