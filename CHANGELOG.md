@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.34.21 — 2026-06-14 (trial)
+
+### Changed: live editor tables fill the editor width
+
+Follow-up to 0.34.20 — the auto-sized table now stretches to the editor width
+(`width: 100%`) with content-proportional columns, instead of shrinking to its
+content and floating narrow in a wide pane. The "#"/No. column still stays
+narrow; the prose columns share the slack.
+
 ## 0.34.20 — 2026-06-14 (trial)
 
 ### Changed: live editor tables size columns to their content

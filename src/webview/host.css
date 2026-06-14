@@ -67,8 +67,9 @@ body { overflow: hidden; }
    widths. (Trade-off: drag-to-resize column handles stop taking effect.) */
 .milkdown table {
   table-layout: auto !important;
-  width: auto !important;
-  max-width: 100%;
+  /* Fill the editor width; auto layout still sizes each column to its content
+     (a "#"/No. column stays narrow) and shares the slack across prose columns. */
+  width: 100% !important;
 }
 .milkdown table col {
   width: auto !important;
