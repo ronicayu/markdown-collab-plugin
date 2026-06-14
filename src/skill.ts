@@ -437,9 +437,13 @@ Group by file. Within a file, order edits by anchor position (earlier first). Fo
 
 For each thread, in order, do everything in **one Edit call per concern** against the \`.md\` file:
 
-1. **Make the prose change.** Use the Edit tool. **You MUST preserve the anchor markers if and only if the passage is being rewritten, not removed.**
+1. **Make the prose change.** Use the Edit tool. **The anchor markers MUST travel with their text. Dropping a marker silently orphans the reviewer's comment — this is the single most common way this workflow breaks, so handle it deliberately.** Three cases:
 
-   - **Rewrite in place:** keep the \`<!--mc:a:ID-->\` open marker immediately before the new passage and the \`<!--mc:/a:ID-->\` close marker immediately after it. Move the markers with the text; do not duplicate or split them.
+   - **Rewrite in place (you change the anchored text):** the marker pair moves with the text and keeps the SAME id. The reliable way is to put the markers *inside* your Edit — \`old_string\` = open marker + old passage + close marker; \`new_string\` = the same open marker + the NEW passage + the same close marker. Do NOT Edit the bare visible text: the markers sit flush against it, so a bare-text \`old_string\` either fails to match or drops a marker. Example — renaming an anchored heading from "Main business flows" to "Core business processes":
+       - \`old_string\`: \`### <!--mc:a:aopzy-->Main business flows<!--mc:/a:aopzy-->\`
+       - \`new_string\`: \`### <!--mc:a:aopzy-->Core business processes<!--mc:/a:aopzy-->\`
+
+     Same \`aopzy\` id, both markers kept, only the wrapped text changed. When the anchored text changes this way, also update that thread's \`quote\` field to the new text in step 2 (the quote is the fallback locator). Never leave the rewritten text un-wrapped; never duplicate or split a marker.
    - **Remove the passage:** delete the open marker, the passage, and the close marker together. The thread will orphan and surface in the UI as "broken anchor". That is the correct outcome — do NOT re-anchor to nearby unrelated text.
    - **Touch surrounding prose without touching the anchored span:** the markers stay exactly where they were.
 
@@ -452,7 +456,7 @@ For each thread, in order, do everything in **one Edit call per concern** agains
      - \`"ts"\`: current UTC timestamp in ISO-8601, e.g. \`"2026-05-13T14:32:11Z"\` (omit sub-second precision).
      - \`"body"\`: one or two sentences quoting the new wording, naming the section, or naming the file/function you changed. Be specific. Don't say "done".
    - **Do NOT change \`status\`.** The human reviewer marks threads resolved. Leave \`"status":"open"\`.
-   - **Do NOT mutate any existing comment.** Only append.
+   - **Do NOT mutate any existing comment.** Only append. (One exception: if you rewrote the anchored text in step 1, update this thread's \`quote\` field to the new text in the same Edit — \`quote\` is a thread-level field, not a comment, and keeping it current makes the comment recoverable if a marker is ever lost.)
    - Preserve the JSON exactly otherwise: same key order, same escaping, same trailing \`-->\`. The line stays on a single line; do not introduce newlines inside the JSON.
 
 3. **For threads you cannot fully address** (ambiguous request, missing info, conflicting with another thread), still append a reply explaining what you tried and what you need. Do not pretend it's done.

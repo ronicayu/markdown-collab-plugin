@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.34.19 — 2026-06-14 (trial)
+
+### Changed: the Claude skill now spells out how to migrate anchor markers
+
+When Claude rewrites an anchored passage it has to move the `<!--mc:a:ID-->` /
+`<!--mc:/a:ID-->` markers onto the new text (same id) — otherwise the reviewer's
+comment orphans. The skill said this conceptually but gave no procedure, so
+Claude would Edit the bare visible text and drop the flush markers. It now gives
+the exact procedure (put the markers *inside* `old_string`/`new_string`) with a
+before/after example, and tells Claude to update the thread's `quote` to match.
+
+**Update your installed skill** for this to take effect — the comment panel will
+show an "update skill" banner, or run **Markdown Collab: Install Claude Skill**.
+
 ## 0.34.18 — 2026-06-14 (trial)
 
 ### Fixed: short selections can be commented on in the live editor
