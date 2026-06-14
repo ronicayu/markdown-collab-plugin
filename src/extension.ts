@@ -12,7 +12,7 @@ import {
   type SendMode,
 } from "./sendToClaude";
 import { buildInlinePayload, buildSingleThreadPayload } from "./inlineComments/sendToClaude";
-import { installClaudeSkill } from "./skill";
+import { checkClaudeSkill, installClaudeSkill, skillFingerprint } from "./skill";
 import { EVENT_LOG_REL, EventLog } from "./transports/eventLog";
 import { sendViaMcpChannel } from "./transports/mcpChannel";
 import { sendViaTerminal, startClaudeTerminal } from "./transports/terminal";
@@ -307,6 +307,43 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     ),
   );
+
+  // On startup, nudge the user to install/update the Claude skill if it's
+  // missing or out of date — otherwise they only find out by opening the
+  // comments panel. Gated per skill version so it prompts once, not every time.
+  void maybePromptSkillUpdate(context, output);
+}
+
+const SKILL_PROMPT_KEY = "markdownCollab.skillPromptedFingerprint";
+
+async function maybePromptSkillUpdate(
+  context: vscode.ExtensionContext,
+  output: vscode.OutputChannel,
+): Promise<void> {
+  let status: Awaited<ReturnType<typeof checkClaudeSkill>>;
+  try {
+    status = await checkClaudeSkill(os.homedir());
+  } catch (e) {
+    output.appendLine(`Skill check failed: ${(e as Error).message}`);
+    return;
+  }
+  if (status === "current") return;
+
+  // Prompt at most once per bundled-skill version, so we don't nag on every
+  // window the user opens.
+  const fingerprint = skillFingerprint();
+  if (context.globalState.get<string>(SKILL_PROMPT_KEY) === fingerprint) return;
+  await context.globalState.update(SKILL_PROMPT_KEY, fingerprint);
+
+  const action = status === "missing" ? "Install skill" : "Update skill";
+  const message =
+    status === "missing"
+      ? "Markdown Collab: the Claude skill isn't installed. Claude needs it to read and act on your comments."
+      : "Markdown Collab: the Claude skill is out of date. Update it so Claude follows the latest comment-handling behavior.";
+  const choice = await vscode.window.showInformationMessage(message, action, "Not now");
+  if (choice === action) {
+    await vscode.commands.executeCommand("markdownCollab.installClaudeSkill");
+  }
 }
 
 export function deactivate(): void {

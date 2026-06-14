@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.34.22 — 2026-06-14 (trial)
+
+### Added: startup prompt to install/update the Claude skill
+
+The only signal that the Claude skill was missing or out of date used to be a
+banner in the inline comments panel — which you'd never see if you worked in the
+live editor or didn't open that panel. Now, on activation, if the skill is
+missing or out of date the extension shows a notification with an **Install
+skill** / **Update skill** button. It's gated per skill version, so it prompts
+once when the bundled skill changes, not on every window.
+
 ## 0.34.21 — 2026-06-14 (trial)
 
 ### Changed: live editor tables fill the editor width

@@ -1,5 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
+import { createHash } from "node:crypto";
 
 export const SKILL_REL_PATH = ".claude/skills/vs-markdown-collab/SKILL.md";
 export const TAIL_SCRIPT_REL = ".claude/skills/vs-markdown-collab/mdc-tail.mjs";
@@ -791,6 +792,20 @@ export async function checkClaudeSkill(homeDir: string): Promise<SkillStatus> {
     }
   }
   return "current";
+}
+
+/**
+ * Short, stable fingerprint of the bundled skill (SKILL.md + helper scripts).
+ * Changes whenever the bundled skill content changes, so callers can prompt the
+ * user to update exactly once per skill version instead of every activation.
+ */
+export function skillFingerprint(): string {
+  return createHash("sha1")
+    .update(SKILL_CONTENT)
+    .update(TAIL_SCRIPT_CONTENT)
+    .update(CHANNEL_SCRIPT_CONTENT)
+    .digest("hex")
+    .slice(0, 12);
 }
 
 async function syncCliScript(homeDir: string): Promise<void> {
