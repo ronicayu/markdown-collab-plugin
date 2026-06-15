@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.34.29 — 2026-06-15 (trial)
+
+### Fixed: editing commented text no longer removes its marker
+
+Changing a character inside a commented span dropped the comment's anchor: the
+live editor re-anchored only by re-finding the original quote, so any in-place
+edit (even one character in the middle) made the quote unmatchable and orphaned
+the thread. Tables made it worse — the file's column padding differs from the
+editor's, so the first edit looked like the whole table changed.
+
+Re-anchoring is now three-tier: find the unchanged quote (edits elsewhere /
+reflow); else, if the edit is enclosed by the marker, map the marker's bounds
+through it (paragraphs, headings, lists); else re-anchor by the unchanged text
+bracketing the span on its own line, whitespace-normalised so table column
+re-padding and separator-row reflow don't defeat it. The comment now tracks the
+edited text instead of disappearing.
+
 ## 0.34.28 — 2026-06-15
 
 ### Published to the marketplaces

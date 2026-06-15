@@ -369,6 +369,41 @@ describe("mergeProseEdit", () => {
     const merged = mergeProseEdit(DOC, "Totally new content.\n");
     expect(merged).toBe("Totally new content.\n");
   });
+
+  it("keeps the marker when text is edited INSIDE the anchored span", () => {
+    const { source, id } = seed(); // anchors "jumps over the lazy dog"
+    // Change a word in the middle of the anchored phrase — the quote no longer
+    // matches, but the marker should track the edit instead of orphaning.
+    const edited = proseOf(source).replace("lazy", "sleepy");
+    const merged = mergeProseEdit(source, edited);
+    expect(merged).toContain(`<!--mc:a:${id}-->jumps over the sleepy dog<!--mc:/a:${id}-->`);
+    expect(commentsOf(merged)).toHaveLength(1);
+  });
+
+  it("keeps a table-cell marker through a mid-cell edit with column re-padding", () => {
+    // Source has tight padding; the editor re-serializes with wide padding AND a
+    // character inserted mid-cell. Context that reaches into the separator row
+    // (its dash run gets re-padded) must not defeat re-anchoring.
+    const src = [
+      "| # | Principle | Rationale |",
+      "| :-- | :-- | :-- |",
+      "| DP-1 | **<!--mc:a:rb824-->Single writer per domain<!--mc:/a:rb824-->** | Eliminates conflicts. |",
+      "",
+      "<!--mc:threads:begin-->",
+      '<!--mc:t {"id":"rb824","quote":"Single writer per domain","status":"open","comments":[{"id":"c1","author":"ron","ts":"2026-01-01T00:00:00Z","body":"q"}]}-->',
+      "<!--mc:threads:end-->",
+      "",
+    ].join("\n");
+    const newProse = [
+      "| #    | Principle                     | Rationale             |",
+      "| :--- | :---------------------------- | :-------------------- |",
+      "| DP-1 | **Single wrZiter per domain** | Eliminates conflicts. |",
+      "",
+    ].join("\n");
+    const merged = mergeProseEdit(src, newProse);
+    expect(merged).toMatch(/<!--mc:a:rb824-->Single wrZiter per domain<!--mc:\/a:rb824-->/);
+    expect(commentsOf(merged)).toHaveLength(1);
+  });
 });
 
 describe("deleteComment", () => {

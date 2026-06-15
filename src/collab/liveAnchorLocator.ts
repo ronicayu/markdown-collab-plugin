@@ -162,11 +162,11 @@ function contextMatchesAt(
   return beforeOk && afterOk;
 }
 
-function normalizeWs(s: string): string {
+export function normalizeWs(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
-function collapseWs(text: string): { normalized: string; map: number[] } {
+export function collapseWs(text: string): { normalized: string; map: number[] } {
   let normalized = "";
   const map: number[] = [];
   let i = 0;
