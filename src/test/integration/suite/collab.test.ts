@@ -30,8 +30,10 @@ import {
   _getRoomConnectionCountForTests,
   _getRoomTextForTests,
 } from "../../../collab/server";
+import * as fsp from "fs/promises";
 import {
   _getDrawioReadHistoryForTests,
+  _getHighlightedIdsForTests,
   _getLastReadyForTests,
   _getLastWebviewErrorForTests,
 } from "../../../collab/collabEditorProvider";
@@ -247,5 +249,63 @@ suite.skip("Collab editor integration", () => {
       docA.destroy();
       docB.destroy();
     }
+  });
+});
+
+// Skipped: asserts the live-editor anchor highlight end-to-end by having the
+// webview report its decorated ids (`highlight-report` → _getHighlightedIdsForTests).
+// It needs a webview that actually executes its script, which requires a real
+// display. In this headless/SSH test host the custom-editor tab opens but the
+// webview iframe never boots (no `ready-with-content`, no `highlight-report`),
+// and `screencapture` fails with "could not create image from display". So this
+// can only pass in a developer's GUI session.
+//
+// For headless verification of the same fix, render the compiled bundle
+// (out/webview/client.js) in a browser instead — that path is display-free:
+// feed it the host's `init` payload via a stubbed acquireVsCodeApi and assert a
+// `.mdc-anchor-highlight[data-comment-id="rb824"]` span wraps the table-cell
+// text. (Verified 2026-06-15: highlight-report ids = ["rb824"] for the bold
+// table-cell anchor whose contextBefore is table markdown — the case the old
+// context locator failed on.)
+suite.skip("Live editor anchor highlight (real Milkdown, needs display)", () => {
+  const tmpPath = fixturePath("zz-highlight-table.md");
+  const tmpUri = vscode.Uri.file(tmpPath);
+  const CONTENT = [
+    "# Data principles",
+    "",
+    "| #     | Principle | Rationale |",
+    "| :---- | :-------- | :-------- |",
+    "| DP-1  | **<!--mc:a:rb824-->Single writer per domain<!--mc:/a:rb824-->** | Eliminates write conflicts. |",
+    "",
+    "<!--mc:threads:begin-->",
+    '<!--mc:t {"id":"rb824","quote":"Single writer per domain","status":"open","comments":[{"id":"c1","author":"ron","ts":"2026-01-01T00:00:00Z","body":"why single writer?"}]}-->',
+    "<!--mc:threads:end-->",
+    "",
+  ].join("\n");
+
+  suiteSetup(async () => {
+    await fsp.writeFile(tmpPath, CONTENT, "utf8");
+    const ext = vscode.extensions.getExtension(EXT_ID);
+    assert.ok(ext, `${EXT_ID} not loaded`);
+    if (!ext.isActive) await ext.activate();
+  });
+  suiteTeardown(async () => {
+    try {
+      await fsp.unlink(tmpPath);
+    } catch {
+      /* ignore */
+    }
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+  });
+
+  test("highlights an anchor inside a bold table cell", async function () {
+    this.timeout(40000);
+    await vscode.commands.executeCommand("vscode.openWith", tmpUri, VIEW_TYPE);
+    await waitFor(() => _getLastReadyForTests(tmpUri) !== undefined, 20000, "webview never booted");
+    await waitFor(
+      () => (_getHighlightedIdsForTests(tmpUri) ?? []).includes("rb824"),
+      10000,
+      `rb824 never highlighted (ids=${JSON.stringify(_getHighlightedIdsForTests(tmpUri))})`,
+    );
   });
 });

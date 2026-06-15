@@ -70,6 +70,11 @@ interface WebviewErrorMessage {
   message: string;
 }
 
+interface HighlightReportMessage {
+  type: "highlight-report";
+  ids: string[];
+}
+
 interface AddCommentMessage {
   type: "add-comment";
   anchor: { text: string; contextBefore: string; contextAfter: string };
@@ -138,6 +143,7 @@ type ClientMessage =
   | EditMessage
   | ReadyMessage
   | ReadyWithContentMessage
+  | HighlightReportMessage
   | WebviewErrorMessage
   | AddCommentMessage
   | ReplyCommentMessage
@@ -157,6 +163,12 @@ type ClientMessage =
 const lastReadyByUri = new Map<string, ReadyWithContentMessage>();
 export function _getLastReadyForTests(uri: vscode.Uri): ReadyWithContentMessage | undefined {
   return lastReadyByUri.get(uri.toString());
+}
+
+const lastHighlightByUri = new Map<string, string[]>();
+/** Comment ids the live editor most recently highlighted — for integration tests. */
+export function _getHighlightedIdsForTests(uri: vscode.Uri): string[] | undefined {
+  return lastHighlightByUri.get(uri.toString());
 }
 
 const lastWebviewErrorByUri = new Map<string, WebviewErrorMessage>();
@@ -372,6 +384,8 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         this.output.appendLine(
           `CollabEditor: webview ready for ${document.uri.fsPath} — content length=${msg.length}, synced=${msg.synced}${msg.error ? `, error=${msg.error}` : ""}`,
         );
+      } else if (msg.type === "highlight-report") {
+        lastHighlightByUri.set(document.uri.toString(), msg.ids);
       } else if (msg.type === "webview-error") {
         // Surface webview-side failures (Milkdown init errors, ProseMirror
         // schema mismatches, etc.) into the extension's output channel so

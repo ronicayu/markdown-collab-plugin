@@ -786,6 +786,7 @@ function buildAnchorDecorations(
   // strip those off the small anchor strings, not off the full
   // document, before searching.
   const haystack = doc.textContent;
+  const decoratedIds: string[] = [];
   for (const c of comments) {
     if (c.resolved) continue; // Don't highlight resolved threads — too noisy.
     // Anchored threads: the marker already tells us which occurrence of the
@@ -799,6 +800,7 @@ function buildAnchorDecorations(
     if (!rendered) continue;
     const pmRange = renderedRangeToPmRange(doc, rendered.start, rendered.end);
     if (!pmRange) continue;
+    decoratedIds.push(c.id);
     decos.push(
       Decoration.inline(
         pmRange.from,
@@ -811,7 +813,19 @@ function buildAnchorDecorations(
       ),
     );
   }
+  // Report which anchors actually got highlighted (only when it changes) so an
+  // integration test in a real VS Code + Milkdown can assert the outcome — the
+  // test host can't read the webview DOM directly.
+  reportHighlights(decoratedIds);
   return DecorationSet.create(doc as never, decos);
+}
+
+let lastHighlightSig = " ";
+function reportHighlights(ids: string[]): void {
+  const sig = ids.join(",");
+  if (sig === lastHighlightSig) return;
+  lastHighlightSig = sig;
+  vscode.postMessage({ type: "highlight-report", ids });
 }
 
 // locateAnchorInLiveText now lives in ../collab/liveAnchorLocator for

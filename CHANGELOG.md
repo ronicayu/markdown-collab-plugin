@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.34.24 — 2026-06-15 (trial)
+
+### Fixed: stray NUL byte in the live-editor source; verified the table-cell highlight
+
+A stray NUL byte had crept into `src/webview/client.ts` (the `lastHighlightSig`
+initializer was a NUL instead of a space). It made the file read as binary to
+tooling and risked corrupting the bundled output. Replaced it with the intended
+space.
+
+Also added a small `highlight-report` message: the live editor now reports which
+comment anchors it actually decorated. That made it possible to verify the
+0.34.23 table-cell highlight fix against the real compiled webview bundle — the
+bold-table-cell anchor ("Single writer per domain", whose stored context is pure
+table markdown) is highlighted by ordinal, confirmed end-to-end.
+
 ## 0.34.23 — 2026-06-15 (trial)
 
 ### Fixed: comment highlights now show on table cells, headings, and lists
