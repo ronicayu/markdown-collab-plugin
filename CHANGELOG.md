@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.34.26 — 2026-06-15
+
+### Published to the marketplaces
+
+Public release rolling up everything since 0.34.15:
+
+- Anchor highlights now show on table cells, headings, and lists (located by
+  marker ordinal instead of surrounding-markdown context).
+- Short selections (< 8 chars) get a marker again.
+- Tables fill the editor width with auto column sizing.
+- Per-thread "→ Claude" / "Copy" and an always-on reply box in the live editor;
+  per-comment delete with an inline confirm.
+- Comment cards reconcile in place instead of re-rendering the whole list.
+- Document-style links in the comment panel open as document links.
+- Prompt to install/update the Claude skill on activation; stronger
+  marker-migration guidance so AI edits don't orphan comments.
+- Inline view: simpler "Select text to add a comment" hint (floating button
+  only; the `C` shortcut is gone).
+- Fixed a stray NUL byte in the live-editor source.
+
 ## 0.34.25 — 2026-06-15 (trial)
 
 ### Changed: simpler "add a comment" hint in the inline comments view
