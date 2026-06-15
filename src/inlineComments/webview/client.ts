@@ -1376,13 +1376,6 @@ function openComposer(sel: { proseStart: number; proseEnd: number }): void {
 document.addEventListener("selectionchange", () => positionFloatingButton());
 window.addEventListener("scroll", () => positionFloatingButton(), true);
 
-document.addEventListener("keydown", (e) => {
-  if (e.key.toLowerCase() === "c" && pendingSelection && document.activeElement?.tagName !== "TEXTAREA") {
-    e.preventDefault();
-    openComposer(pendingSelection);
-  }
-});
-
 dom.filterRadios.forEach((r) =>
   r.addEventListener("change", () => {
     filter = (r.value as typeof filter);

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.34.25 — 2026-06-15 (trial)
+
+### Changed: simpler "add a comment" hint in the inline comments view
+
+The preview hint now reads "Select text in the preview to add a comment" — the
+floating button that appears on selection is affordance enough, so the
+"press C or use the floating button" instruction (and the `C` keyboard shortcut
+it advertised) are gone.
+
 ## 0.34.24 — 2026-06-15 (trial)
 
 ### Fixed: stray NUL byte in the live-editor source; verified the table-cell highlight

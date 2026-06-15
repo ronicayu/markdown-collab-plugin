@@ -370,7 +370,7 @@ export class InlineCommentsPanel {
     </div>
     <header id="preview-header">
       <h2 id="file-name"></h2>
-      <p class="hint">Select text in the preview, then press <kbd>C</kbd> or use the floating button to add a comment. <kbd>⌘F</kbd> to find.</p>
+      <p class="hint">Select text in the preview to add a comment. <kbd>⌘F</kbd> to find.</p>
     </header>
     <article id="preview"></article>
     <button id="floating-add" hidden>+ Comment on selection</button>
