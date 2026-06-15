@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.34.28 — 2026-06-15
+
+### Published to the marketplaces
+
+Public release. Brings the table-cell commenting fix from 0.34.27 public:
+commenting on a table cell (including repeated values like "Yes") now anchors
+the thread with inline markers instead of saving it loosely.
+
 ## 0.34.27 — 2026-06-15 (trial)
 
 ### Fixed: commenting on a table cell now adds markers (even for duplicate values)
