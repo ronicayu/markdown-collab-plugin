@@ -93,6 +93,43 @@ export function locateAnchorInLiveText(
   return { start, end };
 }
 
+/**
+ * Locate the `ordinal`-th (0-based) occurrence of `text` in `haystack`. Used by
+ * the live highlight, which already knows which occurrence is anchored (from the
+ * marker's position) and so needs no surrounding context — sidestepping the
+ * whole class of bugs where the context carried markdown structure (table `|`,
+ * heading `#`, separator rows) that isn't present in the rendered text.
+ *
+ * Exact match first; falls back to a whitespace-normalised search so a stored
+ * span with collapsed runs still resolves. If the ordinal is out of range
+ * (occurrence counts drifted), falls back to the first hit rather than orphaning.
+ */
+export function locateNthOccurrence(
+  haystack: string,
+  text: string,
+  ordinal: number,
+): LiveRange | null {
+  const needle = stripInlineMarkup(text).stripped.trim();
+  if (needle.length === 0) return null;
+
+  const hits = allHits(haystack, needle);
+  if (hits.length > 0) {
+    const i = ordinal >= 0 && ordinal < hits.length ? ordinal : 0;
+    return { start: hits[i]!, end: hits[i]! + needle.length };
+  }
+
+  const nNeedle = normalizeWs(needle);
+  if (nNeedle.length === 0) return null;
+  const { normalized, map } = collapseWs(haystack);
+  const nHits = allHits(normalized, nNeedle);
+  if (nHits.length === 0) return null;
+  const i = ordinal >= 0 && ordinal < nHits.length ? ordinal : 0;
+  const start = map[nHits[i]!];
+  const end = map[nHits[i]! + nNeedle.length];
+  if (start === undefined || end === undefined) return null;
+  return { start, end };
+}
+
 function allHits(haystack: string, needle: string): number[] {
   const hits: number[] = [];
   if (needle.length === 0) return hits;

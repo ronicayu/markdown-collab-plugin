@@ -38,7 +38,7 @@ import { CellSelection } from "@milkdown/prose/tables";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
-import { locateAnchorInLiveText } from "../collab/liveAnchorLocator";
+import { locateAnchorInLiveText, locateNthOccurrence } from "../collab/liveAnchorLocator";
 import { renderedRangeToPmRange } from "../collab/pmPositionMapper";
 import { formatRelativeTime } from "../collab/relativeTime";
 import { slugifyHeading } from "../inlineComments/linkParse";
@@ -57,6 +57,8 @@ interface CommentSummary {
   createdAt: string;
   resolved: boolean;
   anchor: { text: string; contextBefore: string; contextAfter: string };
+  /** Which occurrence of `anchor.text` the marker wraps (0-based; -1 if unanchored). */
+  anchorOrdinal: number;
   replies: Array<{ id: string; author: string; body: string; createdAt: string }>;
 }
 
@@ -762,10 +764,6 @@ function makeAnchorHighlightPlugin(): Plugin {
   });
 }
 
-// TEMP diagnostic: logs each anchor's locate/map outcome to the "Markdown
-// Collab" output channel so we can see why heading highlights don't appear.
-const HIGHLIGHT_DEBUG = true;
-
 interface DocLike {
   textContent: string;
   descendants: (
@@ -788,24 +786,19 @@ function buildAnchorDecorations(
   // strip those off the small anchor strings, not off the full
   // document, before searching.
   const haystack = doc.textContent;
-  const report: string[] = [];
   for (const c of comments) {
     if (c.resolved) continue; // Don't highlight resolved threads — too noisy.
-    const rendered = locateAnchorInLiveText(haystack, c.anchor);
-    if (!rendered) {
-      report.push(
-        `NOT-LOCATED id=${c.id} text=${JSON.stringify(c.anchor.text.slice(0, 40))} ctxBefore=${JSON.stringify(c.anchor.contextBefore.slice(-24))} ctxAfter=${JSON.stringify(c.anchor.contextAfter.slice(0, 24))}`,
-      );
-      continue;
-    }
+    // Anchored threads: the marker already tells us which occurrence of the
+    // text is anchored (anchorOrdinal), so find that occurrence directly — no
+    // surrounding-context match (which broke on table/heading/list markdown).
+    // Unanchored threads have no marker, so fall back to the context locator.
+    const rendered =
+      c.anchorOrdinal >= 0
+        ? locateNthOccurrence(haystack, c.anchor.text, c.anchorOrdinal)
+        : locateAnchorInLiveText(haystack, c.anchor);
+    if (!rendered) continue;
     const pmRange = renderedRangeToPmRange(doc, rendered.start, rendered.end);
-    if (!pmRange) {
-      report.push(
-        `NO-PMRANGE id=${c.id} rendered=${rendered.start}-${rendered.end} text=${JSON.stringify(haystack.slice(rendered.start, rendered.end))}`,
-      );
-      continue;
-    }
-    report.push(`OK id=${c.id} pm=${pmRange.from}-${pmRange.to} text=${JSON.stringify(haystack.slice(rendered.start, rendered.end))}`);
+    if (!pmRange) continue;
     decos.push(
       Decoration.inline(
         pmRange.from,
@@ -817,13 +810,6 @@ function buildAnchorDecorations(
         },
       ),
     );
-  }
-  if (HIGHLIGHT_DEBUG && report.length > 0) {
-    vscode.postMessage({
-      type: "webview-error",
-      stage: "highlight-debug",
-      message: `decos=${decos.length} haystackLen=${haystack.length} :: ${report.join("  ||  ")}`,
-    });
   }
   return DecorationSet.create(doc as never, decos);
 }
@@ -886,7 +872,11 @@ function jumpToAnchor(comment: CommentSummary): void {
   if (!editor) return;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
-    const rendered = locateAnchorInLiveText(view.state.doc.textContent, comment.anchor);
+    const haystack = view.state.doc.textContent;
+    const rendered =
+      comment.anchorOrdinal >= 0
+        ? locateNthOccurrence(haystack, comment.anchor.text, comment.anchorOrdinal)
+        : locateAnchorInLiveText(haystack, comment.anchor);
     if (!rendered) {
       showToast("Couldn't locate this comment's anchor in the document. The text may have changed.");
       return;

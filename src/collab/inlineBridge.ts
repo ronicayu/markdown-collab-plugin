@@ -47,6 +47,8 @@ export interface CollabComment {
   createdAt: string;
   resolved: boolean;
   anchor: CollabCommentAnchor;
+  /** Which occurrence of `anchor.text` the marker wraps, 0-based; -1 if unanchored. */
+  anchorOrdinal: number;
   replies: Array<{ id: string; author: string; body: string; createdAt: string }>;
 }
 
@@ -175,6 +177,21 @@ export function frontmatterOf(source: string): string {
 }
 
 /** Project the parsed inline threads into the flat comment list the sidebar renders. */
+// 0-based index of `needle`'s occurrence that starts at/just-before `beforePos`,
+// i.e. how many occurrences precede it. Lets the live highlight pick the exact
+// anchored occurrence by ordinal — the marker already says which one it is — so
+// it never has to disambiguate by (fragile, markdown-laden) surrounding context.
+function occurrenceIndex(haystack: string, needle: string, beforePos: number): number {
+  if (!needle) return 0;
+  let count = 0;
+  let idx = haystack.indexOf(needle);
+  while (idx >= 0 && idx < beforePos) {
+    count++;
+    idx = haystack.indexOf(needle, idx + 1);
+  }
+  return count;
+}
+
 export function commentsOf(source: string): CollabComment[] {
   const { prose, parsed, anchorsInProse } = buildBridge(source);
   const out: CollabComment[] = [];
@@ -200,6 +217,8 @@ export function commentsOf(source: string): CollabComment[] {
       createdAt: root.ts,
       resolved: thread.status === "resolved",
       anchor,
+      // Which occurrence of `anchor.text` the marker wraps (-1 when unanchored).
+      anchorOrdinal: span ? occurrenceIndex(prose, anchor.text, span.proseStart) : -1,
       replies: visible.slice(1).map((r) => ({ id: r.id, author: r.author, body: r.body, createdAt: r.ts })),
     });
   }

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.34.23 — 2026-06-15 (trial)
+
+### Fixed: comment highlights now show on table cells, headings, and lists
+
+The live editor located an anchored span by matching its text **plus the
+surrounding markdown as "context"** against the editor's rendered text. For an
+anchor inside a table cell (or a heading, or a list), that context carried
+markdown structure — `|`, the `:----` separator row, `#`, `**` — that doesn't
+exist in the rendered text, so the match failed and the span went un-highlighted.
+(That's why it looked like there was "no highlight", and why it sometimes
+reappeared only after Claude re-edited.)
+
+Fix: the marker already records **which occurrence** of the text is anchored, so
+the highlight now finds that occurrence by its ordinal and drops context
+matching entirely — no more structural-markdown false negatives. Removed the
+temporary 0.34.17 diagnostic logging.
+
 ## 0.34.22 — 2026-06-14 (trial)
 
 ### Added: startup prompt to install/update the Claude skill

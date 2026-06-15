@@ -12,6 +12,7 @@ import {
   setThreadResolved,
 } from "../collab/inlineBridge";
 import { parse, withThreads } from "../inlineComments/format";
+import { locateNthOccurrence } from "../collab/liveAnchorLocator";
 
 const DOC = [
   "# Title",
@@ -384,5 +385,44 @@ describe("deleteComment", () => {
     const { source, id } = seed();
     expect(deleteComment(source, "no-such-thread", "c1")).toBeNull();
     expect(deleteComment(source, id, "no-such-comment")).toBeNull();
+  });
+});
+
+describe("anchorOrdinal + ordinal highlight (table / structural-markdown regression)", () => {
+  it("highlights an anchor in a bold table cell whose context is full of table markdown", () => {
+    const source = [
+      "| #     | Principle | Rationale |",
+      "| :---- | :-------- | :-------- |",
+      "| DP-1  | **<!--mc:a:rb824-->Single writer per domain<!--mc:/a:rb824-->** | Eliminates write conflicts. |",
+      "",
+      "<!--mc:threads:begin-->",
+      '<!--mc:t {"id":"rb824","quote":"Single writer per domain","status":"open","comments":[{"id":"c1","author":"ron","ts":"2026-01-01T00:00:00Z","body":"x"}]}-->',
+      "<!--mc:threads:end-->",
+      "",
+    ].join("\n");
+    const c = commentsOf(source)[0]!;
+    expect(c.anchorOrdinal).toBe(0); // first (only) occurrence
+    // Rendered (Milkdown): cell text concatenated, no '|'/'**'/separator row.
+    const rendered = "#PrincipleRationaleDP-1Single writer per domainEliminates write conflicts.";
+    const loc = locateNthOccurrence(rendered, c.anchor.text, c.anchorOrdinal);
+    expect(loc).not.toBeNull();
+    expect(rendered.slice(loc!.start, loc!.end)).toBe("Single writer per domain");
+  });
+
+  it("the ordinal picks the right occurrence among duplicates", () => {
+    const source = [
+      "The active flag is set. Later the <!--mc:a:k1-->active<!--mc:/a:k1--> flag is cleared.",
+      "",
+      "<!--mc:threads:begin-->",
+      '<!--mc:t {"id":"k1","quote":"active","status":"open","comments":[{"id":"c1","author":"ron","ts":"2026-01-01T00:00:00Z","body":"x"}]}-->',
+      "<!--mc:threads:end-->",
+      "",
+    ].join("\n");
+    const c = commentsOf(source)[0]!;
+    expect(c.anchorOrdinal).toBe(1); // the SECOND "active" is the anchored one
+    const rendered = "The active flag is set. Later the active flag is cleared.";
+    const loc = locateNthOccurrence(rendered, c.anchor.text, c.anchorOrdinal)!;
+    expect(loc).not.toBeNull();
+    expect(loc.start).toBe(rendered.indexOf("active", rendered.indexOf("active") + 1));
   });
 });
