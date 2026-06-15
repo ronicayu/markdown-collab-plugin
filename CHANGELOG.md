@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.34.27 — 2026-06-15 (trial)
+
+### Fixed: commenting on a table cell now adds markers (even for duplicate values)
+
+Commenting on a table cell saved the thread but often dropped the inline
+markers, so the comment wasn't anchored in the file. The editor can't compute
+exact source offsets for a cell, so the host located the text by its rendered
+surrounding context — which never matches the markdown source (no `|`, no `**`).
+For a repeated value like "Yes" that was un-disambiguable, so it saved loosely
+with no markers.
+
+Fix: the editor now reports which occurrence of the selected text it is
+(`anchorOrdinal`), and the host places the marker on that occurrence when
+context can't. Same ordinal approach the highlight uses, so a fresh table-cell
+comment is anchored and highlighted immediately.
+
 ## 0.34.26 — 2026-06-15
 
 ### Published to the marketplaces

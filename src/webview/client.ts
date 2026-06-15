@@ -1347,6 +1347,10 @@ function openComposerForCurrentSelection(): void {
   let anchorSelStart = -1;
   let anchorSelEnd = -1;
   let anchorFullMd = "";
+  // Which occurrence of the selected text this is (0-based, in the rendered
+  // editor text). Sent so the host can place the marker on the right occurrence
+  // when offsets are unavailable and the anchor text repeats (table cells).
+  let anchorOrdinal = -1;
   let displayText = "";
   let failureReason = "";
   // Three-layer selection lookup — see the comment block on
@@ -1425,6 +1429,21 @@ function openComposerForCurrentSelection(): void {
       contextAfter: renderedSelEnd >= 0 ? renderedText.slice(renderedSelEnd, renderedSelEnd + 24) : "",
     };
 
+    // Record which occurrence of the anchor text this selection is, counting
+    // matches in the rendered text before it. The host uses this to place the
+    // marker on the right occurrence when context can't (duplicate table cells).
+    if (renderedSelStart >= 0 && anchorText.length > 0) {
+      let ord = 0;
+      let from = 0;
+      while (true) {
+        const idx = renderedText.indexOf(anchorText, from);
+        if (idx < 0 || idx >= renderedSelStart) break;
+        ord++;
+        from = idx + 1;
+      }
+      anchorOrdinal = ord;
+    }
+
     // Precise-placement bonus: if the markdown slice appears in fullMd, record
     // exact offsets so the host wraps that exact span. Otherwise leave the
     // offsets at -1 and let the host fall back to text / loose anchoring.
@@ -1502,6 +1521,7 @@ function openComposerForCurrentSelection(): void {
       fullMd: anchorFullMd,
       selStart: anchorSelStart,
       selEnd: anchorSelEnd,
+      anchorOrdinal,
     });
   });
 }

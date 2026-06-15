@@ -86,6 +86,13 @@ interface AddCommentMessage {
   /** Exact selection offsets into `fullMd`; -1 when the webview couldn't resolve them. */
   selStart?: number;
   selEnd?: number;
+  /**
+   * Which occurrence of `anchor.text` (0-based, in the editor's rendered text)
+   * was selected. Lets the text-anchored fallback place the marker on the right
+   * occurrence in structural markdown (table cells, duplicate values) where
+   * context matching fails. -1 when unknown.
+   */
+  anchorOrdinal?: number;
 }
 
 interface ReplyCommentMessage {
@@ -518,12 +525,13 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       Number.isInteger(msg.selEnd) &&
       (msg.selStart as number) >= 0 &&
       (msg.selEnd as number) >= 0;
+    const ordinal = Number.isInteger(msg.anchorOrdinal) ? (msg.anchorOrdinal as number) : -1;
     let result = useOffsets
       ? addThreadAtOffsets(document.getText(), msg.fullMd!, msg.selStart!, msg.selEnd!, newComment)
-      : addThreadFromAnchor(document.getText(), anchor, newComment);
+      : addThreadFromAnchor(document.getText(), anchor, newComment, ordinal);
     if (!result.ok && useOffsets) {
       // Offsets were rejected (out of range) — fall back to the text anchor.
-      result = addThreadFromAnchor(document.getText(), anchor, newComment);
+      result = addThreadFromAnchor(document.getText(), anchor, newComment, ordinal);
     }
     if (!result.ok) {
       this.output.appendLine(`CollabEditor: addComment failed for ${document.uri.fsPath}: ${result.error}`);

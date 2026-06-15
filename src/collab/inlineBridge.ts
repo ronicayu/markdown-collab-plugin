@@ -28,7 +28,7 @@ import {
   type InlineThread,
   type ParsedDocument,
 } from "../inlineComments/format";
-import { locateAnchorInLiveText } from "./liveAnchorLocator";
+import { locateAnchorInLiveText, locateNthOccurrence } from "./liveAnchorLocator";
 
 /** Anchor shape exchanged with the webview (markdown-source space). */
 export interface CollabCommentAnchor {
@@ -235,9 +235,23 @@ export function addThreadFromAnchor(
   source: string,
   anchor: CollabCommentAnchor,
   comment: { author: string; body: string; ts?: string },
+  /**
+   * Which occurrence of `anchor.text` was selected (0-based, in the editor's
+   * rendered text). When the context-based `locate` can't pin the span — the
+   * usual case for table cells and other structural markdown, where the stored
+   * context carries `|`/`#`/`**` that the rendered text lacks, and any
+   * duplicate value (e.g. "Yes") is otherwise un-disambiguable — fall back to
+   * placing the marker at this occurrence in the prose. Mirrors the ordinal the
+   * highlight uses, so a freshly-placed marker highlights right away.
+   */
+  ordinal?: number,
 ): { ok: true; source: string } | { ok: false; error: string } {
   const { prose, proseToSrc } = buildBridge(source);
-  const range = locate(prose, anchor);
+  const range =
+    locate(prose, anchor) ??
+    (typeof ordinal === "number" && ordinal >= 0
+      ? locateNthOccurrence(prose, anchor.text, ordinal)
+      : null);
   if (range) {
     const srcStart = proseToSrc[range.start];
     // End boundary: map the last selected prose char to source, then +1, so we

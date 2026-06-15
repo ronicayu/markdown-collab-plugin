@@ -104,6 +104,30 @@ describe("addThreadFromAnchor", () => {
     const firstMarkerIdx = res.source.indexOf("<!--mc:a:");
     expect(firstMarkerIdx).toBe(0);
   });
+
+  it("places the marker by ordinal on a duplicate table cell (context can't disambiguate)", () => {
+    // Tables repeat values ("Yes"), and the rendered context the editor sends
+    // carries no `|`, so context matching fails. Before the ordinal fallback
+    // this saved loosely-anchored (no markers); now the occurrence index pins it.
+    const table = ["| Feature | Free | Pro |", "| :-- | :-- | :-- |", "| Export | No | Yes |", "| Sharing | Yes | Yes |", ""].join("\n");
+    const anchor = { text: "Yes", contextBefore: "SharingYes", contextAfter: "Yes" };
+
+    // No ordinal → context fails on a duplicate → loose (no markers).
+    const loose = addThreadFromAnchor(table, anchor, { author: "ron", body: "q" });
+    expect(loose.ok).toBe(true);
+    if (loose.ok) expect(loose.source).not.toContain("<!--mc:a:");
+
+    // Ordinal 1 = the Sharing/Free "Yes" (2nd of three) gets the marker, exactly.
+    const placed = addThreadFromAnchor(table, anchor, { author: "ron", body: "q" }, 1);
+    expect(placed.ok).toBe(true);
+    if (!placed.ok) return;
+    const sharingRow = placed.source.split("\n").find((l) => l.includes("Sharing"))!;
+    expect(sharingRow).toContain("<!--mc:a:");
+    expect(sharingRow).toMatch(/\|\s*<!--mc:a:[a-z0-9]+-->Yes<!--mc:\/a:[a-z0-9]+-->\s*\|\s*Yes\s*\|/);
+    // The Export row's "Yes" (ordinal 0) stays unmarked.
+    const exportRow = placed.source.split("\n").find((l) => l.includes("Export"))!;
+    expect(exportRow).not.toContain("<!--mc:a:");
+  });
 });
 
 describe("commentsOf", () => {
