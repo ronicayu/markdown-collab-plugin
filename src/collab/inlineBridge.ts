@@ -72,17 +72,26 @@ const CONTEXT_CHARS = 24;
  * the user edited the surrounding prose). The fallback only ever returns an
  * unambiguous single hit, so it never silently mis-anchors a duplicated quote.
  */
-function locate(
+function locateWithContext(
   prose: string,
   anchor: CollabCommentAnchor,
 ): { start: number; end: number } | null {
-  const withContext = locateAnchorInLiveText(prose, {
+  return locateAnchorInLiveText(prose, {
     text: anchor.text,
     contextBefore: normalizeWs(anchor.contextBefore),
     contextAfter: normalizeWs(anchor.contextAfter),
   });
-  if (withContext) return withContext;
-  return locateAnchorInLiveText(prose, { text: anchor.text, contextBefore: "", contextAfter: "" });
+}
+
+function locateTextOnly(prose: string, text: string): { start: number; end: number } | null {
+  return locateAnchorInLiveText(prose, { text, contextBefore: "", contextAfter: "" });
+}
+
+function locate(
+  prose: string,
+  anchor: CollabCommentAnchor,
+): { start: number; end: number } | null {
+  return locateWithContext(prose, anchor) ?? locateTextOnly(prose, anchor.text);
 }
 
 const openMarker = (id: string): string => `<!--mc:a:${id}-->`;
@@ -447,12 +456,19 @@ interface EditEnvelope {
   delta: number;
 }
 
+const isHighSurrogate = (c: number): boolean => c >= 0xd800 && c <= 0xdbff;
+const isLowSurrogate = (c: number): boolean => c >= 0xdc00 && c <= 0xdfff;
+
 function diffEnvelope(oldStr: string, newStr: string): EditEnvelope {
   const oldLen = oldStr.length;
   const newLen = newStr.length;
   const minLen = Math.min(oldLen, newLen);
   let prefix = 0;
   while (prefix < minLen && oldStr.charCodeAt(prefix) === newStr.charCodeAt(prefix)) prefix++;
+  // charCodeAt works in UTF-16 code units, so a boundary can fall between the
+  // halves of a surrogate pair (e.g. two emoji sharing a high surrogate). Back
+  // the prefix off a trailing high surrogate so it never splits a code point.
+  if (prefix > 0 && isHighSurrogate(oldStr.charCodeAt(prefix - 1))) prefix--;
   let suffix = 0;
   while (
     suffix < minLen - prefix &&
@@ -460,6 +476,8 @@ function diffEnvelope(oldStr: string, newStr: string): EditEnvelope {
   ) {
     suffix++;
   }
+  // Likewise: don't let the suffix begin on a lone low surrogate.
+  if (suffix > 0 && isLowSurrogate(oldStr.charCodeAt(oldLen - suffix))) suffix--;
   return { prefix, oldSuffixStart: oldLen - suffix, delta: newLen - oldLen };
 }
 
@@ -478,7 +496,9 @@ function mapSpanThroughEnclosedEdit(
 ): { start: number; end: number } | null {
   if (start <= edit.prefix && end >= edit.oldSuffixStart) {
     const mappedEnd = end + edit.delta;
-    if (mappedEnd >= start) return { start, end: mappedEnd };
+    // Reject a collapse to zero width (the edit deleted the whole anchored
+    // text) — leave the thread unanchored rather than emit an empty marker.
+    if (mappedEnd > start) return { start, end: mappedEnd };
   }
   return null;
 }
@@ -491,34 +511,39 @@ function mapSpanThroughEnclosedEdit(
  * sits in the new prose and take everything between as the new anchored text.
  * Matching is whitespace-normalised so table column re-padding doesn't break it.
  *
- * `oldStart`/`delta` disambiguate repeated context by preferring the bracket
- * nearest the anchor's old position. Returns null when either side is too thin
+ * `want` (the expected post-edit start) disambiguates repeated context by
+ * preferring the bracket nearest it. Returns null when either side is too thin
  * to be specific, or no plausible bracket is found.
  */
 function relocateByContext(
   newProse: string,
+  collapsedNew: { normalized: string; map: number[] },
   contextBefore: string,
   contextAfter: string,
-  oldStart: number,
+  want: number,
   oldLen: number,
   delta: number,
 ): { start: number; end: number } | null {
   // Bracket with only the anchor's own line, not neighbouring rows: a table's
   // separator row (`| :--- |`) re-pads its dash run on every serialize, so
-  // context that reaches across the line break would never match again.
+  // context that reaches across the line break would never match again. But for
+  // a line-edge anchor the own-line context is empty/too thin, so fall back to
+  // the full cross-line context — prose has no re-padded separators to confuse,
+  // and table cells always have a `| ` prefix so they keep the own-line form.
   const cbLine = contextBefore.slice(contextBefore.lastIndexOf("\n") + 1);
   const caNl = contextAfter.indexOf("\n");
   const caLine = caNl >= 0 ? contextAfter.slice(0, caNl) : contextAfter;
-  const nb = normalizeWs(cbLine);
-  const na = normalizeWs(caLine);
+  let nb = normalizeWs(cbLine);
+  let na = normalizeWs(caLine);
+  if (nb.length < 2) nb = normalizeWs(contextBefore);
+  if (na.length < 2) na = normalizeWs(contextAfter);
   // Need a couple of real chars on each side, else the match is too loose.
   if (nb.length < 2 || na.length < 2) return null;
 
-  const { normalized, map } = collapseWs(newProse);
+  const { normalized, map } = collapsedNew;
   // Generous bound on the bracketed gap so we don't swallow a whole table/section
   // when the context repeats; the anchor can only have grown by the edit size.
   const maxGap = Math.max(oldLen * 4, oldLen + Math.abs(delta) + 80);
-  const want = oldStart + delta; // expected raw start of the anchor after the edit
 
   let best: { start: number; end: number } | null = null;
   let bestDist = Infinity;
@@ -531,9 +556,15 @@ function relocateByContext(
     const aIdx = normalized.indexOf(na, afterB); // anchor ends where context-after starts
     if (aIdx < 0) continue;
     if (aIdx - afterB > maxGap) continue;
-    const start = map[afterB];
-    const end = map[aIdx];
-    if (start === undefined || end === undefined || end < start) continue;
+    let start = map[afterB];
+    let end = map[aIdx];
+    if (start === undefined || end === undefined) continue;
+    // The normalized→raw map points a collapsed whitespace run at its first
+    // char, so the bracket can include padding spaces/newlines. Trim them so the
+    // marker wraps just the anchored text (and never a structural newline).
+    while (start < end && /\s/.test(newProse[start]!)) start++;
+    while (end > start && /\s/.test(newProse[end - 1]!)) end--;
+    if (end <= start) continue; // nothing but whitespace between the brackets
     const dist = Math.abs(start - want);
     if (dist < bestDist) {
       bestDist = dist;
@@ -543,44 +574,75 @@ function relocateByContext(
   return best;
 }
 
+/**
+ * Re-anchor one thread's span into `newProse` by text, tiered most-trustworthy
+ * first:
+ *   1. context+text match — robust to edits elsewhere and whitespace reflow.
+ *   2. diff-bracket — the edit is enclosed by the marker AND padding matches
+ *      (precise; also covers doc-edge anchors with no context to bracket).
+ *   3. context-bracket — re-anchor by the unchanged surrounding text, which
+ *      survives table re-padding the diff envelope can't.
+ *   4. text-only — a unique match LAST, and only when it's near where the anchor
+ *      was, so a stale duplicate elsewhere can't yank the marker across the doc.
+ */
+function reanchorThreadByText(
+  oldProse: string,
+  newProse: string,
+  collapsed: () => { normalized: string; map: number[] },
+  edit: EditEnvelope,
+  span: { proseStart: number; proseEnd: number },
+): { start: number; end: number } | null {
+  const quote = oldProse.slice(span.proseStart, span.proseEnd);
+  const oldLen = span.proseEnd - span.proseStart;
+  const contextBefore = oldProse.slice(Math.max(0, span.proseStart - CONTEXT_CHARS), span.proseStart);
+  const contextAfter = oldProse.slice(span.proseEnd, span.proseEnd + CONTEXT_CHARS);
+  const anchor = { text: quote, contextBefore, contextAfter };
+  // Expected raw start of this anchor after the edit: unchanged if it sits in the
+  // common prefix (edit is at/after it), else shifted by the length delta.
+  const want = span.proseStart <= edit.prefix ? span.proseStart : span.proseStart + edit.delta;
+  const loc =
+    locateWithContext(newProse, anchor) ??
+    mapSpanThroughEnclosedEdit(edit, span.proseStart, span.proseEnd) ??
+    relocateByContext(newProse, collapsed(), contextBefore, contextAfter, want, oldLen, edit.delta);
+  if (loc) return loc;
+  const textHit = locateTextOnly(newProse, quote);
+  if (textHit && Math.abs(textHit.start - want) <= Math.max(oldLen * 4, 200)) return textHit;
+  return null;
+}
+
 export function mergeProseEdit(oldSource: string, newProse: string): string {
   const { prose: oldProse, parsed, anchorsInProse } = buildBridge(oldSource);
   const threads = parsed.threads;
-
-  // The single-edit envelope between old and new prose, used to keep a marker
-  // alive when the user edits *inside* the anchored text (which changes the
-  // quote, so the text search below can't find it).
   const edit = diffEnvelope(oldProse, newProse);
+  // Whitespace-collapsed view of newProse for the context-bracket fallback.
+  // Computed at most once per merge (only when a thread actually reaches that
+  // tier), not once per thread — mergeProseEdit runs on every debounced edit.
+  let collapsedNew: { normalized: string; map: number[] } | null = null;
+  const collapsed = (): { normalized: string; map: number[] } =>
+    (collapsedNew ??= collapseWs(newProse));
 
   const placements: Array<{ id: string; start: number; end: number }> = [];
   for (const thread of threads) {
     const span = anchorsInProse.get(thread.id);
     if (!span) continue; // already unanchored — leave it that way
-    const quote = oldProse.slice(span.proseStart, span.proseEnd);
-    const contextBefore = oldProse.slice(Math.max(0, span.proseStart - CONTEXT_CHARS), span.proseStart);
-    const contextAfter = oldProse.slice(span.proseEnd, span.proseEnd + CONTEXT_CHARS);
-    // First try to find the (unchanged) quote — robust to edits elsewhere and to
-    // whitespace reflow. If that fails, the edit landed inside this anchor:
-    //   1. diff-bracket: when the change is enclosed by the marker AND padding
-    //      matches, map the bounds through the edit (precise; also covers anchors
-    //      at the doc edge that have no context to bracket with).
-    //   2. context-bracket: re-anchor by the unchanged surrounding text, which
-    //      survives table re-padding the diff envelope can't.
-    const loc =
-      locate(newProse, { text: quote, contextBefore, contextAfter }) ??
-      mapSpanThroughEnclosedEdit(edit, span.proseStart, span.proseEnd) ??
-      relocateByContext(
-        newProse,
-        contextBefore,
-        contextAfter,
-        span.proseStart,
-        span.proseEnd - span.proseStart,
-        edit.delta,
-      );
+    const loc = reanchorThreadByText(oldProse, newProse, collapsed, edit, span);
     if (loc) placements.push({ id: thread.id, start: loc.start, end: loc.end });
   }
 
-  // Drop overlaps (keep the earliest); markers must nest cleanly.
+  return assembleMarkedSource(oldSource, newProse, threads, placements);
+}
+
+/**
+ * Wrap each placement's `[start, end)` of `newProse` in its marker, dropping
+ * overlaps (markers must nest cleanly), then re-prepend the frontmatter the
+ * editor never sees and re-append the threads region.
+ */
+function assembleMarkedSource(
+  oldSource: string,
+  newProse: string,
+  threads: InlineThread[],
+  placements: Array<{ id: string; start: number; end: number }>,
+): string {
   placements.sort((a, b) => a.start - b.start || a.end - b.end);
   const kept: typeof placements = [];
   let lastEnd = -1;
@@ -602,7 +664,53 @@ export function mergeProseEdit(oldSource: string, newProse: string): string {
   }
   marked += newProse.slice(cursor);
 
-  // Re-prepend the frontmatter the editor never sees, so it round-trips
-  // verbatim instead of being lost when the body is written back.
   return withThreads(frontmatterOf(oldSource) + marked, threads);
+}
+
+/**
+ * Re-anchor using positions the editor already tracks. The live editor's anchor
+ * highlights are ProseMirror decorations that map through every edit natively
+ * (insert/delete inside a span grows/shifts it losslessly), so on each edit the
+ * editor can report, per comment, the *current* text of its span and which
+ * occurrence of that text it is. Placing the marker at that occurrence lands it
+ * exactly where the comment now sits — no quote re-matching, no diff/context
+ * heuristics — even when the user edited the anchored text itself.
+ *
+ * A thread the editor no longer reports (its decoration was dropped because the
+ * text was fully deleted) is left unanchored. This is the authoritative edit
+ * path; `mergeProseEdit` remains the fallback when no anchor info is supplied.
+ */
+export function placeAnchorsInProse(
+  oldSource: string,
+  newProse: string,
+  anchors: Array<{ id: string; text: string; ordinal: number }>,
+): string {
+  const { prose: oldProse, parsed, anchorsInProse } = buildBridge(oldSource);
+  const byId = new Map(anchors.map((a) => [a.id, a]));
+  const edit = diffEnvelope(oldProse, newProse);
+  let collapsedNew: { normalized: string; map: number[] } | null = null;
+  const collapsed = (): { normalized: string; map: number[] } =>
+    (collapsedNew ??= collapseWs(newProse));
+
+  const placements: Array<{ id: string; start: number; end: number }> = [];
+  for (const thread of parsed.threads) {
+    const reported = byId.get(thread.id);
+    const span = anchorsInProse.get(thread.id);
+    let loc: { start: number; end: number } | null = null;
+    // Editor reported a live position → place there exactly (works even for a
+    // thread that had no inline marker before, e.g. a previously-loose anchor
+    // the editor is now tracking).
+    if (reported && reported.text.trim().length > 0) {
+      const r = locateNthOccurrence(newProse, reported.text, reported.ordinal);
+      if (r && r.end > r.start) loc = r;
+    }
+    // Not reported (decoration destroyed by a cut/paste move) or reported but
+    // unplaceable: if it had a marker before, re-anchor by text so it follows
+    // its text instead of being dropped. Genuinely-deleted text fails to locate
+    // and the thread is left unanchored. A thread that was already unanchored and
+    // isn't tracked stays unanchored.
+    if (!loc && span) loc = reanchorThreadByText(oldProse, newProse, collapsed, edit, span);
+    if (loc) placements.push({ id: thread.id, start: loc.start, end: loc.end });
+  }
+  return assembleMarkedSource(oldSource, newProse, parsed.threads, placements);
 }

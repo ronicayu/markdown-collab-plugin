@@ -258,11 +258,23 @@ async function init(msg: InitMessage): Promise<void> {
         if (editDebounce) clearTimeout(editDebounce);
         editDebounce = setTimeout(() => {
           editDebounce = null;
-          vscode.postMessage({ type: "edit", text: markdown });
+          // Report each anchor's live position (read off the mapped decoration
+          // set) so the host places markers exactly where comments now sit,
+          // instead of re-deriving positions from the old quote text.
+          let anchors: AnchorReport[] = [];
+          editor?.action((ictx) => {
+            const view = ictx.get(editorViewCtx);
+            const set = HIGHLIGHT_PLUGIN_KEY.getState(view.state) as DecorationSet | undefined;
+            anchors = collectAnchors(view.state.doc, set);
+          });
+          vscode.postMessage({ type: "edit", text: markdown, anchors });
         }, 250);
-        // Doc structure changed → recompute anchor highlights so they
-        // track the new positions.
-        forceHighlightRefresh();
+        // Don't rebuild highlights here: the plugin's apply() already maps the
+        // existing decorations through this edit (so a highlight tracks text
+        // changed inside it). Rebuilding from the not-yet-re-anchored
+        // sidebarState.comments would drop a just-edited highlight (its stored
+        // quote no longer matches). The authoritative rebuild arrives when the
+        // host re-anchors and pushes fresh comments (sidecar-changed).
       });
     })
     .config(nord)
@@ -737,8 +749,13 @@ function makeAnchorHighlightPlugin(): Plugin {
         if (meta?.refresh) {
           return buildAnchorDecorations(tr.doc, sidebarState.comments, cachedMarkdown);
         }
-        if (!tr.docChanged) return oldDecos.map(tr.mapping, tr.doc);
-        return buildAnchorDecorations(tr.doc, sidebarState.comments, cachedMarkdown);
+        // Map existing highlights through the edit instead of rebuilding from the
+        // stored anchor text. Rebuilding here lost a highlight the moment you
+        // edited *inside* it (the old quote no longer matched), so it only came
+        // back on reopen. Mapping makes the highlight grow/shift with the edit; a
+        // fresh rebuild with re-anchored comments follows via forceHighlightRefresh
+        // once the host writes the moved markers and re-sends the comments.
+        return oldDecos.map(tr.mapping, tr.doc);
       },
     },
     props: {
@@ -788,7 +805,6 @@ function buildAnchorDecorations(
   const haystack = doc.textContent;
   const decoratedIds: string[] = [];
   for (const c of comments) {
-    if (c.resolved) continue; // Don't highlight resolved threads — too noisy.
     // Anchored threads: the marker already tells us which occurrence of the
     // text is anchored (anchorOrdinal), so find that occurrence directly — no
     // surrounding-context match (which broke on table/heading/list markdown).
@@ -800,18 +816,20 @@ function buildAnchorDecorations(
     if (!rendered) continue;
     const pmRange = renderedRangeToPmRange(doc, rendered.start, rendered.end);
     if (!pmRange) continue;
-    decoratedIds.push(c.id);
-    decos.push(
-      Decoration.inline(
-        pmRange.from,
-        pmRange.to,
-        {
+    // Resolved threads aren't highlighted (too noisy) but we still decorate them
+    // invisibly so their position is tracked through edits and reported to the
+    // host — otherwise editing near a resolved comment would orphan its marker.
+    const attrs: Record<string, string> = c.resolved
+      ? { class: "mdc-anchor-tracked", "data-comment-id": c.id }
+      : {
           class: "mdc-anchor-highlight",
           "data-comment-id": c.id,
           title: `Comment by ${c.author}: ${truncate(c.body, 100)}`,
-        },
-      ),
-    );
+        };
+    if (!c.resolved) decoratedIds.push(c.id);
+    // The 4th arg (spec) carries the id so collectAnchors can read it back off
+    // the mapped decoration without parsing DOM attributes.
+    decos.push(Decoration.inline(pmRange.from, pmRange.to, attrs, { id: c.id }));
   }
   // Report which anchors actually got highlighted (only when it changes) so an
   // integration test in a real VS Code + Milkdown can assert the outcome — the
@@ -826,6 +844,50 @@ function reportHighlights(ids: string[]): void {
   if (sig === lastHighlightSig) return;
   lastHighlightSig = sig;
   vscode.postMessage({ type: "highlight-report", ids });
+}
+
+interface AnchorReport {
+  id: string;
+  text: string;
+  ordinal: number;
+}
+
+// Read each tracked anchor's CURRENT position straight off the mapped decoration
+// set and describe it as (live text, occurrence ordinal). Because the decoration
+// moved with every edit, these describe exactly where the comment now sits — so
+// the host can place the marker there without re-deriving it from the old quote.
+function collectAnchors(
+  doc: {
+    textContent: string;
+    textBetween: (from: number, to: number) => string;
+    descendants: (cb: (n: { isText: boolean; nodeSize: number }, p: number) => boolean | void) => void;
+  },
+  set: DecorationSet | undefined,
+): AnchorReport[] {
+  if (!set) return [];
+  const haystack = doc.textContent;
+  const out: AnchorReport[] = [];
+  const seen = new Set<string>();
+  for (const deco of set.find()) {
+    const id = (deco.spec as { id?: string } | undefined)?.id;
+    if (!id || seen.has(id)) continue;
+    const from = (deco as unknown as { from: number }).from;
+    const to = (deco as unknown as { to: number }).to;
+    const text = doc.textBetween(from, to);
+    if (text.trim().length === 0) continue; // span collapsed (text deleted) → leave unanchored
+    const renderedStart = renderedOffsetForPm(doc, from);
+    let ordinal = 0;
+    let idx = 0;
+    while (true) {
+      const hit = haystack.indexOf(text, idx);
+      if (hit < 0 || hit >= renderedStart) break;
+      ordinal++;
+      idx = hit + 1;
+    }
+    seen.add(id);
+    out.push({ id, text, ordinal });
+  }
+  return out;
 }
 
 // locateAnchorInLiveText now lives in ../collab/liveAnchorLocator for

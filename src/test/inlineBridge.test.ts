@@ -7,6 +7,7 @@ import {
   deleteThread,
   frontmatterOf,
   mergeProseEdit,
+  placeAnchorsInProse,
   proseOf,
   replyToThread,
   setThreadResolved,
@@ -403,6 +404,153 @@ describe("mergeProseEdit", () => {
     const merged = mergeProseEdit(src, newProse);
     expect(merged).toMatch(/<!--mc:a:rb824-->Single wrZiter per domain<!--mc:\/a:rb824-->/);
     expect(commentsOf(merged)).toHaveLength(1);
+  });
+
+  // --- review hardening: in-place edit-tracking edge cases ---
+
+  it("tracks the edited text and does NOT jump to a stale duplicate elsewhere", () => {
+    const src = addThreadFromAnchor(
+      "intro alpha here.\n\nlater alpha word.\n",
+      { text: "alpha", contextBefore: "intro ", contextAfter: " here" },
+      { author: "ron", body: "c" },
+    );
+    expect(src.ok).toBe(true);
+    if (!src.ok) return;
+    // Edit the FIRST 'alpha' -> 'alphx'; the old quote 'alpha' still occurs in line 2.
+    const merged = mergeProseEdit(src.source, proseOf(src.source).replace("intro alpha here", "intro alphx here"));
+    expect(merged).toMatch(/intro <!--mc:a:[a-z0-9]+-->alphx<!--mc:\/a:[a-z0-9]+--> here/);
+    expect(merged).not.toMatch(/later <!--mc:a:/); // didn't yank onto the 2nd 'alpha'
+  });
+
+  it("keeps a marker when the anchor at the start of a line is edited inside", () => {
+    const src = addThreadFromAnchor(
+      "# Title\n\nAlpha beta is here.\n",
+      { text: "Alpha", contextBefore: "\n", contextAfter: " beta" },
+      { author: "ron", body: "c" },
+    );
+    expect(src.ok).toBe(true);
+    if (!src.ok) return;
+    const merged = mergeProseEdit(src.source, proseOf(src.source).replace("Alpha beta", "Alpheta beta"));
+    expect(merged).toMatch(/<!--mc:a:[a-z0-9]+-->Alpheta<!--mc:\/a:[a-z0-9]+--> beta/);
+  });
+
+  it("unanchors (no empty marker) when the whole anchored text is deleted", () => {
+    const src = addThreadFromAnchor(
+      "the quick brown fox.\n",
+      { text: "quick brown", contextBefore: "the ", contextAfter: " fox" },
+      { author: "ron", body: "c" },
+    );
+    expect(src.ok).toBe(true);
+    if (!src.ok) return;
+    const merged = mergeProseEdit(src.source, proseOf(src.source).replace("quick brown ", ""));
+    expect(merged).not.toMatch(/<!--mc:a:[a-z0-9]+--><!--mc:\/a:[a-z0-9]+-->/); // no zero-width marker
+    expect(commentsOf(merged)).toHaveLength(1); // thread survives, unanchored
+  });
+
+  it("does not wrap padding whitespace, and survives editing a hyphenated word", () => {
+    const src = addThreadFromAnchor(
+      "x ab-cd y\n",
+      { text: "ab-cd", contextBefore: "x ", contextAfter: " y" },
+      { author: "ron", body: "c" },
+    );
+    expect(src.ok).toBe(true);
+    if (!src.ok) return;
+    const merged = mergeProseEdit(src.source, proseOf(src.source).replace("ab-cd", "ab -cd"));
+    expect(merged).toMatch(/x <!--mc:a:[a-z0-9]+-->ab -cd<!--mc:\/a:[a-z0-9]+--> y/);
+  });
+
+  it("does not split a surrogate pair when an emoji inside the anchor is edited", () => {
+    const src = addThreadFromAnchor(
+      "see \u{1F600}x done\n",
+      { text: "\u{1F600}x", contextBefore: "see ", contextAfter: " done" },
+      { author: "ron", body: "c" },
+    );
+    expect(src.ok).toBe(true);
+    if (!src.ok) return;
+    const merged = mergeProseEdit(src.source, proseOf(src.source).replace("\u{1F600}x", "\u{1F601}x"));
+    // No lone surrogate anywhere in the output.
+    expect(merged).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    expect(merged).toMatch(/<!--mc:a:[a-z0-9]+-->\u{1F601}x<!--mc:\/a:[a-z0-9]+-->/u);
+  });
+});
+
+describe("placeAnchorsInProse (editor-reported positions)", () => {
+  const TABLE = [
+    "| # | Principle | Rationale |",
+    "| :- | :- | :- |",
+    "| DP-1 | **<!--mc:a:rb824-->Single writer per domain<!--mc:/a:rb824-->** | Eliminates conflicts. |",
+    "",
+    "<!--mc:threads:begin-->",
+    '<!--mc:t {"id":"rb824","quote":"Single writer per domain","status":"open","comments":[{"id":"c1","author":"ron","ts":"2026-01-01T00:00:00Z","body":"q"}]}-->',
+    "<!--mc:threads:end-->",
+    "",
+  ].join("\n");
+
+  it("places the marker at the editor-reported occurrence after a mid-cell edit", () => {
+    // The editor maps its decoration through the edit and reports the new span
+    // text + ordinal; the host places by that — no quote re-matching.
+    const newProse = [
+      "| #    | Principle                     | Rationale             |",
+      "| :--- | :---------------------------- | :-------------------- |",
+      "| DP-1 | **Single wrZiter per domain** | Eliminates conflicts. |",
+      "",
+    ].join("\n");
+    const out = placeAnchorsInProse(TABLE, newProse, [
+      { id: "rb824", text: "Single wrZiter per domain", ordinal: 0 },
+    ]);
+    expect(out).toMatch(/\*\*<!--mc:a:rb824-->Single wrZiter per domain<!--mc:\/a:rb824-->\*\*/);
+    expect(commentsOf(out)).toHaveLength(1);
+  });
+
+  it("places duplicate-text anchors at the exact reported occurrences", () => {
+    const src = [
+      "| F | Free | Pro |",
+      "| :- | :- | :- |",
+      "| Export | No | Yes |",
+      "| Sharing | Yes | Yes |",
+      "",
+      "<!--mc:threads:begin-->",
+      '<!--mc:t {"id":"t1","quote":"Yes","status":"open","comments":[{"id":"c1","author":"r","ts":"2026-01-01T00:00:00Z","body":"a"}]}-->',
+      '<!--mc:t {"id":"t2","quote":"Yes","status":"open","comments":[{"id":"c1","author":"r","ts":"2026-01-01T00:00:00Z","body":"b"}]}-->',
+      "<!--mc:threads:end-->",
+      "",
+    ].join("\n");
+    const out = placeAnchorsInProse(src, proseOf(src), [
+      { id: "t1", text: "Yes", ordinal: 1 },
+      { id: "t2", text: "Yes", ordinal: 2 },
+    ]);
+    const sharing = out.split("\n").find((l) => l.includes("Sharing"))!;
+    // Sharing row: Free col = 2nd "Yes" (t1), Pro col = 3rd "Yes" (t2).
+    expect(sharing).toMatch(
+      /<!--mc:a:t1-->Yes<!--mc:\/a:t1-->\s*\|\s*<!--mc:a:t2-->Yes<!--mc:\/a:t2-->/,
+    );
+    // The Export row's "Yes" (ordinal 0) is untouched.
+    expect(out.split("\n").find((l) => l.includes("Export"))!).not.toContain("<!--mc:a:");
+  });
+
+  it("unanchors when the anchored text was deleted and isn't reported", () => {
+    // Editor reports nothing (its decoration collapsed) AND the text is gone.
+    const deleted = proseOf(TABLE).replace("Single writer per domain", "");
+    const out = placeAnchorsInProse(TABLE, deleted, []);
+    expect(out).not.toContain("<!--mc:a:"); // nothing to anchor to
+    expect(commentsOf(out)).toHaveLength(1); // thread preserved, unanchored
+  });
+
+  it("re-anchors an unreported thread whose text is still present (safety net)", () => {
+    // If the editor reports nothing for a thread (e.g. its decoration failed to
+    // build) but the anchored text is unchanged, fall back to text re-anchoring
+    // rather than dropping the marker.
+    const out = placeAnchorsInProse(TABLE, proseOf(TABLE), []);
+    expect(out).toMatch(/<!--mc:a:rb824-->Single writer per domain<!--mc:\/a:rb824-->/);
+  });
+
+  it("keeps a resolved thread's marker (editor tracks resolved anchors too)", () => {
+    const resolved = setThreadResolved(TABLE, "rb824", true, "ron")!;
+    const out = placeAnchorsInProse(resolved, proseOf(resolved), [
+      { id: "rb824", text: "Single writer per domain", ordinal: 0 },
+    ]);
+    expect(out).toMatch(/<!--mc:a:rb824-->Single writer per domain<!--mc:\/a:rb824-->/);
+    expect(commentsOf(out)[0]!.resolved).toBe(true);
   });
 });
 

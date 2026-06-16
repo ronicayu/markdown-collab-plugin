@@ -10,6 +10,7 @@ import {
   deleteComment as deleteCommentFromThread,
   frontmatterOf,
   mergeProseEdit,
+  placeAnchorsInProse,
   proseOf,
   replyToThread,
   setThreadResolved,
@@ -51,6 +52,13 @@ interface CommentsChangedPayload {
 interface EditMessage {
   type: "edit";
   text: string;
+  /**
+   * Each tracked comment's live position, read off the editor's mapped anchor
+   * decorations: the current text of its span and which occurrence that is.
+   * When present, the host places markers at these exact occurrences instead of
+   * re-deriving them from the stored quote. Absent for older webviews / fallback.
+   */
+  anchors?: Array<{ id: string; text: string; ordinal: number }>;
 }
 
 interface ReadyMessage {
@@ -349,14 +357,28 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     };
 
     /** Apply a prose-only edit from the webview, preserving inline comment markers. */
-    const applyProseEdit = async (newProse: string): Promise<void> => {
+    const applyProseEdit = async (
+      newProse: string,
+      anchors?: Array<{ id: string; text: string; ordinal: number }>,
+    ): Promise<void> => {
       // The editor now holds `newProse` — record it so a later doc-change echo
       // (e.g. format-on-save) isn't mistaken for an external edit.
       lastWebviewProse = newProse;
       const current = document.getText();
       if (proseOf(current) === newProse) return; // prose unchanged — nothing to merge
-      await writeDocument(mergeProseEdit(current, newProse));
+      // Preferred path: the editor reported each anchor's live position (its
+      // decorations map through edits losslessly), so place markers exactly
+      // there. Fall back to text-based re-anchoring when no anchors were sent.
+      const next = anchors
+        ? placeAnchorsInProse(current, newProse, anchors)
+        : mergeProseEdit(current, newProse);
+      await writeDocument(next);
       scheduleAutosave(); // flush the edit to disk so Claude can see it
+      // The onDidChangeTextDocument handler skips its own pushComments while our
+      // write is in flight (pendingApply), so push the re-anchored comments here
+      // — otherwise the webview keeps the pre-edit anchor text and its highlight
+      // can't relocate the text the user just changed.
+      pushComments();
     };
 
     const pushComments = (): void => {
@@ -385,7 +407,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         };
         void panel.webview.postMessage(payload);
       } else if (msg.type === "edit") {
-        void applyProseEdit(msg.text);
+        void applyProseEdit(msg.text, msg.anchors);
       } else if (msg.type === "ready-with-content") {
         lastReadyByUri.set(document.uri.toString(), msg);
         this.output.appendLine(

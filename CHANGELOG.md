@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.34.30 — 2026-06-16 (trial)
+
+### Comment anchors now track edits via the editor's own position mapping
+
+Reworked how a comment's marker survives editing the commented text. The live
+editor's anchor highlights are ProseMirror decorations that map through every
+edit losslessly, so the editor now reports each comment's current position on
+each edit and the host places the marker exactly there — no re-deriving
+positions by matching the old quote. Editing inside a commented span (even one
+character, even in a table cell that re-pads) keeps the marker and the
+highlight, with no need to reopen the editor.
+
+The previous text-matching re-anchoring is kept as a fallback (and for moved
+text), now hardened:
+
+- The live highlight no longer rebuilds from stale data on every keystroke (it
+  maps through the edit instead), so a just-edited highlight stops vanishing
+  until reopen.
+- Editing inside a commented span no longer jumps the marker to a duplicate of
+  the old text elsewhere; line-start anchors survive; deleting the whole
+  anchored text unanchors cleanly instead of leaving an empty marker; markers no
+  longer wrap padding whitespace; editing an emoji mid-anchor can't corrupt it.
+- Resolved comments are tracked too, so editing near one keeps its marker.
+
 ## 0.34.29 — 2026-06-15 (trial)
 
 ### Fixed: editing commented text no longer removes its marker
