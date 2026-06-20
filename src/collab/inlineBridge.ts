@@ -610,6 +610,22 @@ function reanchorThreadByText(
   return null;
 }
 
+/**
+ * Recover an unanchored thread (no live marker) by its stored quote: if that
+ * exact text occurs *uniquely* in the new prose, re-anchor there. Requires a
+ * unique match (locateTextOnly returns null on 0 or >1 hits) so a short or
+ * duplicated quote can't grab the wrong occurrence. This is what restores a
+ * comment after the user deletes its text and then hits undo.
+ */
+function recoverUnanchoredByQuote(
+  newProse: string,
+  quote: string,
+): { start: number; end: number } | null {
+  if (quote.trim().length === 0) return null;
+  const r = locateTextOnly(newProse, quote);
+  return r && r.end > r.start ? r : null;
+}
+
 export function mergeProseEdit(oldSource: string, newProse: string): string {
   const { prose: oldProse, parsed, anchorsInProse } = buildBridge(oldSource);
   const threads = parsed.threads;
@@ -624,8 +640,11 @@ export function mergeProseEdit(oldSource: string, newProse: string): string {
   const placements: Array<{ id: string; start: number; end: number }> = [];
   for (const thread of threads) {
     const span = anchorsInProse.get(thread.id);
-    if (!span) continue; // already unanchored — leave it that way
-    const loc = reanchorThreadByText(oldProse, newProse, collapsed, edit, span);
+    // No marker: try to recover by the stored quote (undo brought deleted text
+    // back); otherwise leave it unanchored. With a marker: re-anchor by text.
+    const loc = span
+      ? reanchorThreadByText(oldProse, newProse, collapsed, edit, span)
+      : recoverUnanchoredByQuote(newProse, thread.quote);
     if (loc) placements.push({ id: thread.id, start: loc.start, end: loc.end });
   }
 
@@ -710,6 +729,11 @@ export function placeAnchorsInProse(
     // and the thread is left unanchored. A thread that was already unanchored and
     // isn't tracked stays unanchored.
     if (!loc && span) loc = reanchorThreadByText(oldProse, newProse, collapsed, edit, span);
+    // Recovery: a thread with no live marker that the editor isn't tracking — its
+    // decoration was dropped when its text was deleted and an undo brought the
+    // text back (ProseMirror can't resurrect a dropped decoration). Re-anchor to
+    // a unique occurrence of its stored quote so it isn't left orphaned.
+    if (!loc && !span) loc = recoverUnanchoredByQuote(newProse, thread.quote);
     if (loc) placements.push({ id: thread.id, start: loc.start, end: loc.end });
   }
   return assembleMarkedSource(oldSource, newProse, parsed.threads, placements);

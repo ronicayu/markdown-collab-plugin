@@ -32,6 +32,8 @@ interface InitPayload {
   comments: CollabComment[];
   /** Raw frontmatter block, shown in a dedicated read-only panel. "" when absent. */
   frontmatter: string;
+  /** Webview URIs for resolving relative image src in the markdown. */
+  imageBaseUris: { docDir: string; workspaceFolder: string | null };
 }
 
 /** Pushed when the frontmatter changes on disk (external edit) without the body changing. */
@@ -223,9 +225,15 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     _token: vscode.CancellationToken,
   ): Promise<void> {
     const webviewRoot = vscode.Uri.joinPath(this.extensionUri, "out", "webview");
+    // Grant the webview read access to the workspace (or the file's own
+    // directory when loose) so local images referenced from the markdown —
+    // including `../sibling/x.png` paths — can load.
+    const imageRoots: vscode.Uri[] = [webviewRoot];
+    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+    imageRoots.push(folder ? folder.uri : vscode.Uri.file(path.dirname(document.uri.fsPath)));
     panel.webview.options = {
       enableScripts: true,
-      localResourceRoots: [webviewRoot],
+      localResourceRoots: imageRoots,
     };
 
     panel.webview.html = this.renderHtml(panel.webview);
@@ -396,6 +404,8 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         const text = proseOf(source);
         lastWebviewProse = text;
         lastFrontmatter = frontmatterOf(source);
+        const docDirUri = vscode.Uri.file(path.dirname(document.uri.fsPath));
+        const wsFolder = vscode.workspace.getWorkspaceFolder(document.uri);
         const payload: InitPayload = {
           type: "init",
           text,
@@ -404,6 +414,12 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
           user,
           comments: commentsOf(source),
           frontmatter: lastFrontmatter,
+          imageBaseUris: {
+            docDir: panel.webview.asWebviewUri(docDirUri).toString(),
+            workspaceFolder: wsFolder
+              ? panel.webview.asWebviewUri(wsFolder.uri).toString()
+              : null,
+          },
         };
         void panel.webview.postMessage(payload);
       } else if (msg.type === "edit") {
@@ -864,7 +880,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       `style-src ${webview.cspSource} 'unsafe-inline'`,
       `script-src 'nonce-${nonce}'`,
       `font-src ${webview.cspSource}`,
-      `img-src ${webview.cspSource} data: https:`,
+      `img-src ${webview.cspSource} data: https: http:`,
       // y-websocket needs ws:// to localhost or wherever the user pointed
       // markdownCollab.collab.serverUrl. Allow any ws/wss target — the user
       // controls the URL via settings.

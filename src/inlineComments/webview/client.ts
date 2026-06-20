@@ -10,6 +10,7 @@ import MarkdownIt from "markdown-it";
 import { isClaudeReviewed, isClaudeUnread } from "../claudeUnread";
 import { slugifyHeading } from "../linkParse";
 import { buildComposer, buildCommentCard, type CardAction } from "../../webviewShared/commentUi";
+import { resolveImageSrc, type ImageBaseUris } from "../../webviewShared/imageSrc";
 import { installSourceOffsetPlugin } from "./renderWithOffsets";
 import { installPlantumlPlugin } from "../../plantumlPlugin";
 
@@ -99,7 +100,7 @@ function ensurePlantumlInstalled(opts: { serverUrl: string; format: "svg" | "png
   plantumlInstalled = true;
 }
 
-let imageBaseUris: { docDir: string; workspaceFolder: string | null } = {
+let imageBaseUris: ImageBaseUris = {
   docDir: "",
   workspaceFolder: null,
 };
@@ -122,7 +123,7 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
       const alt = tok.children ? self.renderInlineAsText(tok.children, options, env) : "";
       return `<span class="mc-drawio" data-drawio-href="${md.utils.escapeHtml(original)}" title="${md.utils.escapeHtml(alt)}">Loading diagram…</span>`;
     }
-    const resolved = resolveImageSrc(original);
+    const resolved = resolveImageSrc(original, imageBaseUris);
     if (resolved !== original) tok.attrs[srcIdx][1] = resolved;
   }
   return defaultImageRule(tokens, idx, options, env, self);
@@ -134,41 +135,8 @@ function isDrawioSrc(src: string): boolean {
   return clean.endsWith(".drawio") || clean.endsWith(".drawio.xml") || clean.endsWith(".xml");
 }
 
-/**
- * Map a markdown image src to something the webview can load:
- *   - `http://`, `https://`, `data:` → unchanged (CSP allows them)
- *   - leading `/` → resolved against the workspace folder
- *   - everything else → resolved against the .md's directory
- *   - empty / undefined → unchanged
- */
-function resolveImageSrc(src: string): string {
-  if (!src) return src;
-  if (/^(https?:|data:|vscode-webview-resource:|vscode-webview:|file:)/i.test(src)) return src;
-  if (src.startsWith("//")) return "https:" + src;
-  const cleaned = src.replace(/^\.\//, "");
-  if (cleaned.startsWith("/")) {
-    if (!imageBaseUris.workspaceFolder) return src;
-    return joinUri(imageBaseUris.workspaceFolder, cleaned.slice(1));
-  }
-  if (!imageBaseUris.docDir) return src;
-  return joinUri(imageBaseUris.docDir, cleaned);
-}
-
-function joinUri(base: string, rel: string): string {
-  // Best-effort URI join: strip any trailing slash on base, then split
-  // off `?query`/`#hash` so we don't merge them with the path.
-  const m = /^([^?#]*)([?#].*)?$/.exec(rel);
-  const path = m ? m[1] : rel;
-  const tail = m && m[2] ? m[2] : "";
-  const segments = path.split("/");
-  const out: string[] = [];
-  for (const seg of segments) {
-    if (seg === "" || seg === ".") continue;
-    if (seg === "..") out.pop();
-    else out.push(encodeURIComponent(seg));
-  }
-  return base.replace(/\/+$/, "") + "/" + out.join("/") + tail;
-}
+// resolveImageSrc + the `..`-aware joinUri now live in
+// ../../webviewShared/imageSrc (shared with the live editor).
 
 const dom = {
   fileName: document.getElementById("file-name") as HTMLElement,

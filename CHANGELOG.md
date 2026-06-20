@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.34.31 — 2026-06-20 (trial)
+
+### Fixed: local images (incl. `../sibling/x.png`) now render in both views
+
+Markdown images referenced by a relative path that climbs out of the file's
+folder — e.g. `![](../diagrams/arch.png)` — didn't show. The inline preview
+resolved the `..` wrong (it never left the document's own directory), and the
+live editor didn't rewrite image paths at all, so neither could load the file.
+
+Both views now resolve image `src` the same way (a shared, `..`-aware resolver)
+and the live editor renders local images via a node view that rewrites the
+display URL only — the markdown still saves with the original relative path.
+Images load for any path the workspace folder covers.
+
+### Fixed: undo no longer orphans a comment
+
+Deleting commented text and then pressing undo left the comment orphaned — the
+editor can't resurrect a highlight whose text was deleted, so it reported
+nothing on undo. The host now recovers such a comment by re-anchoring it to a
+unique occurrence of its stored quote when the text reappears.
+
 ## 0.34.30 — 2026-06-16 (trial)
 
 ### Comment anchors now track edits via the editor's own position mapping

@@ -544,6 +544,31 @@ describe("placeAnchorsInProse (editor-reported positions)", () => {
     expect(out).toMatch(/<!--mc:a:rb824-->Single writer per domain<!--mc:\/a:rb824-->/);
   });
 
+  it("recovers a thread by its quote when deleted text is restored by undo", () => {
+    // Delete the anchored text: the editor drops the decoration and reports
+    // nothing, so the thread unanchors (but keeps its quote).
+    const deleted = placeAnchorsInProse(TABLE, proseOf(TABLE).replace("Single writer per domain", ""), []);
+    expect(deleted).not.toContain("<!--mc:a:"); // unanchored
+    expect(deleted).toContain('"quote":"Single writer per domain"'); // quote retained
+    // Undo restores the text; ProseMirror can't resurrect the dropped
+    // decoration so the editor STILL reports nothing — recover by the quote.
+    const undone = placeAnchorsInProse(deleted, proseOf(TABLE), []);
+    expect(undone).toMatch(/<!--mc:a:rb824-->Single writer per domain<!--mc:\/a:rb824-->/);
+    expect(commentsOf(undone)).toHaveLength(1);
+  });
+
+  it("does not recover by quote when the quote is duplicated (ambiguous)", () => {
+    const src = [
+      "<!--mc:threads:begin-->",
+      '<!--mc:t {"id":"d1","quote":"Yes","status":"open","comments":[{"id":"c1","author":"r","ts":"2026-01-01T00:00:00Z","body":"a"}]}-->',
+      "<!--mc:threads:end-->",
+      "",
+    ].join("\n");
+    const unanchored = "Yes and also Yes here.\n"; // 2 occurrences, no marker
+    const out = placeAnchorsInProse("Old text.\n\n" + src, unanchored + src, []);
+    expect(out).not.toContain("<!--mc:a:"); // ambiguous → stays unanchored
+  });
+
   it("keeps a resolved thread's marker (editor tracks resolved anchors too)", () => {
     const resolved = setThreadResolved(TABLE, "rb824", true, "ron")!;
     const out = placeAnchorsInProse(resolved, proseOf(resolved), [

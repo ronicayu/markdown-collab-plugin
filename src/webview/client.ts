@@ -42,6 +42,7 @@ import { locateAnchorInLiveText, locateNthOccurrence } from "../collab/liveAncho
 import { renderedRangeToPmRange } from "../collab/pmPositionMapper";
 import { formatRelativeTime } from "../collab/relativeTime";
 import { slugifyHeading } from "../inlineComments/linkParse";
+import { resolveImageSrc, type ImageBaseUris } from "../webviewShared/imageSrc";
 
 declare function acquireVsCodeApi(): {
   postMessage: (msg: unknown) => void;
@@ -70,6 +71,7 @@ interface InitMessage {
   user: { name: string; color: string };
   comments: CommentSummary[];
   frontmatter?: string;
+  imageBaseUris?: ImageBaseUris;
 }
 
 interface ExternalChangeMessage {
@@ -221,8 +223,12 @@ function updateLastNonEmptySelection(): void {
 
 const HIGHLIGHT_PLUGIN_KEY = new PluginKey("mdc-anchor-highlight");
 
+// Webview URIs for resolving relative image src; set from the init payload.
+let imageBaseUris: ImageBaseUris = { docDir: "", workspaceFolder: null };
+
 async function init(msg: InitMessage): Promise<void> {
   userName = msg.user.name || "user";
+  if (msg.imageBaseUris) imageBaseUris = msg.imageBaseUris;
   ydoc = new Y.Doc();
   // Local-only awareness: there is no network relay and no second human. The
   // collab plugin still wants an Awareness, so we give it a doc-local one that
@@ -245,6 +251,7 @@ async function init(msg: InitMessage): Promise<void> {
           makeFlattenCellSelectionPlugin(),
           makeMermaidPlugin(),
           makeDrawioPlugin(),
+          makeImageResolvePlugin(),
           makeAnchorHighlightPlugin(),
         ]),
       );
@@ -1245,6 +1252,42 @@ function makeDrawioPlugin(): Plugin {
 // rewrite it to a plain `TextSelection` covering only the visible text
 // of the selected cell range. The user sees a normal text-range
 // highlight; the comment anchor records the actual text they meant.
+// Render markdown images with a webview-loadable src. Milkdown renders the
+// node's raw `src` (e.g. `../diagrams/x.png`), which a webview can't fetch; this
+// nodeView rewrites the src for DISPLAY only — the underlying node keeps the
+// original path, so the markdown round-trips unchanged on save.
+type PmImageNode = { attrs: Record<string, unknown>; type: { name: string } };
+function makeImageResolvePlugin(): Plugin {
+  const apply = (img: HTMLImageElement, node: PmImageNode): void => {
+    img.setAttribute("src", resolveImageSrc(String(node.attrs.src ?? ""), imageBaseUris));
+    const alt = String(node.attrs.alt ?? "");
+    const title = String(node.attrs.title ?? "");
+    if (alt) img.setAttribute("alt", alt);
+    else img.removeAttribute("alt");
+    if (title) img.setAttribute("title", title);
+    else img.removeAttribute("title");
+  };
+  return new Plugin({
+    props: {
+      nodeViews: {
+        image: (node: PmImageNode) => {
+          const dom = document.createElement("img");
+          dom.className = "mdc-image";
+          apply(dom, node);
+          return {
+            dom,
+            update: (next: PmImageNode) => {
+              if (next.type.name !== "image") return false;
+              apply(dom, next);
+              return true;
+            },
+          };
+        },
+      },
+    },
+  });
+}
+
 function makeFlattenCellSelectionPlugin(): Plugin {
   return new Plugin({
     appendTransaction(_trs, _oldState, newState) {
