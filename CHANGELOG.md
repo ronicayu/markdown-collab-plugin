@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.34.34 — 2026-07-15
+
+### Published to the marketplaces
+
+Public release rolling up everything since 0.34.28:
+
+- Comment anchors now survive editing the commented text in place — the live
+  editor tracks each marker through edits via its own position mapping, with a
+  hardened text-matching fallback for moved text (table cells, line-start
+  anchors, emoji included).
+- Undo after deleting commented text no longer orphans the comment.
+- Local images referenced by relative paths that climb out of the file's
+  folder (e.g. `../diagrams/arch.png`) now render in both the inline preview
+  and the live editor.
+- The PR review preview shows source line numbers in a left gutter for every
+  top-level block, matching the comment cards' "Line N" buttons.
+- The PR review submit bar stays pinned to the bottom of the pane instead of
+  floating mid-window when the draft list is short.
+
 ## 0.34.33 — 2026-07-15 (trial)
 
 ### Fixed: submit bar no longer floats mid-window
