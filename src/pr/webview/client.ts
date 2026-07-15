@@ -208,7 +208,36 @@ function renderPreview(source: string, addedRanges: LineRange[]): void {
   dom.preview.innerHTML = md.render(source);
   rewriteImageSrcs();
   paintDiffStripes(addedRanges);
+  annotateLineNumbers();
   void runMermaid();
+}
+
+/**
+ * Tag each top-level rendered block with the 1-based source line it starts
+ * on (`data-src-line`), shown as a gutter number by CSS. The line comes
+ * from the first `[data-mc-src]` span inside the block, so blocks with no
+ * annotated text (mermaid diagrams, bare images, hr) get no number.
+ */
+function annotateLineNumbers(): void {
+  for (const block of Array.from(dom.preview.children)) {
+    if (!(block instanceof HTMLElement)) continue;
+    const src = block.dataset.mcSrc
+      ? block
+      : block.querySelector<HTMLElement>("[data-mc-src]");
+    const m = /^(\d+)\.(\d+)$/.exec(src?.dataset.mcSrc ?? "");
+    if (!m) continue;
+    const line = String(lineFromOffset(Number(m[1])));
+    if (block.tagName === "PRE") {
+      // `pre` scrolls horizontally (overflow-x), which clips the gutter
+      // pseudo-element — hang the number on a plain wrapper instead.
+      const wrap = document.createElement("div");
+      block.replaceWith(wrap);
+      wrap.appendChild(block);
+      wrap.dataset.srcLine = line;
+    } else {
+      block.dataset.srcLine = line;
+    }
+  }
 }
 
 function rewriteImageSrcs(): void {

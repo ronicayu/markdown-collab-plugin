@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.34.32 — 2026-07-15 (trial)
+
+### Added: source line numbers in the PR review view
+
+The PR review preview now shows the source line number of every top-level
+block in a left gutter — headings, paragraphs, lists, tables, and code
+blocks each carry a muted number where they start in the `.md` file. The
+numbers use the same source mapping as the draft and existing-comment
+cards' "Line N" buttons, so a card's line and the gutter number always
+agree. Rendered as unselectable pseudo-elements, they never leak into a
+text selection when drafting a comment.
+
 ## 0.34.31 — 2026-06-20 (trial)
 
 ### Fixed: local images (incl. `../sibling/x.png`) now render in both views

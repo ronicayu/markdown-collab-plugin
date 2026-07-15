@@ -28,7 +28,8 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
 #preview-pane {
   position: relative;
   overflow-y: auto;
-  padding: 24px 32px 64px;
+  /* Wide left padding leaves a gutter for source line numbers. */
+  padding: 24px 32px 64px 60px;
   border-right: 1px solid var(--border);
 }
 #preview-header h2 { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
@@ -47,6 +48,30 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
 #preview img { max-width: 100%; height: auto; }
 #preview figure.mc-plantuml { margin: 12px 0; text-align: center; }
 #preview figure.mc-plantuml img { max-width: 100%; height: auto; background: white; padding: 4px; border-radius: 3px; }
+
+/* Source line numbers — a muted gutter number at the start of each
+   top-level block, anchored to the block's left edge (`right: 100%`)
+   so it tracks the block through the diff-stripe margin shift. Pseudo-
+   element content is unselectable, so it never leaks into a comment
+   selection. */
+#preview [data-src-line] { position: relative; }
+#preview [data-src-line]::after {
+  content: attr(data-src-line);
+  position: absolute;
+  right: 100%;
+  margin-right: 16px;
+  top: 0;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--muted);
+  opacity: 0.7;
+  pointer-events: none;
+  white-space: nowrap;
+}
+/* Changed blocks are pulled 14px left (negative margin) — pull the
+   number's gap in by the same amount so the gutter column stays aligned. */
+#preview .pr-changed[data-src-line]::after { margin-right: 2px; }
 
 /* Diff stripe + background tint — painted on any rendered block whose
    source-byte range overlaps an added-line range. Bold left bar plus a
