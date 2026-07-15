@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.34.33 — 2026-07-15 (trial)
+
+### Fixed: submit bar no longer floats mid-window
+
+With few (or no) drafts, the PR review view's submit bar (verdict +
+summary + Submit button) sat in the middle of the sidebar instead of at
+the bottom — `position: sticky` only pins while content overflows. The
+bar is now pushed to the pane's bottom edge when content is short, and
+still sticks to the bottom while a long draft list scrolls.
+
 ## 0.34.32 — 2026-07-15 (trial)
 
 ### Added: source line numbers in the PR review view
