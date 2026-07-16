@@ -339,6 +339,7 @@ export class PrReviewPanel {
     <div id="composer" hidden></div>
     <section id="existing-section" hidden>
       <h3 class="section-title">Existing comments</h3>
+      <div id="existing-filter" role="radiogroup" aria-label="Filter existing comments" hidden></div>
       <p id="existing-status" class="hint">Loading…</p>
       <div id="existing-list"></div>
     </section>

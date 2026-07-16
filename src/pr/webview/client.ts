@@ -106,12 +106,20 @@ const dom = {
   verdictRadios: document.querySelectorAll<HTMLInputElement>('input[name="verdict"]'),
   reviewBody: document.getElementById("review-body") as HTMLTextAreaElement,
   existingSection: document.getElementById("existing-section") as HTMLElement,
+  existingFilter: document.getElementById("existing-filter") as HTMLElement,
   existingStatus: document.getElementById("existing-status") as HTMLElement,
   existingList: document.getElementById("existing-list") as HTMLElement,
 };
 
 let totalDraftCount = 0;
 let existingComments: ExistingPrComment[] | null = null;
+
+type ExistingFilter = "all" | "open" | "resolved";
+/** Restored from webview state so the choice survives tab switches/reloads. */
+let existingFilter: ExistingFilter = (() => {
+  const saved = (vscode.getState() as { existingFilter?: unknown } | undefined)?.existingFilter;
+  return saved === "open" || saved === "resolved" ? saved : "all";
+})();
 
 let state: InitMessage | null = null;
 let editingDraftId: string | null = null;
@@ -569,12 +577,14 @@ function renderExisting(): void {
   pendingReplies.clear();
   dom.existingSection.hidden = false;
   if (existingComments === null) {
+    dom.existingFilter.hidden = true;
     dom.existingStatus.textContent = "Loading existing comments…";
     dom.existingStatus.hidden = false;
     dom.existingList.innerHTML = "";
     return;
   }
   if (existingComments.length === 0) {
+    dom.existingFilter.hidden = true;
     dom.existingStatus.textContent = "No existing PR comments on this file.";
     dom.existingStatus.hidden = false;
     dom.existingList.innerHTML = "";
@@ -593,8 +603,59 @@ function renderExisting(): void {
   const threads = Array.from(byThread.values())
     .map((list) => list.slice().sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt)))
     .sort((a, b) => a[0].line - b[0].line);
-  for (const thread of threads) {
+
+  // A thread is resolved when its head comment is — GitLab sets it per note,
+  // GitHub per review thread; both surface on the head. Only offer the filter
+  // when it can change anything (some resolved data exists).
+  const resolvedCount = threads.filter((t) => t[0].resolved === true).length;
+  renderExistingFilterChips(threads.length, resolvedCount);
+  const filtered = threads.filter((t) => {
+    if (existingFilter === "open") return t[0].resolved !== true;
+    if (existingFilter === "resolved") return t[0].resolved === true;
+    return true;
+  });
+  if (filtered.length === 0) {
+    dom.existingStatus.textContent = existingFilter === "open"
+      ? "No open comments on this file."
+      : "No resolved comments on this file.";
+    dom.existingStatus.hidden = false;
+    return;
+  }
+  for (const thread of filtered) {
     dom.existingList.appendChild(renderExistingThread(thread));
+  }
+}
+
+function renderExistingFilterChips(total: number, resolved: number): void {
+  if (resolved === 0) {
+    // Nothing to filter — every thread is open (or the platform gave no
+    // resolved data). Fall back to showing everything.
+    dom.existingFilter.hidden = true;
+    existingFilter = "all";
+    return;
+  }
+  dom.existingFilter.hidden = false;
+  dom.existingFilter.innerHTML = "";
+  const chips: { key: ExistingFilter; label: string }[] = [
+    { key: "all", label: `All ${total}` },
+    { key: "open", label: `Open ${total - resolved}` },
+    { key: "resolved", label: `Resolved ${resolved}` },
+  ];
+  for (const chip of chips) {
+    const btn = document.createElement("button");
+    btn.className = "filter-chip";
+    btn.setAttribute("role", "radio");
+    btn.setAttribute("aria-checked", String(existingFilter === chip.key));
+    if (existingFilter === chip.key) btn.classList.add("active");
+    btn.textContent = chip.label;
+    btn.addEventListener("click", () => {
+      if (existingFilter === chip.key) return;
+      existingFilter = chip.key;
+      const prev = (vscode.getState() as Record<string, unknown> | undefined) ?? {};
+      vscode.setState({ ...prev, existingFilter });
+      renderExisting();
+    });
+    dom.existingFilter.appendChild(btn);
   }
 }
 

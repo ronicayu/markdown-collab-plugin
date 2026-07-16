@@ -7,7 +7,7 @@
 
 import { getCliRunner } from "../cli";
 import { mergeBaseSha, parseRemoteUrl } from "../diff";
-import type { ExistingPrComment, PrPlatform } from "../types";
+import type { ExistingPrComment, PrContext, PrPlatform } from "../types";
 
 const GH = "gh";
 
@@ -223,6 +223,94 @@ export const githubPlatform: PrPlatform = {
         url: c.html_url,
       });
     }
+    try {
+      const resolvedById = await fetchResolvedById(ctx);
+      for (const c of out) {
+        const r = resolvedById.get(c.id);
+        if (r !== undefined) c.resolved = r;
+      }
+    } catch {
+      // Resolved state is an enhancement — the review still works with
+      // every thread treated as open, so a GraphQL failure (old gh, token
+      // without GraphQL scope) must not fail the whole comment load.
+    }
     return out;
   },
 };
+
+/** One page of the reviewThreads GraphQL response, reduced to what we use. */
+export interface ReviewThreadsPage {
+  nodes: { isResolved: boolean; commentIds: string[] }[];
+  hasNextPage: boolean;
+  endCursor: string | null;
+}
+
+/**
+ * Parse a `reviewThreads` GraphQL page. Comment ids come back as REST
+ * `databaseId`s, stringified to match `ExistingPrComment.id`.
+ */
+export function parseReviewThreadsPage(json: string): ReviewThreadsPage {
+  const parsed = JSON.parse(json) as {
+    data?: { repository?: { pullRequest?: { reviewThreads?: {
+      pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+      nodes?: { isResolved?: boolean; comments?: { nodes?: { databaseId?: number | null }[] } }[];
+    } } } };
+  };
+  const rt = parsed.data?.repository?.pullRequest?.reviewThreads;
+  const nodes = (rt?.nodes ?? []).map((n) => ({
+    isResolved: n?.isResolved === true,
+    commentIds: (n?.comments?.nodes ?? [])
+      .map((c) => c?.databaseId)
+      .filter((d): d is number => typeof d === "number")
+      .map(String),
+  }));
+  return {
+    nodes,
+    hasNextPage: rt?.pageInfo?.hasNextPage === true,
+    endCursor: rt?.pageInfo?.endCursor ?? null,
+  };
+}
+
+/**
+ * The REST comments endpoint carries no resolved state — that lives on
+ * GraphQL review threads. Map every thread comment's databaseId to its
+ * thread's `isResolved`.
+ */
+async function fetchResolvedById(ctx: PrContext): Promise<Map<string, boolean>> {
+  const runner = getCliRunner();
+  const env = ghEnvForHost(ctx.host);
+  const query = `query($owner: String!, $repo: String!, $pr: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $pr) {
+      reviewThreads(first: 100, after: $endCursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { isResolved comments(first: 100) { nodes { databaseId } } }
+      }
+    }
+  }
+}`;
+  const resolvedById = new Map<string, boolean>();
+  let cursor: string | null = null;
+  // Page cap so a misbehaving pageInfo can never loop forever (100 threads/page).
+  for (let page = 0; page < 20; page++) {
+    const args = [
+      "api", "graphql",
+      "-f", `query=${query}`,
+      "-F", `owner=${ctx.owner}`,
+      "-F", `repo=${ctx.repo}`,
+      "-F", `pr=${ctx.prNumber}`,
+    ];
+    if (cursor) args.push("-F", `endCursor=${cursor}`);
+    const res = await runner(GH, args, { cwd: ctx.repoRoot, env });
+    if (res.code !== 0) {
+      throw new Error(`gh api graphql failed: ${res.stderr.trim() || res.stdout.trim()}`);
+    }
+    const threads = parseReviewThreadsPage(res.stdout);
+    for (const t of threads.nodes) {
+      for (const id of t.commentIds) resolvedById.set(id, t.isResolved);
+    }
+    if (!threads.hasNextPage || !threads.endCursor) break;
+    cursor = threads.endCursor;
+  }
+  return resolvedById;
+}

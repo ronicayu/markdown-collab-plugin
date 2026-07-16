@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.34.35 — 2026-07-16 (trial)
+
+### Added: filter existing PR/MR comments by resolved state
+
+The PR review view's "Existing comments" section now has All / Open /
+Resolved filter chips (with counts), so a long review can be narrowed to
+just the open threads. The choice is remembered per webview and the chips
+only appear when at least one thread is resolved — nothing changes on PRs
+where everything is still open.
+
+GitHub reviews now carry resolved state at all: the REST comments endpoint
+doesn't expose it, so the platform adapter additionally queries the GraphQL
+`reviewThreads` API (paginated) and marks each comment with its thread's
+`isResolved`. GitLab already provided it. If the GraphQL call fails (older
+`gh`, restricted token), every thread is treated as open and the review
+works as before.
+
 ## 0.34.34 — 2026-07-15
 
 ### Published to the marketplaces

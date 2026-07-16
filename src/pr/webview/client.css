@@ -163,6 +163,26 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
   letter-spacing: 0.06em;
 }
 #existing-section #existing-status { margin: 0 0 8px; color: var(--muted); font-size: 12px; }
+#existing-filter {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 8px;
+}
+.filter-chip {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.filter-chip:hover { color: var(--fg); }
+.filter-chip.active {
+  background: var(--diff-add-bg);
+  border-color: var(--diff-add-stripe);
+  color: var(--fg);
+}
 #existing-list {
   display: flex;
   flex-direction: column;
