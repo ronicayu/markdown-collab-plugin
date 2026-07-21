@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.34.37 — 2026-07-21
+
+### Published to the marketplaces
+
+Public release rolling up everything since 0.34.34:
+
+- PR/MR review: All / Open / Resolved filter chips on existing comments,
+  with GitHub resolved state fetched via the GraphQL `reviewThreads` API.
+- PR/MR review: 💬 comment markers in the preview — blocks with existing
+  threads or drafts show a clickable chip that jumps to the matching
+  card(s) in the right pane.
+- PR/MR review: ⌘F / Ctrl+F find widget enabled in the review panel.
+
 ## 0.34.36 — 2026-07-21 (trial)
 
 ### Added: comment markers in the PR review preview
