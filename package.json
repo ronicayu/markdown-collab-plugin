@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with Claude Code — inline comments, a live AI co-editor, and GitHub/GitLab PR review, all anchored in the file.",
-  "version": "0.34.35",
+  "version": "0.34.36",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -167,7 +167,10 @@
         },
         "markdownCollab.plantuml.format": {
           "type": "string",
-          "enum": ["svg", "png"],
+          "enum": [
+            "svg",
+            "png"
+          ],
           "default": "svg",
           "description": "Image format requested from the PlantUML server. SVG scales better; PNG is heavier but renders identically on every browser."
         }

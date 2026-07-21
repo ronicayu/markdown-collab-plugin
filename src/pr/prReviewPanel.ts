@@ -134,6 +134,7 @@ export class PrReviewPanel {
       { viewColumn: column === vscode.ViewColumn.One ? vscode.ViewColumn.Beside : column, preserveFocus: false },
       {
         enableScripts: true,
+        enableFindWidget: true,
         retainContextWhenHidden: true,
         localResourceRoots: [
           vscode.Uri.joinPath(context.extensionUri, "out", "pr", "webview"),
@@ -322,7 +323,7 @@ export class PrReviewPanel {
   <div id="preview-pane">
     <header id="preview-header">
       <h2 id="file-name"></h2>
-      <p class="hint">Select prose to draft a review comment. Lines with a side stripe are part of this PR's diff.</p>
+      <p class="hint">Select prose to draft a review comment. Lines with a side stripe are part of this PR's diff. Press ${process.platform === "darwin" ? "⌘F" : "Ctrl+F"} to search.</p>
     </header>
     <article id="preview"></article>
     <button id="floating-add" hidden>+ Comment on selection</button>

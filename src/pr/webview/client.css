@@ -120,6 +120,33 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
   animation: pr-jump-flash 1.5s ease-out;
   border-radius: 3px;
 }
+
+/* Comment marker — a 💬 chip hung on the right edge of any block whose
+   source lines carry drafts or existing PR threads. Clicking scrolls the
+   right pane to the card(s). `user-select: none` keeps the chip's text out
+   of prose selections used for new comments. */
+#preview .has-comment-marker { position: relative; }
+.pr-comment-marker {
+  position: absolute;
+  top: 0;
+  right: -10px;
+  z-index: 10;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 10px;
+  border: 1px solid var(--accent);
+  background: var(--bg);
+  color: var(--accent);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.pr-comment-marker:hover { background: color-mix(in srgb, var(--accent) 15%, var(--bg)); }
+.pr-comment-marker.resolved { border-color: var(--border); color: var(--muted); opacity: 0.8; }
+
+/* Flash a right-pane card when a preview marker jumps to it. */
+.card-jump-flash { animation: pr-jump-flash 1.5s ease-out; }
 @keyframes pr-jump-flash {
   0% { background: var(--diff-add-bg-strong); box-shadow: 0 0 0 2px var(--accent); }
   100% { background: transparent; box-shadow: 0 0 0 2px transparent; }

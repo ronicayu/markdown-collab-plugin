@@ -145,14 +145,17 @@ window.addEventListener("message", (ev) => {
     renderDrafts();
     renderExisting();
     refreshSubmitButton();
+    renderCommentMarkers();
   } else if (msg.type === "drafts") {
     drafts = msg.drafts;
     totalDraftCount = msg.totalDraftCount;
     renderDrafts();
     refreshSubmitButton();
+    renderCommentMarkers();
   } else if (msg.type === "existing-comments") {
     existingComments = msg.comments;
     renderExisting();
+    renderCommentMarkers();
   } else if (msg.type === "reply-error") {
     failPendingReply(msg.threadId, msg.error);
   }
@@ -300,13 +303,11 @@ function nearestBlock(start: Element): HTMLElement | null {
 }
 
 /**
- * Scroll the preview pane to the rendered block covering a 1-based source
- * line and flash it. Used by the draft / existing-comment line buttons so a
- * click lands inside the review preview rather than popping the raw text
- * editor. Prefers the most specific block that contains the line; falls back
- * to the nearest block starting at or before it.
+ * Rendered block covering a 1-based source line. Prefers the most specific
+ * block that contains the line; falls back to the nearest block starting at
+ * or before it.
  */
-function scrollPreviewToLine(line: number): void {
+function blockForLine(line: number): HTMLElement | null {
   let containing: HTMLElement | null = null;
   let containingStart = -1;
   let before: HTMLElement | null = null;
@@ -329,7 +330,17 @@ function scrollPreviewToLine(line: number): void {
       beforeStart = startLine;
     }
   }
-  const target = containing ?? before;
+  return containing ?? before;
+}
+
+/**
+ * Scroll the preview pane to the rendered block covering a 1-based source
+ * line and flash it. Used by the draft / existing-comment line buttons so a
+ * click lands inside the review preview rather than popping the raw text
+ * editor.
+ */
+function scrollPreviewToLine(line: number): void {
+  const target = blockForLine(line);
   if (!target) return;
   target.scrollIntoView({ behavior: "smooth", block: "center" });
   flashBlock(target);
@@ -346,6 +357,110 @@ function flashBlock(el: HTMLElement): void {
   el.classList.add("pr-jump-flash");
   if (flashTimer !== undefined) clearTimeout(flashTimer);
   flashTimer = window.setTimeout(() => el.classList.remove("pr-jump-flash"), 1500);
+}
+
+// --- comment line markers -------------------------------------------------
+
+/** One thing a preview marker points at: a draft card or an existing thread. */
+interface MarkerTarget { kind: "draft" | "existing"; key: string; resolved: boolean; }
+
+/**
+ * Hang a clickable 💬 chip on every rendered block whose source lines carry
+ * a draft or an existing PR thread. Clicking scrolls the right pane to the
+ * matching card(s) — the reverse of the cards' "Line N" jump buttons.
+ * Idempotent: clears previous markers, so it re-runs on every drafts /
+ * existing-comments update.
+ */
+function renderCommentMarkers(): void {
+  for (const m of dom.preview.querySelectorAll(".pr-comment-marker")) m.remove();
+  for (const el of dom.preview.querySelectorAll(".has-comment-marker")) el.classList.remove("has-comment-marker");
+
+  const byBlock = new Map<HTMLElement, MarkerTarget[]>();
+  const add = (line: number, t: MarkerTarget): void => {
+    let block = blockForLine(line);
+    if (!block) return;
+    if (block.tagName === "PRE" && block.parentElement && block.parentElement !== dom.preview) {
+      // `pre` scrolls horizontally (overflow-x), which would clip the
+      // absolutely-positioned chip — hang it on the wrapper instead.
+      block = block.parentElement;
+    }
+    const list = byBlock.get(block) ?? [];
+    list.push(t);
+    byBlock.set(block, list);
+  };
+
+  for (const d of drafts) add(d.startLine ?? d.line, { kind: "draft", key: d.id, resolved: false });
+  if (existingComments) {
+    // First comment per thread carries the anchor line and resolved state.
+    const heads = new Map<string, ExistingPrComment>();
+    for (const c of existingComments) {
+      const key = c.threadId ?? c.id;
+      const prev = heads.get(key);
+      if (!prev || Date.parse(c.createdAt) < Date.parse(prev.createdAt)) heads.set(key, c);
+    }
+    for (const [key, head] of heads) {
+      add(head.line, { kind: "existing", key, resolved: head.resolved === true });
+    }
+  }
+
+  for (const [block, targets] of byBlock) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "pr-comment-marker";
+    if (targets.every((t) => t.resolved)) btn.classList.add("resolved");
+    btn.textContent = targets.length === 1 ? "💬" : `💬 ${targets.length}`;
+    btn.title = markerTitle(targets);
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      revealComments(targets);
+    });
+    block.classList.add("has-comment-marker");
+    block.appendChild(btn);
+  }
+}
+
+function markerTitle(targets: MarkerTarget[]): string {
+  const threads = targets.filter((t) => t.kind === "existing").length;
+  const draftCount = targets.length - threads;
+  const parts: string[] = [];
+  if (threads) parts.push(`${threads} comment thread${threads === 1 ? "" : "s"}`);
+  if (draftCount) parts.push(`${draftCount} draft${draftCount === 1 ? "" : "s"}`);
+  return `${parts.join(" · ")} — click to show`;
+}
+
+/** Scroll the right pane to a marker's card(s) and flash them. */
+function revealComments(targets: MarkerTarget[]): void {
+  // A targeted thread may be hidden by the open/resolved filter — widen to
+  // "all" so every target has a card on screen.
+  const hidden = targets.some((t) =>
+    t.kind === "existing" &&
+    (existingFilter === "open" ? t.resolved : existingFilter === "resolved" && !t.resolved),
+  );
+  if (hidden) {
+    existingFilter = "all";
+    const prev = (vscode.getState() as Record<string, unknown> | undefined) ?? {};
+    vscode.setState({ ...prev, existingFilter });
+    renderExisting();
+  }
+  const cards: HTMLElement[] = [];
+  for (const t of targets) {
+    const sel = t.kind === "draft"
+      ? `[data-draft-id="${CSS.escape(t.key)}"]`
+      : `[data-thread-id="${CSS.escape(t.key)}"]`;
+    const card = (t.kind === "draft" ? dom.draftsList : dom.existingList).querySelector<HTMLElement>(sel);
+    if (card) cards.push(card);
+  }
+  if (cards.length === 0) return;
+  cards[0].scrollIntoView({ behavior: "smooth", block: "center" });
+  for (const card of cards) flashCard(card);
+}
+
+function flashCard(el: HTMLElement): void {
+  el.classList.remove("card-jump-flash");
+  // Force reflow so re-adding the class restarts the animation.
+  void el.offsetWidth;
+  el.classList.add("card-jump-flash");
+  window.setTimeout(() => el.classList.remove("card-jump-flash"), 1500);
 }
 
 let mermaidInitialized = false;
@@ -546,12 +661,14 @@ function renderDraftCard(d: PrDraft): HTMLElement {
         renderDrafts();
       },
     });
-    return buildCommentCard({ author: "Your draft", bodyEl: composer.el });
+    const editCard = buildCommentCard({ author: "Your draft", bodyEl: composer.el });
+    editCard.dataset.draftId = d.id;
+    return editCard;
   }
 
   const bodyEl = document.createElement("div");
   bodyEl.textContent = d.body;
-  return buildCommentCard({
+  const card = buildCommentCard({
     author: "Your draft",
     bodyEl,
     actions: [
@@ -564,6 +681,8 @@ function renderDraftCard(d: PrDraft): HTMLElement {
       { label: "Delete", variant: "danger", onClick: () => vscode.postMessage({ type: "delete-draft", id: d.id }) },
     ],
   });
+  card.dataset.draftId = d.id;
+  return card;
 }
 
 // --- existing comments (read-only) ----------------------------------------
@@ -663,6 +782,7 @@ function renderExistingThread(thread: ExistingPrComment[]): HTMLElement {
   const head = thread[0];
   const card = document.createElement("section");
   card.className = "existing-card";
+  card.dataset.threadId = head.threadId ?? head.id;
   if (head.resolved) card.classList.add("resolved");
 
   const meta = document.createElement("header");

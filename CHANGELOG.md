@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.34.36 — 2026-07-21 (trial)
+
+### Added: comment markers in the PR review preview
+
+Blocks whose source lines carry existing PR threads or your drafts now show
+a clickable 💬 chip (with a count when there's more than one) on their right
+edge. Clicking scrolls the right pane to the matching card(s) and flashes
+them — the reverse of the cards' "Line N" jump buttons. Chips go muted when
+every thread on them is resolved, and clicking a thread hidden by the
+Open/Resolved filter widens the filter to "All" first.
+
+### Added: find in the PR review view
+
+The review panel now enables VS Code's find widget — press ⌘F / Ctrl+F to
+search the rendered preview, drafts, and existing comments with match
+highlighting and next/prev.
+
 ## 0.34.35 — 2026-07-16 (trial)
 
 ### Added: filter existing PR/MR comments by resolved state
