@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.34.39 — 2026-07-23
+
+### Published to the marketplaces
+
+Public release rolling up since 0.34.37:
+
+- Live collab editor: ⌘F / Ctrl+F find widget — searches the document and
+  the comments sidebar with match highlighting and next/prev.
+
 ## 0.34.38 — 2026-07-23 (trial)
 
 ### Added: find in the live editor
