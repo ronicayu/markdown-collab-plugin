@@ -214,7 +214,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
   ): vscode.Disposable {
     const provider = new CollabEditorProvider(context.extensionUri, output);
     return vscode.window.registerCustomEditorProvider(VIEW_TYPE, provider, {
-      webviewOptions: { retainContextWhenHidden: true },
+      webviewOptions: { retainContextWhenHidden: true, enableFindWidget: true },
       supportsMultipleEditorsPerDocument: true,
     });
   }

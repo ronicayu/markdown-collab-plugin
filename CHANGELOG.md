@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.34.38 — 2026-07-23 (trial)
+
+### Added: find in the live editor
+
+The live collab editor now enables VS Code's find widget — press ⌘F /
+Ctrl+F to search the document and the comments sidebar with match
+highlighting and next/prev.
+
 ## 0.34.37 — 2026-07-21
 
 ### Published to the marketplaces
