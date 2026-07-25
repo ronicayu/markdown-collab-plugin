@@ -25,9 +25,14 @@ The 10x version: **the round-trip becomes structurally incapable of losing a com
 
 ---
 
-## P0 — Structural integrity (kills the top failure class)
+## P0 — Structural integrity (kills the top failure class) — ✅ LANDED
 
-### P0.1 `mdc` CLI: structured mutations instead of trusting Claude with raw markers
+*Status: complete as of v0.34.41–0.34.43 (2026-07-25). The corpus found two
+real engine bugs on its first run — anchoring inside a code span silently
+produced a broken thread, and add/remove cycles appended a blank line to the
+document every time. Both fixed in 0.34.41.*
+
+### P0.1 `mdc` CLI: structured mutations instead of trusting Claude with raw markers — ✅ v0.34.42
 
 **Problem.** The skill asks Claude to hand-edit `<!--mc:a:ID-->` markers and `<!--mc:t {JSON}-->` lines with Edit-tool string surgery. This is the single most common way the workflow breaks (the skill says so itself). All the marker-integrity risk lives in the model's diligence.
 
@@ -51,7 +56,7 @@ node mdc.mjs check <file>                              # integrity report: unpai
 - Skill updated + fingerprint bumped so the update nag fires.
 - `mdc check` exits non-zero on integrity violations, with machine-readable JSON output.
 
-### P0.2 Anchor integrity guard in the extension (defense in depth)
+### P0.2 Anchor integrity guard in the extension (defense in depth) — ✅ v0.34.43
 
 **Problem.** Even with the CLI, Claude (or the human, or another tool) can still corrupt markers via raw edits. Today corruption is discovered lazily, as an "unanchored" badge, often after the context needed for recovery is gone.
 
@@ -63,7 +68,14 @@ node mdc.mjs check <file>                              # integrity report: unpai
 
 **Acceptance:** deliberately corrupt a marker with a raw text edit; within the watcher debounce the thread is either repaired (quote unique) or flagged, and no repair ever modifies prose content — markers/threads-block only.
 
-### P0.3 Golden round-trip corpus + regression harness
+*As shipped (v0.34.43), with one deliberate deviation:* the guard **reports
+and offers** repair rather than auto-writing it. `repairIntegrity` is
+prose-safe by construction, but a review tool that silently rewrites the file
+under review spends the trust it exists to build. Damage is surfaced
+immediately (the stated goal); the write stays a human decision, one click
+away, and lands through a `WorkspaceEdit` so it is undoable.
+
+### P0.3 Golden round-trip corpus + regression harness — ✅ v0.34.41
 
 **Problem.** The four chronic failure classes (tables, short selections, duplicate values, emoji, code-fence false markers, frontmatter) each got fixed one CHANGELOG entry at a time. Nothing prevents regressions across the *combination* space.
 
@@ -173,6 +185,11 @@ P1.2, P1.3, P3.x — independent, schedule opportunistically
 ```
 
 Recommended order: **P0.3 → P0.1 → P0.2 → P2.2 → P2.1 → P1.1 → P1.2 → P2.3 → P1.3 → P2.4 (continuous) → P3.x**.
+
+**Progress:** P0.3, P0.1, P0.2 landed (v0.34.41–0.34.43). Next up is P2.2
+(delete the dead CRDT layer) — it is a deletion whose acceptance criteria
+require a manual live-editor pass in the Extension Development Host, so it
+needs a human in the loop before it can be called done.
 
 Each initiative should land as its own version with a CHANGELOG entry, following the existing release discipline (`[skip-publish]` trial commits, tag only after Ronica confirms — tags publish publicly).
 
