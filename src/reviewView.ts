@@ -1,6 +1,7 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import { parse, type InlineThread } from "./inlineComments/format";
+import { IntegrityGuard, summarize, type GuardDecision } from "./inlineComments/integrityGuard";
 
 export type ReviewNode =
   | { kind: "file"; docPath: string; unresolvedCount: number }
@@ -26,6 +27,12 @@ export interface ReviewViewDeps {
     onChange: (fsPath: string) => void;
     onDelete: (fsPath: string) => void;
   }) => vscode.Disposable;
+  /**
+   * Called when a watched document is found to have damaged comment anchors.
+   * The default surfaces a non-modal warning offering a one-click repair;
+   * tests inject a spy.
+   */
+  onIntegrityIssues?: (decision: GuardDecision) => void;
 }
 
 const CONCURRENCY = 8;
@@ -66,6 +73,8 @@ export class ReviewView
 
   private readonly findFiles: NonNullable<ReviewViewDeps["findFiles"]>;
   private readonly readFile: NonNullable<ReviewViewDeps["readFile"]>;
+  private readonly onIntegrityIssues: NonNullable<ReviewViewDeps["onIntegrityIssues"]>;
+  private readonly guard = new IntegrityGuard();
 
   private readonly subs: vscode.Disposable[] = [];
   /** mdPath -> pending change timer, for per-path coalescing. */
@@ -84,6 +93,7 @@ export class ReviewView
           "**/node_modules/**",
         ));
     this.readFile = deps.readFile ?? defaultReadFile;
+    this.onIntegrityIssues = deps.onIntegrityIssues ?? defaultIntegrityNotifier;
 
     const watch = deps.watch ?? defaultWatch;
     this.subs.push(
@@ -246,6 +256,11 @@ export class ReviewView
   private async readEntry(mdPath: string): Promise<CacheEntry | null> {
     const text = await this.readFile(mdPath);
     if (text === null) return null;
+    // Integrity runs before the threads-region fast-path below: a document
+    // whose threads region was destroyed but whose anchor markers survive is
+    // exactly the damage worth reporting, and it has no threads region to
+    // pass that check.
+    this.runIntegrityGuard(mdPath, text);
     // Fast-path: skip the full code-mask/marker parse for the overwhelming
     // majority of docs that carry no threads region at all.
     if (!text.includes(THREADS_MARKER)) return { openThreads: [] };
@@ -291,8 +306,27 @@ export class ReviewView
     this._onDidChangeTreeData.fire();
   }
 
+  /**
+   * Check a document's marker integrity and notify at most once per distinct
+   * problem set. Never throws into the watcher path — a guard failure must
+   * not take down the tree refresh.
+   */
+  private runIntegrityGuard(mdPath: string, text: string): void {
+    try {
+      const decision = this.guard.consider(mdPath, text);
+      if (!decision) return;
+      for (const issue of decision.issues) {
+        this.output.appendLine(`Integrity [${path.basename(mdPath)}] ${issue.kind}: ${issue.message}`);
+      }
+      this.onIntegrityIssues(decision);
+    } catch (e) {
+      this.output.appendLine(`Integrity check failed for ${mdPath}: ${(e as Error).message}`);
+    }
+  }
+
   private removeFile(mdPath: string): void {
     if (this.disposed || !this.scanStarted) return;
+    this.guard.forget(mdPath);
     const t = this.changeTimers.get(mdPath);
     if (t) {
       clearTimeout(t);
@@ -372,6 +406,26 @@ async function defaultReadFile(fsPath: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Default reaction to damaged anchors: one non-modal warning, offering the
+ * repair rather than performing it. Repair only touches markers and the
+ * threads region — never prose — but it is still the user's document, and a
+ * review tool that rewrites files unasked spends the trust it exists to build.
+ */
+function defaultIntegrityNotifier(decision: GuardDecision): void {
+  const label = path.basename(decision.fsPath);
+  const actions = decision.repairableCount > 0 ? ["Repair", "Show file"] : ["Show file"];
+  void vscode.window
+    .showWarningMessage(summarize(decision, label), ...actions)
+    .then((choice) => {
+      if (choice === "Repair") {
+        void vscode.commands.executeCommand("markdownCollab.repairInlineComments", decision.fsPath);
+      } else if (choice === "Show file") {
+        void vscode.window.showTextDocument(vscode.Uri.file(decision.fsPath));
+      }
+    });
 }
 
 /** Default watcher: a `**​/*.md` filesystem watcher plus markdown save events. */

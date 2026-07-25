@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.34.43 — 2026-07-25 (trial)
+
+### Added: damaged comment anchors are reported immediately (10x-plan P0.2)
+
+The `mdc` helper stops Claude from breaking markers. It cannot stop a
+formatter, a merge, or a hand edit — and until now that damage surfaced
+lazily as a "broken anchor" badge, often long after the context needed to
+fix it was gone.
+
+Every watched `.md` change is now checked. When a document's anchors are
+damaged, a single non-modal warning names the file and the number of
+problems, and offers a one-click **Repair**. A new command,
+**Markdown Collab: Repair Comment Anchors**, does the same for the active
+file from the palette.
+
+Repair strips stray markers, removes anchors whose thread is gone, and
+re-anchors threads whose quote still matches exactly one place in the prose.
+It never guesses at an ambiguous quote, and it never alters prose — if a
+repair would change a single character of prose, the whole batch is abandoned
+and reported instead.
+
+Notifications are deduplicated per file and per distinct problem set, so a
+damaged document warns once rather than on every save; if the file is fixed
+and later breaks the same way again, that is reported as new.
+
+Note the guard reports rather than auto-writes. Repair is safe by
+construction, but a review tool that silently rewrites the file it is
+reviewing spends exactly the trust it exists to build, so the decision stays
+with the human.
+
 ## 0.34.42 — 2026-07-25 (trial)
 
 ### Added: the `mdc` helper — Claude no longer hand-edits comment markers (10x-plan P0.1)

@@ -1,5 +1,6 @@
 import * as os from "os";
 import * as path from "path";
+import { repairIntegrity } from "./inlineComments/integrity";
 import * as vscode from "vscode";
 import { ensureAgentsSnippet } from "./agents";
 import { CollabEditorProvider } from "./collab/collabEditorProvider";
@@ -65,6 +66,12 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("markdownCollab.installClaudeSkill", async () => {
       await invokeInstallClaudeSkill(output);
     }),
+    vscode.commands.registerCommand(
+      "markdownCollab.repairInlineComments",
+      async (fsPathArg?: string) => {
+        await invokeRepairInlineComments(output, fsPathArg);
+      },
+    ),
     vscode.commands.registerCommand("markdownCollab.initializeAgents", async () => {
       await invokeInitializeAgents(output);
     }),
@@ -834,3 +841,56 @@ async function pickWorkspaceFolder(): Promise<vscode.WorkspaceFolder | undefined
   return pick?.folder;
 }
 
+
+/**
+ * Repair damaged comment anchors in a markdown file.
+ *
+ * Only ever touches markers and the threads region — `repairIntegrity`
+ * abandons the whole batch if a repair would alter prose — and the edit goes
+ * through a WorkspaceEdit so it lands in the undo stack like any other change.
+ */
+async function invokeRepairInlineComments(
+  output: vscode.OutputChannel,
+  fsPathArg?: string,
+): Promise<void> {
+  const fsPath = fsPathArg ?? vscode.window.activeTextEditor?.document.uri.fsPath;
+  if (!fsPath) {
+    void vscode.window.showWarningMessage("Open a markdown file to repair its comment anchors.");
+    return;
+  }
+  const uri = vscode.Uri.file(fsPath);
+  let doc: vscode.TextDocument;
+  try {
+    doc = await vscode.workspace.openTextDocument(uri);
+  } catch (e) {
+    void vscode.window.showErrorMessage(`Could not open ${path.basename(fsPath)}: ${(e as Error).message}`);
+    return;
+  }
+
+  const before = doc.getText();
+  const result = repairIntegrity(before);
+  if (result.repairs.length === 0) {
+    const remaining = result.remaining.length;
+    void vscode.window.showInformationMessage(
+      remaining === 0
+        ? "No comment-anchor problems found."
+        : `Nothing could be repaired automatically; ${remaining} problem(s) need a manual fix.`,
+    );
+    return;
+  }
+
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(uri, new vscode.Range(doc.positionAt(0), doc.positionAt(before.length)), result.source);
+  const applied = await vscode.workspace.applyEdit(edit);
+  if (!applied) {
+    void vscode.window.showErrorMessage("Could not apply the comment-anchor repair.");
+    return;
+  }
+  for (const r of result.repairs) output.appendLine(`Repair [${path.basename(fsPath)}] ${r.description}`);
+  const remaining = result.remaining.length;
+  void vscode.window.showInformationMessage(
+    remaining === 0
+      ? `Repaired ${result.repairs.length} comment-anchor problem(s).`
+      : `Repaired ${result.repairs.length}; ${remaining} still need a manual fix.`,
+  );
+}

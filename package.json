@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with Claude Code — inline comments, a live AI co-editor, and GitHub/GitLab PR review, all anchored in the file.",
-  "version": "0.34.42",
+  "version": "0.34.43",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -55,6 +55,11 @@
       {
         "command": "markdownCollab.installClaudeSkill",
         "title": "Markdown Collab: Install Claude Skill"
+      },
+      {
+        "command": "markdownCollab.repairInlineComments",
+        "title": "Markdown Collab: Repair Comment Anchors",
+        "category": "Markdown Collab"
       },
       {
         "command": "markdownCollab.initializeAgents",
