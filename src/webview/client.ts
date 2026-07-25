@@ -66,8 +66,6 @@ interface CommentSummary {
 interface InitMessage {
   type: "init";
   text: string;
-  room: string;
-  serverUrl: string;
   user: { name: string; color: string };
   comments: CommentSummary[];
   frontmatter?: string;

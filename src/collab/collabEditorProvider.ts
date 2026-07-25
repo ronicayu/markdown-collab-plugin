@@ -26,8 +26,6 @@ const VIEW_TYPE = "markdownCollab.collabEditor";
 interface InitPayload {
   type: "init";
   text: string;
-  room: string;
-  serverUrl: string;
   user: { name: string; color: string };
   comments: CollabComment[];
   /** Raw frontmatter block, shown in a dedicated read-only panel. "" when absent. */
@@ -239,9 +237,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     panel.webview.html = this.renderHtml(panel.webview);
 
     const config = vscode.workspace.getConfiguration("markdownCollab");
-    const serverUrl = config.get<string>("collab.serverUrl", "ws://localhost:1234");
     const userName = config.get<string>("collab.userName", "") || os.userInfo().username;
-    const room = computeRoom(document.uri);
     const user = { name: userName, color: pickColor(userName) };
 
     // Track our own writes so the workspace.onDidChangeTextDocument handler
@@ -409,8 +405,6 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         const payload: InitPayload = {
           type: "init",
           text,
-          room,
-          serverUrl,
           user,
           comments: commentsOf(source),
           frontmatter: lastFrontmatter,
@@ -881,10 +875,9 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       `script-src 'nonce-${nonce}'`,
       `font-src ${webview.cspSource}`,
       `img-src ${webview.cspSource} data: https: http:`,
-      // y-websocket needs ws:// to localhost or wherever the user pointed
-      // markdownCollab.collab.serverUrl. Allow any ws/wss target — the user
-      // controls the URL via settings.
-      `connect-src ws: wss:`,
+      // No `connect-src`: the live editor is single-human + Claude with no
+      // network relay, so the webview opens no sockets or fetches. It falls
+      // back to default-src 'none', blocking all of them.
     ].join("; ");
 
     return `<!DOCTYPE html>
@@ -912,12 +905,6 @@ function resolveAuthorFromConfig(): string {
   return os.userInfo().username || "user";
 }
 
-function computeRoom(uri: vscode.Uri): string {
-  // Hash the absolute fsPath so the room name doesn't leak filesystem layout
-  // to peers but still uniquely identifies the document. Anyone with the
-  // same absolute path on the same y-websocket server joins the same room.
-  return crypto.createHash("sha1").update(uri.fsPath).digest("hex").slice(0, 16);
-}
 
 function drawioRejectReasonMessage(
   reason: "empty-href" | "absolute-not-allowed" | "outside-workspace" | "wrong-extension",

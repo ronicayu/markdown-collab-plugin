@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.34.44 — 2026-07-25 (trial)
+
+### Removed: the dead multi-peer relay layer (10x-plan P2.2, part 1)
+
+The real-time collaborative relay was walked back in v0.34.6/0.34.7 — the
+live editor is one human plus Claude, converging through the `.md` file, with
+no websocket. The machinery lingered: a 265-line y-websocket server, the
+seed-encoding module, per-document "room" hashing, a `serverUrl` setting, and
+the `ws` / `y-websocket` dependencies. All of it was unreferenced by runtime
+code — bundle-adjacent weight, supply-chain surface, and a standing source of
+confusion.
+
+Removed:
+
+- `src/collab/server.ts` and `src/collab/seedEncoding.ts` (both proven to
+  have no non-test importers), plus their unit tests.
+- `computeRoom()`, the `room` and `serverUrl` fields in the editor's init
+  payload, and the `collab.serverUrl` setting read — none were consumed by
+  the webview.
+- The `connect-src ws: wss:` Content-Security-Policy directive: the editor
+  webview opens no sockets or fetches, so `connect-src` now falls back to
+  `default-src 'none'`, blocking all of them. A small security tightening.
+- Dependencies `ws`, `y-websocket`, `@types/ws`, and `y-codemirror.next`
+  (the last was already imported nowhere). Net ~700 lines of dead code and
+  four packages out of the tree.
+
+The editor itself is unchanged: it keeps its local-only Yjs document
+(`yjs`, `y-protocols`, `y-prosemirror`, `@milkdown/plugin-collab`), so how
+the human types and how Claude's disk-side edits land are exactly as before.
+Bundle size is essentially unchanged, because the relay was never reachable
+from a bundle entry point in the first place — the win here is the dead code
+and the dependency tree.
+
+A follow-up will evaluate removing the local Yjs layer too (analysis shows
+undo is prosemirror-history, not Yjs, and the only load-bearing Yjs use is
+the external-change apply path). That change touches the headline
+convergence path and will land separately, after a manual live-editor pass.
+
 ## 0.34.43 — 2026-07-25 (trial)
 
 ### Added: damaged comment anchors are reported immediately (10x-plan P0.2)

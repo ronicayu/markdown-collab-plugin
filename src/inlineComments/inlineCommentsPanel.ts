@@ -12,7 +12,7 @@
 //
 // Intentionally separate from the existing sidecar-based system: this is
 // a standalone experiment, not an integration. No coupling to
-// commentController, sidecar, or the y-websocket relay.
+// commentController or the sidecar.
 
 import * as fs from "fs/promises";
 import * as os from "os";

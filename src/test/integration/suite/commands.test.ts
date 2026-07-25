@@ -376,13 +376,7 @@ suite("All extension commands", () => {
   // ---------------------------------------------------------------------
   test("every advertised configuration key is reachable", () => {
     const config = vscode.workspace.getConfiguration("markdownCollab");
-    for (const key of [
-      "sendMode",
-      "collab.serverUrl",
-      "collab.startLocalServer",
-      "collab.port",
-      "collab.userName",
-    ]) {
+    for (const key of ["sendMode", "collab.userName"]) {
       // .inspect() returns undefined only if the property isn't declared
       // at all in package.json. Defaults from contributes.configuration
       // surface as defaultValue.
