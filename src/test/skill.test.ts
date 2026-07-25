@@ -5,6 +5,8 @@ import * as path from "path";
 import {
   CHANNEL_SCRIPT_CONTENT,
   CHANNEL_SCRIPT_REL,
+  CLI_SCRIPT_CONTENT,
+  CLI_SCRIPT_REL,
   SKILL_CONTENT,
   SKILL_REL_PATH,
   TAIL_SCRIPT_CONTENT,
@@ -27,10 +29,12 @@ describe("SKILL_CONTENT instructions", () => {
   it("documents the inline format only — no sidecar references remain", () => {
     expect(SKILL_CONTENT).toContain("Comments are stored INLINE");
     expect(SKILL_CONTENT).toContain("<!--mc:threads:begin-->");
-    // The legacy sidecar workflow / CLI / reference doc are fully removed.
+    // The legacy sidecar workflow / reference doc are fully removed. (The
+    // `mdc.mjs` helper is unrelated to the old sidecar CLI of the same name —
+    // it is the marker-safe mutation CLI added in 0.34.42, and the skill is
+    // expected to reference it.)
     expect(SKILL_CONTENT).not.toContain("Sidecar-mode workflow");
     expect(SKILL_CONTENT).not.toContain("SIDECAR.md");
-    expect(SKILL_CONTENT).not.toContain("mdc.mjs");
   });
 
   it("preserves the orphan-on-deletion rule", () => {
@@ -92,13 +96,27 @@ describe("installClaudeSkill", () => {
     expect(contents).toBe(SKILL_CONTENT);
   });
 
-  it("writes the tail + channel helper scripts on a fresh install", async () => {
+  it("writes the tail + channel + mdc helper scripts on a fresh install", async () => {
     await installClaudeSkill(tmpHome);
     const tail = await fs.readFile(path.join(tmpHome, TAIL_SCRIPT_REL), "utf8");
     expect(tail).toBe(TAIL_SCRIPT_CONTENT);
     expect(tail.startsWith("#!/usr/bin/env node")).toBe(true);
     const channel = await fs.readFile(path.join(tmpHome, CHANNEL_SCRIPT_REL), "utf8");
     expect(channel).toBe(CHANNEL_SCRIPT_CONTENT);
+    const cli = await fs.readFile(path.join(tmpHome, CLI_SCRIPT_REL), "utf8");
+    expect(cli).toBe(CLI_SCRIPT_CONTENT);
+    expect(cli.startsWith("#!/usr/bin/env node")).toBe(true);
+  });
+
+  it("re-syncs a stale mdc.mjs even when SKILL.md is untouched", async () => {
+    const skillTarget = path.join(tmpHome, SKILL_REL_PATH);
+    await fs.mkdir(path.dirname(skillTarget), { recursive: true });
+    await fs.writeFile(skillTarget, SKILL_CONTENT, "utf8");
+    const cliTarget = path.join(tmpHome, CLI_SCRIPT_REL);
+    await fs.writeFile(cliTarget, "#!/usr/bin/env node\n// stale\n", "utf8");
+    const result = await installClaudeSkill(tmpHome);
+    expect(result.action).toBe("already-present");
+    expect(await fs.readFile(cliTarget, "utf8")).toBe(CLI_SCRIPT_CONTENT);
   });
 
   it("syncs helper scripts even when SKILL.md is left untouched (already-present)", async () => {

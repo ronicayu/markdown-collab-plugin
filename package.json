@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with Claude Code — inline comments, a live AI co-editor, and GitHub/GitLab PR review, all anchored in the file.",
-  "version": "0.34.41",
+  "version": "0.34.42",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -311,7 +311,7 @@
     ]
   },
   "scripts": {
-    "compile": "tsc -p . && tsc -p tsconfig.webview.json && npm run bundle:extension && npm run bundle:webview && npm run bundle:inline-comments && npm run bundle:pr-review && npm run copy:fixtures",
+    "compile": "npm run bundle:skill-cli && tsc -p . && tsc -p tsconfig.webview.json && npm run bundle:extension && npm run bundle:webview && npm run bundle:inline-comments && npm run bundle:pr-review && npm run copy:fixtures",
     "watch": "tsc -w -p .",
     "bundle:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --external:bufferutil --external:utf-8-validate --outfile=out/extension.js --minify --sourcemap=linked --legal-comments=none",
     "bundle:webview": "esbuild src/webview/client.ts --bundle --format=iife --outfile=out/webview/client.js --target=es2020 --platform=browser --minify --sourcemap=linked --legal-comments=none && node -e \"require('fs').mkdirSync('out/webview',{recursive:true}); require('fs').copyFileSync('src/webviewShared/comments.css','out/webview/comments-shared.css')\"",
@@ -321,7 +321,8 @@
     "copy:fixtures": "node -e \"const fs=require('fs'),p=require('path');function cp(s,d){fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync(s,{withFileTypes:true})){const ss=p.join(s,f.name),dd=p.join(d,f.name);if(f.isDirectory())cp(ss,dd);else fs.copyFileSync(ss,dd);}}cp('src/test/integration/fixtures','out/test/integration/fixtures')\"",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:integration": "npm run compile && node ./out/test/integration/runTest.js"
+    "test:integration": "npm run compile && node ./out/test/integration/runTest.js",
+    "bundle:skill-cli": "node scripts/build-skill-cli.mjs"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.10.3",

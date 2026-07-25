@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.34.42 — 2026-07-25 (trial)
+
+### Added: the `mdc` helper — Claude no longer hand-edits comment markers (10x-plan P0.1)
+
+The skill used to ask Claude to edit `<!--mc:a:ID-->` markers and
+`<!--mc:t {JSON}-->` lines with string surgery, and warned about dropping a
+marker three separate times — a tell that prose instructions were not enough.
+One dropped `-->` silently orphans a reviewer's comment, so all of that risk
+lived in the model's diligence.
+
+A new helper, installed alongside the skill at
+`~/.claude/skills/vs-markdown-collab/mdc.mjs`, now performs every
+marker-level mutation through the same engine the extension itself uses:
+
+| Command | What it does |
+| --- | --- |
+| `list <file> [--actionable]` | Threads as JSON, with each thread's live anchored text |
+| `reply <file> <id> --body TEXT` | Appends a reply with the correct `c<N>` id and timestamp |
+| `rewrite <file> <id> --with TEXT` | Replaces the anchored span; markers preserved by construction |
+| `open <file> --quote TEXT --body TEXT` | Opens a thread: mints an id, wraps the passage, appends the line |
+| `resolve <file> <id>` | Marks a thread resolved |
+| `check <file> [--repair]` | Integrity report; repairs what can be fixed without guessing |
+
+The helper refuses rather than guesses: an ambiguous passage asks for
+`--occurrence`, and anchoring inside a code span, frontmatter, or the threads
+region is rejected outright. Mutating commands re-check the document before
+writing and refuse if the change would introduce a new integrity problem, so
+a failed command leaves the file untouched rather than half-edited.
+
+The skill's phases now route through it — discovery via `mdc list`, edits via
+`mdc rewrite`, replies via `mdc reply`, new threads via `mdc open`, and
+verification via `mdc check` — with the previous hand-editing instructions
+kept as a documented fallback for installs without the helper.
+
+The helper is `src/skillCli/mdc.ts` bundled with the real format engine into
+a dependency-free ESM script; a test fails the build if the committed bundle
+is stale, so the CLI and the engine can never drift apart.
+
 ## 0.34.41 — 2026-07-25 (trial)
 
 ### Added: golden round-trip corpus and a shared integrity checker (10x-plan P0.3)

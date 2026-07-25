@@ -173,7 +173,7 @@ Copies the prompt to the clipboard. Paste into Claude however you like.
 
 | Command | Purpose |
 |---|---|
-| `Markdown Collab: Install Claude Skill` | Write `~/.claude/skills/vs-markdown-collab/SKILL.md` and the bundled helpers (`mdc-tail.mjs`, `mdc-channel.mjs`). |
+| `Markdown Collab: Install Claude Skill` | Write `~/.claude/skills/vs-markdown-collab/SKILL.md` and the bundled helpers (`mdc.mjs`, `mdc-tail.mjs`, `mdc-channel.mjs`). |
 | `Markdown Collab: Initialize AGENTS.md` | Append a convention block to `<workspace>/AGENTS.md` (for non–Claude-Code agents). |
 | `Markdown Collab: Open Inline Comments View` | Open the rendered view with an inline-threads sidebar. Comments are stored inside the `.md` file. The right-click action on `.md` files. |
 | `Markdown Collab: Open Live Editor` | Open the WYSIWYG live editor with the comment panel — you and Claude co-edit the same `.md` (single human + Claude, no relay). |
