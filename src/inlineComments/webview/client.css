@@ -419,7 +419,7 @@ mark.mc-hl:hover { filter: brightness(1.15); }
 }
 .reply-box textarea {
   flex: 1;
-  resize: none;
+  resize: vertical;
   min-height: 28px;
   border: 1px solid var(--border);
   background: var(--bg);

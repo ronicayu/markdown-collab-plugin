@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.34.40 — 2026-07-25 (trial)
+
+### Fixed: the reply box in the inline comments view can be resized
+
+Replying to an existing comment used a fixed-height textarea (`resize: none`)
+while every other composer in the extension allows vertical resizing. Drag
+its bottom edge to make room for a longer reply.
+
 ## 0.34.39 — 2026-07-23
 
 ### Published to the marketplaces
