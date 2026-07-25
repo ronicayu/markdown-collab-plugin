@@ -761,29 +761,6 @@ body { overflow: hidden; }
   100% { background: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 220, 0, 0.25)); }
 }
 
-/* y-prosemirror remote cursors. The yCollab plugin renders a vertical
-   bar with the user's color and a label tag — give the label a
-   readable background using the same color. */
-.ProseMirror .ProseMirror-yjs-cursor {
-  position: relative;
-  border-left: 2px solid;
-  margin-left: -1px;
-  margin-right: -1px;
-}
-.ProseMirror .ProseMirror-yjs-cursor > div {
-  position: absolute;
-  top: -1.4em;
-  left: -1px;
-  font-size: 10px;
-  font-weight: 600;
-  white-space: nowrap;
-  color: white;
-  padding: 1px 4px;
-  border-radius: 2px;
-  user-select: none;
-  text-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
-}
-
 /* ===========================================================
    Mermaid widget
    =========================================================== */

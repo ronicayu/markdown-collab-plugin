@@ -7,8 +7,9 @@
 //     for Claude integrations, a clickable filter chip ("3 open · 5 total"
 //     toggles "hide resolved"), the comment list, and an inline
 //     composer / reply / delete-confirm slot.
-//   - Real social presence: avatar stack of named peers in the header,
-//     remote cursors with name flags styled to match each peer's color.
+//   - Single human + Claude: the human edits here; Claude edits the .md on
+//     disk; the two converge through the file (an "externalChange" push
+//     re-parses the document into the editor). No network relay, no Yjs.
 //   - Bidirectional comment navigation: every comment's anchor is
 //     highlighted in the editor; clicking the highlight scrolls the
 //     sidebar to the matching card and flashes it; clicking a card
@@ -21,13 +22,13 @@ import {
   Editor,
   defaultValueCtx,
   editorViewCtx,
+  parserCtx,
   prosePluginsCtx,
   rootCtx,
   serializerCtx,
 } from "@milkdown/core";
 import { commonmark } from "@milkdown/preset-commonmark";
 import { gfm } from "@milkdown/preset-gfm";
-import { collab, collabServiceCtx } from "@milkdown/plugin-collab";
 import { listener, listenerCtx } from "@milkdown/plugin-listener";
 import { history } from "@milkdown/plugin-history";
 import { nord } from "@milkdown/theme-nord";
@@ -36,8 +37,6 @@ import "./host.css";
 import { Plugin, PluginKey, TextSelection } from "prosemirror-state";
 import { CellSelection } from "@milkdown/prose/tables";
 import { Decoration, DecorationSet } from "prosemirror-view";
-import { Awareness } from "y-protocols/awareness";
-import * as Y from "yjs";
 import { locateAnchorInLiveText, locateNthOccurrence } from "../collab/liveAnchorLocator";
 import { renderedRangeToPmRange } from "../collab/pmPositionMapper";
 import { formatRelativeTime } from "../collab/relativeTime";
@@ -146,8 +145,6 @@ type IncomingMessage =
 const vscode = acquireVsCodeApi();
 
 let editor: Editor | null = null;
-let ydoc: Y.Doc | null = null;
-let awareness: Awareness | null = null;
 let suppressNextPost = false;
 let userName: string = "user";
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -227,12 +224,6 @@ let imageBaseUris: ImageBaseUris = { docDir: "", workspaceFolder: null };
 async function init(msg: InitMessage): Promise<void> {
   userName = msg.user.name || "user";
   if (msg.imageBaseUris) imageBaseUris = msg.imageBaseUris;
-  ydoc = new Y.Doc();
-  // Local-only awareness: there is no network relay and no second human. The
-  // collab plugin still wants an Awareness, so we give it a doc-local one that
-  // never syncs to anyone. Claude collaborates via the file, not via Yjs.
-  awareness = new Awareness(ydoc);
-  awareness.setLocalStateField("user", msg.user);
 
   buildLayout();
   sidebarState.comments = msg.comments ?? [];
@@ -287,25 +278,14 @@ async function init(msg: InitMessage): Promise<void> {
     .use(gfm)
     .use(history)
     .use(listener)
-    .use(collab)
     .create();
 
-  const startCollab = (): void => {
-    if (!editor) return;
-    editor.action((ctx) => {
-      const collabService = ctx.get(collabServiceCtx);
-      collabService
-        .bindDoc(ydoc!)
-        .setAwareness(awareness!)
-        .applyTemplate(msg.text)
-        .connect();
-    });
-    forceHighlightRefresh();
-    reportReady(true);
-  };
-
-  // No relay to wait on — start the editor immediately as a solo editor.
-  startCollab();
+  // The editor seeds its document from `defaultValueCtx` (set to msg.text
+  // above) — there is no Yjs doc and no collab plugin. The human edits here;
+  // Claude edits the .md on disk; the two converge through the file, applied
+  // via `applyExternalChange`. Undo is prosemirror-history (`.use(history)`).
+  forceHighlightRefresh();
+  reportReady(true);
 
   installAddCommentAffordance();
 }
@@ -1685,10 +1665,20 @@ function applyExternalChange(text: string): void {
 
   suppressNextPost = true;
   cachedMarkdown = text;
-  editor.action((ctx) => ctx.set(defaultValueCtx, text));
   editor.action((ctx) => {
-    const collabService = ctx.get(collabServiceCtx);
-    collabService.applyTemplate(text, () => true);
+    const view = ctx.get(editorViewCtx);
+    const parser = ctx.get(parserCtx);
+    const doc = parser(text);
+    if (!doc) return;
+    // Replace the whole document with the freshly parsed one. Marked
+    // external so prosemirror-history keeps Claude's disk-side edit out of
+    // the local undo stack — matching the old collab behaviour, where synced
+    // changes weren't locally undoable.
+    const tr = view.state.tr;
+    tr.replaceWith(0, view.state.doc.content.size, doc.content);
+    tr.setMeta("addToHistory", false);
+    tr.setMeta("external", true);
+    view.dispatch(tr);
   });
 
   // Restore the cursor near its old position (clamped to the new doc),
