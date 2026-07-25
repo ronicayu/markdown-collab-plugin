@@ -158,6 +158,25 @@ function buildCodeMask(source: string): Uint8Array {
   return mask;
 }
 
+/**
+ * True when `[start, end)` touches a fenced block, an indented block, or an
+ * inline code span.
+ *
+ * Markers inside code are deliberately ignored by the parser so a literal
+ * `<!--mc:a:xxx-->` in a code sample is inert. That protection cuts both
+ * ways: markers written there for a *real* thread are inert too, so the
+ * thread would come back unanchored with no explanation. Callers use this
+ * to refuse up front instead.
+ */
+export function isInCode(source: string, start: number, end: number): boolean {
+  const mask = buildCodeMask(source);
+  const last = Math.max(start, Math.min(end, source.length) - 1);
+  for (let i = Math.max(0, start); i <= last && i < source.length; i++) {
+    if (mask[i]) return true;
+  }
+  return false;
+}
+
 interface RawMarker {
   kind: "open" | "close";
   id: string;
@@ -227,14 +246,29 @@ function findThreadsRegion(source: string): { start: number; end: number; body: 
   };
 }
 
-function parseThreads(body: string): InlineThread[] {
+/**
+ * A `<!--mc:t ...-->` line that could not be turned into a thread.
+ * `offset` is relative to the threads-region body.
+ */
+export interface MalformedThreadLine {
+  /** The raw JSON text between `<!--mc:t ` and `-->`. */
+  raw: string;
+  /** Offset of the line within the threads-region body. */
+  offset: number;
+  reason: "json-parse-error" | "missing-id";
+}
+
+function parseThreads(body: string, malformed?: MalformedThreadLine[]): InlineThread[] {
   const threads: InlineThread[] = [];
   let m: RegExpExecArray | null;
   THREAD_LINE_RE.lastIndex = 0;
   while ((m = THREAD_LINE_RE.exec(body)) !== null) {
     try {
       const obj = JSON.parse(m[1]) as Partial<InlineThread>;
-      if (!obj || typeof obj.id !== "string") continue;
+      if (!obj || typeof obj.id !== "string") {
+        malformed?.push({ raw: m[1], offset: m.index, reason: "missing-id" });
+        continue;
+      }
       threads.push({
         id: obj.id,
         quote: typeof obj.quote === "string" ? obj.quote : "",
@@ -244,7 +278,9 @@ function parseThreads(body: string): InlineThread[] {
         comments: Array.isArray(obj.comments) ? obj.comments.filter(isValidComment) : [],
       });
     } catch {
-      // Malformed JSON — skip silently. UI shows count delta vs anchors.
+      // Malformed JSON — skipped by `parse()` so a damaged line never takes
+      // the whole document down. `inspect()` surfaces it instead.
+      malformed?.push({ raw: m[1], offset: m.index, reason: "json-parse-error" });
     }
   }
   return threads;
@@ -343,6 +379,66 @@ export function parse(source: string): ParsedDocument {
   };
 }
 
+/** A marker found in the prose that has no counterpart. */
+export interface UnpairedMarker {
+  kind: "open" | "close";
+  id: string;
+  /** Offset of the first character of the marker. */
+  start: number;
+  /** Offset just past the last character of the marker. */
+  end: number;
+}
+
+/**
+ * Everything `parse()` deliberately swallows, for callers that need to
+ * *diagnose* a document rather than render it. `parse()` stays lenient —
+ * a damaged line must never take the whole document down — so integrity
+ * checking reads from here instead.
+ */
+export interface DocumentInspection {
+  parsed: ParsedDocument;
+  /** Open markers with no close (and vice versa), plus duplicate opens. */
+  unpairedMarkers: UnpairedMarker[];
+  /** `<!--mc:t ...-->` lines that produced no thread. */
+  malformedThreadLines: MalformedThreadLine[];
+  /** Thread ids appearing on more than one thread line. */
+  duplicateThreadIds: string[];
+  /** Anchor markers in the prose with no matching thread in the threads region. */
+  orphanAnchorIds: string[];
+}
+
+/**
+ * Diagnostic pass over a document. Shares every helper with `parse()` —
+ * this is a second view of the same parse, never a second parser.
+ */
+export function inspect(source: string): DocumentInspection {
+  const mask = buildCodeMask(source);
+  const markers = findMarkers(source, mask);
+  const { anchors, unpaired } = pairAnchors(markers);
+  const region = findThreadsRegion(source);
+  const malformedThreadLines: MalformedThreadLine[] = [];
+  const threads = region ? parseThreads(region.body, malformedThreadLines) : [];
+
+  const seen = new Set<string>();
+  const duplicateThreadIds: string[] = [];
+  for (const t of threads) {
+    if (seen.has(t.id)) {
+      if (!duplicateThreadIds.includes(t.id)) duplicateThreadIds.push(t.id);
+    }
+    seen.add(t.id);
+  }
+
+  const orphanAnchorIds = [...anchors.keys()].filter((id) => !seen.has(id));
+
+  return {
+    parsed: parse(source),
+    unpairedMarkers: unpaired.map((m) => ({ kind: m.kind, id: m.id, start: m.start, end: m.end })),
+    malformedThreadLines,
+    duplicateThreadIds,
+    orphanAnchorIds,
+  };
+}
+
 /** Render the threads region as text, with leading/trailing newlines suitable for appending to a markdown file. */
 export function renderThreadsRegion(threads: InlineThread[]): string {
   if (threads.length === 0) return "";
@@ -384,15 +480,21 @@ export function withThreads(source: string, threads: InlineThread[]): string {
     const before = source.slice(0, region.start);
     const after = source.slice(region.end);
     if (rendered === "") {
-      // Removing region — also strip a single trailing newline before it
-      // so we don't accumulate blank lines on repeated empty-state saves.
-      return before.replace(/\n$/, "") + after;
+      // Removing the region. Collapse the newline run on BOTH sides of where
+      // it sat down to a single separator: stripping only one newline (as we
+      // used to) left an extra behind on every removal, so an add/remove
+      // cycle appended a blank line to the document each time it ran.
+      const head = before.replace(/\n+$/, "");
+      const tail = after.replace(/^\n+/, "");
+      const joiner = before.endsWith("\n") || after.startsWith("\n") ? "\n" : "";
+      return head + joiner + tail;
     }
     return before + rendered + after;
   }
   if (rendered === "") return source;
-  const sep = source.endsWith("\n") ? "" : "\n";
-  return source + sep + "\n" + rendered + "\n";
+  // Normalize the trailing newline run before appending so a document that
+  // already carries blank lines doesn't grow another one.
+  return `${source.replace(/\n+$/, "")}\n\n${rendered}\n`;
 }
 
 const ID_CHARSET = "0123456789abcdefghijklmnopqrstuvwxyz";
@@ -477,6 +579,12 @@ export function addThread(
     if (selEnd > parsed.frontmatter.start && selEnd <= parsed.frontmatter.end) {
       throw new Error("Cannot anchor a comment inside the frontmatter");
     }
+  }
+  // Markers inside code are ignored by the parser, so anchoring there would
+  // silently produce a thread with a broken anchor. Refuse, as we do for the
+  // other two zones where an anchor cannot survive.
+  if (isInCode(source, selStart, selEnd)) {
+    throw new Error("Cannot anchor a comment inside a code block or code span");
   }
   const withMarkers =
     source.slice(0, selStart) + openMarker + source.slice(selStart, selEnd) + closeMarker + source.slice(selEnd);

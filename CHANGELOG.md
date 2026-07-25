@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.34.41 — 2026-07-25 (trial)
+
+### Added: golden round-trip corpus and a shared integrity checker (10x-plan P0.3)
+
+Anchoring bugs in this project have historically been fixed one at a time,
+with nothing guarding the *combination* space — a comment on a table cell
+with a duplicate value, in a document with frontmatter, edited in place,
+then undone. There is now a corpus of realistic documents driven through
+scripts of realistic operations, asserting five invariants after every
+single step: integrity, prose fidelity, anchoring, quote fidelity, and
+serialization stability.
+
+New `src/inlineComments/integrity.ts` is the shared checker behind it —
+it names every way a document can be broken (unpaired markers, orphaned
+anchors, unanchored threads, malformed thread JSON, duplicate ids) and
+repairs the subset that can be fixed without guessing. Repairs may only
+touch markers and the threads region; if a repair would alter a single
+character of prose, the whole batch is abandoned and reported instead.
+
+The corpus found two real bugs on its first run, both fixed here:
+
+- **Commenting inside a code span silently produced a broken thread.**
+  Markers inside code are deliberately ignored by the parser so that a
+  `<!--mc:a:xxx-->` in a code sample stays inert — which meant markers
+  written there for a real comment were inert too, and the thread came
+  back unanchored with no explanation. Anchoring inside a code block or
+  code span is now refused up front, the same way anchoring inside
+  frontmatter or the threads region already was.
+- **Adding then deleting a comment appended a blank line to the document,
+  every time.** Removing the threads region stripped only one of the two
+  newlines around it, so the file grew by one line per cycle. Add/remove
+  is now byte-for-byte reversible.
+
 ## 0.34.40 — 2026-07-25 (trial)
 
 ### Fixed: the reply box in the inline comments view can be resized
