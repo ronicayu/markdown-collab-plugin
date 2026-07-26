@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.34.45 — 2026-07-26 (EXPERIMENTAL — Yjs removal preview, do not use in earnest)
+
+**This is an experimental pre-release for testing only.** It removes the local
+Yjs document layer from the live collab editor (10x-plan P2.2, part 2). The
+change touches the editor's core convergence path — how Claude's disk-side
+`.md` edits land in your open editor — and has NOT yet passed a manual
+live-editor verification. Install it to help test; keep your real work on the
+published release.
+
+What changed versus 0.34.44:
+
+- `applyExternalChange` now applies incoming `.md` text by parsing it with
+  Milkdown's `parserCtx` and dispatching a document-replace transaction
+  (marked `addToHistory:false`, so an external edit stays out of your local
+  undo stack), replacing the previous `collabService.applyTemplate` call.
+- The `@milkdown/plugin-collab` collab plugin and the local Yjs document /
+  awareness wiring are gone. The editor seeds from `defaultValueCtx`; undo is
+  prosemirror-history. Dependencies `@milkdown/plugin-collab`, `yjs`,
+  `y-protocols`, and `y-prosemirror` are removed (~110 KB off the webview
+  bundle).
+
+Headless smoke testing confirmed the editor boots, seeds, and applies
+external changes without Yjs. What still needs a human in real VS Code: live
+typing/saving, undo (Ctrl+Z), cursor and scroll preservation during an
+external change, and comment-anchor highlight tracking. Please exercise those.
+
 ## 0.34.44 — 2026-07-25 (trial)
 
 ### Removed: the dead multi-peer relay layer (10x-plan P2.2, part 1)
