@@ -20,6 +20,7 @@ import {
   type CollabSuggestion,
 } from "./inlineBridge";
 import { acceptSuggestion, rejectSuggestion, parse as parseInline } from "../inlineComments/format";
+import { summarizeChange } from "./changeSummary";
 import { resolveDrawioHref } from "./drawioFileResolver";
 import { classifyLink } from "./linkRouter";
 import { isExternalLinkSafe } from "./urlAllowlist";
@@ -530,8 +531,9 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       const source = e.document.getText();
       const newProse = proseOf(source);
       if (newProse !== lastWebviewProse) {
+        const changed = summarizeChange(lastWebviewProse, newProse);
         lastWebviewProse = newProse;
-        void panel.webview.postMessage({ type: "externalChange", text: newProse });
+        void panel.webview.postMessage({ type: "externalChange", text: newProse, changed });
       }
       // Frontmatter lives in its own panel — push it when it changes even if
       // the body prose didn't.

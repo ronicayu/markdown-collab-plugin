@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.34.52 — 2026-07-27 (trial)
+
+### Added: Claude presence in the live editor (10x-plan P1.2)
+
+When Claude edits the open `.md`, the change is no longer a silent flash. The
+live editor now:
+
+- **flashes the exact span Claude edited** with a green tint that fades over a
+  few seconds, so the eye lands on what changed, and
+- shows a **clickable status strip naming the nearest heading** — "Claude
+  edited §Heading ↗" — that scrolls the editor to the change.
+
+The host computes the changed span (a prefix/suffix diff of the old vs new
+prose) and the nearest heading on the existing externalChange push; the webview
+locates that text in the rendered document and decorates it. Best-effort by
+design: a change whose text carries markdown syntax simply isn't flashed, and
+the notice still fires. New `src/collab/changeSummary.ts` is pure and unit
+tested. Not included: cursor-level streaming presence (there is no relay, by
+design) or the "Claude is working…" in-flight indicator.
+
 ## 0.34.51 — 2026-07-27 (trial)
 
 ### Added: "propose as suggestions" toggle on Send-to-Claude (10x-plan P1.1, part 2c — completes P1.1)

@@ -661,6 +661,31 @@ body { overflow: hidden; }
   100% { background: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 220, 0, 0.25)); }
 }
 
+/* The span Claude just edited (externalChange). Green insert-tint that fades
+   out over the decoration's lifetime, so the eye lands on what changed. */
+.mdc-claude-edit {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--vscode-charts-green, #4caf50) 30%, transparent);
+  animation: mdc-claude-edit-fade 4.5s ease-out forwards;
+}
+@keyframes mdc-claude-edit-fade {
+  0% { background: color-mix(in srgb, var(--vscode-charts-green, #4caf50) 42%, transparent); }
+  70% { background: color-mix(in srgb, var(--vscode-charts-green, #4caf50) 30%, transparent); }
+  100% { background: color-mix(in srgb, var(--vscode-charts-green, #4caf50) 0%, transparent); }
+}
+
+/* The presence notice, when clickable (scrolls to Claude's edit). */
+button.mdc-banner--jump {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+button.mdc-banner--jump:hover {
+  filter: brightness(1.1);
+}
+
 /* ===========================================================
    Mermaid widget
    =========================================================== */

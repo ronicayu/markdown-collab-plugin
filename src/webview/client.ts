@@ -85,9 +85,18 @@ interface InitMessage {
   imageBaseUris?: ImageBaseUris;
 }
 
+interface ChangeSummary {
+  start: number;
+  end: number;
+  text: string;
+  heading: string | null;
+}
+
 interface ExternalChangeMessage {
   type: "externalChange";
   text: string;
+  /** Where the disk-side (Claude) edit landed, for the presence affordances. */
+  changed?: ChangeSummary | null;
 }
 
 interface FrontmatterMessage {
@@ -238,6 +247,66 @@ function updateLastNonEmptySelection(): void {
 }
 
 const HIGHLIGHT_PLUGIN_KEY = new PluginKey("mdc-anchor-highlight");
+const CLAUDE_EDIT_KEY = new PluginKey("mdc-claude-edit");
+
+// Decorates the span Claude just edited (from an externalChange) so the change
+// is visible, not silent. The decoration fades itself via `flashClaudeEdit`.
+function makeClaudeEditPlugin(): Plugin {
+  return new Plugin({
+    key: CLAUDE_EDIT_KEY,
+    state: {
+      init: () => DecorationSet.empty,
+      apply: (tr, old) => {
+        const meta = tr.getMeta(CLAUDE_EDIT_KEY);
+        if (meta === "clear") return DecorationSet.empty;
+        if (meta && typeof meta === "object" && "from" in meta) {
+          const { from, to } = meta as { from: number; to: number };
+          return DecorationSet.create(tr.doc, [Decoration.inline(from, to, { class: "mdc-claude-edit" })]);
+        }
+        return old.map(tr.mapping, tr.doc);
+      },
+    },
+    props: {
+      decorations(state) {
+        return CLAUDE_EDIT_KEY.getState(state) as DecorationSet | undefined;
+      },
+    },
+  });
+}
+
+let claudeEditTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * Highlight the just-edited text `changedText` (located in the editor's
+ * rendered content) and fade it after a few seconds. Returns true when the
+ * text was found and decorated. Best-effort: a change whose text carries
+ * markdown syntax (so it isn't a substring of the rendered content) simply
+ * isn't flashed — the notice still fires.
+ */
+function flashClaudeEdit(changedText: string): boolean {
+  const needle = changedText.trim();
+  if (!editor || needle.length === 0) return false;
+  let placed = false;
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    const hay = view.state.doc.textContent;
+    const at = hay.indexOf(needle);
+    if (at === -1) return;
+    const pm = renderedRangeToPmRange(view.state.doc, at, at + needle.length);
+    if (!pm) return;
+    view.dispatch(view.state.tr.setMeta(CLAUDE_EDIT_KEY, { from: pm.from, to: pm.to }));
+    placed = true;
+  });
+  if (!placed) return false;
+  if (claudeEditTimer) clearTimeout(claudeEditTimer);
+  claudeEditTimer = setTimeout(() => {
+    editor?.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      view.dispatch(view.state.tr.setMeta(CLAUDE_EDIT_KEY, "clear"));
+    });
+  }, 4500);
+  return true;
+}
 
 // Webview URIs for resolving relative image src; set from the init payload.
 let imageBaseUris: ImageBaseUris = { docDir: "", workspaceFolder: null };
@@ -264,6 +333,7 @@ async function init(msg: InitMessage): Promise<void> {
           makeDrawioPlugin(),
           makeImageResolvePlugin(),
           makeAnchorHighlightPlugin(),
+          makeClaudeEditPlugin(),
         ]),
       );
       ctx.get(listenerCtx).markdownUpdated((_ctx, markdown, prevMarkdown) => {
@@ -472,9 +542,19 @@ function renderNotice(): void {
     renderSidebar();
     return;
   }
-  slot.innerHTML = sidebarState.notice
-    ? `<div class="mdc-banner mdc-banner--info" role="status">${escapeHtml(sidebarState.notice)}</div>`
-    : "";
+  if (!sidebarState.notice) {
+    slot.innerHTML = "";
+    return;
+  }
+  if (noticeJump) {
+    slot.innerHTML = `<button type="button" class="mdc-banner mdc-banner--info mdc-banner--jump" title="Scroll to Claude's edit">${escapeHtml(sidebarState.notice)} ↗</button>`;
+    slot.querySelector<HTMLButtonElement>(".mdc-banner--jump")?.addEventListener("click", () => {
+      const mark = editorContainer?.querySelector<HTMLElement>(".mdc-claude-edit");
+      mark?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  } else {
+    slot.innerHTML = `<div class="mdc-banner mdc-banner--info" role="status">${escapeHtml(sidebarState.notice)}</div>`;
+  }
 }
 
 // Refresh the header's count + Send-to-Claude enabled state in place.
@@ -1703,7 +1783,7 @@ function reportReady(synced: boolean): void {
   vscode.postMessage({ type: "ready-with-content", length, synced, error });
 }
 
-function applyExternalChange(text: string): void {
+function applyExternalChange(text: string, changed?: ChangeSummary | null): void {
   if (!editor) return;
   // Cancel a still-pending local edit post. The keystroke that scheduled it
   // predates this external (Claude) change, so letting it fire would overwrite
@@ -1760,21 +1840,37 @@ function applyExternalChange(text: string): void {
     });
   }
   forceHighlightRefresh();
-  showNotice("Updated from disk");
+
+  // Presence: flash the span Claude edited and name the nearest heading in a
+  // clickable notice. Falls back to a plain notice when there's no locatable
+  // span (e.g. a pure deletion, or the range didn't map).
+  const flashed = changed ? flashClaudeEdit(changed.text) : false;
+  const where = changed?.heading ? `Claude edited §${changed.heading}` : "Claude updated this document";
+  showNotice(where, flashed);
 }
+
+// Whether the current notice should offer a "jump to the change" click.
+let noticeJump = false;
 
 // Flash a transient one-line notice in the sidebar header, then clear it. Used
 // when an edit arrives from outside the editor (Claude editing the .md, a save
-// from another window, git) so the change isn't silent.
-function showNotice(text: string): void {
+// from another window, git) so the change isn't silent. When `jumpToChange` is
+// set, the notice is clickable and scrolls the editor to Claude's just-edited
+// span, and lingers long enough to click.
+function showNotice(text: string, jumpToChange = false): void {
   sidebarState.notice = text;
+  noticeJump = jumpToChange;
   renderNotice();
   if (noticeTimer) clearTimeout(noticeTimer);
-  noticeTimer = setTimeout(() => {
-    sidebarState.notice = null;
-    noticeTimer = null;
-    renderNotice();
-  }, 2500);
+  noticeTimer = setTimeout(
+    () => {
+      sidebarState.notice = null;
+      noticeJump = false;
+      noticeTimer = null;
+      renderNotice();
+    },
+    jumpToChange ? 6000 : 2500,
+  );
 }
 
 // Render the read-only frontmatter panel above the editor. Milkdown would
@@ -1893,7 +1989,7 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     init(msg).catch((err) => postError("init", err));
   } else if (msg.type === "externalChange") {
     try {
-      applyExternalChange(msg.text);
+      applyExternalChange(msg.text, msg.changed);
     } catch (err) {
       postError("externalChange", err);
     }
