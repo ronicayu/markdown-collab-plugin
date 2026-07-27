@@ -66,6 +66,18 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("markdownCollab.installClaudeSkill", async () => {
       await invokeInstallClaudeSkill(output);
     }),
+    vscode.commands.registerCommand("markdownCollab.toggleSuggestMode", async () => {
+      const next = !isSuggestMode();
+      // Workspace target so the choice is remembered per workspace, like sendMode.
+      await vscode.workspace
+        .getConfiguration("markdownCollab")
+        .update("proposeEditsAsSuggestions", next, vscode.ConfigurationTarget.Workspace);
+      void vscode.window.showInformationMessage(
+        next
+          ? "Suggest mode ON — Send to Claude will propose edits for you to accept/reject."
+          : "Suggest mode OFF — Claude applies edits directly.",
+      );
+    }),
     vscode.commands.registerCommand(
       "markdownCollab.repairInlineComments",
       async (fsPathArg?: string) => {
@@ -478,7 +490,7 @@ async function invokeSendAllToClaude(
   }
   // Comments live inline in the `.md` itself (in the `<!--mc:threads:begin-->`
   // block). Build the payload from the open inline threads.
-  const inlinePayload = buildInlinePayload(doc);
+  const inlinePayload = buildInlinePayload(doc, { suggestMode: isSuggestMode() });
   if (!inlinePayload) {
     void vscode.window.showInformationMessage(
       "No unresolved comments on this file.",
@@ -493,6 +505,13 @@ async function invokeSendAllToClaude(
     workspaceState,
     folder,
   );
+}
+
+/** Whether "Send to Claude" should ask Claude to propose edits as suggestions. */
+function isSuggestMode(): boolean {
+  return vscode.workspace
+    .getConfiguration("markdownCollab")
+    .get<boolean>("proposeEditsAsSuggestions", false);
 }
 
 type DispatchIntent =

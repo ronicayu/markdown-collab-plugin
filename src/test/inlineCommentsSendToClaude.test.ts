@@ -78,6 +78,17 @@ describe("inlineComments/sendToClaude - buildPrompt", () => {
     const prompt = _internal.buildPrompt("docs/foo.md", [parseFirst(src)]);
     expect(prompt).toContain("latest: still broken");
   });
+
+  it("appends the suggest-mode directive only when suggest mode is on", () => {
+    const src = addThread("Hello world.", 6, 11, { author: "r", body: "fix?", ts: TS }).source;
+    const off = _internal.buildPrompt("docs/foo.md", [parseFirst(src)], false);
+    const on = _internal.buildPrompt("docs/foo.md", [parseFirst(src)], true);
+    expect(off).not.toContain("SUGGEST MODE");
+    expect(on).toContain("SUGGEST MODE");
+    expect(on).toContain("mdc suggest");
+    // The thread listing is still present in suggest mode.
+    expect(on).toContain("world");
+  });
 });
 
 function parseFirst(src: string): InlineThread {

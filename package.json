@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with Claude Code — inline comments, a live AI co-editor, and GitHub/GitLab PR review, all anchored in the file.",
-  "version": "0.34.50",
+  "version": "0.34.51",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -136,6 +136,11 @@
         "title": "Refresh Changed Files",
         "category": "Markdown Collab",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "markdownCollab.toggleSuggestMode",
+        "title": "Markdown Collab: Toggle Suggest Mode (propose edits as suggestions)",
+        "category": "Markdown Collab"
       }
     ],
     "configuration": {
@@ -178,6 +183,11 @@
           ],
           "default": "svg",
           "description": "Image format requested from the PlantUML server. SVG scales better; PNG is heavier but renders identically on every browser."
+        },
+        "markdownCollab.proposeEditsAsSuggestions": {
+          "type": "boolean",
+          "default": false,
+          "description": "When on, 'Send to Claude' asks Claude to propose its edits as suggestions (accept/reject) instead of applying them directly. Remembered per workspace."
         }
       }
     },

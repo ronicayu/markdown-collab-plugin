@@ -56,11 +56,14 @@ interface InitMessage {
   plantuml: { serverUrl: string; format: "svg" | "png" };
   /** Whether the installed Claude skill is missing / outdated / current. */
   skillStatus: SkillStatus;
+  /** Whether "Send to Claude" proposes edits as suggestions (accept/reject). */
+  suggestMode: boolean;
 }
 
 interface UpdateMessage {
   type: "update";
   state: SerializedState;
+  suggestMode: boolean;
 }
 
 interface SkillStatusMessage {
@@ -171,6 +174,10 @@ interface RejectSuggestionRequest {
   anchorId: string;
 }
 
+interface ToggleSuggestModeRequest {
+  type: "toggle-suggest-mode";
+}
+
 type ClientMessage =
   | ReadyMessage
   | AddCommentRequest
@@ -187,7 +194,8 @@ type ClientMessage =
   | DrawioReadRequest
   | InstallSkillRequest
   | AcceptSuggestionRequest
-  | RejectSuggestionRequest;
+  | RejectSuggestionRequest
+  | ToggleSuggestModeRequest;
 
 /** Dependencies the panel needs from the extension host (kept narrow so tests can stub them). */
 export interface InlinePanelDeps {
@@ -331,6 +339,11 @@ export class InlineCommentsPanel {
         if (this.pendingApply) return;
         void this.pushState();
       }),
+      // Keep the suggest-mode toggle in sync when the setting is changed
+      // elsewhere (command palette, Settings UI).
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration("markdownCollab.proposeEditsAsSuggestions")) void this.pushState();
+      }),
       panel,
     );
     panel.onDidDispose(() => this.dispose());
@@ -421,6 +434,7 @@ export class InlineCommentsPanel {
         <label id="filter-claude-label" hidden><input type="radio" name="filter" value="claude-unread"> New from Claude</label>
         <button id="send-to-claude" title="Send the prompt to a running Claude terminal (or your configured send mode).">Send to Claude</button>
         <button id="copy-prompt" class="btn-ghost" title="Copy the prompt to your clipboard.">Copy</button>
+        <button id="suggest-mode-toggle" class="btn-ghost" role="switch" aria-checked="false" title="When on, Send to Claude asks Claude to propose edits as suggestions you accept or reject.">Suggest: off</button>
       </div>
       <div id="skill-warning" class="skill-warning" hidden>
         <span id="skill-warning-text"></span>
@@ -520,6 +534,11 @@ export class InlineCommentsPanel {
         });
       case "reject-suggestion":
         return this.applyMutation((parsed) => rejectSuggestion(parsed.source, msg.anchorId));
+      case "toggle-suggest-mode":
+        // The command flips the per-workspace setting and shows the toast;
+        // re-push so the toggle in the panel reflects the new state.
+        await vscode.commands.executeCommand("markdownCollab.toggleSuggestMode");
+        return this.pushState();
       case "delete-thread":
         return this.applyMutation((parsed) => replaceThread(parsed.source, msg.threadId, null));
       case "delete-comment":
@@ -803,6 +822,7 @@ export class InlineCommentsPanel {
       },
       plantuml: readPlantumlConfig(),
       skillStatus: await checkClaudeSkill(os.homedir()),
+      suggestMode: readSuggestMode(),
     };
     await this.panel.webview.postMessage(msg);
   }
@@ -821,7 +841,7 @@ export class InlineCommentsPanel {
 
   private async pushState(): Promise<void> {
     const state = serialize(parse(this.doc.getText()));
-    const msg: UpdateMessage = { type: "update", state };
+    const msg: UpdateMessage = { type: "update", state, suggestMode: readSuggestMode() };
     await this.panel.webview.postMessage(msg);
   }
 
@@ -1049,4 +1069,8 @@ function readPlantumlConfig(): { serverUrl: string; format: "svg" | "png" } {
     serverUrl: cfg.get<string>("plantuml.serverUrl") ?? "https://www.plantuml.com/plantuml",
     format: cfg.get<"svg" | "png">("plantuml.format") ?? "svg",
   };
+}
+
+function readSuggestMode(): boolean {
+  return vscode.workspace.getConfiguration("markdownCollab").get<boolean>("proposeEditsAsSuggestions", false);
 }

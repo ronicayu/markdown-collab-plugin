@@ -79,6 +79,7 @@ interface InitMsg {
   };
   plantuml?: { serverUrl: string; format: "svg" | "png" };
   skillStatus?: SkillStatus;
+  suggestMode?: boolean;
 }
 
 type SkillStatus = "missing" | "outdated" | "current";
@@ -91,6 +92,7 @@ interface SkillStatusMsg {
 interface UpdateMsg {
   type: "update";
   state: SerializedState;
+  suggestMode?: boolean;
 }
 
 interface ReviewPendingMsg {
@@ -160,6 +162,7 @@ const dom = {
   filterRadios: document.querySelectorAll<HTMLInputElement>('input[name="filter"]'),
   sendToClaude: document.getElementById("send-to-claude") as HTMLButtonElement,
   copyPrompt: document.getElementById("copy-prompt") as HTMLButtonElement,
+  suggestModeToggle: document.getElementById("suggest-mode-toggle") as HTMLButtonElement,
   skillWarning: document.getElementById("skill-warning") as HTMLElement,
   skillWarningText: document.getElementById("skill-warning-text") as HTMLElement,
   skillInstall: document.getElementById("skill-install") as HTMLButtonElement,
@@ -389,6 +392,15 @@ dom.sendToClaude.addEventListener("click", () => {
 dom.copyPrompt.addEventListener("click", () => {
   vscode.postMessage({ type: "copy-prompt" });
 });
+dom.suggestModeToggle.addEventListener("click", () => {
+  vscode.postMessage({ type: "toggle-suggest-mode" });
+});
+
+function updateSuggestModeToggle(on: boolean): void {
+  dom.suggestModeToggle.textContent = on ? "Suggest: on" : "Suggest: off";
+  dom.suggestModeToggle.setAttribute("aria-checked", String(on));
+  dom.suggestModeToggle.classList.toggle("active", on);
+}
 
 dom.skillInstall.addEventListener("click", () => {
   dom.skillInstall.disabled = true;
@@ -1433,8 +1445,10 @@ window.addEventListener("message", (ev) => {
     imageBaseUris = msg.imageBaseUris;
     ensurePlantumlInstalled(msg.plantuml);
     renderSkillWarning(msg.skillStatus);
+    updateSuggestModeToggle(msg.suggestMode ?? false);
     render(msg.state);
   } else if (msg.type === "update") {
+    updateSuggestModeToggle(msg.suggestMode ?? false);
     render(msg.state);
   } else if (msg.type === "review-pending") {
     pendingReviewSnapshot = new Set(msg.existingIds);

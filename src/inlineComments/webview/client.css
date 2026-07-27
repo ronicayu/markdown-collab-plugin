@@ -243,6 +243,12 @@ mark.mc-hl.mc-hl--suggestion {
 .filter-row input { accent-color: var(--accent); }
 .filter-row #send-to-claude { margin-left: auto; font-size: 11px; padding: 3px 8px; }
 .filter-row #copy-prompt { font-size: 11px; padding: 3px 8px; }
+.filter-row #suggest-mode-toggle { font-size: 11px; padding: 3px 8px; }
+.filter-row #suggest-mode-toggle.active {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: var(--accent);
+  color: var(--fg);
+}
 
 .skill-warning {
   display: flex;

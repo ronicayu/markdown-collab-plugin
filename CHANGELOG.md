@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.34.51 — 2026-07-27 (trial)
+
+### Added: "propose as suggestions" toggle on Send-to-Claude (10x-plan P1.1, part 2c — completes P1.1)
+
+Send-to-Claude now has a suggest-mode toggle. When on, the prompt asks Claude
+to propose every edit as a suggestion (`mdc suggest`) instead of applying it
+directly — closing the loop that started with the storage foundation: toggle
+on → send → Claude proposes → you accept/reject in the review view.
+
+- A per-workspace setting `markdownCollab.proposeEditsAsSuggestions` (default
+  off), a **Toggle Suggest Mode** command, and a **Suggest: on/off** toggle in
+  the inline comments view next to Send-to-Claude. All three stay in sync.
+- The send prompt gains a terse suggest-mode directive only when the toggle is
+  on; the skill's Suggest Mode section (0.34.48) does the rest. Both the
+  inline "Send to Claude" and the live editor route through the same payload
+  builder, so the toggle governs both.
+
+Verified: the prompt directive is unit-tested (present only when on), and the
+inline toggle's reflect-state / post-message / update-on-refresh loop was
+checked headlessly.
+
+**P1.1 (suggestion mode / reviewable AI edits) is now complete:** authoring via
+`mdc suggest` + the skill, graphical accept/reject in both the inline view and
+the live editor, and a send-mode toggle to request it. The document write paths
+(inline WorkspaceEdit + live-editor writeDocument) remain worth a dev-host pass.
+
 ## 0.34.50 — 2026-07-27 (trial)
 
 ### Added: accept/reject suggestions in the live editor (10x-plan P1.1, part 2b)

@@ -48,9 +48,14 @@ export function buildSingleThreadPayload(
 
 /**
  * Convert open inline threads to a `ReviewPayload`-compatible shape.
- * Returns null when there's nothing to send.
+ * Returns null when there's nothing to send. When `suggestMode` is set, the
+ * prompt asks Claude to propose its edits as suggestions rather than applying
+ * them directly.
  */
-export function buildInlinePayload(doc: vscode.TextDocument): InlineReviewPayload | null {
+export function buildInlinePayload(
+  doc: vscode.TextDocument,
+  opts?: { suggestMode?: boolean },
+): InlineReviewPayload | null {
   const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
   if (!folder) return null;
   const parsed = parse(doc.getText());
@@ -62,11 +67,19 @@ export function buildInlinePayload(doc: vscode.TextDocument): InlineReviewPayloa
   return {
     file: rel,
     unresolvedCount: open.length,
-    prompt: buildPrompt(rel, open),
+    prompt: buildPrompt(rel, open, opts?.suggestMode ?? false),
     comments,
     inlineThreads: open,
   };
 }
+
+/**
+ * The suggest-mode directive appended to a send prompt. Kept terse — the skill
+ * already documents `mdc suggest`; this just flips the mode for the request.
+ */
+export const SUGGEST_MODE_DIRECTIVE =
+  "Work in SUGGEST MODE: propose every edit as a suggestion via `mdc suggest` " +
+  "instead of editing the prose directly. The reviewer will accept or reject each one.";
 
 function threadToComment(t: InlineThread): Comment {
   const live = t.comments.filter((c) => !c.deleted);
@@ -90,16 +103,16 @@ function threadToComment(t: InlineThread): Comment {
   };
 }
 
-function buildPrompt(rel: string, threads: InlineThread[]): string {
+function buildPrompt(rel: string, threads: InlineThread[], suggestMode = false): string {
   // Invoke the vs-markdown-collab skill — it is the source of truth for the
   // inline format and the reply/resolve rules, so we don't re-document them
   // here. A concise thread listing follows for context.
   const n = threads.length;
   const lines: string[] = [
     `Use the vs-markdown-collab skill to address the ${n} unresolved review comment${n === 1 ? "" : "s"} on \`${rel}\`.`,
-    "",
-    "Open threads:",
   ];
+  if (suggestMode) lines.push("", SUGGEST_MODE_DIRECTIVE);
+  lines.push("", "Open threads:");
   for (const t of threads) {
     const live = t.comments.filter((c) => !c.deleted);
     const latest = live.length > 0 ? ` | latest: ${oneLine(live[live.length - 1].body)}` : "";
