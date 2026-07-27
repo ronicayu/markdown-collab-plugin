@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.34.49 — 2026-07-27 (trial)
+
+### Added: accept/reject suggestions in the inline comments view (10x-plan P1.1, part 2a)
+
+The suggestion foundation (0.34.48) gets its graphical loop in the inline
+comments view. A pending suggestion now renders as a card with an inline
+diff — the original struck through, the proposed text inserted, and only the
+changed middle emphasized against the common prefix/suffix so a small edit
+reads at a glance — plus a rationale note and **Accept** / **Reject** buttons.
+
+- Accept applies the proposed text into the prose; Reject drops the suggestion
+  and keeps the original. Both go through the same marker-safe format-engine
+  transforms and the panel's existing WorkspaceEdit → save → refresh path, so
+  undo/redo and dirty state work normally. An unanchored suggestion (markers
+  lost) disables Accept and offers only Reject.
+- The suggestion's original text is marked in the preview with a dashed accent
+  underline (distinct from the solid comment highlight); clicking it scrolls to
+  the card, and clicking the card scrolls to the preview.
+- New shared `buildSuggestionCard` in `commentUi.ts` — built once, so the live
+  editor (next) reuses it. The host serializes `parse().suggestions` (their
+  anchors are already in the same prose-space map as comment anchors).
+
+Verified headlessly against the compiled bundle: the card's affix-aware diff,
+the preview highlight, and Accept/Reject posting the correct host messages.
+
 ## 0.34.48 — 2026-07-27 (trial)
 
 ### Added: suggestion storage + CLI — the foundation for reviewable AI edits (10x-plan P1.1, part 1)

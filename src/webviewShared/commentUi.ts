@@ -215,6 +215,135 @@ export function buildCommentCard(opts: CommentCardOptions): HTMLElement {
   return card;
 }
 
+export interface SuggestionCardOptions {
+  author: string;
+  timestamp?: string | number;
+  /** Claude's rationale for the change. */
+  note?: string;
+  /** Current text (shown struck through). */
+  original: string;
+  /** Proposed replacement (shown as an insertion). */
+  proposed: string;
+  /**
+   * False when the suggestion lost its anchor markers — the change can no
+   * longer be placed, so Accept is disabled and only Reject remains.
+   */
+  anchored?: boolean;
+  onAccept(): void;
+  onReject(): void;
+  /** Card-level click, e.g. scroll to the anchored text. */
+  onClick?(): void;
+}
+
+/**
+ * A pending suggestion rendered as an inline diff (original struck through,
+ * proposed inserted) with Accept / Reject. The changed middle is emphasized
+ * against a plain common prefix/suffix so a small edit reads at a glance.
+ */
+export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
+  const card = document.createElement("div");
+  card.className = "mc-card mc-suggestion";
+
+  const meta = document.createElement("div");
+  meta.className = "mc-card__meta";
+  const author = document.createElement("span");
+  author.className = "mc-card__author";
+  author.textContent = opts.author;
+  meta.appendChild(author);
+  const verb = document.createElement("span");
+  verb.className = "mc-card__time";
+  verb.textContent = "suggests an edit";
+  meta.appendChild(verb);
+  if (opts.timestamp !== undefined) {
+    const time = document.createElement("span");
+    time.className = "mc-card__time";
+    time.textContent = formatRelativeTime(opts.timestamp);
+    meta.appendChild(time);
+  }
+  const badge = document.createElement("span");
+  badge.className = "mc-badge mc-badge--suggestion";
+  badge.textContent = "suggestion";
+  meta.appendChild(badge);
+  card.appendChild(meta);
+
+  card.appendChild(buildDiff(opts.original, opts.proposed));
+
+  if (opts.note) {
+    const note = document.createElement("div");
+    note.className = "mc-suggestion__note";
+    note.textContent = opts.note;
+    card.appendChild(note);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "mc-card__actions";
+  const accept = document.createElement("button");
+  accept.className = "mc-btn mc-btn--primary";
+  accept.textContent = "Accept";
+  if (opts.anchored === false) {
+    accept.disabled = true;
+    accept.title = "This suggestion lost its anchor and can't be applied — reject it.";
+  }
+  accept.addEventListener("click", (e) => {
+    e.stopPropagation();
+    opts.onAccept();
+  });
+  const reject = document.createElement("button");
+  reject.className = "mc-btn mc-btn--ghost";
+  reject.textContent = "Reject";
+  reject.addEventListener("click", (e) => {
+    e.stopPropagation();
+    opts.onReject();
+  });
+  actions.append(accept, reject);
+  card.appendChild(actions);
+
+  if (opts.onClick) {
+    card.style.cursor = "pointer";
+    card.addEventListener("click", opts.onClick);
+  }
+  return card;
+}
+
+/** Build the two-row original→proposed diff with the changed middle emphasized. */
+function buildDiff(original: string, proposed: string): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "mc-suggestion__diff";
+
+  let pre = 0;
+  while (pre < original.length && pre < proposed.length && original[pre] === proposed[pre]) pre++;
+  let suf = 0;
+  while (
+    suf < original.length - pre &&
+    suf < proposed.length - pre &&
+    original[original.length - 1 - suf] === proposed[proposed.length - 1 - suf]
+  ) {
+    suf++;
+  }
+
+  wrap.appendChild(diffRow("del", original, pre, suf));
+  wrap.appendChild(diffRow("ins", proposed, pre, suf));
+  return wrap;
+}
+
+function diffRow(kind: "del" | "ins", text: string, pre: number, suf: number): HTMLElement {
+  const row = document.createElement("div");
+  row.className = `mc-suggestion__${kind}`;
+  const midEnd = text.length - suf;
+  const prefix = text.slice(0, pre);
+  const middle = text.slice(pre, midEnd);
+  const suffix = text.slice(midEnd);
+  if (prefix) row.appendChild(document.createTextNode(prefix));
+  if (middle) {
+    const chg = document.createElement("span");
+    chg.className = "mc-suggestion__chg";
+    chg.textContent = middle;
+    row.appendChild(chg);
+  }
+  if (suffix) row.appendChild(document.createTextNode(suffix));
+  return row;
+}
+
 /**
  * Two-step confirm on a button, in place: first click arms it (swaps the
  * label, auto-disarms after a timeout); a second click while armed fires the

@@ -23,10 +23,12 @@ import { checkClaudeSkill, type SkillStatus } from "../skill";
 import { CollabEditorProvider } from "../collab/collabEditorProvider";
 import { detectUrlScheme, parseLinkHref, slugifyHeading } from "./linkParse";
 import {
+  acceptSuggestion,
   addThread,
   appendReply,
   findFrontmatter,
   parse,
+  rejectSuggestion,
   replaceThread,
   type InlineComment,
   type InlineThread,
@@ -159,6 +161,16 @@ interface InstallSkillRequest {
   type: "install-skill";
 }
 
+interface AcceptSuggestionRequest {
+  type: "accept-suggestion";
+  anchorId: string;
+}
+
+interface RejectSuggestionRequest {
+  type: "reject-suggestion";
+  anchorId: string;
+}
+
 type ClientMessage =
   | ReadyMessage
   | AddCommentRequest
@@ -173,7 +185,9 @@ type ClientMessage =
   | CopyClaudeCommentRequest
   | OpenLinkRequest
   | DrawioReadRequest
-  | InstallSkillRequest;
+  | InstallSkillRequest
+  | AcceptSuggestionRequest
+  | RejectSuggestionRequest;
 
 /** Dependencies the panel needs from the extension host (kept narrow so tests can stub them). */
 export interface InlinePanelDeps {
@@ -202,6 +216,18 @@ export interface SerializedState {
     resolvedTs?: string;
     comments: InlineComment[];
     /** Position in `prose` (offset-into-stripped-source). Null when unanchored. */
+    anchor: { proseStart: number; proseEnd: number } | null;
+  }>;
+  /** Pending suggestions (suggest mode), anchored into the same prose space. */
+  suggestions: Array<{
+    anchorId: string;
+    threadId?: string;
+    author: string;
+    ts: string;
+    original: string;
+    proposed: string;
+    note?: string;
+    /** Null when the suggestion's anchor markers were lost (can't be applied). */
     anchor: { proseStart: number; proseEnd: number } | null;
   }>;
 }
@@ -485,6 +511,15 @@ export class InlineCommentsPanel {
         return this.handleDrawioRead(msg.requestId, msg.href);
       case "install-skill":
         return this.handleInstallSkill();
+      case "accept-suggestion":
+        return this.applyMutation((parsed) => {
+          // An unanchored suggestion can't place its change — leave it for the
+          // human to reject. applyMutation's no-op guard also covers unknown ids.
+          if (!parsed.anchors.has(msg.anchorId)) return parsed.source;
+          return acceptSuggestion(parsed.source, msg.anchorId);
+        });
+      case "reject-suggestion":
+        return this.applyMutation((parsed) => rejectSuggestion(parsed.source, msg.anchorId));
       case "delete-thread":
         return this.applyMutation((parsed) => replaceThread(parsed.source, msg.threadId, null));
       case "delete-comment":
@@ -987,6 +1022,21 @@ export function serialize(parsed: ParsedDocument): SerializedState {
         resolvedBy: t.resolvedBy,
         resolvedTs: t.resolvedTs,
         comments: t.comments,
+        anchor: a ? { proseStart: a.proseStart, proseEnd: a.proseEnd } : null,
+      };
+    }),
+    suggestions: parsed.suggestions.map((s) => {
+      // Suggestion anchors live in the same `anchorsInProse` map as thread
+      // anchors (keyed by anchorId), already mapped to prose space.
+      const a = anchorsInProse.get(s.anchorId);
+      return {
+        anchorId: s.anchorId,
+        threadId: s.threadId,
+        author: s.author,
+        ts: s.ts,
+        original: s.original,
+        proposed: s.proposed,
+        note: s.note,
         anchor: a ? { proseStart: a.proseStart, proseEnd: a.proseEnd } : null,
       };
     }),

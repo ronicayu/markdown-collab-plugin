@@ -119,6 +119,61 @@
   background: color-mix(in srgb, var(--vscode-charts-green, #4caf50) 25%, transparent);
   color: var(--vscode-foreground);
 }
+.mc-badge--suggestion {
+  background: color-mix(in srgb, var(--mc-accent) 22%, transparent);
+  color: var(--vscode-foreground);
+}
+
+/* --- suggestion (tracked-change) card ------------------------------------ */
+.mc-suggestion__diff {
+  margin-top: 6px;
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: 12px;
+  border: 1px solid var(--mc-border);
+  border-radius: var(--mc-radius);
+  overflow: hidden;
+}
+.mc-suggestion__del,
+.mc-suggestion__ins {
+  padding: 3px 8px 3px 20px;
+  position: relative;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.mc-suggestion__del {
+  background: color-mix(in srgb, var(--mc-danger) 12%, transparent);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--mc-danger) 60%, transparent);
+}
+.mc-suggestion__ins {
+  background: color-mix(in srgb, var(--vscode-charts-green, #4caf50) 14%, transparent);
+}
+.mc-suggestion__del::before,
+.mc-suggestion__ins::before {
+  position: absolute;
+  left: 6px;
+  color: var(--mc-muted);
+  text-decoration: none;
+}
+.mc-suggestion__del::before { content: "−"; }
+.mc-suggestion__ins::before { content: "+"; }
+/* The changed span within each row, emphasized against the plain affixes. */
+.mc-suggestion__del .mc-suggestion__chg {
+  background: color-mix(in srgb, var(--mc-danger) 28%, transparent);
+  border-radius: 2px;
+}
+.mc-suggestion__ins .mc-suggestion__chg {
+  background: color-mix(in srgb, var(--vscode-charts-green, #4caf50) 34%, transparent);
+  border-radius: 2px;
+  text-decoration: none;
+}
+.mc-suggestion__note {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--mc-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 /* --- composer ------------------------------------------------------------ */
 .mc-composer {

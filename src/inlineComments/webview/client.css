@@ -182,6 +182,13 @@ mark.mc-hl {
 mark.mc-hl.mc-hl-resolved { background: var(--hl-resolved); }
 mark.mc-hl.flash { background: var(--hl-flash); }
 mark.mc-hl:hover { filter: brightness(1.15); }
+/* A pending suggestion's original text: dashed underline in the accent color,
+   distinct from the solid comment highlight. */
+mark.mc-hl.mc-hl--suggestion {
+  background: color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff) 16%, transparent);
+  text-decoration: underline dashed color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff) 70%, transparent);
+  text-underline-offset: 2px;
+}
 
 #floating-add {
   position: absolute;

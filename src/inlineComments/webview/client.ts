@@ -9,7 +9,7 @@
 import MarkdownIt from "markdown-it";
 import { isClaudeReviewed, isClaudeUnread } from "../claudeUnread";
 import { slugifyHeading } from "../linkParse";
-import { buildComposer, buildCommentCard, type CardAction } from "../../webviewShared/commentUi";
+import { buildComposer, buildCommentCard, buildSuggestionCard, type CardAction } from "../../webviewShared/commentUi";
 import { resolveImageSrc, type ImageBaseUris } from "../../webviewShared/imageSrc";
 import { installSourceOffsetPlugin } from "./renderWithOffsets";
 import { installPlantumlPlugin } from "../../plantumlPlugin";
@@ -51,9 +51,21 @@ interface ThreadState {
   anchor: { proseStart: number; proseEnd: number } | null;
 }
 
+interface SuggestionState {
+  anchorId: string;
+  threadId?: string;
+  author: string;
+  ts: string;
+  original: string;
+  proposed: string;
+  note?: string;
+  anchor: { proseStart: number; proseEnd: number } | null;
+}
+
 interface SerializedState {
   prose: string;
   threads: ThreadState[];
+  suggestions: SuggestionState[];
 }
 
 interface InitMsg {
@@ -737,6 +749,18 @@ function applyAnchorHighlights(state: SerializedState): void {
       wrapSpanRange(span, start - span.proseStart, end - span.proseStart, t.id, t.status);
     }
   }
+  // Mark each anchored suggestion's original text so the change location is
+  // visible in the preview. Uses fresh spans because the thread pass above
+  // mutates text nodes (a mark splits a span into before/mark/after).
+  for (const s of state.suggestions) {
+    if (!s.anchor) continue;
+    for (const span of collectProseSpans()) {
+      const start = Math.max(span.proseStart, s.anchor.proseStart);
+      const end = Math.min(span.proseEnd, s.anchor.proseEnd);
+      if (start >= end) continue;
+      wrapSpanRange(span, start - span.proseStart, end - span.proseStart, "", "open", s.anchorId);
+    }
+  }
 }
 
 /**
@@ -750,6 +774,7 @@ function wrapSpanRange(
   textEnd: number,
   threadId: string,
   status: "open" | "resolved",
+  suggestionId?: string,
 ): void {
   const el = span.el;
   // The span renderer produces either:
@@ -772,17 +797,31 @@ function wrapSpanRange(
   textHost.removeChild(textNode);
   if (before) textHost.appendChild(document.createTextNode(before));
   const mark = document.createElement("mark");
-  mark.className = `mc-hl ${status === "resolved" ? "mc-hl-resolved" : ""}`;
-  mark.dataset.thread = threadId;
   mark.textContent = middle;
-  mark.addEventListener("click", (e) => {
-    e.stopPropagation();
-    highlightedThreadId = threadId;
-    scrollSidebarTo(threadId);
-    for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
-      c.classList.toggle("highlighted", c.dataset.thread === threadId);
-    }
-  });
+  if (suggestionId) {
+    // A suggestion's original text — mark it distinctly and scroll the sidebar
+    // to the suggestion card on click.
+    mark.className = "mc-hl mc-hl--suggestion";
+    mark.dataset.suggestionId = suggestionId;
+    mark.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const card = dom.threadsList.querySelector<HTMLElement>(
+        `[data-suggestion-id="${cssEscape(suggestionId)}"]`,
+      );
+      card?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  } else {
+    mark.className = `mc-hl ${status === "resolved" ? "mc-hl-resolved" : ""}`;
+    mark.dataset.thread = threadId;
+    mark.addEventListener("click", (e) => {
+      e.stopPropagation();
+      highlightedThreadId = threadId;
+      scrollSidebarTo(threadId);
+      for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
+        c.classList.toggle("highlighted", c.dataset.thread === threadId);
+      }
+    });
+  }
   textHost.appendChild(mark);
   if (after) textHost.appendChild(document.createTextNode(after));
 }
@@ -812,6 +851,13 @@ function renderThreads(state: SerializedState): void {
   captureReplyState();
   const list = dom.threadsList;
   list.innerHTML = "";
+
+  // Pending suggestions render above the comment threads, regardless of the
+  // comment filter — an unreviewed edit is the most actionable thing here.
+  for (const s of state.suggestions) {
+    list.appendChild(renderSuggestion(s));
+  }
+
   const filtered = state.threads.filter((t) => {
     if (filter === "open") return t.status === "open";
     if (filter === "resolved") return t.status === "resolved";
@@ -822,20 +868,43 @@ function renderThreads(state: SerializedState): void {
   dom.threadCount.textContent = `${totalOpen} open · ${state.threads.length} total`;
   renderClaudeSummary(state);
   if (filtered.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "empty";
-    empty.textContent =
-      filter === "open"
-        ? "No open comments. Select text in the preview to start a thread."
-        : filter === "claude-unread"
-          ? "No unread threads from Claude. Run 'Ask Claude to Review This Doc' to start one."
-          : "No comments match this filter.";
-    list.appendChild(empty);
+    if (state.suggestions.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "empty";
+      empty.textContent =
+        filter === "open"
+          ? "No open comments. Select text in the preview to start a thread."
+          : filter === "claude-unread"
+            ? "No unread threads from Claude. Run 'Ask Claude to Review This Doc' to start one."
+            : "No comments match this filter.";
+      list.appendChild(empty);
+    }
     return;
   }
   for (const t of filtered) {
     list.appendChild(renderThreadCard(t));
   }
+}
+
+function renderSuggestion(s: SuggestionState): HTMLElement {
+  const card = buildSuggestionCard({
+    author: s.author,
+    timestamp: s.ts,
+    note: s.note,
+    original: s.original,
+    proposed: s.proposed,
+    anchored: s.anchor !== null,
+    onAccept: () => vscode.postMessage({ type: "accept-suggestion", anchorId: s.anchorId }),
+    onReject: () => vscode.postMessage({ type: "reject-suggestion", anchorId: s.anchorId }),
+    onClick: s.anchor
+      ? () => {
+          const mark = dom.preview.querySelector<HTMLElement>(`[data-suggestion-id="${cssEscape(s.anchorId)}"]`);
+          mark?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      : undefined,
+  });
+  card.dataset.suggestionId = s.anchorId;
+  return card;
 }
 
 function renderClaudeSummary(state: SerializedState): void {
