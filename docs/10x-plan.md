@@ -87,7 +87,14 @@ away, and lands through a `WorkspaceEdit` so it is undoable.
 
 ## P1 — The 10x product move: reviewable AI edits
 
-### P1.1 Suggestion mode (tracked changes)
+### P1.1 Suggestion mode (tracked changes) — ◑ PART 1 LANDED (v0.34.48)
+
+*Part 1 (authoring foundation) shipped: `<!--mc:s ...-->` storage + accept/reject
+transforms in format.ts, integrity coverage, `mdc suggest/accept/reject` CLI,
+skill Suggest Mode section, corpus cases. The suggest→review→accept/reject loop
+works via the CLI today. Part 2 (graphical accept/reject UI in the review views
++ the 'propose as suggestions' send-mode toggle) is the remaining increment,
+gated on a dev-host verification.*
 
 **Problem.** The tool's premise is *review*, but Claude's own edits are the one thing that can't be reviewed in it. Claude rewrites the file; the human sees "Updated from disk" and must trust it or read a git diff elsewhere. This is the inverted trust model, and fixing it is the single biggest product upgrade available.
 
