@@ -87,7 +87,7 @@ away, and lands through a `WorkspaceEdit` so it is undoable.
 
 ## P1 — The 10x product move: reviewable AI edits
 
-### P1.1 Suggestion mode (tracked changes) — ◑ PART 1 + BOTH REVIEW UIs LANDED (v0.34.48–0.34.50)
+### P1.1 Suggestion mode (tracked changes) — ✅ COMPLETE (v0.34.48–0.34.51)
 
 *Landed: `<!--mc:s ...-->` storage + accept/reject transforms (format.ts),
 integrity, `mdc suggest/accept/reject` CLI, skill Suggest Mode section, corpus
@@ -98,9 +98,12 @@ all verified headlessly. Also landed (v0.34.50): the same suggestion cards in th
 (inlineBridge.suggestionsOf + host accept/reject via writeDocument). Suggest
 mode's review loop now works in both review views, verified headlessly; the
 host write paths (inline WorkspaceEdit + live-editor writeDocument) warrant a
-dev-host pass. Remaining: only (c) the optional 'propose as suggestions'
-send-mode toggle on Send-to-Claude — a convenience over asking Claude to
-suggest in words (which the skill already handles).*
+dev-host pass. And the 'propose as suggestions' send-mode toggle landed (v0.34.51): a
+per-workspace setting, a Toggle Suggest Mode command, and an inline-view toggle,
+all in sync; the send prompt requests suggest mode when on. P1.1 is complete —
+the inverted trust model is fixed: Claude's edits are now reviewable
+accept/reject tracked changes. The document write paths warrant a dev-host pass
+before a public release.*
 
 **Problem.** The tool's premise is *review*, but Claude's own edits are the one thing that can't be reviewed in it. Claude rewrites the file; the human sees "Updated from disk" and must trust it or read a git diff elsewhere. This is the inverted trust model, and fixing it is the single biggest product upgrade available.
 
