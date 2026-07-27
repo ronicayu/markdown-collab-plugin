@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.34.50 — 2026-07-27 (trial)
+
+### Added: accept/reject suggestions in the live editor (10x-plan P1.1, part 2b)
+
+The suggestion review UI from 0.34.49 now also appears in the live collab
+editor. Pending suggestions render as cards above the comment threads in the
+sidebar — the same shared `buildSuggestionCard` (inline diff + rationale +
+Accept / Reject) the inline view uses, so both review surfaces are identical.
+
+- New `suggestionsOf` in `inlineBridge.ts` serializes `parse().suggestions`
+  with the same text+ordinal anchor scheme the live editor uses for comments.
+- The collab editor host includes suggestions in its init and `sidecar-changed`
+  payloads, and applies accept/reject through the format engine and its normal
+  `writeDocument` → save → refresh path (the same path comment mutations use).
+  Accept is guarded on a live anchor; an unanchored suggestion offers only
+  Reject.
+
+Verified headlessly against the compiled bundle: the card renders in the live
+editor sidebar with the affix-aware diff, and Accept/Reject post the correct
+host messages. With this, suggest mode's review loop works in both the inline
+comments view and the live editor. (The remaining P1.1 item is the optional
+"propose as suggestions" toggle on Send-to-Claude.)
+
 ## 0.34.49 — 2026-07-27 (trial)
 
 ### Added: accept/reject suggestions in the inline comments view (10x-plan P1.1, part 2a)

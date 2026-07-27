@@ -237,6 +237,48 @@ export function commentsOf(source: string): CollabComment[] {
   return out;
 }
 
+/** A pending suggestion the live-editor sidebar renders (suggest mode). */
+export interface CollabSuggestion {
+  anchorId: string;
+  threadId?: string;
+  author: string;
+  ts: string;
+  original: string;
+  proposed: string;
+  note?: string;
+  /** Locator for the original text in the live editor (same scheme as comments). */
+  anchor: CollabCommentAnchor;
+  /** Which occurrence of `anchor.text` the marker wraps, 0-based; -1 if unanchored. */
+  anchorOrdinal: number;
+}
+
+export function suggestionsOf(source: string): CollabSuggestion[] {
+  const { prose, parsed, anchorsInProse } = buildBridge(source);
+  const out: CollabSuggestion[] = [];
+  for (const s of parsed.suggestions) {
+    const span = anchorsInProse.get(s.anchorId);
+    const anchor: CollabCommentAnchor = span
+      ? {
+          text: prose.slice(span.proseStart, span.proseEnd),
+          contextBefore: prose.slice(Math.max(0, span.proseStart - CONTEXT_CHARS), span.proseStart),
+          contextAfter: prose.slice(span.proseEnd, span.proseEnd + CONTEXT_CHARS),
+        }
+      : { text: s.original, contextBefore: "", contextAfter: "" };
+    out.push({
+      anchorId: s.anchorId,
+      threadId: s.threadId,
+      author: s.author,
+      ts: s.ts,
+      original: s.original,
+      proposed: s.proposed,
+      note: s.note,
+      anchor,
+      anchorOrdinal: span ? occurrenceIndex(prose, anchor.text, span.proseStart) : -1,
+    });
+  }
+  return out;
+}
+
 /**
  * Add a thread anchored at `anchor` (markdown-source-space text + context,
  * as the webview computes it). Locates the span in the prose, maps back to

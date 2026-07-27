@@ -37,7 +37,7 @@ import "./host.css";
 import { Plugin, PluginKey, TextSelection } from "prosemirror-state";
 import { CellSelection } from "@milkdown/prose/tables";
 import { Decoration, DecorationSet } from "prosemirror-view";
-import { buildCommentCard, buildComposer, type ComposerHandle } from "../webviewShared/commentUi";
+import { buildCommentCard, buildComposer, buildSuggestionCard, type ComposerHandle } from "../webviewShared/commentUi";
 import { locateAnchorInLiveText, locateNthOccurrence } from "../collab/liveAnchorLocator";
 import { renderedRangeToPmRange } from "../collab/pmPositionMapper";
 import { slugifyHeading } from "../inlineComments/linkParse";
@@ -62,11 +62,25 @@ interface CommentSummary {
   replies: Array<{ id: string; author: string; body: string; createdAt: string }>;
 }
 
+interface SuggestionSummary {
+  anchorId: string;
+  threadId?: string;
+  author: string;
+  ts: string;
+  original: string;
+  proposed: string;
+  note?: string;
+  anchor: { text: string; contextBefore: string; contextAfter: string };
+  /** Which occurrence of `anchor.text` the marker wraps (0-based; -1 if unanchored). */
+  anchorOrdinal: number;
+}
+
 interface InitMessage {
   type: "init";
   text: string;
   user: { name: string; color: string };
   comments: CommentSummary[];
+  suggestions?: SuggestionSummary[];
   frontmatter?: string;
   imageBaseUris?: ImageBaseUris;
 }
@@ -84,6 +98,7 @@ interface FrontmatterMessage {
 interface SidecarChangedMessage {
   type: "sidecar-changed";
   comments: CommentSummary[];
+  suggestions?: SuggestionSummary[];
 }
 
 interface AddCommentResultMessage {
@@ -162,6 +177,7 @@ let addComposer: ComposerHandle | null = null;
 
 const sidebarState: {
   comments: CommentSummary[];
+  suggestions: SuggestionSummary[];
   hideResolved: boolean;
   collapsed: boolean;
   // Transient one-line status (e.g. "Updated from disk" when Claude edits the
@@ -169,6 +185,7 @@ const sidebarState: {
   notice: string | null;
 } = {
   comments: [],
+  suggestions: [],
   hideResolved: false,
   collapsed: false,
   notice: null,
@@ -231,6 +248,7 @@ async function init(msg: InitMessage): Promise<void> {
 
   buildLayout();
   sidebarState.comments = msg.comments ?? [];
+  sidebarState.suggestions = msg.suggestions ?? [];
   cachedMarkdown = msg.text;
   renderFrontmatter(msg.frontmatter ?? "");
   renderSidebar();
@@ -406,8 +424,10 @@ function renderSidebar(): void {
 
   const composerSlot = '<div class="mdc-composer-slot"></div>';
 
-  sidebarEl.innerHTML = header + composerSlot + `<div class="mdc-comment-list"></div>`;
+  sidebarEl.innerHTML =
+    header + composerSlot + `<div class="mdc-suggestions"></div>` + `<div class="mdc-comment-list"></div>`;
   composerEl = sidebarEl.querySelector(".mdc-composer-slot");
+  renderSuggestions();
   const list = sidebarEl.querySelector<HTMLElement>(".mdc-comment-list")!;
   if (total === 0) {
     list.innerHTML = emptyNoCommentsHtml();
@@ -532,6 +552,30 @@ function reconcileComments(): void {
   }
   for (const card of Array.from(list.querySelectorAll<HTMLElement>(".mdc-comment"))) {
     if (!seen.has(card.dataset.id ?? "")) card.remove();
+  }
+}
+
+// Render pending suggestions into their container above the comment list.
+// Full rebuild (suggestion cards hold no in-progress input to preserve, unlike
+// reply boxes), so this can run on every sidecar update.
+function renderSuggestions(): void {
+  if (!sidebarEl) return;
+  const container = sidebarEl.querySelector<HTMLElement>(".mdc-suggestions");
+  if (!container) return;
+  container.innerHTML = "";
+  for (const s of sidebarState.suggestions) {
+    container.appendChild(
+      buildSuggestionCard({
+        author: s.author,
+        timestamp: s.ts,
+        note: s.note,
+        original: s.original,
+        proposed: s.proposed,
+        anchored: s.anchorOrdinal >= 0,
+        onAccept: () => vscode.postMessage({ type: "accept-suggestion", anchorId: s.anchorId }),
+        onReject: () => vscode.postMessage({ type: "reject-suggestion", anchorId: s.anchorId }),
+      }),
+    );
   }
 }
 
@@ -1857,7 +1901,9 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     renderFrontmatter(msg.frontmatter);
   } else if (msg.type === "sidecar-changed") {
     sidebarState.comments = msg.comments ?? [];
+    sidebarState.suggestions = msg.suggestions ?? [];
     reconcileComments();
+    renderSuggestions();
     forceHighlightRefresh();
   } else if (msg.type === "add-comment-result") {
     if (msg.ok) {

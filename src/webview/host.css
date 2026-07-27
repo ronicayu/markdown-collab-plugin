@@ -428,6 +428,17 @@ body { overflow: hidden; }
 .mdc-comment-list {
   padding: var(--mdc-space-2);
 }
+/* Pending suggestions sit above the comment list. Each is a shared
+   `.mc-suggestion` card (from comments-shared.css). */
+.mdc-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mdc-space-2);
+  padding: var(--mdc-space-2) var(--mdc-space-2) 0;
+}
+.mdc-suggestions:empty {
+  display: none;
+}
 /* A thread frame matching the inline view's `.thread-card`: the quote + thread
    actions sit on top, then each comment renders as a shared `.mc-card` (from
    comments-shared.css) so all three comment panels look identical. */

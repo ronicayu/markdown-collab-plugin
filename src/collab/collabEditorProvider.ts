@@ -14,9 +14,12 @@ import {
   proseOf,
   replyToThread,
   setThreadResolved,
+  suggestionsOf,
   type CollabComment,
   type CollabCommentAnchor,
+  type CollabSuggestion,
 } from "./inlineBridge";
+import { acceptSuggestion, rejectSuggestion, parse as parseInline } from "../inlineComments/format";
 import { resolveDrawioHref } from "./drawioFileResolver";
 import { classifyLink } from "./linkRouter";
 import { isExternalLinkSafe } from "./urlAllowlist";
@@ -28,6 +31,7 @@ interface InitPayload {
   text: string;
   user: { name: string; color: string };
   comments: CollabComment[];
+  suggestions: CollabSuggestion[];
   /** Raw frontmatter block, shown in a dedicated read-only panel. "" when absent. */
   frontmatter: string;
   /** Webview URIs for resolving relative image src in the markdown. */
@@ -47,6 +51,7 @@ interface FrontmatterChangedPayload {
 interface CommentsChangedPayload {
   type: "sidecar-changed";
   comments: CollabComment[];
+  suggestions: CollabSuggestion[];
 }
 
 interface EditMessage {
@@ -138,6 +143,16 @@ interface InvokeCommandMessage {
   commentId?: string;
 }
 
+interface AcceptSuggestionMessage {
+  type: "accept-suggestion";
+  anchorId: string;
+}
+
+interface RejectSuggestionMessage {
+  type: "reject-suggestion";
+  anchorId: string;
+}
+
 interface DrawioReadMessage {
   type: "drawio-read";
   /** Stable id minted by the webview so it can correlate the response. */
@@ -167,6 +182,8 @@ type ClientMessage =
   | DeleteSingleCommentMessage
   | OpenLinkMessage
   | InvokeCommandMessage
+  | AcceptSuggestionMessage
+  | RejectSuggestionMessage
   | DrawioReadMessage;
 
 // Test-only observability. The webview reports its post-init content
@@ -386,9 +403,11 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     };
 
     const pushComments = (): void => {
+      const source = document.getText();
       void panel.webview.postMessage({
         type: "sidecar-changed",
-        comments: commentsOf(document.getText()),
+        comments: commentsOf(source),
+        suggestions: suggestionsOf(source),
       } satisfies CommentsChangedPayload);
     };
 
@@ -407,6 +426,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
           text,
           user,
           comments: commentsOf(source),
+          suggestions: suggestionsOf(source),
           frontmatter: lastFrontmatter,
           imageBaseUris: {
             docDir: panel.webview.asWebviewUri(docDirUri).toString(),
@@ -462,6 +482,22 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
           const result = await this.deleteSingleComment(document, msg, writeDocument);
           void panel.webview.postMessage(result);
           if (result.ok) pushComments();
+        })();
+      } else if (msg.type === "accept-suggestion" || msg.type === "reject-suggestion") {
+        const anchorId = msg.anchorId;
+        const mode = msg.type === "accept-suggestion" ? "accept" : "reject";
+        void (async () => {
+          const source = document.getText();
+          const parsed = parseInline(source);
+          const found = parsed.suggestions.some((s) => s.anchorId === anchorId);
+          // Accept needs a live anchor to place the change; reject only needs
+          // the record. Silently ignore an unknown/unplaceable id (the webview
+          // disables Accept when unanchored, so this is a stale-message guard).
+          if (!found || (mode === "accept" && !parsed.anchors.has(anchorId))) return;
+          const next =
+            mode === "accept" ? acceptSuggestion(source, anchorId) : rejectSuggestion(source, anchorId);
+          const ok = await writeDocument(next, { save: true });
+          if (ok) pushComments();
         })();
       } else if (msg.type === "open-link") {
         void this.handleOpenLink(msg, panel, document);
