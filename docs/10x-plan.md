@@ -134,12 +134,14 @@ Explicitly **not** cursor-level streaming presence — no relay exists and none 
 
 **Acceptance:** all three webviews render cards from the shared module; `rg 'buildCommentCard|composer' src/webview/client.ts` shows usage, not reimplementation; visual parity confirmed in the dev host.
 
-### P2.2 Delete the dead CRDT layer — ◑ PART 1 LANDED (v0.34.44)
+### P2.2 Delete the dead CRDT layer — ✅ LANDED (v0.34.44 + v0.34.46)
 
-*Part 1 (network layer) shipped: server.ts, seedEncoding.ts, computeRoom,
-room/serverUrl, ws/y-websocket/@types/ws/y-codemirror.next, ~700 lines gone,
-editor behavior unchanged. Part 2 (removing local Yjs) is evaluated and
-pending a manual live-editor pass — see below.*
+*Part 1 (network layer) shipped in v0.34.44: server.ts, seedEncoding.ts,
+computeRoom, room/serverUrl, ws/y-websocket/@types/ws/y-codemirror.next.
+Part 2 (local Yjs) shipped in v0.34.46 after a manual live-editor pass:
+applyExternalChange rewritten to parserCtx doc-replace; @milkdown/plugin-collab,
+yjs, y-protocols, y-prosemirror removed. Undo is prosemirror-history. ~700 lines
+of source + 8 dependencies gone total; ~110 KB off the webview bundle.*
 
 **Problem.** The multi-peer relay was walked back in 0.34.6/0.34.7 but the machinery remains: `src/collab/server.ts` (265 lines, imported only by its tests), `seedEncoding.ts`, `computeRoom()`, `room`/`serverUrl` in `InitPayload`, `y-websocket`/`ws` in dependencies, and Yjs awareness wiring for a single local peer. It's bundle weight, conceptual overhead, and a standing invitation to confusion.
 
@@ -183,7 +185,7 @@ pending a manual live-editor pass — see below.*
 P0.1 mdc CLI ──────────┬──▶ P1.1 Suggestion mode (needs mdc + shared card)
 P0.2 integrity guard   │
 P0.3 corpus ───────────┘        P2.1 shared comment UI ──▶ P1.1
-P2.2 CRDT deletion — part 1 (network) DONE v0.34.44; part 2 (local Yjs) gated on manual live-editor verification
+P2.2 CRDT deletion — DONE (v0.34.44 network layer, v0.34.46 local Yjs)
 P2.3 render convergence (independent)
 P2.4 tests (start with P0.3, grow alongside every P1/P2 change)
 P1.2, P1.3, P3.x — independent, schedule opportunistically

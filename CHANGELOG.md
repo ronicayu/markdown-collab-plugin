@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.34.46 — 2026-07-27 (trial)
+
+### Removed: the local Yjs layer from the live editor (10x-plan P2.2, part 2)
+
+With the relay gone (0.34.44), the live editor's Yjs document was doing almost
+nothing: undo is prosemirror-history, saving serializes the ProseMirror doc,
+and awareness/cursors were inert with no peers. The one thing Yjs still drove
+was applying Claude's disk-side `.md` edits into the open editor.
+
+That path is rewritten to parse the incoming markdown with Milkdown's
+`parserCtx` and dispatch a document-replace transaction (marked
+`addToHistory:false`, so an external edit stays out of your local undo stack —
+matching the old collab behaviour). With that, the collab plugin and the Yjs
+document/awareness wiring are removed, and so are the dependencies
+`@milkdown/plugin-collab`, `yjs`, `y-protocols`, and `y-prosemirror` — about
+110 KB off the webview bundle. Undo stays on prosemirror-history; the editor
+seeds its content from `defaultValueCtx`.
+
+Verified with a manual live-editor pass (typing/saving, undo, cursor and
+scroll preservation across an external change, comment-anchor highlight
+tracking), after a headless smoke test of the compiled bundle confirmed boot,
+seed, and external-change apply. Shipped first as the experimental pre-release
+v0.34.45 for that verification; this is the finalized landing.
+
 ## 0.34.44 — 2026-07-25 (trial)
 
 ### Removed: the dead multi-peer relay layer (10x-plan P2.2, part 1)
