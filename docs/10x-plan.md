@@ -87,14 +87,18 @@ away, and lands through a `WorkspaceEdit` so it is undoable.
 
 ## P1 — The 10x product move: reviewable AI edits
 
-### P1.1 Suggestion mode (tracked changes) — ◑ PART 1 LANDED (v0.34.48)
+### P1.1 Suggestion mode (tracked changes) — ◑ PART 1 + INLINE UI LANDED (v0.34.48–0.34.49)
 
-*Part 1 (authoring foundation) shipped: `<!--mc:s ...-->` storage + accept/reject
-transforms in format.ts, integrity coverage, `mdc suggest/accept/reject` CLI,
-skill Suggest Mode section, corpus cases. The suggest→review→accept/reject loop
-works via the CLI today. Part 2 (graphical accept/reject UI in the review views
-+ the 'propose as suggestions' send-mode toggle) is the remaining increment,
-gated on a dev-host verification.*
+*Landed: `<!--mc:s ...-->` storage + accept/reject transforms (format.ts),
+integrity, `mdc suggest/accept/reject` CLI, skill Suggest Mode section, corpus
+cases (v0.34.48); and the graphical accept/reject UI in the INLINE comments view
+— shared `buildSuggestionCard` (affix-aware inline diff), preview highlight of
+the original, host accept/reject via the panel's WorkspaceEdit path (v0.34.49),
+all verified headlessly. Remaining: (b) the same suggestion rendering in the
+live editor (host write path needs a dev-host pass, like P2.2), and (c) the
+'propose as suggestions' send-mode toggle on Send-to-Claude. The full
+suggest→review→accept/reject loop already works today via the inline view (ask
+Claude to suggest, or `mdc suggest`) — the toggle is a convenience over asking.*
 
 **Problem.** The tool's premise is *review*, but Claude's own edits are the one thing that can't be reviewed in it. Claude rewrites the file; the human sees "Updated from disk" and must trust it or read a git diff elsewhere. This is the inverted trust model, and fixing it is the single biggest product upgrade available.
 
