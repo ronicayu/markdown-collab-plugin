@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.34.53 — 2026-07-27 (trial)
+
+### Changed: one shared bundle step for comments.css (completes 10x-plan P2.1)
+
+The shared comment stylesheet was copied to each webview's output directory by
+three separate `copyFileSync` calls scattered inside the three `bundle:*`
+scripts. They're now a single `copy:shared-css` step
+(`scripts/copy-shared-css.mjs`) — one source of truth for the copy, so the
+shared CSS can't be updated for one view's build and forgotten for another's.
+No output change (each webview still loads `comments-shared.css` from its own
+localResourceRoot). This finishes the last remaining item of P2.1.
+
 ## 0.34.52 — 2026-07-27 (trial)
 
 ### Added: Claude presence in the live editor (10x-plan P1.2)
