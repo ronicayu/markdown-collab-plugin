@@ -576,126 +576,15 @@ body { overflow: hidden; }
   opacity: 1;
 }
 
-/* Always-on reply box at the bottom of each thread. */
+/* Always-on reply box at the bottom of each thread. The reply composer and
+   the add-comment composer are the shared `.mc-composer` (comments.css); the
+   only view-specific chrome left is these two wrappers. */
 .mdc-reply-box {
   margin-top: var(--mdc-space-2);
   padding-top: var(--mdc-space-2);
   border-top: 1px dashed var(--mc-border);
 }
-.mdc-reply-box-actions {
-  margin-top: var(--mdc-space-1);
-  display: flex;
-  justify-content: flex-end;
-}
-
-/* ===========================================================
-   Composer (new comment + reply + delete-confirm)
-   =========================================================== */
-
 .mdc-composer-slot:empty { display: none; }
-.mdc-composer {
-  padding: var(--mdc-space-3);
-  background: var(--vscode-editor-background);
-  border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.25));
-}
-.mdc-composer-anchor {
-  font-size: 12px;
-  margin-bottom: var(--mdc-space-2);
-  word-break: break-word;
-  background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.06));
-  padding: 6px 8px;
-  border-radius: var(--mdc-radius);
-  border-left: 3px solid var(--vscode-textBlockQuote-border, #555);
-}
-.mdc-composer-label {
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-size: 10px;
-  margin-right: var(--mdc-space-1);
-  opacity: 0.75;
-}
-.mdc-composer-input,
-.mdc-reply-input {
-  width: 100%;
-  box-sizing: border-box;
-  background: var(--vscode-input-background, transparent);
-  color: var(--vscode-input-foreground, inherit);
-  border: 1px solid var(--vscode-input-border, rgba(127, 127, 127, 0.3));
-  border-radius: var(--mdc-radius);
-  padding: 6px 8px;
-  font: inherit;
-  font-size: 13px;
-  resize: vertical;
-}
-.mdc-composer-input:focus,
-.mdc-reply-input:focus {
-  outline: 1px solid var(--vscode-focusBorder, #007fd4);
-  outline-offset: 0;
-}
-.mdc-composer-actions,
-.mdc-reply-actions {
-  margin-top: var(--mdc-space-2);
-  display: flex;
-  gap: var(--mdc-space-1);
-  justify-content: flex-end;
-}
-.mdc-composer-actions button,
-.mdc-reply-actions button {
-  font: inherit;
-  font-size: 12px;
-  border-radius: var(--mdc-radius);
-  padding: 4px 10px;
-  cursor: pointer;
-  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
-  background: var(--vscode-button-secondaryBackground, transparent);
-  color: var(--vscode-button-secondaryForeground, inherit);
-}
-.mdc-composer-submit,
-.mdc-reply-submit {
-  background: var(--vscode-button-background, #0e639c) !important;
-  color: var(--vscode-button-foreground, white) !important;
-  border-color: transparent !important;
-}
-.mdc-composer-submit:disabled,
-.mdc-reply-submit:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.mdc-reply-composer {
-  margin-top: var(--mdc-space-2);
-  padding-top: var(--mdc-space-2);
-  border-top: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
-}
-
-.mdc-delete-confirm {
-  margin-top: var(--mdc-space-2);
-  padding: var(--mdc-space-2) var(--mdc-space-3);
-  border-radius: var(--mdc-radius);
-  background: var(--vscode-inputValidation-warningBackground, rgba(255, 200, 0, 0.1));
-  border: 1px solid var(--vscode-inputValidation-warningBorder, rgba(255, 200, 0, 0.3));
-}
-.mdc-delete-confirm-text { font-size: 12px; margin-bottom: 6px; }
-.mdc-delete-confirm-actions {
-  display: flex;
-  gap: var(--mdc-space-1);
-  justify-content: flex-end;
-}
-.mdc-delete-confirm-actions button {
-  font: inherit; font-size: 11px;
-  padding: 4px 10px;
-  border-radius: var(--mdc-radius);
-  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-}
-.mdc-delete-confirm-confirm {
-  background: var(--vscode-errorForeground, #d04848) !important;
-  color: var(--vscode-button-foreground, white) !important;
-  border-color: transparent !important;
-}
-.mdc-delete-confirm-confirm:disabled { opacity: 0.6; cursor: default; }
 
 /* ===========================================================
    Floating add-comment button + toast

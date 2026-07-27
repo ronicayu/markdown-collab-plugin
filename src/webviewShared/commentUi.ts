@@ -122,6 +122,13 @@ export interface CardAction {
   onClick(): void;
   variant?: "link" | "danger";
   title?: string;
+  /**
+   * Two-step confirm. The first click swaps the button label to
+   * `confirmLabel` for `timeoutMs`; a second click within that window fires
+   * `onClick` and shows `busyLabel`. Used for destructive actions (delete)
+   * so the confirmation stays on the button itself instead of a dialog.
+   */
+  confirm?: { confirmLabel?: string; busyLabel?: string; timeoutMs?: number };
 }
 
 export interface CommentCardOptions {
@@ -192,7 +199,8 @@ export function buildCommentCard(opts: CommentCardOptions): HTMLElement {
       btn.addEventListener("click", (e) => {
         // Don't let an action bubble to a card-level click handler.
         e.stopPropagation();
-        a.onClick();
+        if (a.confirm) armConfirm(btn, a.confirm, a.onClick);
+        else a.onClick();
       });
       row.appendChild(btn);
     }
@@ -205,4 +213,32 @@ export function buildCommentCard(opts: CommentCardOptions): HTMLElement {
   }
 
   return card;
+}
+
+/**
+ * Two-step confirm on a button, in place: first click arms it (swaps the
+ * label, auto-disarms after a timeout); a second click while armed fires the
+ * action and shows a busy label. Shared so every view's destructive actions
+ * confirm the same way.
+ */
+function armConfirm(
+  btn: HTMLButtonElement,
+  opts: NonNullable<CardAction["confirm"]>,
+  action: () => void,
+): void {
+  if (btn.dataset.armed === "1") {
+    action();
+    btn.textContent = opts.busyLabel ?? "…";
+    btn.disabled = true;
+    return;
+  }
+  const original = btn.textContent;
+  btn.dataset.armed = "1";
+  btn.textContent = opts.confirmLabel ?? "Confirm?";
+  window.setTimeout(() => {
+    if (btn.isConnected && btn.dataset.armed === "1") {
+      btn.dataset.armed = "";
+      btn.textContent = original;
+    }
+  }, opts.timeoutMs ?? 3000);
 }

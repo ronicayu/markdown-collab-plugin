@@ -37,9 +37,9 @@ import "./host.css";
 import { Plugin, PluginKey, TextSelection } from "prosemirror-state";
 import { CellSelection } from "@milkdown/prose/tables";
 import { Decoration, DecorationSet } from "prosemirror-view";
+import { buildCommentCard, buildComposer, type ComposerHandle } from "../webviewShared/commentUi";
 import { locateAnchorInLiveText, locateNthOccurrence } from "../collab/liveAnchorLocator";
 import { renderedRangeToPmRange } from "../collab/pmPositionMapper";
-import { formatRelativeTime } from "../collab/relativeTime";
 import { slugifyHeading } from "../inlineComments/linkParse";
 import { resolveImageSrc, type ImageBaseUris } from "../webviewShared/imageSrc";
 
@@ -155,6 +155,10 @@ let editDebounce: ReturnType<typeof setTimeout> | null = null;
 // In-progress reply text per thread, so an always-on reply box keeps what the
 // user typed across sidebar re-renders.
 const pendingReplies = new Map<string, string>();
+/** Live reply composers by thread id, so a failed reply POST can re-enable them. */
+const replyComposers = new Map<string, ComposerHandle>();
+/** The open add-comment composer, so a failed add can re-enable it. */
+let addComposer: ComposerHandle | null = null;
 
 const sidebarState: {
   comments: CommentSummary[];
@@ -402,23 +406,19 @@ function renderSidebar(): void {
 
   const composerSlot = '<div class="mdc-composer-slot"></div>';
 
-  let body: string;
-  if (total === 0) {
-    body = emptyNoCommentsHtml();
-  } else if (visibleComments.length === 0) {
-    body = emptyAllResolvedHtml(resolvedCount);
-  } else {
-    body = visibleComments
-      .slice()
-      .sort((a, b) => Number(a.resolved) - Number(b.resolved))
-      .map((c) => renderCommentCard(c))
-      .join("");
-  }
-
-  sidebarEl.innerHTML = header + composerSlot + `<div class="mdc-comment-list">${body}</div>`;
+  sidebarEl.innerHTML = header + composerSlot + `<div class="mdc-comment-list"></div>`;
   composerEl = sidebarEl.querySelector(".mdc-composer-slot");
+  const list = sidebarEl.querySelector<HTMLElement>(".mdc-comment-list")!;
+  if (total === 0) {
+    list.innerHTML = emptyNoCommentsHtml();
+  } else if (visibleComments.length === 0) {
+    list.innerHTML = emptyAllResolvedHtml(resolvedCount);
+  } else {
+    for (const c of visibleComments.slice().sort((a, b) => Number(a.resolved) - Number(b.resolved))) {
+      list.appendChild(renderCommentCard(c));
+    }
+  }
   attachToolbarHandlers();
-  attachCommentHandlers();
 }
 
 function emptyNoCommentsHtml(): string {
@@ -486,13 +486,6 @@ function threadSignature(c: CommentSummary): string {
   });
 }
 
-function buildCardElement(c: CommentSummary): HTMLElement {
-  const tmp = document.createElement("div");
-  tmp.innerHTML = renderCommentCard(c);
-  const card = tmp.firstElementChild as HTMLElement;
-  attachCardHandlers(card, c.id);
-  return card;
-}
 
 // Patch the comment list in place: keep unchanged thread cards (so a reply
 // you're typing isn't interrupted), rebuild only the threads whose content
@@ -527,7 +520,7 @@ function reconcileComments(): void {
     if (existing && existing.dataset.sig === threadSignature(c)) {
       card = existing; // unchanged — leave the DOM (and any focused reply) alone
     } else {
-      card = buildCardElement(c);
+      card = renderCommentCard(c);
       if (existing) existing.replaceWith(card);
     }
     const desired: Element | null = prev ? prev.nextElementSibling : list.firstElementChild;
@@ -542,48 +535,151 @@ function reconcileComments(): void {
   }
 }
 
-function renderCommentCard(c: CommentSummary): string {
-  const anchorText = escapeHtml(c.anchor.text.length > 80 ? c.anchor.text.slice(0, 77) + "…" : c.anchor.text);
-  // Each comment/reply is the same shared `.mc-card` the inline + PR panels
-  // use, so all three views render identical comment chrome. Each carries its
-  // own Delete (a single comment), separate from the thread-level "Delete
-  // thread" action in the header.
-  const commentCard = (commentId: string, author: string, ts: string, body: string, reply: boolean): string =>
-    `<div class="mc-card${reply ? " mc-card--reply" : ""}">
-      <div class="mc-card__meta"><span class="mc-card__author">${escapeHtml(author)}</span><span class="mc-card__time">${escapeHtml(formatRelativeTime(ts))}</span></div>
-      <div class="mc-card__body">${renderBodyWithLinks(body)}</div>
-      <div class="mc-card__actions"><button type="button" class="mc-btn mc-btn--link mc-btn--danger" data-del-comment="${escapeAttr(commentId)}" title="Delete this comment">Delete</button></div>
-    </div>`;
-  const replies = c.replies.map((r) => commentCard(r.id, r.author, r.createdAt, r.body, true)).join("");
-  return `
-    <article class="mdc-comment ${c.resolved ? "mdc-comment--resolved" : ""}" data-id="${escapeAttr(c.id)}" data-sig="${escapeAttr(threadSignature(c))}">
-      <div class="mdc-thread-head">
-        <button type="button" class="mdc-thread-quote" data-comment-action="jump" title="Click to scroll to the highlighted passage">${anchorText}</button>
-        <div class="mdc-thread-actions">
-          <button type="button" class="mc-btn mc-btn--link" data-comment-action="send-thread-claude" title="Send this thread to Claude">→ Claude</button>
-          <button type="button" class="mc-btn mc-btn--link" data-comment-action="copy-thread-claude" title="Copy this thread's prompt to the clipboard">Copy</button>
-          <button type="button" class="mc-btn mc-btn--link" data-comment-action="resolve">${c.resolved ? "Unresolve" : "Resolve"}</button>
-          <button type="button" class="mc-btn mc-btn--link mc-btn--danger" data-comment-action="delete" title="Delete the whole thread">Delete thread</button>
-        </div>
-      </div>
-      ${commentCard(c.rootCommentId, c.author, c.createdAt, c.body, false)}
-      ${replies}
-      <div class="mdc-reply-box">
-        <textarea class="mdc-reply-input" rows="2" placeholder="Reply…" aria-label="Reply to this thread"></textarea>
-        <div class="mdc-reply-box-actions">
-          <button type="button" class="mc-btn mc-btn--primary mdc-reply-submit" disabled>Reply</button>
-        </div>
-      </div>
-    </article>
-  `;
+// Build a thread card as a detached DOM node. The `.mdc-comment` frame,
+// quote header, and thread-action row are view-specific; the inner comment
+// cards and the reply box are the shared `commentUi` builders, so all three
+// surfaces render identical comment chrome from one implementation.
+function renderCommentCard(c: CommentSummary): HTMLElement {
+  const article = document.createElement("article");
+  article.className = c.resolved ? "mdc-comment mdc-comment--resolved" : "mdc-comment";
+  article.dataset.id = c.id;
+  article.dataset.sig = threadSignature(c);
+
+  const head = document.createElement("div");
+  head.className = "mdc-thread-head";
+  const quote = document.createElement("button");
+  quote.type = "button";
+  quote.className = "mdc-thread-quote";
+  quote.title = "Click to scroll to the highlighted passage";
+  quote.textContent = c.anchor.text.length > 80 ? c.anchor.text.slice(0, 77) + "…" : c.anchor.text;
+  quote.addEventListener("click", (e) => {
+    e.stopPropagation();
+    jumpToAnchor(c);
+  });
+  head.appendChild(quote);
+
+  const actions = document.createElement("div");
+  actions.className = "mdc-thread-actions";
+  actions.appendChild(
+    threadActionButton("→ Claude", "Send this thread to Claude", () => {
+      vscode.postMessage({ type: "invoke-command", command: "send-thread-claude", commentId: c.id });
+      showNotice("Sent this thread to Claude — your edits are saved");
+    }),
+  );
+  actions.appendChild(
+    threadActionButton("Copy", "Copy this thread's prompt to the clipboard", () => {
+      vscode.postMessage({ type: "invoke-command", command: "copy-thread-claude", commentId: c.id });
+    }),
+  );
+  actions.appendChild(
+    threadActionButton(c.resolved ? "Unresolve" : "Resolve", "", () => {
+      vscode.postMessage({ type: "toggle-resolve-comment", commentId: c.id });
+    }),
+  );
+  const delThread = threadActionButton("Delete thread", "Delete the whole thread", null, "danger");
+  delThread.addEventListener("click", (e) => {
+    e.stopPropagation();
+    armDelete(delThread, () => vscode.postMessage({ type: "delete-comment", commentId: c.id }));
+  });
+  actions.appendChild(delThread);
+  head.appendChild(actions);
+  article.appendChild(head);
+
+  // Root comment, then replies — each a shared card carrying its own Delete
+  // (a single comment), separate from the thread-level "Delete thread".
+  article.appendChild(renderInnerCard(c.id, c.rootCommentId, c.author, c.createdAt, c.body, false));
+  for (const r of c.replies) {
+    article.appendChild(renderInnerCard(c.id, r.id, r.author, r.createdAt, r.body, true));
+  }
+
+  article.appendChild(renderReplyBox(c.id));
+  return article;
 }
 
-function renderBodyWithLinks(body: string): string {
-  const escaped = escapeHtml(body);
-  return escaped.replace(
+// A single comment/reply, built from the shared card. `threadId` is the root
+// comment id (the key the host uses for per-comment deletes and replies).
+function renderInnerCard(
+  threadId: string,
+  commentId: string,
+  author: string,
+  ts: string,
+  body: string,
+  reply: boolean,
+): HTMLElement {
+  return buildCommentCard({
+    author,
+    timestamp: ts,
+    bodyEl: buildLinkifiedBody(body),
+    reply,
+    actions: [
+      {
+        label: "Delete",
+        variant: "danger",
+        title: "Delete this comment",
+        confirm: { confirmLabel: "Confirm?", busyLabel: "Deleting…" },
+        onClick: () =>
+          vscode.postMessage({ type: "delete-single-comment", threadId, commentId }),
+      },
+    ],
+  });
+}
+
+function threadActionButton(
+  label: string,
+  title: string,
+  onClick: (() => void) | null,
+  variant?: "danger",
+): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = variant === "danger" ? "mc-btn mc-btn--link mc-btn--danger" : "mc-btn mc-btn--link";
+  btn.textContent = label;
+  if (title) btn.title = title;
+  if (onClick) {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      onClick();
+    });
+  }
+  return btn;
+}
+
+// Always-on reply box at the bottom of a thread, built from the shared
+// composer. In-progress text is kept in `pendingReplies` so the reconciler
+// (which preserves unchanged cards) and a failed POST don't lose it.
+function renderReplyBox(threadId: string): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "mdc-reply-box";
+  const composer = buildComposer({
+    placeholder: "Reply…",
+    submitLabel: "Reply",
+    rows: 2,
+    autofocus: false,
+    initialValue: pendingReplies.get(threadId) ?? "",
+    onSubmit: (body) => {
+      composer.setBusy("Sending…");
+      replyComposers.set(threadId, composer);
+      vscode.postMessage({ type: "reply-comment", commentId: threadId, body, author: userName });
+    },
+  });
+  composer.textarea.addEventListener("input", () => {
+    pendingReplies.set(threadId, composer.textarea.value);
+  });
+  // Keep clicks inside the composer from bubbling to card-level handlers.
+  composer.textarea.addEventListener("click", (e) => e.stopPropagation());
+  composer.textarea.addEventListener("mousedown", (e) => e.stopPropagation());
+  wrap.appendChild(composer.el);
+  return wrap;
+}
+
+// Escape + linkify http(s)/mailto into anchors the link interceptor handles.
+function buildLinkifiedBody(body: string): HTMLElement {
+  const el = document.createElement("div");
+  el.innerHTML = escapeHtml(body).replace(
     /(https?:\/\/[^\s<>"]+)|(mailto:[^\s<>"]+@[^\s<>"]+)/g,
     (match) => `<a href="${match}" data-mdc-link="1">${match}</a>`,
   );
+  return el;
 }
 
 function attachToolbarHandlers(): void {
@@ -626,82 +722,10 @@ function attachToolbarHandlers(): void {
   }
 }
 
-function attachCommentHandlers(): void {
-  if (!sidebarEl) return;
-  for (const card of Array.from(sidebarEl.querySelectorAll<HTMLElement>(".mdc-comment"))) {
-    const id = card.dataset.id;
-    if (id) attachCardHandlers(card, id);
-  }
-}
-
-function attachCardHandlers(card: HTMLElement, id: string): void {
-  for (const btn of Array.from(card.querySelectorAll<HTMLButtonElement>("[data-comment-action]"))) {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const action = btn.dataset.commentAction;
-      if (action === "resolve")
-        vscode.postMessage({ type: "toggle-resolve-comment", commentId: id });
-      else if (action === "delete")
-        armDelete(btn, () => vscode.postMessage({ type: "delete-comment", commentId: id }));
-      else if (action === "send-thread-claude") {
-        vscode.postMessage({ type: "invoke-command", command: "send-thread-claude", commentId: id });
-        showNotice("Sent this thread to Claude — your edits are saved");
-      } else if (action === "copy-thread-claude")
-        vscode.postMessage({ type: "invoke-command", command: "copy-thread-claude", commentId: id });
-      else if (action === "jump") {
-        const comment = sidebarState.comments.find((c) => c.id === id);
-        if (comment) jumpToAnchor(comment);
-      }
-    });
-  }
-  // Per-comment delete (each `.mc-card`), separate from the thread-level delete.
-  for (const del of Array.from(card.querySelectorAll<HTMLButtonElement>("[data-del-comment]"))) {
-    del.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const commentId = del.dataset.delComment;
-      if (!commentId) return;
-      armDelete(del, () =>
-        vscode.postMessage({ type: "delete-single-comment", threadId: id, commentId }),
-      );
-    });
-  }
-  attachReplyBox(card, id);
-}
-
-// Wire the always-on reply box at the bottom of a thread. Typing here is
-// posted directly (no "Reply" button to open a composer first); in-progress
-// text is kept in `pendingReplies` so a sidebar re-render doesn't lose it.
-function attachReplyBox(card: HTMLElement, id: string): void {
-  const input = card.querySelector<HTMLTextAreaElement>(".mdc-reply-input");
-  const submit = card.querySelector<HTMLButtonElement>(".mdc-reply-submit");
-  if (!input || !submit) return;
-  input.value = pendingReplies.get(id) ?? "";
-  submit.disabled = input.value.trim().length === 0;
-  const send = (): void => {
-    const body = input.value.trim();
-    if (!body) return;
-    submit.disabled = true;
-    submit.textContent = "Sending…";
-    vscode.postMessage({ type: "reply-comment", commentId: id, body, author: userName });
-  };
-  input.addEventListener("click", (e) => e.stopPropagation());
-  input.addEventListener("mousedown", (e) => e.stopPropagation());
-  input.addEventListener("input", () => {
-    pendingReplies.set(id, input.value);
-    submit.disabled = input.value.trim().length === 0;
-  });
-  input.addEventListener("keydown", (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-      e.preventDefault();
-      send();
-    }
-  });
-  submit.addEventListener("click", send);
-}
-
-// Inline two-step delete: the first click arms the button ("Confirm?"), a
-// second click within 3s confirms. Keeps the confirmation on the button itself
-// (next to where you clicked) instead of a dialog at the bottom of the thread.
+// Inline two-step delete for the view-specific thread-head "Delete thread"
+// button. The per-comment deletes inside shared cards use commentUi's own
+// `confirm` action option, which mirrors this. The first click arms the
+// button ("Confirm?"), a second click within 3s confirms.
 function armDelete(btn: HTMLButtonElement, confirm: () => void): void {
   if (btn.dataset.armed === "1") {
     confirm();
@@ -1569,44 +1593,36 @@ function openComposerForCurrentSelection(): void {
   }
   const finalAnchor: import("../types").Anchor = anchor;
 
-  composerEl.innerHTML = `
-    <div class="mdc-composer">
-      <div class="mdc-composer-anchor"><span class="mdc-composer-label">Commenting on:</span> ${escapeHtml(displayText.slice(0, 120))}${displayText.length > 120 ? "…" : ""}</div>
-      <textarea class="mdc-composer-input" placeholder="Write a comment…" rows="3"></textarea>
-      <div class="mdc-composer-actions">
-        <button type="button" class="mdc-composer-cancel">Cancel</button>
-        <button type="button" class="mdc-composer-submit">Save</button>
-      </div>
-    </div>
-  `;
-  const textarea = composerEl.querySelector<HTMLTextAreaElement>(".mdc-composer-input")!;
-  const cancelBtn = composerEl.querySelector<HTMLButtonElement>(".mdc-composer-cancel")!;
-  const submitBtn = composerEl.querySelector<HTMLButtonElement>(".mdc-composer-submit")!;
-  textarea.focus();
-  cancelBtn.addEventListener("click", () => {
-    if (composerEl) composerEl.innerHTML = "";
+  const preview = displayText.slice(0, 120) + (displayText.length > 120 ? "…" : "");
+  composerEl.innerHTML = "";
+  const composer = buildComposer({
+    meta: `Commenting on: ${preview}`,
+    placeholder: "Write a comment…",
+    submitLabel: "Save",
+    cancelLabel: "Cancel",
+    rows: 3,
+    onSubmit: (body) => {
+      composer.setBusy("Saving…");
+      addComposer = composer;
+      vscode.postMessage({
+        type: "add-comment",
+        anchor: finalAnchor,
+        body,
+        author: userName,
+        // Exact placement: the host wraps [selStart, selEnd) in fullMd with the
+        // marker, no fuzzy locate. Falls back to anchor text when offsets are -1.
+        fullMd: anchorFullMd,
+        selStart: anchorSelStart,
+        selEnd: anchorSelEnd,
+        anchorOrdinal,
+      });
+    },
+    onCancel: () => {
+      addComposer = null;
+      if (composerEl) composerEl.innerHTML = "";
+    },
   });
-  submitBtn.addEventListener("click", () => {
-    const body = textarea.value.trim();
-    if (!body) {
-      textarea.focus();
-      return;
-    }
-    submitBtn.disabled = true;
-    submitBtn.textContent = "Saving…";
-    vscode.postMessage({
-      type: "add-comment",
-      anchor: finalAnchor,
-      body,
-      author: userName,
-      // Exact placement: the host wraps [selStart, selEnd) in fullMd with the
-      // marker, no fuzzy locate. Falls back to anchor text when offsets are -1.
-      fullMd: anchorFullMd,
-      selStart: anchorSelStart,
-      selEnd: anchorSelEnd,
-      anchorOrdinal,
-    });
-  });
+  composerEl.appendChild(composer.el);
 }
 
 // ---------------------------------------------------------------------------
@@ -1746,10 +1762,6 @@ function escapeHtml(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function escapeAttr(text: string): string {
-  return escapeHtml(text);
-}
-
 function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
   return text.slice(0, max - 1) + "…";
@@ -1788,7 +1800,7 @@ document.addEventListener("keydown", (e) => {
 document.addEventListener("click", (e) => {
   const target = (e.target as HTMLElement | null)?.closest("a[href]");
   if (!target) return;
-  if (target.closest(".mdc-composer")) return;
+  if (target.closest(".mc-composer")) return;
   const sel = window.getSelection();
   if (sel && sel.toString().trim().length > 0) return;
   const href = (target as HTMLAnchorElement).getAttribute("href") || "";
@@ -1849,6 +1861,7 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     forceHighlightRefresh();
   } else if (msg.type === "add-comment-result") {
     if (msg.ok) {
+      addComposer = null;
       if (composerEl) composerEl.innerHTML = "";
       showToast("Comment added.");
       // Belt-and-suspenders: re-run the anchor highlight once the doc has
@@ -1856,11 +1869,7 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
       // re-seed lands), so a fresh comment's highlight shows immediately.
       requestAnimationFrame(() => forceHighlightRefresh());
     } else {
-      const submitBtn = composerEl?.querySelector<HTMLButtonElement>(".mdc-composer-submit");
-      if (submitBtn) {
-        submitBtn.disabled = false;
-        submitBtn.textContent = "Save";
-      }
+      addComposer?.setError(`Could not save comment: ${msg.error ?? "unknown error"}`);
       showToast(`Could not save comment: ${msg.error ?? "unknown error"}`);
     }
   } else if (msg.type === "reply-comment-result") {
@@ -1868,15 +1877,10 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
       // The reply landed; drop the in-progress text so the upcoming re-render
       // shows an empty reply box for this thread.
       pendingReplies.delete(msg.commentId);
+      replyComposers.delete(msg.commentId);
       showToast("Reply sent.");
     } else {
-      const submit = document.querySelector<HTMLButtonElement>(
-        `.mdc-comment[data-id="${cssEscape(msg.commentId)}"] .mdc-reply-submit`,
-      );
-      if (submit) {
-        submit.disabled = false;
-        submit.textContent = "Reply";
-      }
+      replyComposers.get(msg.commentId)?.setError(`Reply failed: ${msg.error ?? "unknown error"}`);
       showToast(`Reply failed: ${msg.error ?? "unknown error"}`);
     }
   } else if (msg.type === "toggle-resolve-result") {

@@ -126,7 +126,12 @@ Explicitly **not** cursor-level streaming presence — no relay exists and none 
 
 ## P2 — Consolidation (halts the churn treadmill)
 
-### P2.1 One comment UI, shared by all three surfaces
+### P2.1 One comment UI, shared by all three surfaces — ◑ MOSTLY LANDED (v0.34.47)
+
+*The live editor now renders its comment cards + composers from the shared
+commentUi.ts (buildCommentCard/buildComposer), matching inline + PR; added a
+shared two-step `confirm` action option. Remaining minor item: ship
+comments.css via one shared bundle step instead of three copyFileSyncs.*
 
 **Problem.** The live editor reimplements comment cards inside its 1927-line `src/webview/client.ts`; inline + PR share `src/webviewShared/commentUi.ts` but the live editor doesn't. Every card feature ships 2–3 times (CHANGELOG: repeated "comment-panel parity" entries).
 

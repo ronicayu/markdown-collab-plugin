@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.34.47 — 2026-07-27 (trial)
+
+### Changed: the live editor renders comments from the shared UI module (10x-plan P2.1)
+
+The live collab editor built its comment cards, reply box, and composer from
+its own string-HTML templates, duplicating what the inline-comments and PR
+views already get from `src/webviewShared/commentUi.ts`. Every card feature
+had to be written two or three times. The live editor now builds its inner
+comment cards with the shared `buildCommentCard` and its reply/add-comment
+composers with the shared `buildComposer`, so all three surfaces render from
+one implementation.
+
+The `.mdc-comment` thread frame, the anchor-quote header, the thread-action
+row (→ Claude / Copy / Resolve / Delete thread), and the incremental
+reconciler that preserves an in-progress reply across updates stay
+view-specific — only the per-comment card and composer chrome moved to the
+shared module. The shared module gained one small, reusable addition: a
+two-step `confirm` option on card actions (used for the in-place
+"Confirm?" → "Deleting…" delete), replacing a bespoke copy.
+
+As a side effect the live composer picks up the shared composer's niceties it
+lacked — submit disabled while empty, Cmd/Ctrl+Enter to submit, Esc to
+cancel — and ~130 lines of duplicated rendering plus the now-dead
+`.mdc-composer-*` / `.mdc-reply-input` / `.mdc-delete-confirm-*` CSS are gone.
+
+Verified headlessly against the compiled bundle: thread and shared-card
+rendering, resolve/reply/two-step-delete all posting the same host messages as
+before, and the incremental reconciler preserving an unchanged thread's DOM
+(and its half-typed reply) while rebuilding a changed one. A dev-host visual
+pass is still worth doing — the reply box and composer now wear the shared
+`.mc-composer` styling instead of the old `.mdc-*` styling (intended).
+
 ## 0.34.46 — 2026-07-27 (trial)
 
 ### Removed: the local Yjs layer from the live editor (10x-plan P2.2, part 2)
