@@ -143,6 +143,70 @@ describe("mdc CLI: reading", () => {
   });
 });
 
+describe("mdc CLI: suggest / accept / reject", () => {
+  it("suggest stores the proposal and leaves the prose showing the original", () => {
+    const doc = writeDoc("a.md", DOC);
+    const r = run(["suggest", doc, "--quote", "exponential backoff", "--with", "exponential backoff with jitter", "--note", "why"]);
+    expect(r.status).toBe(0);
+    const anchorId = json(r).anchorId;
+
+    const after = fs.readFileSync(doc, "utf8");
+    expect(checkIntegrity(after).ok).toBe(true);
+    const prose = after.slice(0, after.indexOf("<!--mc:threads:begin-->")).replace(/<!--mc:[^>]*-->/g, "");
+    expect(prose).toContain("uses exponential backoff with a cap");
+    expect(prose).not.toContain("with jitter");
+
+    const s = parse(after).suggestions[0];
+    expect(s.anchorId).toBe(anchorId);
+    expect(s.proposed).toBe("exponential backoff with jitter");
+    expect(s.note).toBe("why");
+  });
+
+  it("accept applies the proposal into the prose and clears the suggestion", () => {
+    const doc = writeDoc("a.md", DOC);
+    const anchorId = json(run(["suggest", doc, "--quote", "exponential backoff", "--with", "exponential backoff with jitter"])).anchorId;
+    expect(run(["accept", doc, anchorId]).status).toBe(0);
+    const after = fs.readFileSync(doc, "utf8");
+    expect(after).toContain("uses exponential backoff with jitter with a cap");
+    expect(parse(after).suggestions).toHaveLength(0);
+    expect(checkIntegrity(after).ok).toBe(true);
+  });
+
+  it("reject keeps the original and clears the suggestion", () => {
+    const doc = writeDoc("a.md", DOC);
+    const anchorId = json(run(["suggest", doc, "--quote", "exponential backoff", "--with", "linear backoff"])).anchorId;
+    expect(run(["reject", doc, anchorId]).status).toBe(0);
+    const after = fs.readFileSync(doc, "utf8");
+    expect(after).toBe(DOC); // fully reversible
+    expect(parse(after).suggestions).toHaveLength(0);
+  });
+
+  it("list surfaces suggestions with original + proposed", () => {
+    const doc = writeDoc("a.md", DOC);
+    run(["suggest", doc, "--quote", "exponential backoff", "--with", "exponential backoff with jitter"]);
+    const data = json(run(["list", doc]));
+    expect(data.suggestionCount).toBe(1);
+    expect(data.suggestions[0].original).toBe("exponential backoff");
+    expect(data.suggestions[0].proposed).toBe("exponential backoff with jitter");
+    expect(data.suggestions[0].anchored).toBe(true);
+  });
+
+  it("refuses a suggestion inside a code span", () => {
+    const doc = writeDoc("c.md", "# C\n\nUse the `backoff` helper.\n");
+    const r = run(["suggest", doc, "--quote", "backoff", "--with", "retry"]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/code/);
+  });
+
+  it("accept fails cleanly on an unknown id, writing nothing", () => {
+    const doc = writeDoc("a.md", DOC);
+    const before = fs.readFileSync(doc, "utf8");
+    const r = run(["accept", doc, "nope1"]);
+    expect(r.status).toBe(1);
+    expect(fs.readFileSync(doc, "utf8")).toBe(before);
+  });
+});
+
 describe("mdc CLI: mutation keeps markers intact", () => {
   it("open anchors a passage and leaves the document healthy", () => {
     const doc = writeDoc("a.md", DOC);

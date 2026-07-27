@@ -37,7 +37,9 @@ export type IntegrityIssueKind =
   /** Anchor markers in the prose with no matching thread. */
   | "orphan-anchor"
   /** A thread in the threads region with no anchor markers in the prose. */
-  | "unanchored-thread";
+  | "unanchored-thread"
+  /** A suggestion whose anchor markers are missing — its original text is lost. */
+  | "unanchored-suggestion";
 
 export interface IntegrityIssue {
   kind: IntegrityIssueKind;
@@ -132,6 +134,19 @@ export function checkIntegrity(source: string): IntegrityReport {
         : `Thread ${id} has no anchor markers and its quote cannot be located unambiguously.`,
       threadId: id,
       repairable: recoverable,
+    });
+  }
+
+  for (const id of insp.parsed.unanchoredSuggestionIds) {
+    // A suggestion's original text lives in its anchored span; losing the
+    // markers means we no longer know where the change applies. Not
+    // auto-repairable (unlike a thread, a suggestion has no quote fallback).
+    issues.push({
+      kind: "unanchored-suggestion",
+      severity: "warning",
+      message: `Suggestion ${id} lost its anchor markers; its original text can no longer be located.`,
+      threadId: id,
+      repairable: false,
     });
   }
 

@@ -25,9 +25,12 @@ import * as fs from "fs";
 import * as path from "path";
 import { describe, expect, it } from "vitest";
 import {
+  acceptSuggestion,
+  addSuggestion,
   addThread,
   appendReply,
   parse,
+  rejectSuggestion,
   replaceThread,
   stripAllInlineMarkup,
   withThreads,
@@ -515,6 +518,68 @@ describe("round-trip corpus: the one permitted prose difference", () => {
     expect(() =>
       addThread(source, at, at + "Some prose".length, { author: "ronica", body: "x", ts: TS }),
     ).toThrow(/code block or code span/);
+  });
+});
+
+// --- suggestions in combination ------------------------------------------
+
+describe("round-trip corpus: suggestions coexist with threads on gnarly docs", () => {
+  function suggest(source: string, quote: string, proposed: string) {
+    const at = source.indexOf(quote);
+    if (at === -1) throw new Error(`quote not found: ${quote}`);
+    return addSuggestion(source, at, at + quote.length, { author: "claude", proposed, ts: TS });
+  }
+
+  it("a comment and a suggestion on the same table survive together", () => {
+    const source = fixture("tables.md");
+    // Comment on one cell, suggest an edit to a different cell's value.
+    let doc = addThread(source, source.indexOf("green"), source.indexOf("green") + 5, {
+      author: "ronica",
+      body: "is this still green?",
+      ts: TS,
+    }).source;
+    doc = suggest(doc, "cached deps", "cached dependencies").source;
+
+    const parsed = parse(doc);
+    expect(parsed.threads).toHaveLength(1);
+    expect(parsed.suggestions).toHaveLength(1);
+    expect(checkIntegrity(doc).issues).toEqual([]);
+    // Prose still shows the original suggestion text.
+    expect(stripAllInlineMarkup(doc)).toContain("cached deps");
+    expect(stripAllInlineMarkup(doc)).not.toContain("cached dependencies");
+    // Serialization stable.
+    expect(parse(withThreads(doc, parsed.threads, parsed.suggestions)).suggestions).toEqual(parsed.suggestions);
+  });
+
+  it("accepting a suggestion applies proposed text and keeps integrity", () => {
+    const source = fixture("frontmatter-lists.md");
+    const { source: doc, suggestion } = suggest(source, "multi-byte", "multi-byte (UTF-8)");
+    const proseBefore = stripAllInlineMarkup(doc);
+    expect(proseBefore).toContain("multi-byte");
+
+    const after = acceptSuggestion(doc, suggestion.anchorId);
+    expect(stripAllInlineMarkup(after)).toContain("multi-byte (UTF-8)");
+    expect(parse(after).suggestions).toEqual([]);
+    expect(checkIntegrity(after).issues).toEqual([]);
+  });
+
+  it("rejecting a suggestion restores the original prose exactly", () => {
+    const source = fixture("frontmatter-lists.md");
+    const { source: doc, suggestion } = suggest(source, "Status-bar item", "Status bar entry");
+    const after = rejectSuggestion(doc, suggestion.anchorId);
+    // Rejecting removes only the suggestion's own markup, so the prose returns
+    // to what it was before the suggestion was added.
+    expect(stripAllInlineMarkup(after)).toBe(stripAllInlineMarkup(source));
+    expect(parse(after).suggestions).toEqual([]);
+    expect(checkIntegrity(after).issues).toEqual([]);
+  });
+
+  it("a suggestion whose original text sits in a code fence is refused", () => {
+    const source = fixture("code-and-markers.md");
+    const at = source.indexOf("Some prose");
+    expect(() =>
+      addSuggestion(source, at, at + "Some prose".length, { author: "claude", proposed: "x", ts: TS }),
+    ).toThrow(/code/);
   });
 });
 

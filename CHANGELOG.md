@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.34.48 — 2026-07-27 (trial)
+
+### Added: suggestion storage + CLI — the foundation for reviewable AI edits (10x-plan P1.1, part 1)
+
+The tool's premise is *review*, but Claude's own edits were the one thing that
+couldn't be reviewed in it: Claude rewrote the file and the human saw "Updated
+from disk". Suggest mode fixes that inverted trust model — Claude's edits
+become pending suggestions the human accepts or rejects. This release lands
+the storage and authoring foundation; the accept/reject UI follows.
+
+A suggestion keeps the **original** text in the prose, wrapped in the same
+paired anchor markers a comment uses, and stores the **proposed** replacement
+in a `<!--mc:s {JSON}-->` line inside the threads region. So the file still
+renders as the original in any Markdown viewer — the proposal is invisible,
+consistent with the no-sidecar principle. Accepting swaps original→proposed
+(marker-safe); rejecting keeps the original. Both are byte-reversible.
+
+- `src/inlineComments/format.ts`: `InlineSuggestion` model, parse/serialize of
+  `mc:s` lines, and `addSuggestion` / `acceptSuggestion` / `rejectSuggestion`
+  transforms. `withThreads` preserves pending suggestions across thread edits.
+- Integrity: suggestion anchors are recognised (not flagged as orphans), and a
+  suggestion that loses its markers is reported as `unanchored-suggestion`.
+- `mdc` CLI: `suggest`, `accept`, `reject` commands, and `list` now surfaces
+  suggestions with their original + proposed text. Same refuse-don't-guess
+  posture as the rest of the CLI (ambiguous passages, code spans).
+- The round-trip corpus gained suggestion-in-combination cases (a comment and
+  a suggestion on the same gnarly document, accept/reject invariants).
+- The Claude skill gained a **Suggest Mode** section: when the human asks for
+  proposed (not applied) changes, Claude routes every edit through
+  `mdc suggest` and never accepts its own suggestions.
+
+The accept/reject UI in the review views, the "propose as suggestions"
+send-mode toggle, and full end-to-end verification are the next increment.
+
 ## 0.34.47 — 2026-07-27 (trial)
 
 ### Changed: the live editor renders comments from the shared UI module (10x-plan P2.1)

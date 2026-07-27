@@ -42,6 +42,32 @@ export interface InlineThread {
   comments: InlineComment[];
 }
 
+/**
+ * A pending edit Claude proposes instead of applying directly (suggest mode).
+ *
+ * The original text stays in the prose, wrapped in the same paired
+ * `<!--mc:a:ID-->…<!--mc:/a:ID-->` markers a comment uses (here ID = the
+ * suggestion's `anchorId`), so the file still renders as the original in any
+ * other Markdown viewer. The proposed replacement lives only in the
+ * `<!--mc:s {JSON}-->` line. Accepting swaps the anchored original for
+ * `proposed`; rejecting drops the suggestion and keeps the original.
+ */
+export interface InlineSuggestion {
+  /** 5-char base36 id; also the id of the anchor markers wrapping `original`. */
+  anchorId: string;
+  /** Optional link to a comment thread this suggestion discusses. */
+  threadId?: string;
+  author: string;
+  /** ISO-8601 UTC timestamp. */
+  ts: string;
+  /** The current text, wrapped by this suggestion's anchor markers. */
+  original: string;
+  /** The proposed replacement text. */
+  proposed: string;
+  /** Why the change — Claude's rationale, shown in the suggestion card. */
+  note?: string;
+}
+
 export interface ParsedDocument {
   /**
    * Raw markdown source (input unchanged). All offset references in the
@@ -50,7 +76,9 @@ export interface ParsedDocument {
   source: string;
   /** Threads in document order (by first marker occurrence; unanchored last). */
   threads: InlineThread[];
-  /** Marker positions keyed by thread id. */
+  /** Pending suggestions in document order (by anchor position; unanchored last). */
+  suggestions: InlineSuggestion[];
+  /** Marker positions keyed by thread id AND suggestion anchorId. */
   anchors: Map<string, AnchorRange>;
   /**
    * Threads referenced in `<!--mc:t ...-->` but with no matching anchor
@@ -58,6 +86,8 @@ export interface ParsedDocument {
    * fallback".
    */
   unanchoredThreadIds: string[];
+  /** Suggestions in `<!--mc:s ...-->` whose anchor markers are missing. */
+  unanchoredSuggestionIds: string[];
   /**
    * Half-open `[start, end)` range covering the threads region (including
    * the begin/end fences). `null` if no threads region present yet.
@@ -89,6 +119,7 @@ const CLOSE_RE = /<!--mc:\/a:([a-z0-9]{1,12})-->/g;
 const THREADS_BEGIN = "<!--mc:threads:begin-->";
 const THREADS_END = "<!--mc:threads:end-->";
 const THREAD_LINE_RE = /<!--mc:t\s+(\{[\s\S]*?\})\s*-->/g;
+const SUGGESTION_LINE_RE = /<!--mc:s\s+(\{[\s\S]*?\})\s*-->/g;
 
 /** Compute a [start, end) bitmap of "this offset is inside code". */
 function buildCodeMask(source: string): Uint8Array {
@@ -286,6 +317,38 @@ function parseThreads(body: string, malformed?: MalformedThreadLine[]): InlineTh
   return threads;
 }
 
+function parseSuggestions(body: string): InlineSuggestion[] {
+  const suggestions: InlineSuggestion[] = [];
+  let m: RegExpExecArray | null;
+  SUGGESTION_LINE_RE.lastIndex = 0;
+  while ((m = SUGGESTION_LINE_RE.exec(body)) !== null) {
+    try {
+      const obj = JSON.parse(m[1]) as Partial<InlineSuggestion>;
+      if (
+        !obj ||
+        typeof obj.anchorId !== "string" ||
+        typeof obj.original !== "string" ||
+        typeof obj.proposed !== "string"
+      ) {
+        continue;
+      }
+      suggestions.push({
+        anchorId: obj.anchorId,
+        threadId: typeof obj.threadId === "string" ? obj.threadId : undefined,
+        author: typeof obj.author === "string" ? obj.author : "claude",
+        ts: typeof obj.ts === "string" ? obj.ts : "",
+        original: obj.original,
+        proposed: obj.proposed,
+        note: typeof obj.note === "string" ? obj.note : undefined,
+      });
+    } catch {
+      // Malformed JSON — skipped, like a malformed thread line. `inspect()`
+      // surfaces the count delta.
+    }
+  }
+  return suggestions;
+}
+
 function isValidComment(c: unknown): c is InlineComment {
   if (!c || typeof c !== "object") return false;
   const o = c as Record<string, unknown>;
@@ -358,6 +421,7 @@ export function parse(source: string): ParsedDocument {
   const { anchors } = pairAnchors(markers);
   const region = findThreadsRegion(source);
   const threads = region ? parseThreads(region.body) : [];
+  const suggestions = region ? parseSuggestions(region.body) : [];
   const frontmatter = findFrontmatter(source);
 
   // Sort threads by anchor position; threads without an anchor go to the end.
@@ -366,14 +430,24 @@ export function parse(source: string): ParsedDocument {
     const bi = anchors.get(b.id)?.openStart ?? Number.POSITIVE_INFINITY;
     return ai - bi;
   });
+  suggestions.sort((a, b) => {
+    const ai = anchors.get(a.anchorId)?.openStart ?? Number.POSITIVE_INFINITY;
+    const bi = anchors.get(b.anchorId)?.openStart ?? Number.POSITIVE_INFINITY;
+    return ai - bi;
+  });
 
   const unanchoredThreadIds = threads.filter((t) => !anchors.has(t.id)).map((t) => t.id);
+  const unanchoredSuggestionIds = suggestions
+    .filter((s) => !anchors.has(s.anchorId))
+    .map((s) => s.anchorId);
 
   return {
     source,
     threads,
+    suggestions,
     anchors,
     unanchoredThreadIds,
+    unanchoredSuggestionIds,
     threadsRegion: region ? { start: region.start, end: region.end } : null,
     frontmatter,
   };
@@ -418,6 +492,7 @@ export function inspect(source: string): DocumentInspection {
   const region = findThreadsRegion(source);
   const malformedThreadLines: MalformedThreadLine[] = [];
   const threads = region ? parseThreads(region.body, malformedThreadLines) : [];
+  const suggestions = region ? parseSuggestions(region.body) : [];
 
   const seen = new Set<string>();
   const duplicateThreadIds: string[] = [];
@@ -427,8 +502,11 @@ export function inspect(source: string): DocumentInspection {
     }
     seen.add(t.id);
   }
+  // A `mc:a` anchor is legitimate if it belongs to a thread OR a suggestion.
+  const anchorOwners = new Set(seen);
+  for (const s of suggestions) anchorOwners.add(s.anchorId);
 
-  const orphanAnchorIds = [...anchors.keys()].filter((id) => !seen.has(id));
+  const orphanAnchorIds = [...anchors.keys()].filter((id) => !anchorOwners.has(id));
 
   return {
     parsed: parse(source),
@@ -440,8 +518,11 @@ export function inspect(source: string): DocumentInspection {
 }
 
 /** Render the threads region as text, with leading/trailing newlines suitable for appending to a markdown file. */
-export function renderThreadsRegion(threads: InlineThread[]): string {
-  if (threads.length === 0) return "";
+export function renderThreadsRegion(
+  threads: InlineThread[],
+  suggestions: InlineSuggestion[] = [],
+): string {
+  if (threads.length === 0 && suggestions.length === 0) return "";
   const lines = [THREADS_BEGIN];
   for (const t of threads) {
     const obj: Record<string, unknown> = {
@@ -453,6 +534,16 @@ export function renderThreadsRegion(threads: InlineThread[]): string {
     if (t.resolvedTs) obj.resolvedTs = t.resolvedTs;
     obj.comments = t.comments;
     lines.push(`<!--mc:t ${safeStringify(obj)}-->`);
+  }
+  for (const s of suggestions) {
+    const obj: Record<string, unknown> = { anchorId: s.anchorId };
+    if (s.threadId) obj.threadId = s.threadId;
+    obj.author = s.author;
+    obj.ts = s.ts;
+    obj.original = s.original;
+    obj.proposed = s.proposed;
+    if (s.note) obj.note = s.note;
+    lines.push(`<!--mc:s ${safeStringify(obj)}-->`);
   }
   lines.push(THREADS_END);
   return lines.join("\n");
@@ -472,10 +563,20 @@ function safeStringify(obj: unknown): string {
     .replace(/<!--/g, "\\u003c!--");
 }
 
-/** Replace (or insert) the threads region of `source` with `threads`. */
-export function withThreads(source: string, threads: InlineThread[]): string {
+/**
+ * Replace (or insert) the threads region of `source` with `threads` and
+ * `suggestions`. When `suggestions` is omitted, the source's existing
+ * suggestions are preserved — so thread operations never disturb pending
+ * suggestions, and suggestion operations pass the updated list explicitly.
+ */
+export function withThreads(
+  source: string,
+  threads: InlineThread[],
+  suggestions?: InlineSuggestion[],
+): string {
   const region = findThreadsRegion(source);
-  const rendered = renderThreadsRegion(threads);
+  const keepSuggestions = suggestions ?? parse(source).suggestions;
+  const rendered = renderThreadsRegion(threads, keepSuggestions);
   if (region) {
     const before = source.slice(0, region.start);
     const after = source.slice(region.end);
@@ -559,37 +660,44 @@ export function addThread(
     status: "open",
     comments: [{ id: "c1", author: comment.author, ts, body: comment.body }],
   };
-  // Insert markers. If the selection lies inside the threads region, that's
-  // a user error — refuse rather than corrupt the file.
-  if (parsed.threadsRegion) {
-    if (selStart >= parsed.threadsRegion.start && selStart < parsed.threadsRegion.end) {
-      throw new Error("Cannot anchor a comment inside the threads region");
-    }
-    if (selEnd > parsed.threadsRegion.start && selEnd <= parsed.threadsRegion.end) {
-      throw new Error("Cannot anchor a comment inside the threads region");
-    }
-  }
-  // Frontmatter is stripped from the rendered preview, so a comment
-  // anchored there would be invisible. Refuse for the same reason we
-  // refuse the threads region.
-  if (parsed.frontmatter) {
-    if (selStart >= parsed.frontmatter.start && selStart < parsed.frontmatter.end) {
-      throw new Error("Cannot anchor a comment inside the frontmatter");
-    }
-    if (selEnd > parsed.frontmatter.start && selEnd <= parsed.frontmatter.end) {
-      throw new Error("Cannot anchor a comment inside the frontmatter");
-    }
-  }
-  // Markers inside code are ignored by the parser, so anchoring there would
-  // silently produce a thread with a broken anchor. Refuse, as we do for the
-  // other two zones where an anchor cannot survive.
-  if (isInCode(source, selStart, selEnd)) {
-    throw new Error("Cannot anchor a comment inside a code block or code span");
-  }
+  assertAnchorable(parsed, source, selStart, selEnd);
   const withMarkers =
     source.slice(0, selStart) + openMarker + source.slice(selStart, selEnd) + closeMarker + source.slice(selEnd);
   const nextThreads = [...parsed.threads, thread];
   return { source: withThreads(withMarkers, nextThreads), thread };
+}
+
+/**
+ * Throw if `[selStart, selEnd)` cannot carry an anchor: inside the threads
+ * region or frontmatter (invisible in the rendered view) or inside code
+ * (markers there are ignored by the parser, so the anchor would silently
+ * break). Shared by comment and suggestion anchoring.
+ */
+function assertAnchorable(
+  parsed: ParsedDocument,
+  source: string,
+  selStart: number,
+  selEnd: number,
+): void {
+  if (parsed.threadsRegion) {
+    if (selStart >= parsed.threadsRegion.start && selStart < parsed.threadsRegion.end) {
+      throw new Error("Cannot anchor inside the threads region");
+    }
+    if (selEnd > parsed.threadsRegion.start && selEnd <= parsed.threadsRegion.end) {
+      throw new Error("Cannot anchor inside the threads region");
+    }
+  }
+  if (parsed.frontmatter) {
+    if (selStart >= parsed.frontmatter.start && selStart < parsed.frontmatter.end) {
+      throw new Error("Cannot anchor inside the frontmatter");
+    }
+    if (selEnd > parsed.frontmatter.start && selEnd <= parsed.frontmatter.end) {
+      throw new Error("Cannot anchor inside the frontmatter");
+    }
+  }
+  if (isInCode(source, selStart, selEnd)) {
+    throw new Error("Cannot anchor inside a code block or code span");
+  }
 }
 
 /** Replace a thread by id. If `next === null`, remove it (and its anchor markers). */
@@ -653,4 +761,81 @@ function nextCommentId(thread: InlineThread): string {
     if (m) max = Math.max(max, Number(m[1]));
   }
   return `c${max + 1}`;
+}
+
+// --- suggestions (suggest mode) --------------------------------------------
+
+/**
+ * Wrap `[selStart, selEnd)` (the original text) in anchor markers and append a
+ * pending suggestion proposing `proposed` in its place. The file still renders
+ * as the original — the proposed text lives only in the `<!--mc:s ...-->` line.
+ */
+export function addSuggestion(
+  source: string,
+  selStart: number,
+  selEnd: number,
+  suggestion: { author: string; proposed: string; note?: string; threadId?: string; ts?: string },
+): { source: string; suggestion: InlineSuggestion } {
+  if (selEnd < selStart) throw new Error("selEnd must be >= selStart");
+  selStart = startPastHeadingPrefix(source, selStart, selEnd);
+  const parsed = parse(source);
+  // Unique across threads AND existing suggestion anchors.
+  const anchorId = mintThreadId([
+    ...parsed.threads.map((t) => t.id),
+    ...parsed.suggestions.map((s) => s.anchorId),
+  ]);
+  const original = source.slice(selStart, selEnd).replace(OPEN_RE, "").replace(CLOSE_RE, "");
+  assertAnchorable(parsed, source, selStart, selEnd);
+  const openMarker = `<!--mc:a:${anchorId}-->`;
+  const closeMarker = `<!--mc:/a:${anchorId}-->`;
+  const record: InlineSuggestion = {
+    anchorId,
+    threadId: suggestion.threadId,
+    author: suggestion.author,
+    ts: suggestion.ts ?? new Date().toISOString(),
+    original,
+    proposed: suggestion.proposed,
+    note: suggestion.note,
+  };
+  const withMarkers =
+    source.slice(0, selStart) + openMarker + source.slice(selStart, selEnd) + closeMarker + source.slice(selEnd);
+  const nextSuggestions = [...parsed.suggestions, record];
+  return { source: withThreads(withMarkers, parsed.threads, nextSuggestions), suggestion: record };
+}
+
+/**
+ * Accept a suggestion: replace the anchored original span with the proposed
+ * text (marker-safe — the markers are removed with the swap) and drop the
+ * `<!--mc:s ...-->` line. Returns the source unchanged if the id is unknown.
+ */
+export function acceptSuggestion(source: string, anchorId: string): string {
+  return resolveSuggestion(source, anchorId, "accept");
+}
+
+/**
+ * Reject a suggestion: keep the original text (strip its anchor markers) and
+ * drop the `<!--mc:s ...-->` line. The linked thread, if any, is untouched.
+ */
+export function rejectSuggestion(source: string, anchorId: string): string {
+  return resolveSuggestion(source, anchorId, "reject");
+}
+
+function resolveSuggestion(source: string, anchorId: string, mode: "accept" | "reject"): string {
+  const parsed = parse(source);
+  const suggestion = parsed.suggestions.find((s) => s.anchorId === anchorId);
+  if (!suggestion) return source;
+  const anchor = parsed.anchors.get(anchorId);
+  let body = source;
+  if (anchor) {
+    // Replace open + span + close in one splice so no marker is left behind.
+    const replacement = mode === "accept" ? suggestion.proposed : source.slice(anchor.openEnd, anchor.closeStart);
+    body = source.slice(0, anchor.openStart) + replacement + source.slice(anchor.closeEnd);
+  } else {
+    // Unanchored suggestion (markers lost). Nothing to swap in the prose; just
+    // drop the record. On accept with no anchor we cannot place the change, so
+    // it is dropped too — the caller should have checked `anchored` first.
+    body = stripAnchorMarkers(body, anchorId);
+  }
+  const nextSuggestions = parsed.suggestions.filter((s) => s.anchorId !== anchorId);
+  return withThreads(body, parsed.threads, nextSuggestions);
 }

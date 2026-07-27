@@ -23,9 +23,12 @@
 import { writeSync } from "node:fs";
 import { readFileSync, writeFileSync } from "node:fs";
 import {
+  acceptSuggestion,
+  addSuggestion,
   addThread,
   appendReply,
   parse,
+  rejectSuggestion,
   replaceThread,
   stripAllInlineMarkup,
   type InlineThread,
@@ -44,6 +47,10 @@ const USAGE = `mdc — Markdown Collab inline-comment CLI
   mdc open <file> --quote TEXT --body TEXT [--occurrence N]
                                               open a new thread on a passage
   mdc resolve <file> <threadId>               mark a thread resolved
+  mdc suggest <file> --quote TEXT --with TEXT [--note TEXT] [--occurrence N]
+                                              propose an edit (accept/reject in the UI)
+  mdc accept <file> <anchorId>                apply a pending suggestion
+  mdc reject <file> <anchorId>                drop a pending suggestion, keep the original
   mdc check <file> [--repair]                 integrity report; exit 2 if broken
 
 All commands print JSON to stdout. Exit codes: 0 ok, 1 usage, 2 integrity.`;
@@ -157,7 +164,19 @@ function cmdList(file: string, actionableOnly: boolean): void {
           .map((c) => ({ id: c.id, author: c.author, ts: c.ts, body: c.body })),
       };
     });
-  out({ file, threadCount: parsed.threads.length, threads });
+  const suggestions = parsed.suggestions.map((s) => {
+    const a = parsed.anchors.get(s.anchorId);
+    return {
+      anchorId: s.anchorId,
+      threadId: s.threadId,
+      author: s.author,
+      anchored: a !== undefined,
+      original: s.original,
+      proposed: s.proposed,
+      note: s.note,
+    };
+  });
+  out({ file, threadCount: parsed.threads.length, threads, suggestionCount: parsed.suggestions.length, suggestions });
 }
 
 function cmdReply(file: string, threadId: string, body: string): void {
@@ -213,11 +232,13 @@ function cmdRewrite(file: string, threadId: string, replacement: string): void {
  * computed against the raw source but the *search* runs on the prose so a
  * passage adjacent to another thread's markers is still findable.
  */
-function cmdOpen(file: string, quote: string, body: string, occurrence: number): void {
-  const source = readDoc(file);
+/**
+ * Locate the `occurrence`-th appearance of `quote` in the prose (before the
+ * threads region), refusing ambiguity. Shared by `open` and `suggest`.
+ */
+function locatePassage(file: string, source: string, quote: string, occurrence: number): number {
   const parsed = parse(source);
   const limit = parsed.threadsRegion ? parsed.threadsRegion.start : source.length;
-
   const hits: number[] = [];
   let from = 0;
   for (;;) {
@@ -230,15 +251,18 @@ function cmdOpen(file: string, quote: string, body: string, occurrence: number):
     fail(`passage not found in ${file}: ${JSON.stringify(quote.slice(0, 60))}`);
   }
   if (hits.length > 1 && occurrence === 0) {
-    fail(
-      `passage appears ${hits.length} times; pass --occurrence 1..${hits.length} to say which one you mean`,
-    );
+    fail(`passage appears ${hits.length} times; pass --occurrence 1..${hits.length} to say which one you mean`);
   }
   const index = occurrence === 0 ? 0 : occurrence - 1;
   if (index < 0 || index >= hits.length) {
     fail(`--occurrence ${occurrence} is out of range (passage appears ${hits.length} time(s))`);
   }
-  const at = hits[index];
+  return hits[index];
+}
+
+function cmdOpen(file: string, quote: string, body: string, occurrence: number): void {
+  const source = readDoc(file);
+  const at = locatePassage(file, source, quote, occurrence);
 
   let result;
   try {
@@ -267,6 +291,66 @@ function cmdResolve(file: string, threadId: string): void {
   });
   const r = writeChecked(file, source, next);
   out({ action: "resolve", file, threadId, integrityOk: r.ok });
+}
+
+/**
+ * Propose an edit: wrap the passage's original text and record the proposal.
+ * The file still renders as the original — the human accepts or rejects the
+ * change in the review UI (or via `mdc accept` / `mdc reject`).
+ */
+function cmdSuggest(
+  file: string,
+  quote: string,
+  proposed: string,
+  note: string | undefined,
+  occurrence: number,
+): void {
+  const source = readDoc(file);
+  const at = locatePassage(file, source, quote, occurrence);
+  let result;
+  try {
+    result = addSuggestion(source, at, at + quote.length, {
+      author: "claude",
+      proposed,
+      note,
+      ts: new Date().toISOString(),
+    });
+  } catch (e) {
+    return fail((e as Error).message);
+  }
+  const r = writeChecked(file, source, result.source);
+  out({
+    action: "suggest",
+    file,
+    anchorId: result.suggestion.anchorId,
+    original: result.suggestion.original,
+    proposed,
+    integrityOk: r.ok,
+  });
+}
+
+function cmdAccept(file: string, anchorId: string): void {
+  const source = readDoc(file);
+  const parsed = parse(source);
+  const suggestion = parsed.suggestions.find((s) => s.anchorId === anchorId);
+  if (!suggestion) fail(`no suggestion with anchor id ${anchorId} in this file`);
+  if (!parsed.anchors.has(anchorId)) {
+    fail(`suggestion ${anchorId} lost its anchor markers; cannot place the change (see \`mdc check\`)`, EXIT_INTEGRITY);
+  }
+  const next = acceptSuggestion(source, anchorId);
+  const r = writeChecked(file, source, next);
+  out({ action: "accept", file, anchorId, applied: suggestion.proposed, integrityOk: r.ok });
+}
+
+function cmdReject(file: string, anchorId: string): void {
+  const source = readDoc(file);
+  const parsed = parse(source);
+  if (!parsed.suggestions.some((s) => s.anchorId === anchorId)) {
+    fail(`no suggestion with anchor id ${anchorId} in this file`);
+  }
+  const next = rejectSuggestion(source, anchorId);
+  const r = writeChecked(file, source, next);
+  out({ action: "reject", file, anchorId, integrityOk: r.ok });
 }
 
 function cmdCheck(file: string, repair: boolean): void {
@@ -342,6 +426,21 @@ function main(): void {
     case "resolve":
       if (!rest[0] || !rest[1]) fail("usage: mdc resolve <file> <threadId>");
       return cmdResolve(rest[0], rest[1]);
+    case "suggest":
+      if (!rest[0]) fail("usage: mdc suggest <file> --quote TEXT --with TEXT [--note TEXT] [--occurrence N]");
+      return cmdSuggest(
+        rest[0],
+        str(flags, "quote"),
+        str(flags, "with"),
+        typeof flags.note === "string" ? flags.note : undefined,
+        typeof flags.occurrence === "string" ? Number(flags.occurrence) : 0,
+      );
+    case "accept":
+      if (!rest[0] || !rest[1]) fail("usage: mdc accept <file> <anchorId>");
+      return cmdAccept(rest[0], rest[1]);
+    case "reject":
+      if (!rest[0] || !rest[1]) fail("usage: mdc reject <file> <anchorId>");
+      return cmdReject(rest[0], rest[1]);
     case "check":
       if (!rest[0]) fail("usage: mdc check <file> [--repair]");
       return cmdCheck(rest[0], flags.repair === true);

@@ -445,6 +445,8 @@ node ~/.claude/skills/vs-markdown-collab/mdc.mjs <command> <file> [args]
 | \`rewrite <file> <threadId> --with TEXT\` | Replaces the text between a thread's markers and updates its \`quote\`. Both markers are preserved by construction. |
 | \`open <file> --quote TEXT --body TEXT [--occurrence N]\` | Opens a new thread on a passage: mints a unique id, wraps the passage, appends the thread line. |
 | \`resolve <file> <threadId>\` | Marks a thread resolved. Only when the human asks. |
+| \`suggest <file> --quote TEXT --with TEXT [--note TEXT] [--occurrence N]\` | Proposes an edit without applying it (suggest mode). Keeps the original in the prose, records the proposal for the human to accept/reject. |
+| \`accept <file> <anchorId>\` / \`reject <file> <anchorId>\` | Apply / drop a pending suggestion. Normally the human does this in the UI. |
 | \`check <file> [--repair]\` | Integrity report as JSON. \`--repair\` fixes what can be fixed without guessing. |
 
 Every command prints JSON to stdout. Exit codes: \`0\` ok, \`1\` usage error,
@@ -745,6 +747,38 @@ still has exactly one matched marker pair; that removed passages have both
 markers gone; that opt-in deletions removed both the thread line and the
 marker pair; and that any thread you initiated has a paired marker plus a
 valid single-\`c1\` thread line with a unique id.
+
+## Suggest Mode — propose edits instead of applying them
+
+When the human asks you to **suggest** or **propose** changes rather than make
+them ("suggest edits", "propose changes I can review", "don't apply, let me
+accept them", or a send payload that requests suggest mode), do NOT edit the
+prose directly. Every change becomes a pending suggestion the human accepts or
+rejects:
+
+\`\`\`
+node ~/.claude/skills/vs-markdown-collab/mdc.mjs suggest <file> --quote "the exact text to change" --with "your proposed replacement" --note "why"
+\`\`\`
+
+- The original text stays in the file; the proposal is recorded separately, so
+  the document still reads as the original until the human accepts. \`--note\`
+  is your rationale, shown on the suggestion card — always include it.
+- Same anchoring rules as \`open\`: if the passage appears more than once the
+  helper refuses; pass \`--occurrence N\`. Passages inside code, frontmatter, or
+  the threads region are refused — pick a different span.
+- One suggestion per contiguous change. For several edits, run \`suggest\` once
+  per change, re-reading between them so offsets stay valid.
+- **Do NOT accept or reject your own suggestions.** \`accept\`/\`reject\` are the
+  human's decision, made in the review UI. Only run them if the human
+  explicitly tells you to.
+- Verify with \`mdc check <file>\` and \`mdc list <file>\` (which reports each
+  suggestion's \`original\` and \`proposed\`) — confirm each proposal landed and
+  the prose still shows the original.
+
+Suggest mode and direct-edit mode are mutually exclusive per request: if the
+human wants suggestions, route ALL changes through \`suggest\`; never mix a few
+direct edits in. Review Mode (leaving comments) is unaffected — it never edits
+prose in the first place.
 
 ## When this skill applies
 
