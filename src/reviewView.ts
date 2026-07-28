@@ -1,5 +1,6 @@
 import * as path from "path";
 import * as vscode from "vscode";
+import { isClaudeUnread } from "./inlineComments/claudeUnread";
 import { parse, type InlineThread } from "./inlineComments/format";
 import { IntegrityGuard, summarize, type GuardDecision } from "./inlineComments/integrityGuard";
 
@@ -170,6 +171,33 @@ export class ReviewView
       }));
     }
     return [];
+  }
+
+  /**
+   * Run the initial filesystem scan if the user hasn't expanded the tree yet.
+   * Cross-file commands (the unread walk) need the cache populated even when
+   * the view was never opened; expanding the tree stays the lazy path.
+   */
+  public async ensureScanned(): Promise<void> {
+    if (this.scanStarted) return;
+    this.scanStarted = true;
+    await this.runFullScan();
+  }
+
+  /**
+   * Every thread Claude opened that the human hasn't answered or resolved,
+   * across all files, in (file path, document) order — the walk order for
+   * "Next unread from Claude". Reads the cache; call `ensureScanned` first.
+   */
+  public listClaudeUnread(): Array<{ docPath: string; thread: InlineThread }> {
+    const out: Array<{ docPath: string; thread: InlineThread }> = [];
+    const paths = [...this.cache.keys()].sort((a, b) => a.localeCompare(b));
+    for (const docPath of paths) {
+      for (const thread of this.cache.get(docPath)?.openThreads ?? []) {
+        if (isClaudeUnread(thread)) out.push({ docPath, thread });
+      }
+    }
+    return out;
   }
 
   public dispose(): void {

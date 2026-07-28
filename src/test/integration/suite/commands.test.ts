@@ -35,6 +35,12 @@ const ALL_COMMANDS = [
   "markdownCollab.startClaudeTerminal",
   "markdownCollab.resetSendMode",
   "markdownCollab.openCollabEditor",
+  "markdownCollab.askClaudeToReview",
+  "markdownCollab.askClaudeToReviewFolder",
+  "markdownCollab.nextUnreadFromClaude",
+  "markdownCollab.openInlineCommentsView",
+  "markdownCollab.repairInlineComments",
+  "markdownCollab.toggleSuggestMode",
 ];
 
 function fixturePath(name: string): string {

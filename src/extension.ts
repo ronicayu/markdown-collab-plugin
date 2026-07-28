@@ -12,6 +12,12 @@ import {
   type ReviewPayload,
   type SendMode,
 } from "./sendToClaude";
+import {
+  buildMultiFileReviewPayload,
+  totalBytes,
+  type ReviewFile,
+} from "./multiFileReview";
+import { parse as parseInline } from "./inlineComments/format";
 import { buildInlinePayload, buildSingleThreadPayload } from "./inlineComments/sendToClaude";
 import { checkClaudeSkill, installClaudeSkill, skillFingerprint } from "./skill";
 import { EVENT_LOG_REL, EventLog } from "./transports/eventLog";
@@ -286,45 +292,28 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
   );
 
+  // One handler, two command ids: the explorer needs a folder-appropriate
+  // title ("These Docs") next to the file one, and a menu entry can't override
+  // a command's title.
+  const askClaudeToReview = async (
+    arg?: vscode.Uri,
+    selected?: vscode.Uri[],
+  ): Promise<void> => {
+    await invokeAskClaudeToReviewSelection(
+      resolveSelection(arg, selected),
+      output,
+      terminalTracker,
+      eventLogs,
+      context.workspaceState,
+      context.globalState,
+    );
+  };
   context.subscriptions.push(
-    vscode.commands.registerCommand(
-      "markdownCollab.askClaudeToReview",
-      async (arg?: vscode.Uri) => {
-        const uri =
-          arg instanceof vscode.Uri
-            ? arg
-            : vscode.window.activeTextEditor?.document.uri;
-        if (!uri) {
-          void vscode.window.showWarningMessage(
-            "Open a Markdown file first, then run this command.",
-          );
-          return;
-        }
-        let doc: vscode.TextDocument;
-        try {
-          doc = await vscode.workspace.openTextDocument(uri);
-        } catch (e) {
-          void vscode.window.showErrorMessage(
-            `Failed to open ${uri.fsPath}: ${(e as Error).message}`,
-          );
-          return;
-        }
-        if (doc.languageId !== "markdown" && !uri.fsPath.toLowerCase().endsWith(".md")) {
-          void vscode.window.showWarningMessage(
-            "Ask Claude to Review only supports .md files.",
-          );
-          return;
-        }
-        await invokeAskClaudeToReview(
-          doc,
-          output,
-          terminalTracker,
-          eventLogs,
-          context.workspaceState,
-          context.globalState,
-        );
-      },
-    ),
+    vscode.commands.registerCommand("markdownCollab.askClaudeToReview", askClaudeToReview),
+    vscode.commands.registerCommand("markdownCollab.askClaudeToReviewFolder", askClaudeToReview),
+    vscode.commands.registerCommand("markdownCollab.nextUnreadFromClaude", async () => {
+      await invokeNextUnreadFromClaude(reviewView, output);
+    }),
   );
 
   // On startup, nudge the user to install/update the Claude skill if it's
@@ -710,6 +699,261 @@ const RECENT_FOCUS_KEY = "markdownCollab.recentFocusHistory";
 const RECENT_FOCUS_MAX = 5;
 const FOCUS_MAX_LEN = 500;
 const LARGE_DOC_WARN_BYTES = 50 * 1024;
+
+const MARKDOWN_GLOB = "**/*.{md,markdown}";
+
+function isMarkdownFsPath(p: string): boolean {
+  const lower = p.toLowerCase();
+  return lower.endsWith(".md") || lower.endsWith(".markdown");
+}
+
+/**
+ * What the user actually pointed at. Explorer context menus invoke a command
+ * as `(clickedUri, allSelectedUris)`; everything else (palette, editor title)
+ * passes one uri or nothing, in which case the active editor is the subject.
+ */
+function resolveSelection(arg?: vscode.Uri, selected?: vscode.Uri[]): vscode.Uri[] {
+  if (Array.isArray(selected)) {
+    const uris = selected.filter((u): u is vscode.Uri => u instanceof vscode.Uri);
+    if (uris.length > 0) return uris;
+  }
+  if (arg instanceof vscode.Uri) return [arg];
+  const active = vscode.window.activeTextEditor?.document.uri;
+  return active ? [active] : [];
+}
+
+/**
+ * Expand a selection of files and folders to the `.md` files it contains,
+ * deduped and in path order. Folders are walked with the same exclusion the
+ * Markdown Review tree uses, so a folder review covers exactly the files that
+ * tree would show.
+ */
+async function expandMarkdownSelection(uris: vscode.Uri[]): Promise<vscode.Uri[]> {
+  const found = new Map<string, vscode.Uri>();
+  for (const uri of uris) {
+    let isDirectory = false;
+    try {
+      const stat = await vscode.workspace.fs.stat(uri);
+      isDirectory = (stat.type & vscode.FileType.Directory) !== 0;
+    } catch {
+      continue; // vanished between the click and here
+    }
+    if (isDirectory) {
+      const matches = await vscode.workspace.findFiles(
+        new vscode.RelativePattern(uri, MARKDOWN_GLOB),
+        "**/node_modules/**",
+      );
+      for (const m of matches) found.set(m.fsPath, m);
+    } else if (isMarkdownFsPath(uri.fsPath)) {
+      found.set(uri.fsPath, uri);
+    }
+  }
+  return [...found.values()].sort((a, b) => a.fsPath.localeCompare(b.fsPath));
+}
+
+/**
+ * Entry point for "Ask Claude to Review", for any selection shape: one file
+ * (the original flow), a folder, or a multi-select. A multi-file selection
+ * becomes ONE review pass so Claude can compare the files against each other.
+ */
+async function invokeAskClaudeToReviewSelection(
+  selection: vscode.Uri[],
+  output: vscode.OutputChannel,
+  tracker: TerminalTracker,
+  eventLogs: Map<string, EventLog>,
+  workspaceState: vscode.Memento,
+  globalState: vscode.Memento,
+): Promise<void> {
+  if (selection.length === 0) {
+    void vscode.window.showWarningMessage(
+      "Open a Markdown file first, then run this command.",
+    );
+    return;
+  }
+  const files = await expandMarkdownSelection(selection);
+  if (files.length === 0) {
+    void vscode.window.showWarningMessage(
+      selection.length === 1 && isMarkdownFsPath(selection[0].fsPath)
+        ? `Could not read ${path.basename(selection[0].fsPath)}.`
+        : "Ask Claude to Review only supports .md files — the selection contains none.",
+    );
+    return;
+  }
+
+  if (files.length === 1) {
+    let doc: vscode.TextDocument;
+    try {
+      doc = await vscode.workspace.openTextDocument(files[0]);
+    } catch (e) {
+      void vscode.window.showErrorMessage(
+        `Failed to open ${files[0].fsPath}: ${(e as Error).message}`,
+      );
+      return;
+    }
+    await invokeAskClaudeToReview(doc, output, tracker, eventLogs, workspaceState, globalState);
+    return;
+  }
+
+  await invokeAskClaudeToReviewMulti(
+    files,
+    output,
+    tracker,
+    eventLogs,
+    workspaceState,
+    globalState,
+  );
+}
+
+/**
+ * One Review Mode pass over several files. Everything the single-file flow
+ * does — soft size confirm, focus prompt, pending-review notification — but
+ * the confirm is on the summed size and the payload lists every file.
+ */
+async function invokeAskClaudeToReviewMulti(
+  uris: vscode.Uri[],
+  output: vscode.OutputChannel,
+  tracker: TerminalTracker,
+  eventLogs: Map<string, EventLog>,
+  workspaceState: vscode.Memento,
+  globalState: vscode.Memento,
+): Promise<void> {
+  const folder = vscode.workspace.getWorkspaceFolder(uris[0]);
+  if (!folder) {
+    void vscode.window.showWarningMessage(
+      "Ask Claude to Review: the files must live inside a workspace folder.",
+    );
+    return;
+  }
+  // The payload's paths are relative to one folder and the event log lives in
+  // one folder, so a selection spanning several is reviewed one folder at a
+  // time rather than silently mixing incomparable relative paths.
+  const inFolder = uris.filter(
+    (u) => vscode.workspace.getWorkspaceFolder(u)?.uri.fsPath === folder.uri.fsPath,
+  );
+  const skipped = uris.length - inFolder.length;
+
+  const files: ReviewFile[] = [];
+  for (const uri of inFolder) {
+    let bytes = 0;
+    try {
+      bytes = (await vscode.workspace.fs.stat(uri)).size;
+    } catch {
+      // Unreadable size is not a reason to drop the file from the review;
+      // it only makes the soft confirm slightly optimistic.
+    }
+    files.push({ rel: workspaceRelPosix(folder, uri), bytes });
+  }
+
+  const total = totalBytes(files);
+  if (total > LARGE_DOC_WARN_BYTES) {
+    const kb = Math.round(total / 1024);
+    const pick = await vscode.window.showWarningMessage(
+      `Reviewing ${files.length} files (${kb} KB total) — Claude's review may take a while and use significant context.`,
+      { modal: false },
+      "Continue",
+      "Cancel",
+    );
+    if (pick !== "Continue") return;
+  }
+
+  const focus = await promptForFocus(globalState);
+  if (focus === undefined) return; // user cancelled
+  const trimmedFocus = focus === "" ? undefined : focus;
+  if (trimmedFocus) await pushRecentFocus(globalState, trimmedFocus);
+
+  const payload = buildMultiFileReviewPayload(files, trimmedFocus);
+
+  // Snapshot thread state in every open panel for the selection, so each one
+  // scrolls to Claude's first new thread when the pass lands.
+  for (const uri of inFolder) InlineCommentsPanel.notifyReviewPending(uri);
+
+  if (skipped > 0) {
+    output.appendLine(
+      `Ask Claude to Review: skipped ${skipped} file(s) outside ${folder.name}.`,
+    );
+    void vscode.window.showInformationMessage(
+      `Reviewing ${files.length} file(s) in ${folder.name}; ${skipped} outside it were skipped — run the command again from that folder.`,
+    );
+  }
+
+  await dispatchReviewPayload(
+    payload,
+    output,
+    tracker,
+    eventLogs,
+    workspaceState,
+    folder,
+    { kind: "review-request", hasFocus: Boolean(trimmedFocus) },
+  );
+}
+
+/** Workspace-relative path with POSIX separators — it goes into a prompt. */
+function workspaceRelPosix(folder: vscode.WorkspaceFolder, uri: vscode.Uri): string {
+  return path.relative(folder.uri.fsPath, uri.fsPath).split(path.sep).join("/");
+}
+
+/**
+ * Walk every thread Claude opened and the human hasn't answered yet, across
+ * all files in the Markdown Review tree. Each invocation advances one thread
+ * and wraps at the end; the cursor is module state, so the walk survives
+ * switching editors but not a window reload (by design — a reload should start
+ * the pass over rather than resume mid-list from stale positions).
+ */
+let unreadWalkCursor: { docPath: string; threadId: string } | null = null;
+
+async function invokeNextUnreadFromClaude(
+  reviewView: ReviewView,
+  output: vscode.OutputChannel,
+): Promise<void> {
+  await reviewView.ensureScanned();
+  const unread = reviewView.listClaudeUnread();
+  if (unread.length === 0) {
+    unreadWalkCursor = null;
+    void vscode.window.showInformationMessage(
+      "No unread threads from Claude. Run 'Ask Claude to Review' to start a pass.",
+    );
+    return;
+  }
+  const currentIdx = unreadWalkCursor
+    ? unread.findIndex(
+        (u) =>
+          u.docPath === unreadWalkCursor?.docPath &&
+          u.thread.id === unreadWalkCursor?.threadId,
+      )
+    : -1;
+  const next = unread[(currentIdx + 1) % unread.length];
+  unreadWalkCursor = { docPath: next.docPath, threadId: next.thread.id };
+
+  try {
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(next.docPath));
+    const anchor = parseInline(doc.getText()).anchors.get(next.thread.id);
+    // Select the anchored passage itself (between the markers) so the thread's
+    // subject is highlighted, not the marker comment around it.
+    const selection = anchor
+      ? new vscode.Range(
+          doc.positionAt(anchor.openEnd),
+          doc.positionAt(anchor.closeStart),
+        )
+      : undefined;
+    await vscode.window.showTextDocument(doc, {
+      selection,
+      preview: false,
+    });
+  } catch (e) {
+    output.appendLine(
+      `Next unread failed for ${next.docPath}: ${(e as Error).message}`,
+    );
+    void vscode.window.showErrorMessage(
+      `Could not open ${path.basename(next.docPath)}.`,
+    );
+    return;
+  }
+  const position = ((currentIdx + 1) % unread.length) + 1;
+  void vscode.window.setStatusBarMessage(
+    `Unread from Claude ${position}/${unread.length} — ${path.basename(next.docPath)}`,
+    5000,
+  );
+}
 
 async function invokeAskClaudeToReview(
   doc: vscode.TextDocument,

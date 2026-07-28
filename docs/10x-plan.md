@@ -130,7 +130,24 @@ Explicitly **not** cursor-level streaming presence — no relay exists and none 
 
 **Acceptance:** Claude edits the file mid-session → changed spans flash and the status strip names the nearest heading; indicator clears when the thread reply arrives.
 
-### P1.3 Multi-file review sessions
+### P1.3 Multi-file review sessions — ✅ COMPLETE (v0.34.55)
+
+*Landed: "Ask Claude to Review" now takes a folder or a multi-select
+(`askClaudeToReviewFolder`, explorer context menu on folders) and builds ONE
+Review Mode payload over the selection — `src/multiFileReview.ts`, pure and
+unit-tested, with the cross-document consistency dimension stated as part of
+the pass rather than an optional extra. The 50 KB soft confirm now applies to
+the summed size (read via `fs.stat`, no doc opens); one focus prompt covers the
+selection; every open panel gets `notifyReviewPending`. A selection spanning
+several workspace folders is reviewed one folder at a time rather than mixing
+incomparable relative paths. The skill gained a "Multi-file review passes"
+section (read-all-first, then file-by-file, anchor cross-doc threads in the
+wrong file and name the other one, verify per file). For the walk half of the
+acceptance criteria: `ReviewView.listClaudeUnread()` +
+`markdownCollab.nextUnreadFromClaude` walk unread Claude threads across every
+file in the tree, selecting the anchored passage on arrival. Per-file counts
+were already in the tree. Dev-host pass still wanted for the folder
+right-click and the explorer multi-select, which unit tests can't reach.*
 
 **Problem.** "Ask Claude to Review" is per-file, but real doc work is a `docs/` folder or a PR's worth of files. The cross-file TreeView (`src/reviewView.ts`) already aggregates threads; only the initiation is single-file.
 

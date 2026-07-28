@@ -622,7 +622,7 @@ You MUST NOT:
 
 ### Review Mode (inline) — Claude as the reviewer
 
-When the human's request matches **Review Mode** trigger phrases — "review this doc", "leave your thoughts on X", "do a review pass on Y", "second pair of eyes on README", "what would you flag in this file", or the Markdown Collab extension's "Ask Claude to Review This Doc" command — you switch from addressing existing comments to **initiating** new review threads. The human will triage them in the sidebar.
+When the human's request matches **Review Mode** trigger phrases — "review this doc", "leave your thoughts on X", "do a review pass on Y", "second pair of eyes on README", "what would you flag in this file", or the Markdown Collab extension's "Ask Claude to Review This Doc" / "Ask Claude to Review These Docs" commands — you switch from addressing existing comments to **initiating** new review threads. The human will triage them in the sidebar. When the prompt names more than one file, read the *Multi-file review passes* section below before starting.
 
 The mechanics are the same as Phase 5: pick a passage, allocate an id, insert paired markers, append a \`<!--mc:t {…}-->\` line with a single \`c1\` comment authored by \`"claude"\`, verify. Read Phase 5 first if you have not — it carries the invariants you must respect when wrapping passages.
 
@@ -702,6 +702,23 @@ Do not "leave the top N" — dropping findings to hit a count target risks suppr
 #### Honest empty result
 
 If you read the doc carefully and find no concerns that match the focus (or no general-rubric concerns if no focus was given), say so explicitly via the send channel. Do **not** open a thread to comment "looks good" — threads are for actionable concerns. A short reply of *"Reviewed \`<path>\` against focus \`<focus>\`. No concerns found."* is the correct outcome.
+
+#### Multi-file review passes
+
+A Review Mode prompt may name **several files** instead of one — the extension's "Ask Claude to Review These Docs" command builds one pass over a folder or a multi-select. The prompt lists the files; treat that list as the work order.
+
+1. **Read every listed file end to end before opening any thread.** You cannot judge consistency across files you haven't read, and a thread opened in file 1 may be answered by file 3.
+2. **Then open threads file by file, in the order listed**, document order within each file. Same Phase 5 mechanics per file; ids only need to be unique within their own file.
+3. **Cross-document consistency is part of the pass**, not an optional extra — reviewing each file in isolation is what the single-file command already does. Look for:
+   - terminology drift (the same concept under two names across files, or one name used for two concepts),
+   - a claim in one file contradicted by another,
+   - guidance duplicated in two files that has since diverged,
+   - cross-references between the files that no longer resolve (renamed heading, moved section, stale relative path).
+4. **Anchor a cross-document thread in the file that is wrong.** When neither is clearly wrong, anchor in the more prominent one (the entry-point doc, the one a reader hits first). Name the other file and quote its conflicting text in the body — the human is reading the thread without the other file open.
+   *Good:* *"\`docs/api.md\` calls this the \\"channel token\\"; here it's the \\"session key\\". Same value, two names — pick one and update the other file."*
+5. **The focus directive and the no-upper-bound rule apply per pass, not per file.** Don't ration threads across files to keep any one file's count down.
+6. **Verify each file** with \`mdc check <file>\` before moving to the next. A broken marker in file 1 is much cheaper to fix before you've edited files 2 and 3.
+7. **Report per file** — how many threads you opened in each, plus the cross-document findings called out separately, so the human knows what the sidebar's per-file counts mean.
 
 #### Workflow — Review Mode pass
 

@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.34.55 — 2026-07-28 (trial)
+
+### Added: multi-file review sessions (10x-plan P1.3)
+
+"Ask Claude to Review" was per-file, but real doc work is a `docs/` folder or a
+PR's worth of files. It now takes a **folder or a multi-select**: right-click a
+folder in the explorer → **Markdown Collab: Ask Claude to Review These Docs**,
+or select several `.md` files and use the same action. Every `.md` under the
+selection (excluding `node_modules`) goes into **one** review pass.
+
+One pass rather than N is the point: it lets Claude do the thing a per-file
+review structurally cannot — compare the documents against each other.
+**Cross-document consistency is part of the pass**, not an optional extra:
+terminology that drifts between files, a claim in one file contradicted by
+another, guidance duplicated in two files that has since diverged, and
+cross-references that no longer resolve. Such a thread is anchored in the file
+that's wrong (or the more prominent one when neither clearly is) and names the
+other file and its conflicting text in the body, since the human reads the
+thread without the other file open.
+
+Details:
+
+- One focus prompt covers the whole selection, with the same recent-focus
+  quick-pick as the single-file flow.
+- The 50 KB soft confirm now applies to the **summed** size, read via
+  `fs.stat` — no documents are opened just to measure them.
+- A selection spanning several workspace folders is reviewed one folder at a
+  time (relative paths and the event log are both folder-scoped); the skipped
+  count is reported rather than silently dropped.
+- The payload gained a `files` array; `file` carries a human label
+  ("3 files under docs/") for toasts and the event-log envelope.
+- Every open Inline Comments panel in the selection gets the pending-review
+  notification, so each scrolls to Claude's first new thread when the pass
+  lands.
+- The skill gained a **Multi-file review passes** section: read every listed
+  file end to end *before* opening any thread, then work file by file in the
+  listed order, verify each with `mdc check` before moving on, and report
+  per-file counts with cross-document findings called out separately.
+
+### Added: Next Unread from Claude walks across files
+
+The "N new from Claude · Next" affordance was per-document. **Markdown Collab:
+Next Unread from Claude** — also the → button in the Markdown Review view's
+title bar — walks every thread Claude opened and you haven't answered, across
+all files in the tree, in path order, wrapping at the end. It opens the file
+with the thread's anchored passage selected, and shows position ("3/12") in the
+status bar. Backed by `ReviewView.listClaudeUnread()`, which reads the tree's
+existing cache; `ensureScanned()` populates it for the command even when the
+tree was never expanded.
+
 ## 0.34.54 — 2026-07-28 (EXPERIMENTAL — dogfood build, not for the marketplace)
 
 **Experimental pre-release for hands-on testing in real VS Code.** It bundles
