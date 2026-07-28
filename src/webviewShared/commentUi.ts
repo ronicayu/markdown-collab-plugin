@@ -142,6 +142,13 @@ export interface CommentCardOptions {
   /** Pre-rendered body element (e.g. markdown HTML), used instead of `body`. */
   bodyEl?: HTMLElement;
   badges?: string[];
+  /**
+   * Claude has been sent this thread and hasn't replied yet. Renders a muted
+   * "Claude is working…" row under the body — deliberately in the card rather
+   * than a toast, because the wait belongs to a specific thread and the human
+   * is looking at the list, not at the corner of the screen.
+   */
+  pending?: boolean;
   /** Render as a nested reply (indented, lighter chrome). */
   reply?: boolean;
   actions?: CardAction[];
@@ -187,6 +194,18 @@ export function buildCommentCard(opts: CommentCardOptions): HTMLElement {
   })();
   bodyEl.classList.add("mc-card__body");
   card.appendChild(bodyEl);
+
+  if (opts.pending) {
+    const working = document.createElement("div");
+    working.className = "mc-card__pending";
+    const dot = document.createElement("span");
+    dot.className = "mc-card__pending-dot";
+    working.appendChild(dot);
+    const label = document.createElement("span");
+    label.textContent = "Claude is working\u2026";
+    working.appendChild(label);
+    card.appendChild(working);
+  }
 
   if (opts.actions && opts.actions.length > 0) {
     const row = document.createElement("div");

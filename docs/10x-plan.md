@@ -116,7 +116,29 @@ before a public release.*
 
 **Acceptance:** full loop works end-to-end in the Extension Development Host: human comments → send in suggest mode → Claude proposes → human accepts one, rejects one → file content and thread state correct, zero orphaned markers. Corpus tests from P0.3 extended with suggestion ops.
 
-### P1.2 Claude presence in the live editor
+### P1.2 Claude presence in the live editor — ✅ COMPLETE (v0.34.52 + v0.34.60)
+
+*The first two affordances landed in v0.34.52 (changed spans flash; a clickable
+"Claude edited §Heading" strip). The third — the in-flight indicator — landed in
+v0.34.60, and the header sat unmarked until then because of it.*
+
+*As shipped:* the host tracks which threads a dispatch covered and whether each
+has been answered (`inlineComments/claudePending.ts`, pure and unit-tested;
+`claudePendingService.ts` owns the single instance). Answered is comment-shaped,
+not time-shaped: a thread stops waiting when a Claude comment appears that
+wasn't there at dispatch — so a human replying to their own thread while waiting
+does not clear it, and a thread Claude had already replied to before the send
+does not clear instantly. A 10-minute timeout exists only because a dispatch can
+go unanswered forever (Claude closed, terminal paste never ran) and a permanent
+"working…" is a lie. Both views render the same shared card row, and the state
+lives in the host so it survives a webview reload and is shared between them.
+
+*One design correction during the build:* marking started at each call site and
+immediately missed one — the guard test caught it on its first run. Marking now
+happens inside `dispatchReviewPayload`'s delivery branches, derived from
+`payload.comments`, so no send path can forget it and review-mode payloads
+(which carry no comments) correctly mark nothing. Clipboard mode deliberately
+does not mark: nothing has been delivered until the human pastes.
 
 **Problem.** The live editor's "co-editing" is invisible: Claude's edits appear as an unexplained flash + toast. The collaboration doesn't *feel* live, which undercuts the headline feature.
 
@@ -317,8 +339,10 @@ P1.2, P1.3, P3.x — independent, schedule opportunistically
 Recommended order: **P0.3 → P0.1 → P0.2 → P2.2 → P2.1 → P1.1 → P1.2 → P2.3 → P1.3 → P2.4 (continuous) → P3.x**.
 
 **Progress: the plan is complete.** Every initiative — P0, P1, P2, and P3 —
-has landed across v0.34.41–0.34.58, with 847 unit tests and a working
-Extension Host suite behind it.
+has landed across v0.34.41–0.34.60, with 884 unit tests and a working
+Extension Host suite behind it. (P1.2 was the last one closed: two of its three
+affordances shipped in v0.34.52 and the in-flight indicator in v0.34.60, which
+is why its header outlived the rest of the tier.)
 
 What still wants a human: the write paths from P1.1 (accept/reject a
 suggestion) and the folder / multi-select entry points from P1.3 have unit,

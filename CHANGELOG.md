@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.34.60 — 2026-07-28 (trial)
+
+### Added: "Claude is working…" on threads awaiting a reply (completes 10x-plan P1.2)
+
+Sending comments to Claude was the one moment in the workflow with no feedback:
+you clicked, the payload went out, and nothing changed until the file was
+rewritten underneath you. Threads you've sent now carry a muted
+**Claude is working…** row, under the last comment — where the reply will land.
+
+This closes P1.2, whose other two affordances (changed spans flashing, the
+clickable "Claude edited §Heading" strip) shipped back in v0.34.52.
+
+How it decides:
+
+- **Answered is comment-shaped, not time-shaped.** A thread stops waiting when a
+  comment authored by Claude appears that wasn't there at dispatch. Counting
+  comments alone would clear the indicator when *you* add a note while waiting;
+  checking the author alone would clear it instantly on a thread Claude had
+  already replied to before you sent it.
+- **Resolving or deleting the thread also ends the wait** — there is nothing
+  left to wait for.
+- **A 10-minute timeout exists only as a backstop.** A dispatch can go
+  unanswered forever (Claude closed, the terminal paste never ran), and a
+  permanent "working…" is a lie. Elapsed time otherwise means nothing.
+- **Clipboard sends don't mark anything.** Nothing has been delivered until you
+  paste it, so claiming Claude is working would be a guess.
+- **Review-mode sends don't mark anything** either: they create threads rather
+  than addressing existing ones, so there is no card to annotate.
+
+The state lives in the extension host, not a webview, so it survives a panel
+reload, appears in whichever view you open next, and reads the same in the
+inline comments view and the live editor. Both render it from the same shared
+card, and both re-render when the pending set changes — neither marking nor
+expiry has a file write to hang off.
+
+*Build note:* marking started at each send call site and immediately missed
+one, which the new source-level guard caught on its first run. It now happens
+inside `dispatchReviewPayload`'s delivery branches, derived from the payload
+itself, so no send path can forget it.
+
 ## 0.34.59 — 2026-07-28 (trial)
 
 ### Fixed: suggest mode was ignored by the button next to its own toggle

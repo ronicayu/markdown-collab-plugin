@@ -18,6 +18,7 @@ import {
   type ReviewFile,
 } from "./multiFileReview";
 import { parse as parseInline } from "./inlineComments/format";
+import { claudePending } from "./claudePendingService";
 import { buildInlinePayload, buildSingleThreadPayload } from "./inlineComments/sendToClaude";
 import { checkClaudeSkill, installClaudeSkill, skillFingerprint } from "./skill";
 import { EVENT_LOG_REL, EventLog } from "./transports/eventLog";
@@ -503,6 +504,31 @@ async function invokeSendAllToClaude(
     workspaceState,
     folder,
   );
+
+}
+
+/**
+ * Record that Claude owes a reply on the threads this payload carries, so
+ * every open view can show "Claude is working…" on them (10x-plan P1.2).
+ *
+ * Called from the delivery branches of `dispatchReviewPayload` rather than
+ * from each command, so a new send path cannot forget it. Review-mode payloads
+ * carry no comments and therefore mark nothing — they create threads instead
+ * of addressing existing ones, so there is no card to annotate.
+ */
+async function markPayloadPending(
+  payload: ReviewPayload,
+  folder: vscode.WorkspaceFolder,
+): Promise<void> {
+  const threadIds = payload.comments.map((c) => c.id);
+  if (threadIds.length === 0) return;
+  try {
+    const uri = vscode.Uri.joinPath(folder.uri, payload.file);
+    const doc = await vscode.workspace.openTextDocument(uri);
+    claudePending.mark(uri.toString(), parseInline(doc.getText()).threads, threadIds);
+  } catch {
+    // The indicator is a nicety; never fail a successful send over it.
+  }
 }
 
 /** Whether "Send to Claude" should ask Claude to propose edits as suggestions. */
@@ -623,6 +649,7 @@ async function dispatchReviewPayload(
       return;
     }
     if (!sendResult.ok) return;
+    await markPayloadPending(payload, folder);
     const msg =
       intent.kind === "review-request"
         ? `Claude is reviewing — threads will appear when it's done. (Sent to "${sendResult.terminalName}".)`
@@ -648,6 +675,7 @@ async function dispatchReviewPayload(
       );
       return;
     }
+    await markPayloadPending(payload, folder);
     if (mode === "channel") {
       void vscode.window.showInformationMessage(
         `Appended to ${EVENT_LOG_REL}. In Claude, run \`mdc-tail.mjs\` in background and Monitor it.${rememberedSuffix}`,

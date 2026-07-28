@@ -92,6 +92,7 @@ interface InitMsg {
   plantuml?: { serverUrl: string; format: "svg" | "png" };
   skillStatus?: SkillStatus;
   suggestMode?: boolean;
+  pendingThreadIds?: string[];
 }
 
 type SkillStatus = "missing" | "outdated" | "current";
@@ -105,6 +106,7 @@ interface UpdateMsg {
   type: "update";
   state: SerializedState;
   suggestMode?: boolean;
+  pendingThreadIds?: string[];
 }
 
 interface ReviewPendingMsg {
@@ -531,6 +533,9 @@ function cssEscape(s: string): string {
 let currentState: SerializedState | null = null;
 let user: { name: string } = { name: "anonymous" };
 let filter: ThreadFilter = "open";
+// Threads dispatched to Claude and not yet answered — the host owns this, so
+// it survives a webview reload and matches whatever the live editor shows.
+let pendingThreadIds: ReadonlySet<string> = new Set();
 // How many thread cards the list is currently allowed to build. Grows by a
 // chunk each time the user clicks "Show more"; resets when the filter changes,
 // since that is a new list.
@@ -1075,9 +1080,14 @@ function renderThreadCard(t: ThreadState): HTMLElement {
   head.appendChild(actions);
   card.appendChild(head);
 
+  // "Claude is working…" hangs off the last comment, where the reply will
+  // land — the wait belongs to this thread, not to the panel as a whole.
+  const awaitingClaude = pendingThreadIds.has(t.id);
+  const lastLive = [...t.comments].reverse().find((c) => !c.deleted);
   for (const c of t.comments) {
-    card.appendChild(renderComment(t, c));
+    card.appendChild(renderComment(t, c, awaitingClaude && c === lastLive));
   }
+  if (awaitingClaude) card.classList.add("awaiting-claude");
 
   // Reply composer. We stop click propagation on the box and its children
   // so clicking inside doesn't bubble to the card's click handler (which
@@ -1120,7 +1130,7 @@ function renderThreadCard(t: ThreadState): HTMLElement {
   return card;
 }
 
-function renderComment(thread: ThreadState, c: InlineComment): HTMLElement {
+function renderComment(thread: ThreadState, c: InlineComment, pending = false): HTMLElement {
   if (c.deleted) {
     const card = buildCommentCard({
       author: c.author,
@@ -1204,6 +1214,7 @@ function renderComment(thread: ThreadState, c: InlineComment): HTMLElement {
     bodyEl,
     reply: !!c.parent,
     actions,
+    pending,
   });
 }
 
@@ -1475,9 +1486,11 @@ window.addEventListener("message", (ev) => {
     ensurePlantumlInstalled(msg.plantuml);
     renderSkillWarning(msg.skillStatus);
     updateSuggestModeToggle(msg.suggestMode ?? false);
+    pendingThreadIds = new Set(msg.pendingThreadIds ?? []);
     render(msg.state);
   } else if (msg.type === "update") {
     updateSuggestModeToggle(msg.suggestMode ?? false);
+    pendingThreadIds = new Set(msg.pendingThreadIds ?? []);
     render(msg.state);
   } else if (msg.type === "review-pending") {
     pendingReviewSnapshot = new Set(msg.existingIds);

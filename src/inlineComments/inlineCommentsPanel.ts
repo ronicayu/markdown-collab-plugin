@@ -21,6 +21,7 @@ import * as vscode from "vscode";
 import { isInsideRoot } from "../pathUtils";
 import { checkClaudeSkill, type SkillStatus } from "../skill";
 import { runDrawioRead } from "../collab/drawioService";
+import { claudePending, onPendingChanged } from "../claudePendingService";
 import { detectUrlScheme, parseLinkHref, slugifyHeading } from "./linkParse";
 import {
   findFrontmatter,
@@ -55,12 +56,15 @@ interface InitMessage {
   skillStatus: SkillStatus;
   /** Whether "Send to Claude" proposes edits as suggestions (accept/reject). */
   suggestMode: boolean;
+  /** Threads dispatched to Claude that haven't been answered yet (P1.2). */
+  pendingThreadIds: string[];
 }
 
 interface UpdateMessage {
   type: "update";
   state: SerializedState;
   suggestMode: boolean;
+  pendingThreadIds: string[];
 }
 
 interface SkillStatusMessage {
@@ -335,6 +339,11 @@ export class InlineCommentsPanel {
         if (e.document.uri.toString() !== this.doc.uri.toString()) return;
         if (this.pendingApply) return;
         void this.pushState();
+      }),
+      // The pending set changes when a payload goes out and when one expires
+      // unanswered — neither has a file write to hang off, so re-render here.
+      onPendingChanged((docKey) => {
+        if (docKey === this.doc.uri.toString()) void this.pushState();
       }),
       // Keep the suggest-mode toggle in sync when the setting is changed
       // elsewhere (command palette, Settings UI).
@@ -698,6 +707,11 @@ export class InlineCommentsPanel {
     return cfg.get<string>("collab.userName", "") || os.userInfo().username || "anonymous";
   }
 
+  /** Threads still awaiting Claude, pruned against the document's current state. */
+  private pendingThreadIds(): string[] {
+    return claudePending.pending(this.doc.uri.toString(), parse(this.doc.getText()).threads);
+  }
+
   /**
    * Run one webview mutation through the pure handler and apply the result.
    * The handler decides what the document becomes; the panel owns the
@@ -779,6 +793,7 @@ export class InlineCommentsPanel {
       plantuml: readPlantumlConfig(),
       skillStatus: await checkClaudeSkill(os.homedir()),
       suggestMode: readSuggestMode(),
+      pendingThreadIds: this.pendingThreadIds(),
     };
     await this.panel.webview.postMessage(msg);
   }
@@ -797,7 +812,12 @@ export class InlineCommentsPanel {
 
   private async pushState(): Promise<void> {
     const state = serialize(parse(this.doc.getText()));
-    const msg: UpdateMessage = { type: "update", state, suggestMode: readSuggestMode() };
+    const msg: UpdateMessage = {
+      type: "update",
+      state,
+      suggestMode: readSuggestMode(),
+      pendingThreadIds: this.pendingThreadIds(),
+    };
     await this.panel.webview.postMessage(msg);
   }
 

@@ -24,6 +24,7 @@ import { summarizeChange } from "./changeSummary";
 import { runDrawioRead, type DrawioReadResult } from "./drawioService";
 
 export type { DrawioReadResult };
+import { claudePending, onPendingChanged } from "../claudePendingService";
 import { classifyLink } from "./linkRouter";
 import { isExternalLinkSafe } from "./urlAllowlist";
 
@@ -35,6 +36,8 @@ interface InitPayload {
   user: { name: string; color: string };
   comments: CollabComment[];
   suggestions: CollabSuggestion[];
+  /** Threads dispatched to Claude that haven't been answered yet (P1.2). */
+  pendingThreadIds: string[];
   /** Raw frontmatter block, shown in a dedicated read-only panel. "" when absent. */
   frontmatter: string;
   /** Webview URIs for resolving relative image src in the markdown. */
@@ -55,6 +58,7 @@ interface CommentsChangedPayload {
   type: "sidecar-changed";
   comments: CollabComment[];
   suggestions: CollabSuggestion[];
+  pendingThreadIds: string[];
 }
 
 interface EditMessage {
@@ -402,8 +406,18 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         type: "sidecar-changed",
         comments: commentsOf(source),
         suggestions: suggestionsOf(source),
+        pendingThreadIds: claudePending.pending(
+          document.uri.toString(),
+          parseInline(source).threads,
+        ),
       } satisfies CommentsChangedPayload);
     };
+
+    // The pending set changes when a payload goes out and when one expires
+    // unanswered — neither has a file write to hang off, so re-push here.
+    const pendingSub = onPendingChanged((docKey) => {
+      if (docKey === document.uri.toString()) pushComments();
+    });
 
     const messageSub = panel.webview.onDidReceiveMessage((raw: unknown) => {
       const msg = raw as ClientMessage | undefined;
@@ -421,6 +435,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
           user,
           comments: commentsOf(source),
           suggestions: suggestionsOf(source),
+          pendingThreadIds: claudePending.pending(document.uri.toString(), parseInline(source).threads),
           frontmatter: lastFrontmatter,
           imageBaseUris: {
             docDir: panel.webview.asWebviewUri(docDirUri).toString(),
@@ -547,6 +562,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       if (autosaveTimer) clearTimeout(autosaveTimer);
       messageSub.dispose();
       docSub.dispose();
+      pendingSub.dispose();
     });
   }
 

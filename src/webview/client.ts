@@ -82,6 +82,7 @@ interface InitMessage {
   user: { name: string; color: string };
   comments: CommentSummary[];
   suggestions?: SuggestionSummary[];
+  pendingThreadIds?: string[];
   frontmatter?: string;
   imageBaseUris?: ImageBaseUris;
 }
@@ -109,6 +110,7 @@ interface SidecarChangedMessage {
   type: "sidecar-changed";
   comments: CommentSummary[];
   suggestions?: SuggestionSummary[];
+  pendingThreadIds?: string[];
 }
 
 interface AddCommentResultMessage {
@@ -193,9 +195,12 @@ const sidebarState: {
   // Transient one-line status (e.g. "Updated from disk" when Claude edits the
   // file). null when nothing to show.
   notice: string | null;
+  /** Threads dispatched to Claude and not yet answered — owned by the host. */
+  pending: ReadonlySet<string>;
 } = {
   comments: [],
   suggestions: [],
+  pending: new Set<string>(),
   hideResolved: false,
   collapsed: false,
   notice: null,
@@ -319,6 +324,7 @@ async function init(msg: InitMessage): Promise<void> {
   buildLayout();
   sidebarState.comments = msg.comments ?? [];
   sidebarState.suggestions = msg.suggestions ?? [];
+  sidebarState.pending = new Set(msg.pendingThreadIds ?? []);
   cachedMarkdown = msg.text;
   renderFrontmatter(msg.frontmatter ?? "");
   renderSidebar();
@@ -701,10 +707,17 @@ function renderCommentCard(c: CommentSummary): HTMLElement {
 
   // Root comment, then replies — each a shared card carrying its own Delete
   // (a single comment), separate from the thread-level "Delete thread".
-  article.appendChild(renderInnerCard(c.id, c.rootCommentId, c.author, c.createdAt, c.body, false));
-  for (const r of c.replies) {
-    article.appendChild(renderInnerCard(c.id, r.id, r.author, r.createdAt, r.body, true));
-  }
+  // "Claude is working…" hangs off the last one, where the reply will land.
+  const awaiting = sidebarState.pending.has(c.id);
+  if (awaiting) article.classList.add("mdc-comment--awaiting");
+  article.appendChild(
+    renderInnerCard(c.id, c.rootCommentId, c.author, c.createdAt, c.body, false, awaiting && c.replies.length === 0),
+  );
+  c.replies.forEach((r, i) => {
+    article.appendChild(
+      renderInnerCard(c.id, r.id, r.author, r.createdAt, r.body, true, awaiting && i === c.replies.length - 1),
+    );
+  });
 
   article.appendChild(renderReplyBox(c.id));
   return article;
@@ -719,12 +732,14 @@ function renderInnerCard(
   ts: string,
   body: string,
   reply: boolean,
+  pending = false,
 ): HTMLElement {
   return buildCommentCard({
     author,
     timestamp: ts,
     bodyEl: buildLinkifiedBody(body),
     reply,
+    pending,
     actions: [
       {
         label: "Delete",
@@ -1988,6 +2003,7 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
   } else if (msg.type === "sidecar-changed") {
     sidebarState.comments = msg.comments ?? [];
     sidebarState.suggestions = msg.suggestions ?? [];
+    sidebarState.pending = new Set(msg.pendingThreadIds ?? []);
     reconcileComments();
     renderSuggestions();
     forceHighlightRefresh();

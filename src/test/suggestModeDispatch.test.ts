@@ -131,3 +131,42 @@ describe("every send path reads the suggest-mode toggle", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// The same class of bug, for the "Claude is working…" indicator (P1.2): a
+// dispatch that forgets to mark its threads pending leaves the user staring at
+// a card that says nothing while Claude works.
+// ---------------------------------------------------------------------------
+
+describe("dispatch marks its threads pending", () => {
+  // Marking lives in `dispatchReviewPayload`'s delivery branches rather than
+  // in each command, so a new send path cannot forget it — the earlier draft
+  // of this feature marked at call sites and immediately missed one.
+  const source = fs.readFileSync(path.join(__dirname, "..", "extension.ts"), "utf8");
+
+  function dispatcherBody(): string {
+    const start = source.indexOf("async function dispatchReviewPayload(");
+    expect(start, "dispatchReviewPayload not found").toBeGreaterThan(-1);
+    const next = source.indexOf("\nasync function ", start + 1);
+    const end = next === -1 ? source.length : next;
+    return source.slice(start, end);
+  }
+
+  it("marks pending inside the dispatcher, not at the call sites", () => {
+    expect(dispatcherBody()).toMatch(/markPayloadPending\(payload, folder\)/);
+  });
+
+  it("marks on every delivery branch that actually reaches Claude", () => {
+    // terminal + channel/mcp-channel. Clipboard is deliberately excluded:
+    // nothing has been delivered until the human pastes it, so claiming
+    // Claude is working would be a guess.
+    const marks = dispatcherBody().match(/markPayloadPending\(/g) ?? [];
+    expect(marks.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("derives the threads from the payload rather than a caller argument", () => {
+    // payload.comments carries thread ids for comment-addressing sends and is
+    // empty for review-mode, which is exactly the right marking behavior.
+    expect(source).toMatch(/const threadIds = payload\.comments\.map/);
+  });
+});
