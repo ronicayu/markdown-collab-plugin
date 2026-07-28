@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.34.54 — 2026-07-28 (EXPERIMENTAL — dogfood build, not for the marketplace)
+
+**Experimental pre-release for hands-on testing in real VS Code.** It bundles
+everything since the last public release (0.34.39) — a large batch implementing
+most of the 10x plan. Install it to dogfood; keep real work on the published
+marketplace version until this is promoted.
+
+Highlights to exercise (see the individual entries below for detail):
+
+- **Suggest mode (reviewable AI edits) — the headline feature.** Turn on the
+  **Suggest: on** toggle next to Send-to-Claude (or the *Toggle Suggest Mode*
+  command), send, and Claude proposes edits as accept/reject **suggestions**
+  instead of applying them. Review them as inline-diff cards in **both** the
+  inline comments view and the live editor; Accept applies, Reject keeps the
+  original.
+- **Marker-safe comment editing.** Claude now mutates comments through the
+  bundled `mdc` helper (structured, integrity-checked) rather than hand-editing
+  markers. Damaged anchors are detected on save with a one-click **Repair**.
+- **Claude presence in the live editor.** When Claude edits the open file, the
+  changed span flashes and a "Claude edited §Heading" strip points you to it.
+- **Live editor is lighter.** The dead multi-peer relay and the local Yjs layer
+  are gone (~110 KB off the webview bundle, 8 dependencies removed). Undo,
+  typing, and external-change convergence should behave exactly as before.
+- **Unified comment UI** across all three review surfaces.
+
+**Please focus testing on the document write paths** — accepting/rejecting
+suggestions, addressing comments, and Claude editing the file while the live
+editor is open — since those write-and-refresh flows are the parts verified so
+far only by unit tests and headless checks, not a running Extension Host.
+
 ## 0.34.53 — 2026-07-27 (trial)
 
 ### Changed: one shared bundle step for comments.css (completes 10x-plan P2.1)
