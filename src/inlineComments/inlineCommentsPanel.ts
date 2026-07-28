@@ -493,7 +493,7 @@ export class InlineCommentsPanel {
   }
 
   private async handleSendToClaude(): Promise<void> {
-    const payload = buildInlinePayload(this.doc);
+    const payload = buildInlinePayload(this.doc, { suggestMode: readSuggestMode() });
     if (!payload) {
       void vscode.window.showInformationMessage(
         "Inline comments: no open threads to send.",
@@ -509,7 +509,7 @@ export class InlineCommentsPanel {
   }
 
   private async handleCopyPrompt(): Promise<void> {
-    const payload = buildInlinePayload(this.doc);
+    const payload = buildInlinePayload(this.doc, { suggestMode: readSuggestMode() });
     if (!payload) {
       void vscode.window.showInformationMessage(
         "Inline comments: no open threads to copy.",
@@ -523,7 +523,9 @@ export class InlineCommentsPanel {
   }
 
   private async handleSendToClaudeComment(threadId: string): Promise<void> {
-    const payload = buildSingleThreadPayload(this.doc, threadId);
+    const payload = buildSingleThreadPayload(this.doc, threadId, {
+      suggestMode: readSuggestMode(),
+    });
     if (!payload) {
       void vscode.window.showInformationMessage(
         "Inline comments: thread not found or already resolved.",
@@ -534,7 +536,9 @@ export class InlineCommentsPanel {
   }
 
   private async handleCopyClaudeComment(threadId: string): Promise<void> {
-    const payload = buildSingleThreadPayload(this.doc, threadId);
+    const payload = buildSingleThreadPayload(this.doc, threadId, {
+      suggestMode: readSuggestMode(),
+    });
     if (!payload) {
       void vscode.window.showInformationMessage(
         "Inline comments: thread not found or already resolved.",

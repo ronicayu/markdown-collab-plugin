@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.34.59 — 2026-07-28 (trial)
+
+### Fixed: suggest mode was ignored by the button next to its own toggle
+
+Turning **Suggest: on** in the inline comments view and clicking **Send to
+Claude** sent an ordinary prompt, so Claude edited the file directly instead of
+proposing accept/reject suggestions.
+
+The toggle, the setting (`markdownCollab.proposeEditsAsSuggestions`), the
+command, and the badge were all correct — the flag was simply never read on the
+way out. `buildInlinePayload` takes suggest mode as an *optional* argument, and
+four of the five send paths didn't pass it:
+
+- the inline panel's **Send to Claude** button (the one beside the toggle),
+- the inline panel's **Copy prompt**,
+- per-thread **→ Claude** and **Copy**, from both the panel and the live editor
+  — `buildSingleThreadPayload` didn't even accept the option, so single-thread
+  sends could never request suggest mode at all.
+
+Only the command-palette *Send Unresolved Comments to Claude* passed it, which
+is why the feature worked in testing and looked inert in use. All five paths
+now read the setting, and single-thread sends carry the directive too: suggest
+mode is a property of the request, not of how many threads it covers.
+
+Guarded three ways, because the builders were never wrong and builder tests
+would not have caught this: unit tests that both payload builders carry the
+directive when asked; an Extension Host test that the per-thread copy path
+respects the toggle; and a source-level test asserting every
+`buildInlinePayload` / `buildSingleThreadPayload` call site passes a
+`suggestMode` read from the setting (verified to fail, naming the exact line,
+when the original bug is reintroduced).
+
 ## 0.34.58 — 2026-07-28 (trial)
 
 ### Added: the first Send to Claude click works it out for you (10x-plan P3.1)

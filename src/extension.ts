@@ -179,7 +179,9 @@ export function activate(context: vscode.ExtensionContext): void {
           );
           return;
         }
-        const payload = buildSingleThreadPayload(doc, threadId);
+        const payload = buildSingleThreadPayload(doc, threadId, {
+          suggestMode: isSuggestMode(),
+        });
         if (!payload) {
           void vscode.window.showInformationMessage(
             "Thread not found or already resolved.",
@@ -209,7 +211,9 @@ export function activate(context: vscode.ExtensionContext): void {
           );
           return;
         }
-        const payload = buildSingleThreadPayload(doc, threadId);
+        const payload = buildSingleThreadPayload(doc, threadId, {
+          suggestMode: isSuggestMode(),
+        });
         if (!payload) {
           void vscode.window.showInformationMessage(
             "Thread not found or already resolved.",

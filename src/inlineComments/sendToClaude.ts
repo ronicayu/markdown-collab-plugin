@@ -26,6 +26,7 @@ export interface InlineReviewPayload extends ReviewPayload {
 export function buildSingleThreadPayload(
   doc: vscode.TextDocument,
   threadId: string,
+  opts?: { suggestMode?: boolean },
 ): InlineReviewPayload | null {
   const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
   if (!folder) return null;
@@ -33,10 +34,15 @@ export function buildSingleThreadPayload(
   const thread = parsed.threads.find((t) => t.id === threadId && t.status === "open");
   if (!thread) return null;
   const rel = path.relative(folder.uri.fsPath, doc.uri.fsPath);
-  const prompt = [
+  const lines = [
     `Use the vs-markdown-collab skill on \`${rel}\`.`,
     `Address only the open thread with id ${thread.id} (anchored on: ${JSON.stringify(thread.quote)}).`,
-  ].join("\n");
+  ];
+  // Suggest mode is a property of the request, not of how many threads it
+  // covers — sending one thread must respect the toggle exactly like sending
+  // all of them.
+  if (opts?.suggestMode) lines.push("", SUGGEST_MODE_DIRECTIVE);
+  const prompt = lines.join("\n");
   return {
     file: rel,
     unresolvedCount: 1,

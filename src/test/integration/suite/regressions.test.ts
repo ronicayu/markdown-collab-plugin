@@ -341,6 +341,28 @@ suite("Historical regressions (real host)", () => {
       const suggesting = await vscode.env.clipboard.readText();
       assert.ok(/suggest mode/i.test(suggesting), `prompt missing the suggest directive: ${suggesting}`);
       assert.ok(suggesting.includes("mdc suggest"), `prompt should name the helper: ${suggesting}`);
+
+      // ...and the per-thread path too. This one silently ignored the toggle
+      // until v0.34.59: suggest mode is a property of the request, not of how
+      // many threads it covers.
+      const threadId = parse(doc.getText()).threads[0]!.id;
+      await vscode.env.clipboard.writeText("cleared-by-test");
+      await vscode.commands.executeCommand(
+        "markdownCollab.copyThreadToClaude",
+        doc.uri,
+        threadId,
+      );
+      await waitFor(
+        async () => (await vscode.env.clipboard.readText()) !== "cleared-by-test",
+        5000,
+        "clipboard never updated with the per-thread prompt",
+      );
+      const perThread = await vscode.env.clipboard.readText();
+      assert.ok(perThread.includes(threadId), `per-thread prompt lost its scope: ${perThread}`);
+      assert.ok(
+        /suggest mode/i.test(perThread),
+        `per-thread prompt ignored the suggest toggle: ${perThread}`,
+      );
     } finally {
       await config.update("sendMode", prevMode, vscode.ConfigurationTarget.Workspace);
       await config.update(
