@@ -188,7 +188,32 @@ of source + 8 dependencies gone total; ~110 KB off the webview bundle.*
 
 **Acceptance:** compile + full test suite green; live editor manual pass (edit, undo, comment, Claude external change) unaffected; report bundle-size before/after in the PR description.
 
-### P2.3 Converge the two markdown pipelines where they can converge
+### P2.3 Converge the two markdown pipelines where they can converge — ✅ COMPLETE (v0.34.57)
+
+*The asset/embed layer is now one implementation, and the convergence found a
+live rendering bug: the PR view carried its own hand-rolled image resolver —
+the pre-0.34.31 version that can't climb `..` — so `../diagrams/flow.png`
+rendered in the inline view and 404'd in the PR view. It now calls the shared
+`resolveImageSrc` like the other two surfaces.*
+
+*Landed:* `webviewShared/markdownPipeline.ts` builds the markdown-it renderer
+for both markdown-it surfaces (same options, same plugins, correct install
+order — the PlantUML fence rule chains to whatever was registered before it,
+so order is a contract, not a detail). `collab/drawioService.ts` owns the
+drawio read for both hosts, so the inline comments panel no longer imports the
+live editor's provider to do it, and `drawioRejectReasonMessage` moved beside
+the rejection reasons it explains. `src/test/fixtures/embeds.md` exercises
+every embed type in one document, and `sharedEmbeds.test.ts` asserts both
+markdown-it surfaces render it identically, that every image reference resolves
+to something loadable with no un-normalized `/../`, that mermaid and PlantUML
+emit what their clients expect, and that drawio hrefs resolve inside the
+workspace and are refused outside it. Verified headlessly: the same document
+through the inline view and the PR view produces byte-identical image srcs, the
+same PlantUML URL, and the same mermaid block.
+
+*Not converged, by design:* the live editor renders through Milkdown/ProseMirror
+and always will — the plan scopes this to the asset layer for that reason. What
+it shares is what's pure: `resolveImageSrc` and the drawio resolver.
 
 **Problem.** markdown-it (inline + PR) vs Milkdown/ProseMirror (live editor) will never render identically — this drove 21 image/diagram CHANGELOG entries. Full unification is not realistic (the live editor needs ProseMirror), but the *asset-resolution and embedded-diagram* layer can be one implementation.
 
@@ -273,12 +298,12 @@ P1.2, P1.3, P3.x — independent, schedule opportunistically
 
 Recommended order: **P0.3 → P0.1 → P0.2 → P2.2 → P2.1 → P1.1 → P1.2 → P2.3 → P1.3 → P2.4 (continuous) → P3.x**.
 
-**Progress:** P0 (all), P1.1, P1.2, P1.3, P2.1, P2.2, and P2.4 have landed
-(v0.34.41–0.34.56). Remaining: **P2.3** (converge the asset/embed layer across
-the two markdown pipelines) and the **P3** polish tier. The write paths added
-in P1.1 and the folder/multi-select entry points added in P1.3 still want a
-pass in the Extension Development Host before a public release — unit,
-contract, and integration tests cover the logic, but not the right-click.
+**Progress:** every P0, P1, and P2 initiative has landed (v0.34.41–0.34.57).
+Remaining: the **P3** polish tier (send-mode onboarding, performance headroom,
+docs hygiene, skill self-update). The write paths added in P1.1 and the
+folder/multi-select entry points added in P1.3 still want a pass in the
+Extension Development Host before a public release — unit, contract, and
+integration tests cover the logic, but not the right-click.
 
 Each initiative should land as its own version with a CHANGELOG entry, following the existing release discipline (`[skip-publish]` trial commits, tag only after Ronica confirms — tags publish publicly).
 

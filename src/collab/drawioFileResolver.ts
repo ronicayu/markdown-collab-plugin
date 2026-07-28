@@ -57,6 +57,24 @@ export function resolveDrawioHref(
   return { ok: true, absolutePath: candidate };
 }
 
+/**
+ * The human-facing message for a rejected href. Lives beside the rejection
+ * reasons rather than in a webview provider, so every surface that resolves a
+ * drawio link explains a refusal the same way.
+ */
+export function drawioRejectReasonMessage(reason: ResolveErr["reason"]): string {
+  switch (reason) {
+    case "empty-href":
+      return "Drawio link is empty.";
+    case "absolute-not-allowed":
+      return "Drawio link must be a workspace-relative path (no http:, file:, or absolute paths).";
+    case "outside-workspace":
+      return "Drawio link points outside the workspace.";
+    case "wrong-extension":
+      return "Drawio link must end in .drawio, .drawio.xml, or .xml.";
+  }
+}
+
 export function isDrawioHref(href: string): boolean {
   const trimmed = (href || "").trim().toLowerCase();
   if (!trimmed) return false;

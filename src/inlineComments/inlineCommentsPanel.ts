@@ -20,7 +20,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { isInsideRoot } from "../pathUtils";
 import { checkClaudeSkill, type SkillStatus } from "../skill";
-import { CollabEditorProvider } from "../collab/collabEditorProvider";
+import { runDrawioRead } from "../collab/drawioService";
 import { detectUrlScheme, parseLinkHref, slugifyHeading } from "./linkParse";
 import {
   findFrontmatter,
@@ -673,14 +673,16 @@ export class InlineCommentsPanel {
    */
   private async handleDrawioRead(requestId: string, href: string): Promise<void> {
     const folder = vscode.workspace.getWorkspaceFolder(this.doc.uri);
-    const result = await CollabEditorProvider.runDrawioRead(
-      requestId,
-      href,
-      this.doc.uri.fsPath,
-      folder?.uri.fsPath ?? null,
+    const result = await runDrawioRead(
+      {
+        requestId,
+        href,
+        documentPath: this.doc.uri.fsPath,
+        workspaceRoot: folder?.uri.fsPath ?? null,
+      },
       async (absPath) => {
-        const buf = await vscode.workspace.fs.readFile(vscode.Uri.file(absPath));
-        return Buffer.from(buf).toString("utf8");
+        const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(absPath));
+        return Buffer.from(bytes).toString("utf8");
       },
     );
     await this.panel.webview.postMessage(result);

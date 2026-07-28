@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.34.57 — 2026-07-28 (trial)
+
+### Fixed: `../images` didn't render in the PR/MR review view
+
+The PR review preview carried its own hand-rolled image-src resolver — a copy
+of the logic from before v0.34.31, which fixed exactly this — so a relative
+image that climbs out of the document's directory resolved to
+`<docDir>/diagrams/flow.png` instead of `<docDir>/../diagrams/flow.png` and
+404'd. It rendered correctly in the inline comments view and the live editor
+the whole time, because those two share the fixed resolver.
+
+The PR view now uses the same `resolveImageSrc` as the other surfaces.
+Verified headlessly: the same document through the inline view and the PR view
+now produces byte-identical image URLs, the same PlantUML URL, and the same
+mermaid block.
+
+### Changed: one asset/embed layer for every surface (10x-plan P2.3)
+
+Two renderers is a permanent fact of this codebase — the inline and PR views
+use markdown-it, the live editor uses Milkdown/ProseMirror — and that split has
+produced 21 image/diagram entries in this changelog. Full unification isn't
+realistic, but the layer where the divergences actually happen is the asset and
+embed handling, and that is now one implementation:
+
+- **`webviewShared/markdownPipeline.ts`** builds the markdown-it renderer for
+  both markdown-it surfaces. They previously constructed it by copy-paste,
+  which is how the PR view drifted. Plugin install order is now stated as the
+  contract it is: the PlantUML fence rule chains to whatever fence rule was
+  registered before it, so installing it before the source-offset plugin
+  silently loses mermaid and comment anchoring on every fence.
+- **`collab/drawioService.ts`** owns reading a `.drawio` file for a webview.
+  Both hosts call it, so the inline comments panel no longer imports the live
+  editor's `CollabEditorProvider` just to resolve a diagram path — that import
+  was the only thing coupling the two views. `drawioRejectReasonMessage` moved
+  next to the rejection reasons it explains, so every surface refuses a bad
+  href with the same words.
+- **`src/test/fixtures/embeds.md`** is one document with every embed type —
+  sibling / nested / parent-relative / workspace-absolute / remote /
+  protocol-relative / data images, mermaid, both PlantUML fence spellings, a
+  drawio link, and lookalikes inside code. `sharedEmbeds.test.ts` renders it
+  through the shared pipeline and asserts both surfaces agree, every image
+  reference resolves to something loadable with no un-normalized `/../`,
+  mermaid and PlantUML emit what their clients expect, and drawio hrefs resolve
+  inside the workspace and are refused outside it.
+
 ## 0.34.56 — 2026-07-28 (trial)
 
 ### Fixed: only the first comment in a paragraph was highlighted

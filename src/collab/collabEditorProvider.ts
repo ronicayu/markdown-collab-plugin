@@ -21,7 +21,9 @@ import {
 } from "./inlineBridge";
 import { acceptSuggestion, rejectSuggestion, parse as parseInline } from "../inlineComments/format";
 import { summarizeChange } from "./changeSummary";
-import { resolveDrawioHref } from "./drawioFileResolver";
+import { runDrawioRead, type DrawioReadResult } from "./drawioService";
+
+export type { DrawioReadResult };
 import { classifyLink } from "./linkRouter";
 import { isExternalLinkSafe } from "./urlAllowlist";
 
@@ -159,15 +161,6 @@ interface DrawioReadMessage {
   /** Stable id minted by the webview so it can correlate the response. */
   requestId: string;
   href: string;
-}
-
-export interface DrawioReadResult {
-  type: "drawio-read-result";
-  requestId: string;
-  href: string;
-  ok: boolean;
-  content?: string;
-  error?: string;
 }
 
 type ClientMessage =
@@ -830,66 +823,19 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     document: vscode.TextDocument,
   ): Promise<DrawioReadResult> {
     const folder = vscode.workspace.getWorkspaceFolder(document.uri);
-    return CollabEditorProvider.runDrawioRead(
-      msg.requestId,
-      msg.href,
-      document.uri.fsPath,
-      folder?.uri.fsPath ?? null,
-      async (absPath) => {
-        const buf = await vscode.workspace.fs.readFile(vscode.Uri.file(absPath));
-        return Buffer.from(buf).toString("utf8");
+    return runDrawioRead(
+      {
+        requestId: msg.requestId,
+        href: msg.href,
+        documentPath: document.uri.fsPath,
+        workspaceRoot: folder?.uri.fsPath ?? null,
       },
-      (line) => this.output.appendLine(line),
+      async (absPath) => {
+        const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(absPath));
+        return Buffer.from(bytes).toString("utf8");
+      },
+      (line) => this.output.appendLine(`CollabEditor: ${line}`),
     );
-  }
-
-  static async runDrawioRead(
-    requestId: string,
-    href: string,
-    documentPath: string,
-    workspaceRoot: string | null,
-    readFile: (absPath: string) => Promise<string>,
-    appendLog: (line: string) => void = () => {},
-  ): Promise<DrawioReadResult> {
-    if (!workspaceRoot) {
-      return {
-        type: "drawio-read-result",
-        requestId,
-        href,
-        ok: false,
-        error: "Markdown file is outside any workspace folder.",
-      };
-    }
-    const resolved = resolveDrawioHref(href, documentPath, workspaceRoot);
-    if (!resolved.ok) {
-      return {
-        type: "drawio-read-result",
-        requestId,
-        href,
-        ok: false,
-        error: drawioRejectReasonMessage(resolved.reason),
-      };
-    }
-    try {
-      const content = await readFile(resolved.absolutePath);
-      return {
-        type: "drawio-read-result",
-        requestId,
-        href,
-        ok: true,
-        content,
-      };
-    } catch (e) {
-      const message = (e as Error).message ?? "Unknown read error";
-      appendLog(`CollabEditor: drawio-read failed for ${resolved.absolutePath}: ${message}`);
-      return {
-        type: "drawio-read-result",
-        requestId,
-        href,
-        ok: false,
-        error: `Could not read ${href}: ${message}`,
-      };
-    }
   }
 
   private renderHtml(webview: vscode.Webview): string {
@@ -943,21 +889,6 @@ function resolveAuthorFromConfig(): string {
   return os.userInfo().username || "user";
 }
 
-
-function drawioRejectReasonMessage(
-  reason: "empty-href" | "absolute-not-allowed" | "outside-workspace" | "wrong-extension",
-): string {
-  switch (reason) {
-    case "empty-href":
-      return "Drawio link is empty.";
-    case "absolute-not-allowed":
-      return "Drawio link must be a workspace-relative path (no http:, file:, or absolute paths).";
-    case "outside-workspace":
-      return "Drawio link points outside the workspace.";
-    case "wrong-extension":
-      return "Drawio link must end in .drawio, .drawio.xml, or .xml.";
-  }
-}
 
 function pickColor(name: string): string {
   const palette = [

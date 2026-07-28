@@ -14,11 +14,10 @@
  * in the editor when clicked.
  */
 
-import MarkdownIt from "markdown-it";
-import { installSourceOffsetPlugin } from "../../inlineComments/webview/renderWithOffsets";
+import { createMarkdownRenderer, ensurePlantuml } from "../../webviewShared/markdownPipeline";
 import { slugifyHeading } from "../../inlineComments/linkParse";
 import { buildComposer, buildCommentCard, type ComposerHandle } from "../../webviewShared/commentUi";
-import { installPlantumlPlugin } from "../../plantumlPlugin";
+import { resolveImageSrc, type ImageBaseUris } from "../../webviewShared/imageSrc";
 
 interface VsCodeApi {
   postMessage(msg: ClientToHost): void;
@@ -54,7 +53,7 @@ interface InitMessage {
   addedRanges: LineRange[];
   drafts: PrDraft[];
   totalDraftCount: number;
-  imageBaseUris: { docDir: string; workspaceFolder: string | null };
+  imageBaseUris: ImageBaseUris;
   plantuml?: { serverUrl: string; format: "svg" | "png" };
 }
 interface DraftsMessage { type: "drafts"; drafts: PrDraft[]; totalDraftCount: number; }
@@ -85,13 +84,9 @@ type ClientToHost = ReadyMessage | AddDraftRequest | EditDraftRequest | DeleteDr
 
 const vscode = window.acquireVsCodeApi();
 
-const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
-installSourceOffsetPlugin(md);
-let plantumlInstalled = false;
+const md = createMarkdownRenderer();
 function ensurePlantumlInstalled(opts: { serverUrl: string; format: "svg" | "png" } | undefined): void {
-  if (plantumlInstalled || !opts) return;
-  installPlantumlPlugin(md, opts);
-  plantumlInstalled = true;
+  ensurePlantuml(md, opts);
 }
 
 const dom = {
@@ -256,12 +251,13 @@ function rewriteImageSrcs(): void {
   const base = state.imageBaseUris;
   for (const img of dom.preview.querySelectorAll<HTMLImageElement>("img")) {
     const src = img.getAttribute("src") || "";
-    if (/^(https?:|data:|vscode-webview)/.test(src)) continue;
-    if (src.startsWith("/") && base.workspaceFolder) {
-      img.src = `${base.workspaceFolder}${src}`;
-    } else if (!src.startsWith("#")) {
-      img.src = `${base.docDir}/${src.replace(/^\.\//, "")}`;
-    }
+    if (src.startsWith("#")) continue;
+    // Same resolver as the inline view and the live editor. This used to be a
+    // hand-rolled string join here, which is the code the `..`-climbing fix in
+    // 0.34.31 replaced everywhere else — so `../diagrams/x.png` resolved to
+    // `<docDir>/diagrams/x.png` and 404'd in the PR view only.
+    const resolved = resolveImageSrc(src, base);
+    if (resolved !== src) img.src = resolved;
   }
 }
 

@@ -6,7 +6,7 @@
 // round-trip through the extension host as `WorkspaceEdit`s on the
 // underlying .md file — there is no in-webview cache of comments.
 
-import MarkdownIt from "markdown-it";
+import { createMarkdownRenderer, ensurePlantuml } from "../../webviewShared/markdownPipeline";
 import { isClaudeUnread } from "../claudeUnread";
 import { slugifyHeading } from "../linkParse";
 import { findCountLabel, findMatchesIn, stepIndex } from "../../webviewShared/findState";
@@ -23,8 +23,6 @@ import {
 } from "../../webviewShared/threadListState";
 import { buildComposer, buildCommentCard, buildSuggestionCard, type CardAction } from "../../webviewShared/commentUi";
 import { resolveImageSrc, type ImageBaseUris } from "../../webviewShared/imageSrc";
-import { installSourceOffsetPlugin } from "./renderWithOffsets";
-import { installPlantumlPlugin } from "../../plantumlPlugin";
 
 declare function acquireVsCodeApi(): {
   postMessage: (msg: unknown) => void;
@@ -117,13 +115,9 @@ interface ScrollToMsg {
   proseOffset: number;
 }
 
-const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
-installSourceOffsetPlugin(md);
-let plantumlInstalled = false;
+const md = createMarkdownRenderer();
 function ensurePlantumlInstalled(opts: { serverUrl: string; format: "svg" | "png" } | undefined): void {
-  if (plantumlInstalled || !opts) return;
-  installPlantumlPlugin(md, opts);
-  plantumlInstalled = true;
+  ensurePlantuml(md, opts);
 }
 
 let imageBaseUris: ImageBaseUris = {

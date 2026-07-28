@@ -1,6 +1,7 @@
-// Tests for the extension-side drawio-read handler. We run the static
-// helper that backs `handleDrawioRead`, injecting an in-memory file
-// reader so the test stays independent of the VS Code workspace API.
+// Tests for the extension-side drawio-read handler. We run the shared
+// service that backs `handleDrawioRead` in BOTH the live editor and the
+// inline comments view, injecting an in-memory file reader so the test stays
+// independent of the VS Code workspace API.
 //
 // What we pin here:
 //   - File outside the workspace (no workspaceRoot) → friendly error.
@@ -12,7 +13,7 @@
 //     webview can correlate.
 
 import { describe, expect, it } from "vitest";
-import { CollabEditorProvider } from "../collab/collabEditorProvider";
+import { runDrawioRead } from "../collab/drawioService";
 
 describe("runDrawioRead", () => {
   const REQ_ID = "req-1";
@@ -21,11 +22,8 @@ describe("runDrawioRead", () => {
 
   it("returns ok with file contents on the happy path", async () => {
     const seenPaths: string[] = [];
-    const result = await CollabEditorProvider.runDrawioRead(
-      REQ_ID,
-      "flow.drawio",
-      DOC,
-      ROOT,
+    const result = await runDrawioRead(
+      { requestId: REQ_ID, href: "flow.drawio", documentPath: DOC, workspaceRoot: ROOT },
       async (abs) => {
         seenPaths.push(abs);
         return "<mxfile><diagram>x</diagram></mxfile>";
@@ -39,11 +37,8 @@ describe("runDrawioRead", () => {
   });
 
   it("returns error when the markdown file is outside any workspace folder", async () => {
-    const result = await CollabEditorProvider.runDrawioRead(
-      REQ_ID,
-      "flow.drawio",
-      DOC,
-      null,
+    const result = await runDrawioRead(
+      { requestId: REQ_ID, href: "flow.drawio", documentPath: DOC, workspaceRoot: null },
       async () => {
         throw new Error("should not be called");
       },
@@ -53,11 +48,8 @@ describe("runDrawioRead", () => {
   });
 
   it("returns error when the href has the wrong extension", async () => {
-    const result = await CollabEditorProvider.runDrawioRead(
-      REQ_ID,
-      "readme.md",
-      DOC,
-      ROOT,
+    const result = await runDrawioRead(
+      { requestId: REQ_ID, href: "readme.md", documentPath: DOC, workspaceRoot: ROOT },
       async () => {
         throw new Error("should not be called");
       },
@@ -67,11 +59,8 @@ describe("runDrawioRead", () => {
   });
 
   it("returns error when the href escapes the workspace root", async () => {
-    const result = await CollabEditorProvider.runDrawioRead(
-      REQ_ID,
-      "../../outside.drawio",
-      DOC,
-      ROOT,
+    const result = await runDrawioRead(
+      { requestId: REQ_ID, href: "../../outside.drawio", documentPath: DOC, workspaceRoot: ROOT },
       async () => {
         throw new Error("should not be called");
       },
@@ -81,11 +70,8 @@ describe("runDrawioRead", () => {
   });
 
   it("returns error when the href has a scheme", async () => {
-    const result = await CollabEditorProvider.runDrawioRead(
-      REQ_ID,
-      "http://example.com/x.drawio",
-      DOC,
-      ROOT,
+    const result = await runDrawioRead(
+      { requestId: REQ_ID, href: "http://example.com/x.drawio", documentPath: DOC, workspaceRoot: ROOT },
       async () => {
         throw new Error("should not be called");
       },
@@ -96,11 +82,8 @@ describe("runDrawioRead", () => {
 
   it("returns error when the reader throws", async () => {
     const logs: string[] = [];
-    const result = await CollabEditorProvider.runDrawioRead(
-      REQ_ID,
-      "flow.drawio",
-      DOC,
-      ROOT,
+    const result = await runDrawioRead(
+      { requestId: REQ_ID, href: "flow.drawio", documentPath: DOC, workspaceRoot: ROOT },
       async () => {
         throw new Error("ENOENT");
       },
