@@ -12,6 +12,8 @@ import { slugifyHeading } from "../linkParse";
 import { findCountLabel, findMatchesIn, stepIndex } from "../../webviewShared/findState";
 import { planHighlightSlices } from "../../webviewShared/highlightSlices";
 import {
+  THREAD_RENDER_CHUNK,
+  chunkThreads,
   claudeSummary,
   emptyListMessage,
   filterThreads,
@@ -529,6 +531,10 @@ function cssEscape(s: string): string {
 let currentState: SerializedState | null = null;
 let user: { name: string } = { name: "anonymous" };
 let filter: ThreadFilter = "open";
+// How many thread cards the list is currently allowed to build. Grows by a
+// chunk each time the user clicks "Show more"; resets when the filter changes,
+// since that is a new list.
+let renderedThreadLimit = THREAD_RENDER_CHUNK;
 let pendingSelection: { proseStart: number; proseEnd: number } | null = null;
 let editingCommentId: string | null = null; // composite "threadId:commentId" when editing
 let highlightedThreadId: string | null = null;
@@ -560,6 +566,15 @@ function maybeScrollToNewReview(state: SerializedState): void {
   if (newClaudeUnread.length === 0) return;
   const target = newClaudeUnread[0];
   highlightedThreadId = target.id;
+  // A big review pass can push the first new thread past the render cap. Raise
+  // the budget far enough to include it and rebuild, or "Claude finished —
+  // here's the first finding" would scroll to a card that was never built.
+  const targetIndex = filterThreads(state.threads, filter).findIndex((t) => t.id === target.id);
+  if (targetIndex >= renderedThreadLimit) {
+    renderedThreadLimit =
+      Math.ceil((targetIndex + 1) / THREAD_RENDER_CHUNK) * THREAD_RENDER_CHUNK;
+    renderThreads(state);
+  }
   // Clear the snapshot first so re-entry doesn't loop on subsequent updates.
   pendingReviewSnapshot = null;
   savePendingReviewSnapshot();
@@ -899,8 +914,21 @@ function renderThreads(state: SerializedState): void {
     }
     return;
   }
-  for (const t of filtered) {
+  // Build at most a chunk of cards per pass. A 300-thread review used to build
+  // every card before the panel painted anything; the rest arrive on click.
+  const chunk = chunkThreads(filtered, renderedThreadLimit);
+  for (const t of chunk.visible) {
     list.appendChild(renderThreadCard(t));
+  }
+  if (chunk.moreLabel) {
+    const more = document.createElement("button");
+    more.className = "btn-ghost mc-show-more";
+    more.textContent = chunk.moreLabel;
+    more.addEventListener("click", () => {
+      renderedThreadLimit += THREAD_RENDER_CHUNK;
+      if (currentState) renderThreads(currentState);
+    });
+    list.appendChild(more);
   }
 }
 
@@ -1426,6 +1454,9 @@ window.addEventListener("scroll", () => positionFloatingButton(), true);
 dom.filterRadios.forEach((r) =>
   r.addEventListener("change", () => {
     filter = (r.value as typeof filter);
+    // A different filter is a different list — start its render budget over
+    // rather than carrying a limit the user raised for the previous one.
+    renderedThreadLimit = THREAD_RENDER_CHUNK;
     if (currentState) render(currentState);
   }),
 );

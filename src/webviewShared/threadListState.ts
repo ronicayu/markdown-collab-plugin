@@ -122,6 +122,48 @@ export function nextCollapseAllAction(
   return allCollapsed ? "expand" : "collapse";
 }
 
+/**
+ * How many thread cards to build in one pass. Each card is a non-trivial DOM
+ * subtree (header, body, replies, an always-on reply box), so a review pass
+ * that opened 300 threads used to build 300 of them synchronously before the
+ * panel painted anything.
+ */
+export const THREAD_RENDER_CHUNK = 100;
+
+export interface ThreadChunk<T> {
+  /** The threads to build cards for now. */
+  visible: T[];
+  /** How many are held back behind the "show more" control. */
+  remaining: number;
+  /** Label for that control, or null when everything is rendered. */
+  moreLabel: string | null;
+}
+
+/**
+ * Split a filtered thread list into what to render now and what to hold back.
+ *
+ * Deliberately progressive rendering, NOT virtualization: cards already built
+ * stay in the DOM, so find-in-page, Cmd+F, and scroll position keep working —
+ * a windowed list would silently hide threads from all three. The cap only
+ * defers the initial build.
+ */
+export function chunkThreads<T>(threads: T[], shown: number): ThreadChunk<T> {
+  const limit = Math.max(0, shown);
+  if (threads.length <= limit) {
+    return { visible: threads, remaining: 0, moreLabel: null };
+  }
+  const remaining = threads.length - limit;
+  const next = Math.min(remaining, THREAD_RENDER_CHUNK);
+  return {
+    visible: threads.slice(0, limit),
+    remaining,
+    moreLabel:
+      remaining === next
+        ? `Show ${remaining} more`
+        : `Show ${next} more (${remaining} hidden)`,
+  };
+}
+
 /** A thread's rendered content, for the live editor's reconciler. */
 export interface SignatureThread {
   author: string;

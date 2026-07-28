@@ -105,12 +105,28 @@ export function mapProseToSource(parsed: ParsedDocument): ProseMapping {
   };
 }
 
+/**
+ * The prose index for a source offset: the first entry that is >= `srcOffset`,
+ * so an offset inside a skipped region (a marker, the threads block) collapses
+ * to the next surviving character. Null when the offset is past the end.
+ *
+ * `proseToSrc` is strictly increasing by construction, so this is a binary
+ * search. It used to be a linear scan, which made every call O(document) —
+ * and `mapProseToSource` calls it twice per thread, so a doc with 200 threads
+ * scanned the file 400 times to build one preview.
+ */
 export function findProseIndex(proseToSrc: number[], srcOffset: number): number | null {
-  // Linear scan is fine for review-sized docs. Switch to binary search if
-  // anyone complains.
-  for (let i = 0; i < proseToSrc.length; i++) {
-    if (proseToSrc[i] === srcOffset) return i;
-    if (proseToSrc[i] > srcOffset) return i; // Marker boundary collapse — closest prose index.
+  let lo = 0;
+  let hi = proseToSrc.length - 1;
+  let found: number | null = null;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (proseToSrc[mid] >= srcOffset) {
+      found = mid;
+      hi = mid - 1;
+    } else {
+      lo = mid + 1;
+    }
   }
-  return null;
+  return found;
 }

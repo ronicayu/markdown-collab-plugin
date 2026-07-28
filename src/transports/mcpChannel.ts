@@ -21,6 +21,26 @@ interface ChannelEndpoint {
  * descriptor written by the server at startup; returns "not-running" if the
  * file is missing (no Claude Code session has spawned the server yet).
  */
+/**
+ * Whether the MCP channel server has written a usable endpoint descriptor for
+ * this workspace. Used to auto-detect a send mode on first use (P3.1).
+ *
+ * File presence only — no connection is opened, because this runs before the
+ * user has asked for anything and must not add latency to the first click. A
+ * descriptor can outlive the server that wrote it, so the caller must treat a
+ * `true` here as a good guess, not a guarantee, and fall back when the push
+ * reports "not-running".
+ */
+export async function hasMcpChannelEndpoint(workspaceRoot: string): Promise<boolean> {
+  try {
+    const raw = await fs.readFile(path.join(workspaceRoot, CHANNEL_FILE_REL), "utf8");
+    const descriptor = JSON.parse(raw) as ChannelEndpoint;
+    return typeof descriptor.port === "number" && typeof descriptor.token === "string";
+  } catch {
+    return false;
+  }
+}
+
 export async function sendViaMcpChannel(
   workspaceRoot: string,
   envelope: EventEnvelope,

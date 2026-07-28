@@ -28,6 +28,7 @@ import {
   type InlineComment,
   type ParsedDocument,
 } from "./format";
+import { minimalEdit } from "./minimalEdit";
 import { applyClientMutation, type MutationMessage } from "./mutations";
 import { mapProseToSource } from "./proseMapping";
 import { buildInlinePayload, buildSingleThreadPayload } from "./sendToClaude";
@@ -715,12 +716,18 @@ export class InlineCommentsPanel {
     const parsed = parse(this.doc.getText());
     const next = fn(parsed);
     if (next === parsed.source) return;
+    // Replace only the span that changed, not the whole file: a reply touches
+    // one line of the threads region, and rewriting the entire document to say
+    // so re-tokenizes the buffer, disturbs folds and decorations, and tells
+    // every watcher that everything changed.
+    const change = minimalEdit(parsed.source, next);
+    if (!change) return;
     const edit = new vscode.WorkspaceEdit();
-    const fullRange = new vscode.Range(
-      this.doc.positionAt(0),
-      this.doc.positionAt(this.doc.getText().length),
+    edit.replace(
+      this.doc.uri,
+      new vscode.Range(this.doc.positionAt(change.start), this.doc.positionAt(change.end)),
+      change.replacement,
     );
-    edit.replace(this.doc.uri, fullRange, next);
     this.pendingApply = true;
     try {
       const ok = await vscode.workspace.applyEdit(edit);

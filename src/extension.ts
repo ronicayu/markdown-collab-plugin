@@ -21,7 +21,12 @@ import { parse as parseInline } from "./inlineComments/format";
 import { buildInlinePayload, buildSingleThreadPayload } from "./inlineComments/sendToClaude";
 import { checkClaudeSkill, installClaudeSkill, skillFingerprint } from "./skill";
 import { EVENT_LOG_REL, EventLog } from "./transports/eventLog";
-import { sendViaMcpChannel } from "./transports/mcpChannel";
+import { hasMcpChannelEndpoint, sendViaMcpChannel } from "./transports/mcpChannel";
+import {
+  CHANGE_HINT,
+  detectSendMode,
+  type SendModeDetection,
+} from "./transports/detectSendMode";
 import { sendViaTerminal, startClaudeTerminal } from "./transports/terminal";
 import { TerminalTracker } from "./transports/terminalTracker";
 
@@ -539,22 +544,38 @@ async function dispatchReviewPayload(
     );
   }
   let justRemembered = false;
+  /** Set when this send's mode was auto-detected rather than chosen. */
+  let detected: SendModeDetection | null = null;
   if (mode === "ask") {
     const remembered = workspaceState.get<unknown>(REMEMBERED_SEND_MODE_KEY);
     if (isConcreteSendMode(remembered)) {
       mode = remembered;
     } else {
-      const picked = await pickSendMode(payload.unresolvedCount, intent);
-      if (!picked) return;
-      mode = picked;
-      await workspaceState.update(REMEMBERED_SEND_MODE_KEY, picked);
+      // Before asking, look at what's actually running. A visible Claude REPL
+      // or a live MCP channel answers the question the quick-pick was asking,
+      // and the user has no way to make that call better than we can.
+      detected = detectSendMode({
+        claudeTerminal: tracker.anyClaudeTerminal(),
+        mcpChannelEndpoint: await hasMcpChannelEndpoint(folder.uri.fsPath),
+      });
+      if (detected) {
+        mode = detected.mode;
+        output.appendLine(`Send mode auto-detected: ${detected.mode} (${detected.reason})`);
+      } else {
+        const picked = await pickSendMode(payload.unresolvedCount, intent);
+        if (!picked) return;
+        mode = picked;
+      }
+      await workspaceState.update(REMEMBERED_SEND_MODE_KEY, mode);
       justRemembered = true;
     }
   }
 
-  const rememberedSuffix = justRemembered
-    ? ' Run "Markdown Collab: Reset Send Mode" to change later.'
-    : "";
+  const rememberedSuffix = detected
+    ? ` Send mode auto-detected.${CHANGE_HINT}`
+    : justRemembered
+      ? ' Run "Markdown Collab: Reset Send Mode" to change later.'
+      : "";
 
   if (mode === "clipboard") {
     await vscode.env.clipboard.writeText(payload.prompt);
@@ -637,6 +658,12 @@ async function dispatchReviewPayload(
         `Sent via MCP channel.${rememberedSuffix}`,
       );
     } else if (result.reason === "not-running") {
+      // An endpoint file can outlive the server that wrote it. If we picked
+      // this mode ourselves off that file, un-remember it so the next send
+      // asks properly instead of failing the same way forever.
+      if (detected?.mode === "mcp-channel") {
+        await workspaceState.update(REMEMBERED_SEND_MODE_KEY, undefined);
+      }
       void vscode.window.showWarningMessage(
         "MCP channel server isn't running. Start Claude with `--dangerously-load-development-channels server:markdown-collab` or run 'Markdown Collab: Install Claude Skill' if mdc-channel.mjs is missing. The payload was still appended to the events log.",
       );

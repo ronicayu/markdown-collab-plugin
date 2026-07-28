@@ -1,5 +1,73 @@
 # Changelog
 
+## 0.34.58 — 2026-07-28 (trial)
+
+### Added: the first Send to Claude click works it out for you (10x-plan P3.1)
+
+The first click used to open a four-way quick-pick — terminal vs event log vs
+MCP channel vs clipboard — whose options the README needs a comparison table to
+explain, asked before you have any way to know which your setup supports. Most
+of the time the environment already answers it, so now the extension looks:
+
+- A `claude` REPL running in a terminal → **terminal**, no prompt, one toast.
+- Otherwise, an MCP channel server registered for this workspace →
+  **mcp-channel**, no prompt.
+- Neither → the quick-pick, exactly as before.
+
+The terminal wins when both are present: it's live evidence from a
+shell-integration event, whereas an endpoint file can outlive the server that
+wrote it. The detected mode is remembered like a manual choice and the toast
+names the escape hatch (**Reset Send Mode**). If an auto-detected MCP channel
+turns out to be stale, the payload still lands in the event log and the choice
+un-remembers itself, so the next click asks properly instead of failing the
+same way twice. `channel` and `clipboard` are never auto-selected — both need
+you to do something afterwards, so they stay explicit.
+
+### Changed: performance headroom for large documents (10x-plan P3.2)
+
+- **`findProseIndex` is a binary search.** It was a linear scan, and
+  `mapProseToSource` calls it twice per thread — so building the preview for a
+  document with 200 threads scanned the file 400 times.
+- **Comment writes are minimal edits, not whole-file rewrites.** Replying to a
+  thread changes one line in the threads region; the panel used to apply that
+  as a `WorkspaceEdit` replacing the entire file, which re-tokenizes the
+  buffer, disturbs folds and decorations, and tells every watcher that
+  everything changed. `minimalEdit` strips the common prefix and suffix so the
+  edit is the size of the change. (Not a full diff: two distant changes
+  collapse into one covering span — correct, still far smaller than the file,
+  no diff dependency.)
+- **The thread list builds 100 cards per pass**, with a "Show N more" control
+  for the rest. Deliberately progressive rendering rather than virtualization:
+  cards already built stay in the DOM, so Cmd+F, find-in-page, and scroll
+  position keep working, where a windowed list would silently hide threads from
+  all three. Counters and preview highlights still cover every thread — the cap
+  is a render budget, not a filter. When a review pass lands a new thread past
+  the cap, the budget is raised so "jump to Claude's first finding" still has a
+  card to jump to.
+- **A ~500 KB fixture pins all of it** with deliberately loose timing budgets:
+  they exist to catch a return to quadratic behavior, not to benchmark the
+  machine.
+
+### Changed: docs hygiene (10x-plan P3.3)
+
+`v1.1-plan.md`, `COLLAB-EXPERIMENT.md`, and `preview-anchor-fix-plan.md`
+describe architectures this project no longer has — the JSON sidecar, the
+CodeMirror + Yjs spike, and the read-only preview panel. They moved to
+`docs/archive/` with a disclaimer each saying what replaced them and why
+they're kept. `docs/10x-plan.md` is the live roadmap.
+
+### Changed: the skill and its helpers can't drift apart (10x-plan P3.4)
+
+The activation-time update nag, the one-click reinstall, and a fingerprint
+covering `SKILL.md` plus all three helper scripts were already in place from
+P0.1. What was missing was the guard that they stay in sync: a test now fails
+if a fresh install writes a file the fingerprint doesn't hash — otherwise a
+future helper could ship stale forever, because nothing would ever detect that
+the installed copy was out of date.
+
+**With this, every initiative in `docs/10x-plan.md` — P0 through P3 — has
+landed.**
+
 ## 0.34.57 — 2026-07-28 (trial)
 
 ### Fixed: `../images` didn't render in the PR/MR review view

@@ -13,7 +13,9 @@ import {
   TAIL_SCRIPT_REL,
   checkClaudeSkill,
   installClaudeSkill,
+  skillFingerprint,
 } from "../skill";
+import { createHash } from "crypto";
 
 let tmpHome: string;
 
@@ -160,5 +162,44 @@ describe("checkClaudeSkill", () => {
     await fs.writeFile(skillTarget, SKILL_CONTENT, "utf8");
     // SKILL.md matches but the tail/channel scripts were never written.
     expect(await checkClaudeSkill(tmpHome)).toBe("outdated");
+  });
+});
+
+// The activation-time update nag (P3.4) fires when the installed fingerprint
+// differs from the bundled one, so the fingerprint has to cover every artifact
+// `installClaudeSkill` writes. If a future helper script is added to the
+// install but not to the fingerprint, Claude silently keeps running against a
+// stale helper and nothing ever prompts.
+describe("skillFingerprint", () => {
+  it("is a short, stable hex digest", () => {
+    const fp = skillFingerprint();
+    expect(fp).toMatch(/^[0-9a-f]{12}$/);
+    expect(skillFingerprint()).toBe(fp);
+  });
+
+  it("hashes the skill and all three helper scripts", () => {
+    const expected = createHash("sha1")
+      .update(SKILL_CONTENT)
+      .update(TAIL_SCRIPT_CONTENT)
+      .update(CHANNEL_SCRIPT_CONTENT)
+      .update(CLI_SCRIPT_CONTENT)
+      .digest("hex")
+      .slice(0, 12);
+    expect(skillFingerprint()).toBe(expected);
+  });
+
+  it("covers every file a fresh install writes", async () => {
+    await installClaudeSkill(tmpHome);
+    const skillDir = path.dirname(path.join(tmpHome, SKILL_REL_PATH));
+    const installed = await fs.readdir(skillDir, { recursive: true, withFileTypes: true });
+    const files = installed.filter((e) => e.isFile()).map((e) => e.name).sort();
+    // SKILL.md + mdc.mjs + mdc-tail.mjs + mdc-channel.mjs. A new entry here
+    // means skillFingerprint (and checkClaudeSkill) need it too.
+    expect(files).toEqual([
+      path.basename(CHANNEL_SCRIPT_REL),
+      path.basename(CLI_SCRIPT_REL),
+      path.basename(SKILL_REL_PATH),
+      path.basename(TAIL_SCRIPT_REL),
+    ].sort());
   });
 });

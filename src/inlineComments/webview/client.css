@@ -489,6 +489,15 @@ button.btn-ghost {
   color: var(--fg);
 }
 button.btn-ghost.danger { color: #e08080; }
+/* "Show N more" at the foot of a long thread list (progressive rendering). */
+button.mc-show-more {
+  display: block;
+  width: 100%;
+  margin: 8px 0 4px;
+  padding: 8px;
+  border: 1px dashed var(--border, rgba(128, 128, 128, 0.4));
+  border-radius: 4px;
+}
 button.btn-link {
   background: transparent;
   border: none;

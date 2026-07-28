@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  chunkThreads,
   claudeSummary,
   emptyListMessage,
   filterThreads,
@@ -193,6 +194,56 @@ describe("nextCollapseAllAction", () => {
 
   it("collapses on an empty list rather than reporting 'all collapsed'", () => {
     expect(nextCollapseAllAction([], new Set())).toBe("collapse");
+  });
+});
+
+describe("chunkThreads", () => {
+  const list = (n: number) => Array.from({ length: n }, (_, i) => `t${i}`);
+
+  it("renders everything when the list fits", () => {
+    expect(chunkThreads(list(40), 100)).toEqual({
+      visible: list(40),
+      remaining: 0,
+      moreLabel: null,
+    });
+  });
+
+  it("renders exactly the limit when the list is exactly full", () => {
+    const chunk = chunkThreads(list(100), 100);
+    expect(chunk.visible).toHaveLength(100);
+    expect(chunk.moreLabel).toBeNull();
+  });
+
+  it("holds back the tail past the limit", () => {
+    const chunk = chunkThreads(list(150), 100);
+    expect(chunk.visible).toHaveLength(100);
+    expect(chunk.visible[99]).toBe("t99");
+    expect(chunk.remaining).toBe(50);
+  });
+
+  it("labels the button with the exact count when one more click finishes it", () => {
+    expect(chunkThreads(list(150), 100).moreLabel).toBe("Show 50 more");
+  });
+
+  it("says how many are still hidden when more than one click remains", () => {
+    expect(chunkThreads(list(350), 100).moreLabel).toBe("Show 100 more (250 hidden)");
+  });
+
+  it("advances as the limit grows, keeping earlier cards", () => {
+    const first = chunkThreads(list(250), 100);
+    const second = chunkThreads(list(250), 200);
+    expect(second.visible.slice(0, 100)).toEqual(first.visible);
+    expect(second.remaining).toBe(50);
+  });
+
+  it("handles an empty list", () => {
+    expect(chunkThreads([], 100)).toEqual({ visible: [], remaining: 0, moreLabel: null });
+  });
+
+  it("treats a negative limit as zero rather than slicing from the end", () => {
+    const chunk = chunkThreads(list(5), -10);
+    expect(chunk.visible).toEqual([]);
+    expect(chunk.remaining).toBe(5);
   });
 });
 

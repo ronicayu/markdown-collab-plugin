@@ -1,3 +1,10 @@
+> **Archived — describes a removed surface.** This plan targets the old
+> read-only preview panel and its sidecar anchors. That panel is gone; the
+> inline comments view solved the same DOM↔source mapping problem with
+> `data-mc-src` offset spans (see `renderWithOffsets.ts` and
+> `proseMapping.ts`). Kept for the failure analysis. The live roadmap is
+> [`docs/10x-plan.md`](../10x-plan.md).
+
 # Comment-on-preview, fixed end-to-end
 
 Two halves of the same problem:

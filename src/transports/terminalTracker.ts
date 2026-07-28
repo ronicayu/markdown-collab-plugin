@@ -72,6 +72,16 @@ export class TerminalTracker implements vscode.Disposable {
     return this.claudeRunning.get(t) === true;
   }
 
+  /**
+   * Whether any open terminal is running a `claude` REPL. Used to auto-detect
+   * a send mode on first use (P3.1) — live evidence from a shell-integration
+   * event, not a name-match guess, so a terminal the user happened to call
+   * "claude" doesn't hijack the choice.
+   */
+  public anyClaudeTerminal(): boolean {
+    return vscode.window.terminals.some((t) => this.hasClaudeEvidence(t));
+  }
+
   public dispose(): void {
     for (const d of this.disposables) {
       try {

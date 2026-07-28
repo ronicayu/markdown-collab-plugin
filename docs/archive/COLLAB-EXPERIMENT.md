@@ -1,3 +1,10 @@
+> **Archived — describes an abandoned experiment.** The CodeMirror + Yjs
+> spike this documents was replaced by the Milkdown live editor, and the
+> whole CRDT layer was deleted in v0.34.44–0.34.46: the live editor is one
+> human plus Claude converging through the `.md` file, with no relay and no
+> Yjs. Kept for the reasoning that led there. The live roadmap is
+> [`docs/10x-plan.md`](../10x-plan.md).
+
 # Real-time Collaborative Editor (experimental)
 
 Branch: `experiment/codemirror-yjs-webview`.

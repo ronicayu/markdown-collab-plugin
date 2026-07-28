@@ -275,7 +275,25 @@ and that the host bundle requires nothing unbundled.
 
 ---
 
-## P3 — Polish and reach
+## P3 — Polish and reach — ✅ COMPLETE (v0.34.58)
+
+*All four landed. P3.1: `transports/detectSendMode.ts` picks a mode from live
+evidence (a running `claude` REPL beats a possibly-stale MCP endpoint file);
+detection is remembered like a manual choice, announced in one toast, and a
+stale MCP pick un-remembers itself when the push reports the server is gone.
+P3.2: `findProseIndex` is a binary search (it was a linear scan called twice
+per thread, so building the preview for a 200-thread doc scanned the file 400
+times); comment writes go through `minimalEdit` so replying to a thread
+replaces one line instead of the whole file; the thread list builds 100 cards
+per pass with a "Show N more" control — progressive rendering, deliberately not
+virtualization, so find-in-page and scroll position keep working; and a ~500 KB
+fixture pins all of it with loose timing budgets that catch a return to
+quadratic behavior without being a benchmark. P3.3: the three docs describing
+the dead sidecar/preview architecture moved to `docs/archive/` with a
+disclaimer each. P3.4: the activation nag, one-click reinstall, and a
+fingerprint over SKILL.md plus all three helper scripts were already in place
+from P0.1 — what was missing was the guard that they stay in sync, so a test
+now fails if a fresh install writes a file the fingerprint doesn't cover.*
 
 - **P3.1 Zero-friction send-mode onboarding.** Auto-detect at first click: MCP channel reachable → offer `mcp-channel`; a `claude` REPL visible in a terminal → default `terminal`, no quick-pick at all (one toast: "Sent to your Claude terminal — change in settings"). Reduce the decision the README currently needs a comparison table for.
 - **P3.2 Performance headroom.** Fix the known O(n)-per-keystroke costs before large docs hurt: binary search in `inlineCommentsPanel.findProseIndex` (the code even invites it), incremental thread-block reserialization (only the threads region changes on comment ops — stop rewriting the whole file via full-document `WorkspaceEdit`), and virtualize the thread list past ~100 cards. Add a 500 KB fixture to the corpus with timing assertions.
@@ -298,12 +316,15 @@ P1.2, P1.3, P3.x — independent, schedule opportunistically
 
 Recommended order: **P0.3 → P0.1 → P0.2 → P2.2 → P2.1 → P1.1 → P1.2 → P2.3 → P1.3 → P2.4 (continuous) → P3.x**.
 
-**Progress:** every P0, P1, and P2 initiative has landed (v0.34.41–0.34.57).
-Remaining: the **P3** polish tier (send-mode onboarding, performance headroom,
-docs hygiene, skill self-update). The write paths added in P1.1 and the
-folder/multi-select entry points added in P1.3 still want a pass in the
-Extension Development Host before a public release — unit, contract, and
-integration tests cover the logic, but not the right-click.
+**Progress: the plan is complete.** Every initiative — P0, P1, P2, and P3 —
+has landed across v0.34.41–0.34.58, with 847 unit tests and a working
+Extension Host suite behind it.
+
+What still wants a human: the write paths from P1.1 (accept/reject a
+suggestion) and the folder / multi-select entry points from P1.3 have unit,
+contract, and integration coverage of their logic, but nothing tests a
+right-click. A pass in the Extension Development Host is the remaining gate
+before this batch goes to the marketplace.
 
 Each initiative should land as its own version with a CHANGELOG entry, following the existing release discipline (`[skip-publish]` trial commits, tag only after Ronica confirms — tags publish publicly).
 

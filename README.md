@@ -113,7 +113,13 @@ The **Send to Claude** button delivers the comment payload one of four ways. Pic
 | Claude Code v2.1.80+, `claude.ai` login, channels enabled by your org | `mcp-channel` | Native `<channel>` events on Claude's next turn — cleanest semantics when supported. |
 | Want to copy/paste manually each time | `clipboard` | Simplest fallback; nothing automatic. |
 
-Don't know which to pick? Leave `markdownCollab.sendMode` on `ask` (the default). The first click shows a quick-pick and remembers your choice. **Markdown Collab: Reset Send Mode** clears it if you want to switch later.
+**Don't know which to pick? Don't.** Leave `markdownCollab.sendMode` on `ask` (the default) and the first click works it out from what's running (v0.34.58+):
+
+- A `claude` REPL running in a terminal → `terminal`, no prompt. One toast tells you what happened.
+- Otherwise, an MCP channel server that has registered itself for this workspace → `mcp-channel`, no prompt.
+- Neither → the quick-pick, as before.
+
+The detected mode is remembered like a manual choice, and the toast names the escape hatch: **Markdown Collab: Reset Send Mode** clears it if you want to switch later. If the MCP channel turns out to be stale (its endpoint file outlived the server), the send falls back to the event log and un-remembers the choice, so the next click asks you properly instead of failing the same way twice.
 
 ## Send mode details
 
