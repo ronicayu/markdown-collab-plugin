@@ -196,7 +196,48 @@ of source + 8 dependencies gone total; ~110 KB off the webview bundle.*
 
 **Acceptance:** the shared-embeds test passes; PR view renders `../sibling.png` and PlantUML identically to the inline view.
 
-### P2.4 Test the fragile layer
+### P2.4 Test the fragile layer — ✅ COMPLETE (v0.34.56)
+
+*All three moves landed, and the work paid for itself immediately by finding
+two live bugs.*
+
+*1. Extract-and-test.* Pure logic pulled out of the webview clients into
+`webviewShared/threadListState.ts` (filter, counters, Claude summary,
+next-unread walk, collapse-all, the reconciler's thread signature),
+`webviewShared/findState.ts` (match finding, index stepping, counter label),
+`webviewShared/highlightSlices.ts` (which text-node slices a highlight covers),
+and `inlineComments/proseMapping.ts` (prose ↔ source offsets, moved out of the
+vscode-importing panel). Both the inline view and the live editor now render
+their counters from the same code. +76 unit tests.
+
+*2. Message-protocol contract tests.* Every document mutation the inline
+webview can request moved into `inlineComments/mutations.ts` as one pure
+`applyClientMutation(parsed, msg, ctx)`; the panel keeps the WorkspaceEdit,
+the save, and the warning toast. `inlineMutations.test.ts` drives recorded
+messages against real documents and asserts the resulting file — table-cell
+anchoring, frontmatter offsets, code-fence refusal, tombstone-vs-delete,
+accept/reject, and full comment→reply→resolve→delete sequences. +31 tests.
+
+*3. Integration suite.* It had been red for months and nobody could tell: a
+stale `out/` fed the mocha glob compiled tests from the deleted sidecar
+architecture, and even clean it failed 8 tests written against removed
+commands. Repaired (`npm run clean` before the run, dead tests removed,
+fixtures switched from sidecar JSON to inline threads, the inline-bridge
+contract updated to "never lose a comment"), then grown with
+`regressions.test.ts`: duplicate table-cell anchoring, editing inside an
+anchored span, orphaning by deletion, one-click repair of stripped markers,
+an external change reaching an open document, and suggest mode reaching the
+dispatched prompt. 28 passing, 0 failing — and it now runs in CI under xvfb,
+which it never did before.
+
+*Two bugs found and fixed on the way:* (a) only the FIRST comment in a
+paragraph was highlighted in the preview — `wrapSpanRange` looked at a span's
+first text node only, and rebuilt the node list with `appendChild`, which
+could also have reordered text; (b) CI's "verify runtime deps are bundled"
+step had asserted `yjs`/`y-protocols`/`ws` were in the vsix since P2.2 deleted
+them, so **every CI run since v0.34.44 was red for a stale reason**. Replaced
+with `scripts/verify-package.mjs`, which checks the assets that actually ship
+and that the host bundle requires nothing unbundled.
 
 **Problem.** The churned code (three webview clients, `collabEditorProvider.ts`, `inlineCommentsPanel.ts`, `prReviewController.ts`) has near-zero coverage; the CHANGELOG's regression history maps 1:1 onto it.
 
@@ -232,10 +273,12 @@ P1.2, P1.3, P3.x — independent, schedule opportunistically
 
 Recommended order: **P0.3 → P0.1 → P0.2 → P2.2 → P2.1 → P1.1 → P1.2 → P2.3 → P1.3 → P2.4 (continuous) → P3.x**.
 
-**Progress:** P0.3, P0.1, P0.2 landed (v0.34.41–0.34.43). Next up is P2.2
-(delete the dead CRDT layer) — it is a deletion whose acceptance criteria
-require a manual live-editor pass in the Extension Development Host, so it
-needs a human in the loop before it can be called done.
+**Progress:** P0 (all), P1.1, P1.2, P1.3, P2.1, P2.2, and P2.4 have landed
+(v0.34.41–0.34.56). Remaining: **P2.3** (converge the asset/embed layer across
+the two markdown pipelines) and the **P3** polish tier. The write paths added
+in P1.1 and the folder/multi-select entry points added in P1.3 still want a
+pass in the Extension Development Host before a public release — unit,
+contract, and integration tests cover the logic, but not the right-click.
 
 Each initiative should land as its own version with a CHANGELOG entry, following the existing release discipline (`[skip-publish]` trial commits, tag only after Ronica confirms — tags publish publicly).
 

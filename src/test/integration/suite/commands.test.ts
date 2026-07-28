@@ -14,24 +14,21 @@ import * as crypto from "crypto";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
+import { addThread } from "../../../inlineComments/format";
 
+// Every command the extension registers. The sidecar-era commands
+// (reloadComments, validate, openPreview, createThread, addReply,
+// toggleResolve, deleteThread, editComment, saveEdit, cancelEdit,
+// reattachOrphan) were removed with that architecture; they were left in this
+// list long after, which is why the suite has been red.
 const ALL_COMMANDS = [
   "markdownCollab.installClaudeSkill",
   "markdownCollab.initializeAgents",
   "markdownCollab.copyClaudePrompt",
-  "markdownCollab.reloadComments",
-  "markdownCollab.validate",
-  "markdownCollab.openPreview",
-  "markdownCollab.reattachOrphan",
   "markdownCollab.revealComment",
-  "markdownCollab.createThread",
-  "markdownCollab.addReply",
-  "markdownCollab.toggleResolve",
-  "markdownCollab.deleteThread",
-  "markdownCollab.editComment",
-  "markdownCollab.saveEdit",
-  "markdownCollab.cancelEdit",
   "markdownCollab.sendAllToClaude",
+  "markdownCollab.sendThreadToClaude",
+  "markdownCollab.copyThreadToClaude",
   "markdownCollab.startClaudeTerminal",
   "markdownCollab.resetSendMode",
   "markdownCollab.openCollabEditor",
@@ -41,6 +38,7 @@ const ALL_COMMANDS = [
   "markdownCollab.openInlineCommentsView",
   "markdownCollab.repairInlineComments",
   "markdownCollab.toggleSuggestMode",
+  "markdownCollab.startPrReview",
 ];
 
 function fixturePath(name: string): string {
@@ -74,39 +72,25 @@ async function writeFixtureMd(name: string, body: string): Promise<vscode.Uri> {
   return vscode.Uri.file(p);
 }
 
-async function writeFixtureSidecar(
-  fileRel: string,
-  comments: Array<{
-    id: string;
-    text: string;
-    body?: string;
-    resolved?: boolean;
-    contextBefore?: string;
-    contextAfter?: string;
-  }>,
-): Promise<string> {
-  const sidecarDir = path.join(workspaceRoot(), ".markdown-collab", path.dirname(fileRel));
-  await fs.mkdir(sidecarDir, { recursive: true });
-  const sidecarPath = path.join(workspaceRoot(), ".markdown-collab", fileRel + ".json");
-  const sidecar = {
-    version: 1,
-    file: fileRel,
-    comments: comments.map((c) => ({
-      id: c.id,
-      author: "user",
-      body: c.body ?? "test comment",
-      createdAt: "2026-05-02T00:00:00.000Z",
-      resolved: c.resolved ?? false,
-      anchor: {
-        text: c.text,
-        contextBefore: c.contextBefore ?? "",
-        contextAfter: c.contextAfter ?? "",
-      },
-      replies: [],
-    })),
-  };
-  await fs.writeFile(sidecarPath, JSON.stringify(sidecar, null, 2), "utf-8");
-  return sidecarPath;
+/**
+ * Write a `.md` fixture that already carries an inline comment thread — the
+ * only comment storage the extension has since the sidecar was removed.
+ * Returns the file uri; `anchorText` must appear verbatim in `body`.
+ */
+async function writeFixtureWithThread(
+  name: string,
+  body: string,
+  anchorText: string,
+  commentBody = "test comment",
+): Promise<vscode.Uri> {
+  const start = body.indexOf(anchorText);
+  assert.ok(start >= 0, `anchor text ${JSON.stringify(anchorText)} not in fixture body`);
+  const { source } = addThread(body, start, start + anchorText.length, {
+    author: "user",
+    body: commentBody,
+    ts: "2026-05-02T00:00:00.000Z",
+  });
+  return writeFixtureMd(name, source);
 }
 
 function waitFor(
@@ -205,36 +189,21 @@ suite("All extension commands", () => {
   });
 
   // ---------------------------------------------------------------------
-  // reloadComments — must not throw even when no editor is active
+  // openInlineCommentsView — the right-click action on .md files
   // ---------------------------------------------------------------------
-  test("reloadComments is a safe no-op when nothing is open", async () => {
-    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
-    await vscode.commands.executeCommand("markdownCollab.reloadComments");
-  });
-
-  // ---------------------------------------------------------------------
-  // validate
-  // ---------------------------------------------------------------------
-  test("validate runs without error against a workspace with no sidecars", async () => {
-    await vscode.commands.executeCommand("markdownCollab.validate");
-  });
-
-  // ---------------------------------------------------------------------
-  // openPreview
-  // ---------------------------------------------------------------------
-  test("openPreview creates a webview panel for a .md file", async () => {
+  test("openInlineCommentsView opens a webview tab for a .md file", async () => {
     const uri = await writeFixtureMd("preview-target.md", "# Preview test\n\nHello world.\n");
     try {
-      const before = (vscode.window as unknown as { tabGroups: { all: unknown[] } }).tabGroups.all.length;
-      await vscode.commands.executeCommand("markdownCollab.openPreview", uri);
-      // The preview is a WebviewPanel; opening a tab should be observable.
-      // Use a generous wait — webview reveal is async via showWebviewPanel.
-      await waitFor(() => {
-        const tabs = (vscode.window as unknown as { tabGroups: { all: { tabs: unknown[] }[] } }).tabGroups.all;
-        const total = tabs.reduce((sum, g) => sum + g.tabs.length, 0);
-        return total >= before;
-      }, 5000, "tab count did not change after openPreview");
+      const countTabs = () =>
+        (vscode.window as unknown as { tabGroups: { all: { tabs: unknown[] }[] } }).tabGroups.all.reduce(
+          (sum, g) => sum + g.tabs.length,
+          0,
+        );
+      const before = countTabs();
+      await vscode.commands.executeCommand("markdownCollab.openInlineCommentsView", uri);
+      await waitFor(() => countTabs() > before, 5000, "no tab appeared for the inline comments view");
     } finally {
+      await vscode.commands.executeCommand("workbench.action.closeAllEditors");
       await rmIfExists(uri.fsPath);
     }
   });
@@ -245,10 +214,7 @@ suite("All extension commands", () => {
   test("sendAllToClaude in clipboard mode copies the prompt", async () => {
     const fileRel = "cmd-send-target.md";
     const body = "# Send target\n\nThis text is the anchor target for sending.\n";
-    const uri = await writeFixtureMd(fileRel, body);
-    const sidecarPath = await writeFixtureSidecar(fileRel, [
-      { id: "c_aaaaaaaa", text: "anchor target for sending" },
-    ]);
+    const uri = await writeFixtureWithThread(fileRel, body, "anchor target for sending");
     try {
       // Force clipboard mode for this run + clear any stale workspace state.
       const config = vscode.workspace.getConfiguration("markdownCollab");
@@ -270,7 +236,6 @@ suite("All extension commands", () => {
       await config.update("sendMode", prevMode, vscode.ConfigurationTarget.Workspace);
     } finally {
       await rmIfExists(uri.fsPath);
-      await rmIfExists(sidecarPath);
     }
   });
 
@@ -280,10 +245,7 @@ suite("All extension commands", () => {
   test("sendAllToClaude in channel mode appends to .markdown-collab/.events.jsonl", async () => {
     const fileRel = "cmd-channel-target.md";
     const body = "# Channel target\n\nAnother anchor target string here.\n";
-    const uri = await writeFixtureMd(fileRel, body);
-    const sidecarPath = await writeFixtureSidecar(fileRel, [
-      { id: "c_bbbbbbbb", text: "anchor target string here" },
-    ]);
+    const uri = await writeFixtureWithThread(fileRel, body, "anchor target string here");
     const eventsPath = path.join(workspaceRoot(), ".markdown-collab", ".events.jsonl");
     await rmIfExists(eventsPath);
     try {
@@ -303,7 +265,6 @@ suite("All extension commands", () => {
       await config.update("sendMode", prevMode, vscode.ConfigurationTarget.Workspace);
     } finally {
       await rmIfExists(uri.fsPath);
-      await rmIfExists(sidecarPath);
       await rmIfExists(eventsPath);
     }
   });
@@ -351,30 +312,29 @@ suite("All extension commands", () => {
   });
 
   // ---------------------------------------------------------------------
-  // Comment thread commands (createThread, addReply, toggleResolve,
-  // deleteThread, editComment, saveEdit, cancelEdit) and the
-  // argument-driven commands (reattachOrphan, revealComment) — these
-  // expect a CommentReply / Comment / Uri context object that VSCode's UI
-  // supplies when the user interacts with the gutter or tree view. From
-  // headless tests we can only confirm they're registered; invoking with
-  // no args can hang on showInformationMessage modals or a missing
-  // active editor. The underlying mutation logic is exercised in
-  // commentController.test.ts (21 unit tests).
+  // Argument-driven commands (revealComment, sendThreadToClaude,
+  // copyThreadToClaude) expect a tree node / uri + thread id that the UI
+  // supplies when the user clicks. From headless tests we can only confirm
+  // they're registered; invoking with no args is a documented no-op but
+  // tells us nothing. Their logic is exercised by the unit suite.
   // ---------------------------------------------------------------------
-  test("UI-context-bound commands are registered", () => {
+  test("argument-driven commands are registered", () => {
     for (const id of [
-      "markdownCollab.createThread",
-      "markdownCollab.addReply",
-      "markdownCollab.toggleResolve",
-      "markdownCollab.deleteThread",
-      "markdownCollab.editComment",
-      "markdownCollab.saveEdit",
-      "markdownCollab.cancelEdit",
-      "markdownCollab.reattachOrphan",
       "markdownCollab.revealComment",
+      "markdownCollab.sendThreadToClaude",
+      "markdownCollab.copyThreadToClaude",
+      "markdownCollab.repairInlineComments",
     ]) {
       assert.ok(registered.includes(id), `command ${id} not registered`);
     }
+  });
+
+  test("argument-driven commands are no-ops when invoked with no context", async () => {
+    // The UI never calls them this way, but a palette invocation or a stale
+    // keybinding can — they must not throw into the extension host.
+    await vscode.commands.executeCommand("markdownCollab.revealComment", undefined);
+    await vscode.commands.executeCommand("markdownCollab.sendThreadToClaude", undefined, undefined);
+    await vscode.commands.executeCommand("markdownCollab.copyThreadToClaude", undefined, undefined);
   });
 
   // ---------------------------------------------------------------------

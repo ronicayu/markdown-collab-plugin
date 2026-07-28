@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with Claude Code — inline comments, a live AI co-editor, and GitHub/GitLab PR review, all anchored in the file.",
-  "version": "0.34.55",
+  "version": "0.34.56",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -359,7 +359,8 @@
     "copy:fixtures": "node -e \"const fs=require('fs'),p=require('path');function cp(s,d){fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync(s,{withFileTypes:true})){const ss=p.join(s,f.name),dd=p.join(d,f.name);if(f.isDirectory())cp(ss,dd);else fs.copyFileSync(ss,dd);}}cp('src/test/integration/fixtures','out/test/integration/fixtures')\"",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:integration": "npm run compile && node ./out/test/integration/runTest.js",
+    "clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\"",
+    "test:integration": "npm run clean && npm run compile && node ./out/test/integration/runTest.js",
     "bundle:skill-cli": "node scripts/build-skill-cli.mjs",
     "copy:shared-css": "node scripts/copy-shared-css.mjs"
   },

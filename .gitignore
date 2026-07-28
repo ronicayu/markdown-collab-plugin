@@ -4,3 +4,6 @@ out/
 .vscode-test/
 .DS_Store
 .claude/settings.local.json
+
+# Playwright MCP scratch output from headless webview checks.
+.playwright-mcp/

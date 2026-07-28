@@ -50,12 +50,23 @@ suite("Collab editor inline comment bridge", () => {
     assert.strictEqual(comments[0]!.resolved, false);
   });
 
-  test("add: ok=false when the anchor text isn't in the document", () => {
-    const res = addThreadFromAnchor(BODY, { text: "text that is absent entirely", contextBefore: "", contextAfter: "" }, {
-      author: "user",
-      body: "x",
-    });
-    assert.strictEqual(res.ok, false);
+  test("add: an unplaceable anchor is saved loosely rather than lost", () => {
+    // The contract changed deliberately: a comment whose selected text can't
+    // be located in the markdown (table cells, inline-formatted spans) is
+    // stored quote-only instead of being refused, so it is never lost. Other
+    // surfaces show it as an unanchored thread.
+    const res = addThreadFromAnchor(
+      BODY,
+      { text: "text that is absent entirely", contextBefore: "", contextAfter: "" },
+      { author: "user", body: "x" },
+    );
+    assert.strictEqual(res.ok, true);
+    const parsed = parse((res as { ok: true; source: string }).source);
+    assert.strictEqual(parsed.threads.length, 1);
+    assert.strictEqual(parsed.threads[0]!.quote, "text that is absent entirely");
+    assert.deepStrictEqual(parsed.unanchoredThreadIds, [parsed.threads[0]!.id]);
+    // Never at the cost of the prose.
+    assert.ok(res.source.startsWith(BODY.trimEnd()));
   });
 
   // -------------------------------------------------------------------

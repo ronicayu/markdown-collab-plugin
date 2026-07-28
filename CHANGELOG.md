@@ -1,5 +1,81 @@
 # Changelog
 
+## 0.34.56 — 2026-07-28 (trial)
+
+### Fixed: only the first comment in a paragraph was highlighted
+
+In the inline comments view, a paragraph with two or more anchored comments
+showed a highlight for only the first one. `wrapSpanRange` looked at a prose
+span's *first* text node, but the first highlight splits that node in three —
+so every later comment in the same paragraph computed offsets against text
+that was no longer there and silently gave up. It also rebuilt the span's
+children with `appendChild`, which appends at the end: had the offsets
+happened to line up, it would have reordered the paragraph's text rather than
+losing a highlight.
+
+It now walks every text node under the span, wraps in place with `splitText`,
+and skips text already inside a highlight (nested marks render as one darker
+blob and say nothing). Verified headlessly with three comments in one
+paragraph: all three highlight, in order, with the prose byte-identical
+through a find cycle.
+
+Also: closing the find bar left a stale "No results" counter behind it — the
+label was recomputed before the query was cleared.
+
+### Changed: test the fragile layer (10x-plan P2.4)
+
+The webview clients and host glue are where this project's regressions have
+always lived, and they had almost no coverage. Three moves, +107 unit tests
+and a working integration suite:
+
+**Pure logic extracted from the webview clients** into
+`webviewShared/threadListState.ts` (filters, counters, the "N new from Claude"
+summary, the next-unread walk, collapse-all, and the live editor's
+reconciliation signature), `webviewShared/findState.ts` (match finding, index
+stepping, counter label), `webviewShared/highlightSlices.ts` (the offset
+arithmetic behind the fix above), and `inlineComments/proseMapping.ts` (prose
+↔ source offsets, moved out of the panel so it no longer needs `vscode` to be
+tested). The inline view and the live editor now compute their counters from
+the same code.
+
+**Message-protocol contract tests.** Every document mutation the inline
+webview can request now goes through one pure
+`applyClientMutation(parsed, msg, ctx)` in `inlineComments/mutations.ts`; the
+panel keeps the `WorkspaceEdit`, the save, and the warning toast. Tests drive
+recorded messages against real documents and assert the resulting file:
+anchoring a duplicate table-cell value, mapping offsets past frontmatter,
+refusing to anchor inside a code fence, tombstoning a comment that has replies
+versus deleting a leaf, accept/reject of suggestions, and whole
+comment→reply→resolve→reopen→delete sequences that must leave the file
+byte-identical to where they started.
+
+**The integration suite works again.** It had been red for months without
+anyone being able to tell: a stale `out/` directory fed the test glob compiled
+tests from the deleted sidecar architecture. `npm run test:integration` now
+cleans first; the dead tests are gone; fixtures use inline threads instead of
+sidecar JSON; and the inline-bridge contract test was updated to the behavior
+we actually chose (an unplaceable anchor is saved loosely rather than
+refused — a comment is never lost). Then grown with the regressions that
+actually happened, replayed in a real Extension Host: duplicate table-cell
+anchoring, editing inside an anchored span, orphaning a thread by deleting its
+passage, one-click repair of stripped markers, an external change reaching an
+open document, and suggest mode reaching the dispatched prompt. 28 passing.
+
+### Fixed: CI has been red since v0.34.44 for a stale reason
+
+CI's "verify runtime deps are bundled" step asserted that `yjs`, `y-protocols`,
+`lib0`, `ws`, and `markdown-it` were present inside the packaged `.vsix`. Those
+dependencies were deleted in v0.34.44–0.34.46 (and the rest are inlined by
+esbuild), so the step had failed on every push since — a guard that fails for a
+reason no one is reading is worse than no guard.
+
+Replaced with `scripts/verify-package.mjs`, which checks what the package
+actually needs: every asset the extension loads by URI (all three webview
+bundles, their stylesheets, the shared comment CSS, the mermaid script) and
+that `out/extension.js` requires nothing that wasn't bundled — the real form of
+"a runtime dependency went missing". CI also gained an `integration` job that
+runs the Extension Host suite under `xvfb`, which had never run in CI at all.
+
 ## 0.34.55 — 2026-07-28 (trial)
 
 ### Added: multi-file review sessions (10x-plan P1.3)

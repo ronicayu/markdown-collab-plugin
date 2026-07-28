@@ -23,17 +23,13 @@ import { checkClaudeSkill, type SkillStatus } from "../skill";
 import { CollabEditorProvider } from "../collab/collabEditorProvider";
 import { detectUrlScheme, parseLinkHref, slugifyHeading } from "./linkParse";
 import {
-  acceptSuggestion,
-  addThread,
-  appendReply,
   findFrontmatter,
   parse,
-  rejectSuggestion,
-  replaceThread,
   type InlineComment,
-  type InlineThread,
   type ParsedDocument,
 } from "./format";
+import { applyClientMutation, type MutationMessage } from "./mutations";
+import { mapProseToSource } from "./proseMapping";
 import { buildInlinePayload, buildSingleThreadPayload } from "./sendToClaude";
 import type { ReviewPayload } from "../sendToClaude";
 
@@ -461,56 +457,18 @@ export class InlineCommentsPanel {
           await this.scrollTo(opts);
         }
         return;
+      // Document mutations all run through the same pure handler — see
+      // `mutations.ts`. The panel's job is the side effects: applying the
+      // edit and surfacing whatever warning the handler returns.
       case "add-comment":
-        return this.applyMutation((parsed) => {
-          // Selection arrives in *prose* (stripped) offset space. Map it
-          // back to source-offset space before inserting markers.
-          const { proseStartToSource, proseEndToSource } = mapProseToSource(parsed);
-          const sStart = proseStartToSource(msg.selStart);
-          const sEnd = proseEndToSource(msg.selEnd);
-          if (sStart === null || sEnd === null) {
-            void vscode.window.showWarningMessage("Could not map selection back to source — try selecting again.");
-            return parsed.source;
-          }
-          if (sStart === sEnd) {
-            void vscode.window.showWarningMessage("Select some text to anchor the comment to.");
-            return parsed.source;
-          }
-          const author = this.resolveAuthor();
-          const { source } = addThread(parsed.source, sStart, sEnd, { author, body: msg.body });
-          return source;
-        });
       case "reply":
-        return this.applyMutation((parsed) => {
-          const t = parsed.threads.find((x) => x.id === msg.threadId);
-          if (!t) return parsed.source;
-          const author = this.resolveAuthor();
-          const next = appendReply(t, { author, body: msg.body, parent: msg.parentCommentId });
-          return replaceThread(parsed.source, t.id, next);
-        });
       case "edit-comment":
-        return this.applyMutation((parsed) => {
-          const t = parsed.threads.find((x) => x.id === msg.threadId);
-          if (!t) return parsed.source;
-          const ts = new Date().toISOString();
-          const next: InlineThread = {
-            ...t,
-            comments: t.comments.map((c) =>
-              c.id === msg.commentId ? { ...c, body: msg.body, editedTs: ts } : c,
-            ),
-          };
-          return replaceThread(parsed.source, t.id, next);
-        });
       case "toggle-resolve":
-        return this.applyMutation((parsed) => {
-          const t = parsed.threads.find((x) => x.id === msg.threadId);
-          if (!t) return parsed.source;
-          const next: InlineThread =
-            t.status === "open"
-              ? { ...t, status: "resolved", resolvedBy: this.resolveAuthor(), resolvedTs: new Date().toISOString() }
-              : { ...t, status: "open", resolvedBy: undefined, resolvedTs: undefined };
-          return replaceThread(parsed.source, t.id, next);
-        });
+      case "delete-thread":
+      case "delete-comment":
+      case "accept-suggestion":
+      case "reject-suggestion":
+        return this.applyClientMutation(msg);
       case "send-to-claude":
         return this.handleSendToClaude();
       case "copy-prompt":
@@ -525,44 +483,11 @@ export class InlineCommentsPanel {
         return this.handleDrawioRead(msg.requestId, msg.href);
       case "install-skill":
         return this.handleInstallSkill();
-      case "accept-suggestion":
-        return this.applyMutation((parsed) => {
-          // An unanchored suggestion can't place its change — leave it for the
-          // human to reject. applyMutation's no-op guard also covers unknown ids.
-          if (!parsed.anchors.has(msg.anchorId)) return parsed.source;
-          return acceptSuggestion(parsed.source, msg.anchorId);
-        });
-      case "reject-suggestion":
-        return this.applyMutation((parsed) => rejectSuggestion(parsed.source, msg.anchorId));
       case "toggle-suggest-mode":
         // The command flips the per-workspace setting and shows the toast;
         // re-push so the toggle in the panel reflects the new state.
         await vscode.commands.executeCommand("markdownCollab.toggleSuggestMode");
         return this.pushState();
-      case "delete-thread":
-        return this.applyMutation((parsed) => replaceThread(parsed.source, msg.threadId, null));
-      case "delete-comment":
-        return this.applyMutation((parsed) => {
-          const t = parsed.threads.find((x) => x.id === msg.threadId);
-          if (!t) return parsed.source;
-          // If the comment has descendants (replies), tombstone to keep the
-          // tree shape. If it's a leaf, drop it entirely. If removing it
-          // leaves the thread empty, delete the whole thread.
-          const hasChildren = t.comments.some((c) => c.parent === msg.commentId && !c.deleted);
-          let nextComments: InlineComment[];
-          if (hasChildren) {
-            nextComments = t.comments.map((c) =>
-              c.id === msg.commentId ? { ...c, deleted: true, body: "" } : c,
-            );
-          } else {
-            nextComments = t.comments.filter((c) => c.id !== msg.commentId);
-          }
-          const liveCount = nextComments.filter((c) => !c.deleted).length;
-          if (liveCount === 0) {
-            return replaceThread(parsed.source, t.id, null);
-          }
-          return replaceThread(parsed.source, t.id, { ...t, comments: nextComments });
-        });
     }
   }
 
@@ -766,6 +691,24 @@ export class InlineCommentsPanel {
     return cfg.get<string>("collab.userName", "") || os.userInfo().username || "anonymous";
   }
 
+  /**
+   * Run one webview mutation through the pure handler and apply the result.
+   * The handler decides what the document becomes; the panel owns the
+   * `WorkspaceEdit`, the save, and the warning toast.
+   */
+  private async applyClientMutation(msg: MutationMessage): Promise<void> {
+    let warning: string | undefined;
+    await this.applyMutation((parsed) => {
+      const result = applyClientMutation(parsed, msg, {
+        author: this.resolveAuthor(),
+        now: () => new Date().toISOString(),
+      });
+      warning = result.warning;
+      return result.source;
+    });
+    if (warning) void vscode.window.showWarningMessage(warning);
+  }
+
   private async applyMutation(fn: (parsed: ParsedDocument) => string): Promise<void> {
     const parsed = parse(this.doc.getText());
     const next = fn(parsed);
@@ -865,108 +808,6 @@ export class InlineCommentsPanel {
     this.disposables.length = 0;
     this.onDispose();
   }
-}
-
-/**
- * Build a map from prose offsets (the source with all `mc:` markup
- * stripped) back to source offsets. Plus the serialized state with
- * per-thread anchor positions in prose space.
- */
-function mapProseToSource(parsed: ParsedDocument): {
-  prose: string;
-  /** Map a *start* prose offset (inclusive boundary) to a source offset. */
-  proseStartToSource: (proseOffset: number) => number | null;
-  /** Map an *end* prose offset (exclusive boundary) to a source offset. */
-  proseEndToSource: (proseOffset: number) => number | null;
-  /**
-   * Map a source offset to a prose offset. If the source offset falls
-   * inside a skipped region (anchor marker or threads block), returns
-   * the prose offset of the next surviving character. Returns `null`
-   * only when the source offset is past the end of the source.
-   */
-  sourceToProse: (srcOffset: number) => number | null;
-  anchorsInProse: Map<string, { proseStart: number; proseEnd: number }>;
-} {
-  const src = parsed.source;
-  // Build a list of "skip" intervals (every mc marker + the entire
-  // threads region + frontmatter block). We then walk src and emit a
-  // position map.
-  const skips: Array<[number, number]> = [];
-  for (const a of parsed.anchors.values()) {
-    skips.push([a.openStart, a.openEnd]);
-    skips.push([a.closeStart, a.closeEnd]);
-  }
-  if (parsed.threadsRegion) {
-    // Also eat one trailing newline before the region so we don't leave a
-    // stray blank line floating in the preview.
-    const start = parsed.threadsRegion.start > 0 && src[parsed.threadsRegion.start - 1] === "\n"
-      ? parsed.threadsRegion.start - 1
-      : parsed.threadsRegion.start;
-    skips.push([start, parsed.threadsRegion.end]);
-  }
-  if (parsed.frontmatter) {
-    skips.push([parsed.frontmatter.start, parsed.frontmatter.end]);
-  }
-  skips.sort((a, b) => a[0] - b[0]);
-
-  // proseIndexToSourceIndex[i] = source offset corresponding to prose offset i.
-  // Length = prose.length + 1 so end-of-string maps too.
-  const proseChars: string[] = [];
-  const proseToSrc: number[] = [];
-  let skipIdx = 0;
-  for (let i = 0; i < src.length; i++) {
-    while (skipIdx < skips.length && i >= skips[skipIdx][1]) skipIdx++;
-    if (skipIdx < skips.length && i >= skips[skipIdx][0] && i < skips[skipIdx][1]) {
-      continue;
-    }
-    proseToSrc.push(i);
-    proseChars.push(src[i]);
-  }
-  proseToSrc.push(src.length);
-  const prose = proseChars.join("");
-
-  // Per-thread anchor in prose space: openEnd maps to the prose offset
-  // of the first character after the open marker.
-  const anchorsInProse = new Map<string, { proseStart: number; proseEnd: number }>();
-  for (const [id, range] of parsed.anchors) {
-    // Find prose indices for the source positions just after open marker
-    // and just before close marker. Since markers were skipped, the prose
-    // index for source offset openEnd is the first proseToSrc[p] === openEnd.
-    const ps = findProseIndex(proseToSrc, range.openEnd);
-    const pe = findProseIndex(proseToSrc, range.closeStart);
-    if (ps !== null && pe !== null) {
-      anchorsInProse.set(id, { proseStart: ps, proseEnd: pe });
-    }
-  }
-
-  return {
-    prose,
-    anchorsInProse,
-    proseStartToSource: (proseOffset: number) => {
-      if (proseOffset < 0 || proseOffset > proseToSrc.length - 1) return null;
-      return proseToSrc[proseOffset];
-    },
-    proseEndToSource: (proseOffset: number) => {
-      if (proseOffset < 0 || proseOffset > proseToSrc.length - 1) return null;
-      // End boundary: anchor "just past the last selected char". If the
-      // next prose char lives across a skipped region we still want to
-      // anchor immediately after the last *selected* source char rather
-      // than swallowing the markers.
-      if (proseOffset === 0) return proseToSrc[0];
-      return proseToSrc[proseOffset - 1] + 1;
-    },
-    sourceToProse: (srcOffset: number) => findProseIndex(proseToSrc, srcOffset),
-  };
-}
-
-function findProseIndex(proseToSrc: number[], srcOffset: number): number | null {
-  // Linear scan is fine for review-sized docs. Switch to binary search if
-  // anyone complains.
-  for (let i = 0; i < proseToSrc.length; i++) {
-    if (proseToSrc[i] === srcOffset) return i;
-    if (proseToSrc[i] > srcOffset) return i; // Marker boundary collapse — closest prose index.
-  }
-  return null;
 }
 
 /**

@@ -38,6 +38,7 @@ import { Plugin, PluginKey, TextSelection } from "prosemirror-state";
 import { CellSelection } from "@milkdown/prose/tables";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import { buildCommentCard, buildComposer, buildSuggestionCard, type ComposerHandle } from "../webviewShared/commentUi";
+import { sidebarCountLabel, threadSignature } from "../webviewShared/threadListState";
 import { locateAnchorInLiveText, locateNthOccurrence } from "../collab/liveAnchorLocator";
 import { renderedRangeToPmRange } from "../collab/pmPositionMapper";
 import { slugifyHeading } from "../inlineComments/linkParse";
@@ -564,27 +565,16 @@ function updateSidebarCounts(): void {
   const open = sidebarState.comments.filter((c) => !c.resolved).length;
   const filterBtn = sidebarEl.querySelector<HTMLButtonElement>("[data-action='toggle-filter']");
   if (filterBtn) {
-    filterBtn.textContent = sidebarState.hideResolved
-      ? `Showing open · ${open}`
-      : `${open} open · ${total} total`;
+    filterBtn.textContent = sidebarCountLabel({
+      open,
+      total,
+      hideResolved: sidebarState.hideResolved,
+    });
   }
   const sendBtn = sidebarEl.querySelector<HTMLButtonElement>("[data-action='send-to-claude']");
   if (sendBtn) sendBtn.disabled = open === 0;
 }
 
-// A stable identity for a thread's rendered content. Two renders with the same
-// signature are byte-identical, so reconciliation can leave that card's DOM
-// untouched — preserving its always-on reply box's focus and caret.
-function threadSignature(c: CommentSummary): string {
-  return JSON.stringify({
-    a: c.author,
-    t: c.createdAt,
-    b: c.body,
-    r: c.resolved,
-    an: c.anchor.text,
-    rep: c.replies.map((x) => [x.author, x.createdAt, x.body]),
-  });
-}
 
 
 // Patch the comment list in place: keep unchanged thread cards (so a reply

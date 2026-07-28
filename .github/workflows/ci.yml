@@ -26,22 +26,40 @@ jobs:
         run: npm test
 
       # Real package, NOT `--no-dependencies`. The release pipeline ships
-      # the same artifact; CI must catch missing-runtime-dep failures
-      # (e.g. y-protocols not bundled) before a tag goes out, not after.
+      # the same artifact; CI must catch a broken package before a tag goes
+      # out, not after.
       - name: Package (full)
         run: npx --yes @vscode/vsce package --out markdown-collab-plugin.vsix
 
-      - name: Verify runtime deps are bundled
-        run: |
-          for dep in node_modules/y-protocols/awareness.js node_modules/yjs/package.json node_modules/lib0/package.json node_modules/ws/package.json node_modules/markdown-it/package.json; do
-            if ! unzip -l markdown-collab-plugin.vsix | grep -q "extension/$dep"; then
-              echo "::error::missing $dep in vsix — vscodeignore re-includes are out of sync with the code's requires"
-              exit 1
-            fi
-          done
+      # Asserts every asset the extension loads by URI is inside the vsix, and
+      # that the host bundle requires nothing that wasn't bundled. Replaces a
+      # check that listed yjs / y-protocols / ws — dependencies deleted in
+      # v0.34.44–0.34.46, which left CI red for reasons no one was reading.
+      - name: Verify packaged assets and bundled requires
+        run: node scripts/verify-package.mjs markdown-collab-plugin.vsix
 
       - uses: actions/upload-artifact@v4
         with:
           name: vsix
           path: markdown-collab-plugin.vsix
           if-no-files-found: error
+
+  # The Extension Host suite: the only tests that exercise real TextDocuments,
+  # WorkspaceEdits, and files changing on disk under an open editor — the layer
+  # the anchoring and live-editor regressions actually lived in.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # VS Code needs a display even for the headless suites; the display-bound
+      # tests skip themselves, the rest run.
+      - name: Integration tests
+        run: xvfb-run -a npm run test:integration

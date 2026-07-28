@@ -7,8 +7,20 @@
 // underlying .md file — there is no in-webview cache of comments.
 
 import MarkdownIt from "markdown-it";
-import { isClaudeReviewed, isClaudeUnread } from "../claudeUnread";
+import { isClaudeUnread } from "../claudeUnread";
 import { slugifyHeading } from "../linkParse";
+import { findCountLabel, findMatchesIn, stepIndex } from "../../webviewShared/findState";
+import { planHighlightSlices } from "../../webviewShared/highlightSlices";
+import {
+  claudeSummary,
+  emptyListMessage,
+  filterThreads,
+  matchesFilter,
+  nextCollapseAllAction,
+  nextUnreadThreadId,
+  threadCountLabel,
+  type ThreadFilter,
+} from "../../webviewShared/threadListState";
 import { buildComposer, buildCommentCard, buildSuggestionCard, type CardAction } from "../../webviewShared/commentUi";
 import { resolveImageSrc, type ImageBaseUris } from "../../webviewShared/imageSrc";
 import { installSourceOffsetPlugin } from "./renderWithOffsets";
@@ -250,8 +262,10 @@ function findOpen(): void {
 
 function findClose(): void {
   dom.findBar.hidden = true;
-  findClear();
+  // Clear the query first: findClear() recomputes the counter from the input,
+  // so clearing afterwards left a stale "No results" behind the hidden bar.
   dom.findInput.value = "";
+  findClear();
 }
 
 function findClear(): void {
@@ -267,20 +281,9 @@ function findClear(): void {
 }
 
 function updateFindCount(): void {
-  const total = findMatches.length;
-  const query = dom.findInput.value;
-  if (!query) {
-    dom.findCount.textContent = "";
-    dom.findCount.classList.remove("empty");
-    return;
-  }
-  if (total === 0) {
-    dom.findCount.textContent = "No results";
-    dom.findCount.classList.add("empty");
-    return;
-  }
-  dom.findCount.textContent = `${findIndex + 1} / ${total}`;
-  dom.findCount.classList.remove("empty");
+  const label = findCountLabel(dom.findInput.value, findIndex, findMatches.length);
+  dom.findCount.textContent = label.text;
+  dom.findCount.classList.toggle("empty", label.empty);
 }
 
 function findRun(): void {
@@ -316,23 +319,20 @@ function findRun(): void {
 
   for (const textNode of targets) {
     const text = textNode.textContent ?? "";
-    const lower = text.toLowerCase();
     const frag = document.createDocumentFragment();
     let pos = 0;
-    while (pos < text.length) {
-      const hit = lower.indexOf(needle, pos);
-      if (hit === -1) {
-        frag.appendChild(document.createTextNode(text.slice(pos)));
-        break;
+    for (const match of findMatchesIn(text, query)) {
+      if (match.start > pos) {
+        frag.appendChild(document.createTextNode(text.slice(pos, match.start)));
       }
-      if (hit > pos) frag.appendChild(document.createTextNode(text.slice(pos, hit)));
       const mark = document.createElement("mark");
       mark.className = "mc-search";
-      mark.textContent = text.slice(hit, hit + needle.length);
+      mark.textContent = text.slice(match.start, match.end);
       frag.appendChild(mark);
       findMatches.push(mark);
-      pos = hit + needle.length;
+      pos = match.end;
     }
+    if (pos < text.length) frag.appendChild(document.createTextNode(text.slice(pos)));
     textNode.parentNode?.replaceChild(frag, textNode);
   }
 
@@ -353,7 +353,7 @@ function highlightCurrent(scroll: boolean): void {
 
 function findStep(delta: number): void {
   if (findMatches.length === 0) return;
-  findIndex = (findIndex + delta + findMatches.length) % findMatches.length;
+  findIndex = stepIndex(findIndex, delta, findMatches.length);
   highlightCurrent(true);
   updateFindCount();
 }
@@ -499,19 +499,20 @@ function setThreadCollapsed(id: string, collapsed: boolean): void {
 }
 dom.collapseAll.addEventListener("click", () => {
   const threads = currentState?.threads ?? [];
-  const collapse = !(threads.length > 0 && threads.every((t) => collapsedThreads.has(t.id)));
+  const collapse =
+    nextCollapseAllAction(
+      threads.map((t) => t.id),
+      collapsedThreads,
+    ) === "collapse";
   for (const t of threads) setThreadCollapsed(t.id, collapse);
 });
 
 dom.claudeNext.addEventListener("click", () => {
   if (!currentState) return;
-  const unread = currentState.threads.filter(isClaudeUnread);
-  if (unread.length === 0) return;
-  const currentIdx = highlightedThreadId
-    ? unread.findIndex((t) => t.id === highlightedThreadId)
-    : -1;
-  const nextIdx = (currentIdx + 1) % unread.length;
-  const target = unread[nextIdx];
+  const nextId = nextUnreadThreadId(currentState.threads, highlightedThreadId);
+  if (!nextId) return;
+  const target = currentState.threads.find((t) => t.id === nextId);
+  if (!target) return;
   highlightedThreadId = target.id;
   // Scroll the card into view, then scroll the preview to the anchor.
   const card = dom.threadsList.querySelector<HTMLElement>(
@@ -533,7 +534,7 @@ function cssEscape(s: string): string {
 
 let currentState: SerializedState | null = null;
 let user: { name: string } = { name: "anonymous" };
-let filter: "open" | "all" | "resolved" | "claude-unread" = "open";
+let filter: ThreadFilter = "open";
 let pendingSelection: { proseStart: number; proseEnd: number } | null = null;
 let editingCommentId: string | null = null; // composite "threadId:commentId" when editing
 let highlightedThreadId: string | null = null;
@@ -751,9 +752,9 @@ function applyAnchorHighlights(state: SerializedState): void {
   const spans = collectProseSpans();
   for (const t of state.threads) {
     if (!t.anchor) continue;
-    if (filter === "open" && t.status === "resolved") continue;
-    if (filter === "resolved" && t.status === "open") continue;
-    if (filter === "claude-unread" && !isClaudeUnread(t)) continue;
+    // Highlights follow the sidebar filter — a thread the list doesn't show
+    // shouldn't paint a span in the preview either.
+    if (!matchesFilter(t, filter)) continue;
     for (const span of spans) {
       const start = Math.max(span.proseStart, t.anchor.proseStart);
       const end = Math.min(span.proseEnd, t.anchor.proseEnd);
@@ -776,9 +777,16 @@ function applyAnchorHighlights(state: SerializedState): void {
 }
 
 /**
- * Wrap chars [textStart, textEnd) of `span.el`'s first text node in a
- * `<mark>`. The renderer guarantees each `[data-mc-src]` wraps either a
- * single text node or `<code>`-text-`</code>`; we handle both.
+ * Wrap chars [textStart, textEnd) of a prose span's text in a `<mark>`.
+ *
+ * Offsets are over the span's *concatenated* text, so the walk covers every
+ * text node under the span rather than just the first one: a paragraph with
+ * two comments in it gets marked twice, and the second mark lands in whatever
+ * node the first one split off. (Before this, only the first text node was
+ * considered, so the second thread in a paragraph silently went unhighlighted.)
+ * Text already inside a `<mark>` still counts toward the offsets but is never
+ * wrapped again — nested highlights would render as a single darker blob and
+ * tell the reader nothing.
  */
 function wrapSpanRange(
   span: ProseSpan,
@@ -789,27 +797,43 @@ function wrapSpanRange(
   suggestionId?: string,
 ): void {
   const el = span.el;
-  // The span renderer produces either:
-  //   <span data-mc-src="..">TEXT</span>
-  //   <span data-mc-src=".."><code>TEXT</code></span>
-  // Pick the text-holding node.
-  let textHost: HTMLElement = el;
-  if (el.firstElementChild && el.children.length === 1 && el.firstElementChild.tagName === "CODE") {
-    textHost = el.firstElementChild as HTMLElement;
+  // Collect the nodes BEFORE mutating: splitting a text node while a
+  // TreeWalker is live would revisit the pieces we just created.
+  const nodes: Text[] = [];
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) nodes.push(n as Text);
+
+  const slices = planHighlightSlices(
+    nodes.map((node) => ({ length: node.data.length, inMark: isInsideMark(node, el) })),
+    textStart,
+    textEnd,
+  );
+
+  for (const slice of slices) {
+    const mark = buildHighlightMark(threadId, status, suggestionId);
+    // splitText leaves the pieces in place, so surrounding text keeps its
+    // order — the old rebuild-by-appendChild did not.
+    const rest = nodes[slice.index].splitText(slice.from);
+    rest.splitText(slice.to - slice.from);
+    mark.textContent = rest.data;
+    rest.parentNode?.replaceChild(mark, rest);
   }
-  const textNode = textHost.firstChild;
-  if (!textNode || textNode.nodeType !== Node.TEXT_NODE) return;
-  const data = (textNode as Text).data;
-  const tStart = Math.max(0, Math.min(textStart, data.length));
-  const tEnd = Math.max(tStart, Math.min(textEnd, data.length));
-  if (tEnd <= tStart) return;
-  const before = data.slice(0, tStart);
-  const middle = data.slice(tStart, tEnd);
-  const after = data.slice(tEnd);
-  textHost.removeChild(textNode);
-  if (before) textHost.appendChild(document.createTextNode(before));
+}
+
+/** Is this text node already inside a highlight mark within `root`? */
+function isInsideMark(node: Node, root: HTMLElement): boolean {
+  for (let p = node.parentNode; p && p !== root; p = p.parentNode) {
+    if ((p as HTMLElement).tagName === "MARK") return true;
+  }
+  return false;
+}
+
+function buildHighlightMark(
+  threadId: string,
+  status: "open" | "resolved",
+  suggestionId?: string,
+): HTMLElement {
   const mark = document.createElement("mark");
-  mark.textContent = middle;
   if (suggestionId) {
     // A suggestion's original text — mark it distinctly and scroll the sidebar
     // to the suggestion card on click.
@@ -834,8 +858,7 @@ function wrapSpanRange(
       }
     });
   }
-  textHost.appendChild(mark);
-  if (after) textHost.appendChild(document.createTextNode(after));
+  return mark;
 }
 
 /**
@@ -870,25 +893,14 @@ function renderThreads(state: SerializedState): void {
     list.appendChild(renderSuggestion(s));
   }
 
-  const filtered = state.threads.filter((t) => {
-    if (filter === "open") return t.status === "open";
-    if (filter === "resolved") return t.status === "resolved";
-    if (filter === "claude-unread") return isClaudeUnread(t);
-    return true;
-  });
-  const totalOpen = state.threads.filter((t) => t.status === "open").length;
-  dom.threadCount.textContent = `${totalOpen} open · ${state.threads.length} total`;
+  const filtered = filterThreads(state.threads, filter);
+  dom.threadCount.textContent = threadCountLabel(state.threads);
   renderClaudeSummary(state);
   if (filtered.length === 0) {
     if (state.suggestions.length === 0) {
       const empty = document.createElement("p");
       empty.className = "empty";
-      empty.textContent =
-        filter === "open"
-          ? "No open comments. Select text in the preview to start a thread."
-          : filter === "claude-unread"
-            ? "No unread threads from Claude. Run 'Ask Claude to Review This Doc' to start one."
-            : "No comments match this filter.";
+      empty.textContent = emptyListMessage(filter);
       list.appendChild(empty);
     }
     return;
@@ -920,27 +932,19 @@ function renderSuggestion(s: SuggestionState): HTMLElement {
 }
 
 function renderClaudeSummary(state: SerializedState): void {
-  let unread = 0;
-  let reviewed = 0;
-  for (const t of state.threads) {
-    if (isClaudeUnread(t)) unread++;
-    else if (isClaudeReviewed(t)) reviewed++;
-  }
-  const hasAny = unread + reviewed > 0;
-  dom.claudeSummary.hidden = !hasAny;
+  const summary = claudeSummary(state.threads);
+  dom.claudeSummary.hidden = !summary.hasAny;
   // The "New from Claude" filter chip is only relevant when there are
   // Claude threads to look at. Hide it (and snap filter back to "open")
   // when none exist so the chip doesn't sit there in dead state.
-  dom.claudeFilterLabel.hidden = !hasAny;
-  if (!hasAny && filter === "claude-unread") {
+  dom.claudeFilterLabel.hidden = !summary.hasAny;
+  if (!summary.hasAny && filter === "claude-unread") {
     filter = "open";
     for (const r of dom.filterRadios) r.checked = r.value === "open";
   }
-  if (!hasAny) return;
-  const unreadLabel = unread === 1 ? "1 new from Claude" : `${unread} new from Claude`;
-  const reviewedLabel = reviewed === 1 ? "1 reviewed" : `${reviewed} reviewed`;
-  dom.claudeSummaryText.textContent = `${unreadLabel} · ${reviewedLabel}`;
-  dom.claudeNext.disabled = unread === 0;
+  if (!summary.hasAny) return;
+  dom.claudeSummaryText.textContent = summary.text;
+  dom.claudeNext.disabled = summary.unread === 0;
 }
 
 function renderThreadCard(t: ThreadState): HTMLElement {
