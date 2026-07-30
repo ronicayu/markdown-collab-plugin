@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.34.62 — 2026-07-30 (trial)
+
+### Added: the extension is now an MCP server Claude can call (10x-plan-2 P0.1)
+
+Until now every Claude edit reached a document the same way — a separate process
+wrote the file, and the extension found out by watching it change. That loses
+three things at once: the write races whatever you have unsaved, it can't be
+undone, and integrity gets checked *after* the damage instead of before it.
+
+The extension now hosts an MCP server (localhost, per-session bearer token) with
+the same verbs the `mdc` CLI has:
+
+```
+mc_list  mc_reply  mc_open  mc_rewrite  mc_resolve
+mc_suggest  mc_accept  mc_reject  mc_check  mc_status
+```
+
+Every write goes out as a `WorkspaceEdit` against the live `TextDocument`. So:
+
+- **Cmd+Z undoes Claude.** Its reply or rewrite is on the same undo stack as
+  your own typing.
+- **Your unsaved work survives.** The edit is ordered against the buffer instead
+  of overwriting the file underneath it.
+- **A bad call is refused, not repaired.** A tool call that would break marker
+  integrity — unknown thread id, a quote that isn't there, a replacement
+  carrying a stray marker — comes back to Claude as a structured error with a
+  machine-readable code, and the document is untouched. The CLI checked after
+  writing; the ops now check before returning.
+- **An ambiguous quote is refused too**, with the occurrence count, instead of
+  guessing which of three identical sentences you meant.
+
+**The CLI and the tools are one implementation, not two.** The verbs moved to
+`src/inlineComments/docOps.ts`; `mdc.ts` and the tool handlers are thin front
+ends over them, supplying only their own I/O and error reporting. Two guard
+tests enforce it: neither front end may call the format engine's mutators
+directly, and both must import the shared ops. A CLI that accepted an edit the
+tools refused would be a second, quieter definition of the file format.
+
+**Registration keeps no secret.** `Markdown Collab: Register Review Tools with
+Claude Code` (offered once per workspace, never written without a yes) adds a
+`markdown-collab` entry to `.mcp.json` whose url and Authorization header are
+`${VAR}` references. The real values ride in the environment of terminals VS
+Code spawns, so a committed `.mcp.json` leaks nothing, a fresh window mints a
+fresh token, and a teammate without the extension sees a server that simply
+doesn't connect. The port is derived from the workspace path so the registered
+URL usually survives a reload, and falls back to an ephemeral port when taken.
+
+**MCP is supported, never the default.** It can be disabled entirely on Claude's
+side — enterprise policy, `--strict-mcp-config`, user config — so `detectSendMode`
+never selects it. `terminal` stays the default; the new `mcp` mode appears in the
+picker only while the server is running, is used only after you pick it, and
+degrades to `terminal` with a toast if the server goes away. Terminal, clipboard,
+event log, and the `mdc` CLI are unchanged and permanent.
+
+Security posture of the listener: loopback bind, per-request peer check,
+constant-time token compare, `Origin`-bearing requests refused (a localhost port
+is reachable from any page the user has open), 1 MB body cap, and paths outside
+the workspace refused. 39 new unit tests plus an Extension Host suite that drives
+the real HTTP surface against a real workspace.
+
 ## 0.34.61 — 2026-07-30 (trial)
 
 ### Added: click-level CI for the webviews (10x-plan-2 P2.1)

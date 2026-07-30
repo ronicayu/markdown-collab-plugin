@@ -100,7 +100,7 @@ Run **Markdown Collab: Review PR / MR** to review the Markdown files changed in 
 
 ## Choosing a send mode
 
-The **Send to Claude** button delivers the comment payload one of four ways. Pick one once via `markdownCollab.sendMode` and you won't be asked again.
+The **Send to Claude** button delivers the comment payload one of five ways. Pick one once via `markdownCollab.sendMode` and you won't be asked again.
 
 > **TL;DR:** if MCP isn't available in your environment AND your Claude Code harness doesn't expose a streaming-stdout tool (`Monitor` or `BashOutput`), **use `terminal`**. It works everywhere with zero setup.
 
@@ -108,6 +108,7 @@ The **Send to Claude** button delivers the comment payload one of four ways. Pic
 |---|---|---|
 | Just trying it out, or unsure | `terminal` | Zero setup. Bracketed-pastes the prompt into a `claude` REPL in your VS Code terminal. |
 | MCP disabled by your company / org | **`terminal`** | Channel-based modes need MCP; terminal mode doesn't. |
+| You want Claude's edits to be undoable | `mcp` | Same delivery as `terminal`, plus Claude acts through this extension's review tools, so every change lands as an editor edit you can undo. |
 | Harness lacks `Monitor` / `BashOutput` | **`terminal`** | Channel mode's reactivity depends on streaming notifications; without them you'd be polling, which terminal sidesteps entirely. |
 | Harness has `Monitor` / `BashOutput`, MCP allowed | `channel` | File-watcher pattern; supports long-lived watch loops without per-click setup. |
 | Claude Code v2.1.80+, `claude.ai` login, channels enabled by your org | `mcp-channel` | Native `<channel>` events on Claude's next turn — cleanest semantics when supported. |
@@ -117,7 +118,7 @@ The **Send to Claude** button delivers the comment payload one of four ways. Pic
 
 - A `claude` REPL running in a terminal → `terminal`, no prompt. One toast tells you what happened.
 - Otherwise, an MCP channel server that has registered itself for this workspace → `mcp-channel`, no prompt.
-- Neither → the quick-pick, as before.
+- Neither → the quick-pick, as before. `mcp` appears there when the review tool server is running; it is offered, never auto-selected.
 
 The detected mode is remembered like a manual choice, and the toast names the escape hatch: **Markdown Collab: Reset Send Mode** clears it if you want to switch later. If the MCP channel turns out to be stale (its endpoint file outlived the server), the send falls back to the event log and un-remembers the choice, so the next click asks you properly instead of failing the same way twice.
 
@@ -132,6 +133,31 @@ Bracketed-pastes the prompt into a `claude` REPL running in any VS Code terminal
 - **No MCP, no streaming tool, no protocol gates** — just a `paste` keystroke into your REPL.
 
 **Setup:** none. Just have `claude` running in any integrated terminal when you click.
+
+### `mcp` — terminal delivery, tool-driven edits
+
+Delivered exactly like `terminal`, with one extra line asking Claude to work through this
+extension's MCP review tools (`mc_list`, `mc_reply`, `mc_open`, `mc_rewrite`, `mc_suggest`,
+`mc_status`, `mc_check`) instead of editing the file directly.
+
+What that changes is the *write path*, not the delivery:
+
+- **Undoable.** Every change arrives as a `WorkspaceEdit`, so <kbd>Cmd</kbd>+<kbd>Z</kbd> takes back
+  Claude's reply or rewrite like your own typing.
+- **No races with your unsaved work.** The edit is ordered against the live buffer instead of
+  overwriting the file underneath it.
+- **Refused before it lands, not repaired after.** A call that would break marker integrity comes
+  back to Claude as a structured error and the file is untouched.
+
+**Setup:** run **Markdown Collab: Register Review Tools with Claude Code** (or accept the prompt on
+first activation). That adds a `markdown-collab` entry to the workspace's `.mcp.json`. No token is
+written to that file — the URL and a per-session token travel through the environment of terminals
+VS Code spawns, so a committed `.mcp.json` leaks nothing and a fresh window mints a fresh token.
+
+**This mode is never chosen for you.** MCP can be disabled entirely on your side of the
+conversation, so detection never selects it — it appears in the quick-pick only when the tool server
+is actually running, and if it stops running, a send degrades to `terminal` with a toast saying so.
+Claude sessions outside this VS Code window (ssh, another editor) keep using the `mdc` CLI.
 
 ### `channel` — events log + tailer
 
@@ -202,7 +228,7 @@ Copies the prompt to the clipboard. Paste into Claude however you like.
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `markdownCollab.sendMode` | `ask` | One of `ask`, `terminal`, `channel`, `mcp-channel`, `clipboard`. See [Choosing a send mode](#choosing-a-send-mode). |
+| `markdownCollab.sendMode` | `ask` | One of `ask`, `terminal`, `mcp`, `channel`, `mcp-channel`, `clipboard`. See [Choosing a send mode](#choosing-a-send-mode). |
 
 ## Storage layout
 
@@ -225,7 +251,8 @@ The only files Markdown Collab writes under `.markdown-collab/` are runtime stat
 └── .markdown-collab/
     ├── .events.jsonl         ← channel-mode event log (gitignore)
     ├── .events.acked.jsonl   ← addressed-event ids (gitignore)
-    └── .channel.json         ← mcp-channel endpoint descriptor (gitignore)
+    ├── .channel.json         ← mcp-channel endpoint descriptor (gitignore)
+    └── .mcp-server.json      ← review tool server address + session token (gitignore)
 ```
 
 ```gitignore

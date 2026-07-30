@@ -4,10 +4,28 @@ import type { Comment } from "./types";
 
 export type SendMode =
   | "terminal"
+  /** Terminal delivery, but Claude acts through the extension's MCP tools. */
+  | "mcp"
   | "channel"
   | "mcp-channel"
   | "clipboard"
   | "ask";
+
+/**
+ * The line appended to a prompt in `mcp` mode.
+ *
+ * The tools can't start a turn — only a delivered prompt does — so `mcp` mode
+ * is terminal delivery plus this directive. What it buys is the write path:
+ * every change lands as a `WorkspaceEdit` the human can undo, checked before it
+ * applies, instead of a disk write the extension learns about afterwards.
+ */
+export function mcpToolsDirective(): string {
+  return (
+    "Use the `markdown-collab` MCP tools for this pass — mc_list to read, mc_reply / mc_open / mc_rewrite / " +
+    "mc_suggest to act, mc_status to say what you're doing, and mc_check on each file when you're done. " +
+    "They write through the editor, so nothing races an unsaved buffer and the human can undo you."
+  );
+}
 
 export interface ReviewPayload {
   prompt: string;

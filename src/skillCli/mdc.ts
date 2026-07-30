@@ -11,29 +11,39 @@
 // next to the skill. It imports the real format engine — it must never grow
 // its own copy of the parser.
 //
+// Since 10x-plan-2 P0.1 the verbs themselves live in `inlineComments/docOps.ts`,
+// shared with the extension-hosted MCP server: this file is argv parsing, file
+// I/O, and exit codes over those ops. Fixing a rule in one front end fixes it in
+// both, which is the point — a CLI that accepted an edit the MCP tools refused
+// would be a second, quieter definition of the format.
+//
 // Contract with the caller:
 //   - stdout is always a single JSON document, written with writeSync(1) so
 //     it survives a POSIX pipe without buffering loss
 //   - stderr carries human-readable errors
 //   - exit 0 = success, 1 = command/usage error, 2 = integrity violation
 //
-// Every mutating command re-checks integrity after writing and refuses to
-// leave the file worse than it found it.
+// Mutations are validated before the write, and refuse to leave the file worse
+// than they found it.
 
 import { writeSync } from "node:fs";
 import { readFileSync, writeFileSync } from "node:fs";
-import {
-  acceptSuggestion,
-  addSuggestion,
-  addThread,
-  appendReply,
-  parse,
-  rejectSuggestion,
-  replaceThread,
-  stripAllInlineMarkup,
-  type InlineThread,
-} from "../inlineComments/format";
+import { stripAllInlineMarkup } from "../inlineComments/format";
 import { checkIntegrity, repairIntegrity } from "../inlineComments/integrity";
+import {
+  DocOpError,
+  opAccept,
+  opCheck,
+  opList,
+  opOpen,
+  opReject,
+  opReply,
+  opResolve,
+  opRewrite,
+  opSuggest,
+  type DocOpCode,
+  type OpOutcome,
+} from "../inlineComments/docOps";
 
 const EXIT_OK = 0;
 const EXIT_USAGE = 1;
@@ -63,6 +73,22 @@ function fail(message: string, code = EXIT_USAGE): never {
   process.stderr.write(`mdc: ${message}\n`);
   process.exit(code);
 }
+
+/**
+ * Which exit status each refusal reason maps to. Integrity-class refusals
+ * (a broken anchor, a change that would corrupt the file) are exit 2 so a
+ * caller can tell "you asked for the wrong thing" from "the document is
+ * damaged"; everything else is a usage error.
+ */
+const EXIT_FOR_CODE: Record<DocOpCode, number> = {
+  thread_not_found: EXIT_USAGE,
+  suggestion_not_found: EXIT_USAGE,
+  passage_not_found: EXIT_USAGE,
+  passage_ambiguous: EXIT_USAGE,
+  not_anchorable: EXIT_USAGE,
+  unanchored: EXIT_USAGE,
+  integrity: EXIT_INTEGRITY,
+};
 
 interface Args {
   _: string[];
@@ -106,198 +132,62 @@ function readDoc(file: string): string {
 }
 
 /**
- * Write only if the mutation left the document at least as healthy as it
- * found it. A command that would introduce a new integrity problem aborts
- * with exit 2 and touches nothing — the caller sees the failure instead of
- * discovering it later as a lost comment.
+ * Run a mutating op and write the result. Refusals from the shared ops arrive as
+ * DocOpError and become the CLI's own exit codes; `unanchored` on a suggestion
+ * is reported as an integrity problem, matching what a `check` would say about
+ * the same document.
  */
-function writeChecked(file: string, before: string, after: string): {
-  ok: boolean;
-  issues: ReturnType<typeof checkIntegrity>["issues"];
-} {
-  const wasOk = checkIntegrity(before).issues.length;
-  const report = checkIntegrity(after);
-  if (report.issues.length > wasOk) {
-    process.stderr.write(
-      `mdc: refusing to write — the change would introduce ${report.issues.length - wasOk} integrity problem(s):\n`,
-    );
-    for (const i of report.issues) process.stderr.write(`  - ${i.message}\n`);
-    process.exit(EXIT_INTEGRITY);
+function apply<T>(
+  file: string,
+  action: string,
+  run: (source: string) => OpOutcome<T>,
+  opts: { integrityCodes?: DocOpCode[] } = {},
+): void {
+  const source = readDoc(file);
+  let outcome: OpOutcome<T>;
+  try {
+    outcome = run(source);
+  } catch (e) {
+    if (e instanceof DocOpError) {
+      const escalated = opts.integrityCodes?.includes(e.code) ? EXIT_INTEGRITY : EXIT_FOR_CODE[e.code];
+      const hint = e.code === "unanchored" || e.code === "integrity" ? " (see `mdc check`)" : "";
+      // The shared ops phrase "occurrence" without a flag, since the MCP tools
+      // take it as a field. Name the flag here, where the caller has one.
+      if (e.code === "passage_ambiguous") {
+        const n = e.details?.occurrences;
+        return fail(
+          `passage appears ${n} times; pass --occurrence 1..${n} to say which one you mean`,
+          escalated,
+        );
+      }
+      return fail(`${e.message}${hint}`, escalated);
+    }
+    throw e;
   }
-  writeFileSync(file, after, "utf8");
-  return { ok: report.ok, issues: report.issues };
-}
-
-function findThread(source: string, threadId: string): InlineThread {
-  const t = parse(source).threads.find((x) => x.id === threadId);
-  if (!t) fail(`no thread with id ${threadId} in this file`);
-  return t;
-}
-
-/** Last non-deleted comment, used to decide whether a thread awaits Claude. */
-function lastLiveComment(t: InlineThread) {
-  const live = t.comments.filter((c) => !c.deleted);
-  return live[live.length - 1];
+  writeFileSync(file, outcome.next, "utf8");
+  out({ action, file, ...outcome.result, integrityOk: checkIntegrity(outcome.next).ok });
 }
 
 function cmdList(file: string, actionableOnly: boolean): void {
-  const source = readDoc(file);
-  const parsed = parse(source);
-  const threads = parsed.threads
-    .filter((t) => {
-      if (!actionableOnly) return true;
-      if (t.status !== "open") return false;
-      const last = lastLiveComment(t);
-      return last !== undefined && last.author !== "claude";
-    })
-    .map((t) => {
-      const a = parsed.anchors.get(t.id);
-      return {
-        id: t.id,
-        status: t.status,
-        quote: t.quote,
-        anchored: a !== undefined,
-        /** The live text between the markers — what the reviewer is pointing at. */
-        anchoredText: a ? source.slice(a.openEnd, a.closeStart) : null,
-        comments: t.comments
-          .filter((c) => !c.deleted)
-          .map((c) => ({ id: c.id, author: c.author, ts: c.ts, body: c.body })),
-      };
-    });
-  const suggestions = parsed.suggestions.map((s) => {
-    const a = parsed.anchors.get(s.anchorId);
-    return {
-      anchorId: s.anchorId,
-      threadId: s.threadId,
-      author: s.author,
-      anchored: a !== undefined,
-      original: s.original,
-      proposed: s.proposed,
-      note: s.note,
-    };
-  });
-  out({ file, threadCount: parsed.threads.length, threads, suggestionCount: parsed.suggestions.length, suggestions });
+  out({ file, ...opList(readDoc(file), actionableOnly) });
 }
 
 function cmdReply(file: string, threadId: string, body: string): void {
-  const source = readDoc(file);
-  const thread = findThread(source, threadId);
-  const next = replaceThread(
-    source,
-    threadId,
-    appendReply(thread, { author: "claude", body, ts: new Date().toISOString() }),
-  );
-  const r = writeChecked(file, source, next);
-  const updated = findThread(next, threadId);
-  out({
-    action: "reply",
-    file,
-    threadId,
-    commentId: updated.comments[updated.comments.length - 1].id,
-    integrityOk: r.ok,
-  });
+  apply(file, "reply", (s) => opReply(s, threadId, body));
 }
 
-/**
- * Replace the text between a thread's markers.
- *
- * This is the operation the skill's marker-surgery instructions were for,
- * and the one most likely to drop a marker by hand: the markers sit flush
- * against the text, so a bare-text edit either fails to match or eats one.
- * Here the markers are never part of the edit — we splice between them and
- * update the thread's `quote`, which is the fallback locator.
- */
 function cmdRewrite(file: string, threadId: string, replacement: string): void {
-  const source = readDoc(file);
-  const parsed = parse(source);
-  const thread = findThread(source, threadId);
-  const a = parsed.anchors.get(threadId);
-  if (!a) {
-    fail(
-      `thread ${threadId} has no anchor markers in the prose; rewrite needs an anchored span (see \`mdc check\`)`,
-    );
-  }
-  const previous = source.slice(a.openEnd, a.closeStart);
-  const spliced = source.slice(0, a.openEnd) + replacement + source.slice(a.closeStart);
-  const next = replaceThread(spliced, threadId, { ...thread, quote: replacement });
-  const r = writeChecked(file, source, next);
-  out({ action: "rewrite", file, threadId, previous, replacement, integrityOk: r.ok });
-}
-
-/**
- * Open a new thread on a passage, locating it by exact text.
- *
- * Refuses ambiguity rather than guessing: if the passage appears more than
- * once the caller must say which occurrence it means. The offsets are
- * computed against the raw source but the *search* runs on the prose so a
- * passage adjacent to another thread's markers is still findable.
- */
-/**
- * Locate the `occurrence`-th appearance of `quote` in the prose (before the
- * threads region), refusing ambiguity. Shared by `open` and `suggest`.
- */
-function locatePassage(file: string, source: string, quote: string, occurrence: number): number {
-  const parsed = parse(source);
-  const limit = parsed.threadsRegion ? parsed.threadsRegion.start : source.length;
-  const hits: number[] = [];
-  let from = 0;
-  for (;;) {
-    const at = source.indexOf(quote, from);
-    if (at === -1 || at >= limit) break;
-    hits.push(at);
-    from = at + quote.length;
-  }
-  if (hits.length === 0) {
-    fail(`passage not found in ${file}: ${JSON.stringify(quote.slice(0, 60))}`);
-  }
-  if (hits.length > 1 && occurrence === 0) {
-    fail(`passage appears ${hits.length} times; pass --occurrence 1..${hits.length} to say which one you mean`);
-  }
-  const index = occurrence === 0 ? 0 : occurrence - 1;
-  if (index < 0 || index >= hits.length) {
-    fail(`--occurrence ${occurrence} is out of range (passage appears ${hits.length} time(s))`);
-  }
-  return hits[index];
+  apply(file, "rewrite", (s) => opRewrite(s, threadId, replacement));
 }
 
 function cmdOpen(file: string, quote: string, body: string, occurrence: number): void {
-  const source = readDoc(file);
-  const at = locatePassage(file, source, quote, occurrence);
-
-  let result;
-  try {
-    result = addThread(source, at, at + quote.length, {
-      author: "claude",
-      body,
-      ts: new Date().toISOString(),
-    });
-  } catch (e) {
-    // addThread refuses frontmatter, the threads region, and code — surface
-    // the reason rather than a stack trace.
-    return fail((e as Error).message);
-  }
-  const r = writeChecked(file, source, result.source);
-  out({ action: "open", file, threadId: result.thread.id, quote, integrityOk: r.ok });
+  apply(file, "open", (s) => opOpen(s, quote, body, occurrence));
 }
 
 function cmdResolve(file: string, threadId: string): void {
-  const source = readDoc(file);
-  const thread = findThread(source, threadId);
-  const next = replaceThread(source, threadId, {
-    ...thread,
-    status: "resolved",
-    resolvedBy: "claude",
-    resolvedTs: new Date().toISOString(),
-  });
-  const r = writeChecked(file, source, next);
-  out({ action: "resolve", file, threadId, integrityOk: r.ok });
+  apply(file, "resolve", (s) => opResolve(s, threadId));
 }
 
-/**
- * Propose an edit: wrap the passage's original text and record the proposal.
- * The file still renders as the original — the human accepts or rejects the
- * change in the review UI (or via `mdc accept` / `mdc reject`).
- */
 function cmdSuggest(
   file: string,
   quote: string,
@@ -305,70 +195,24 @@ function cmdSuggest(
   note: string | undefined,
   occurrence: number,
 ): void {
-  const source = readDoc(file);
-  const at = locatePassage(file, source, quote, occurrence);
-  let result;
-  try {
-    result = addSuggestion(source, at, at + quote.length, {
-      author: "claude",
-      proposed,
-      note,
-      ts: new Date().toISOString(),
-    });
-  } catch (e) {
-    return fail((e as Error).message);
-  }
-  const r = writeChecked(file, source, result.source);
-  out({
-    action: "suggest",
-    file,
-    anchorId: result.suggestion.anchorId,
-    original: result.suggestion.original,
-    proposed,
-    integrityOk: r.ok,
-  });
+  apply(file, "suggest", (s) => opSuggest(s, quote, proposed, { note, occurrence }));
 }
 
 function cmdAccept(file: string, anchorId: string): void {
-  const source = readDoc(file);
-  const parsed = parse(source);
-  const suggestion = parsed.suggestions.find((s) => s.anchorId === anchorId);
-  if (!suggestion) fail(`no suggestion with anchor id ${anchorId} in this file`);
-  if (!parsed.anchors.has(anchorId)) {
-    fail(`suggestion ${anchorId} lost its anchor markers; cannot place the change (see \`mdc check\`)`, EXIT_INTEGRITY);
-  }
-  const next = acceptSuggestion(source, anchorId);
-  const r = writeChecked(file, source, next);
-  out({ action: "accept", file, anchorId, applied: suggestion.proposed, integrityOk: r.ok });
+  // A suggestion that lost its markers is a damaged document, not a typo in the
+  // command — exit 2 so a wrapper can tell the two apart.
+  apply(file, "accept", (s) => opAccept(s, anchorId), { integrityCodes: ["unanchored"] });
 }
 
 function cmdReject(file: string, anchorId: string): void {
-  const source = readDoc(file);
-  const parsed = parse(source);
-  if (!parsed.suggestions.some((s) => s.anchorId === anchorId)) {
-    fail(`no suggestion with anchor id ${anchorId} in this file`);
-  }
-  const next = rejectSuggestion(source, anchorId);
-  const r = writeChecked(file, source, next);
-  out({ action: "reject", file, anchorId, integrityOk: r.ok });
+  apply(file, "reject", (s) => opReject(s, anchorId));
 }
 
 function cmdCheck(file: string, repair: boolean): void {
   const source = readDoc(file);
   if (!repair) {
-    const report = checkIntegrity(source);
-    out({
-      file,
-      ok: report.ok,
-      counts: report.counts,
-      issues: report.issues.map((i) => ({
-        kind: i.kind,
-        severity: i.severity,
-        threadId: i.threadId,
-        repairable: i.repairable,
-        message: i.message,
-      })),
-    });
+    const report = opCheck(source);
+    out({ file, ...report });
     process.exit(report.ok ? EXIT_OK : EXIT_INTEGRITY);
   }
 

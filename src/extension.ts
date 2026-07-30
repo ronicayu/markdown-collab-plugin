@@ -9,9 +9,16 @@ import { PrReviewController } from "./pr/prReviewController";
 import { ReviewView, type ReviewNode } from "./reviewView";
 import {
   buildReviewRequestPayload,
+  mcpToolsDirective,
   type ReviewPayload,
   type SendMode,
 } from "./sendToClaude";
+import {
+  currentMcpServer,
+  ensureMcpJsonRegistration,
+  resetMcpJsonConsent,
+  startMcpServer,
+} from "./mcpServer";
 import {
   buildMultiFileReviewPayload,
   totalBytes,
@@ -74,9 +81,35 @@ export function activate(context: vscode.ExtensionContext): void {
   terminalTracker.activate(context.subscriptions);
   context.subscriptions.push(terminalTracker);
 
+  // The MCP tool server (10x-plan-2 P0.1). Started for every workspace so the
+  // tools are there when Claude reaches for them, but nothing depends on it:
+  // it is never the default send mode, and a failure to bind is logged and
+  // ignored. Registration in `.mcp.json` is a separate, asked-once step.
+  void startMcpServer(context, {
+    output,
+    onToolCall: () => undefined,
+  }).then(async (handle) => {
+    if (!handle) return;
+    context.subscriptions.push({ dispose: () => handle.dispose() });
+    await ensureMcpJsonRegistration(context, handle, output);
+  });
+
   context.subscriptions.push(
     vscode.commands.registerCommand("markdownCollab.installClaudeSkill", async () => {
       await invokeInstallClaudeSkill(output);
+    }),
+    vscode.commands.registerCommand("markdownCollab.registerMcpServer", async () => {
+      const handle = currentMcpServer();
+      if (!handle) {
+        void vscode.window.showWarningMessage(
+          "Markdown Collab: the review tool server isn't running — reload the window and try again. See the Markdown Collab output channel.",
+        );
+        return;
+      }
+      // Clear the remembered answer so a previous "Not now" doesn't silently
+      // swallow an explicit request.
+      await resetMcpJsonConsent(context);
+      await ensureMcpJsonRegistration(context, handle, output);
     }),
     vscode.commands.registerCommand("markdownCollab.toggleSuggestMode", async () => {
       const next = !isSuggestMode();
@@ -462,6 +495,7 @@ const REMEMBERED_SEND_MODE_KEY = "markdownCollab.rememberedSendMode";
 function isConcreteSendMode(v: unknown): v is Exclude<SendMode, "ask"> {
   return (
     v === "terminal" ||
+    v === "mcp" ||
     v === "channel" ||
     v === "mcp-channel" ||
     v === "clipboard"
@@ -592,7 +626,12 @@ async function dispatchReviewPayload(
         mode = detected.mode;
         output.appendLine(`Send mode auto-detected: ${detected.mode} (${detected.reason})`);
       } else {
-        const picked = await pickSendMode(payload.unresolvedCount, intent);
+        // MCP is offered, never auto-selected: it can be disabled entirely on
+        // Claude's side (enterprise policy, --strict-mcp-config), so a default
+        // that depends on it would silently break for those users.
+        const picked = await pickSendMode(payload.unresolvedCount, intent, {
+          mcpAvailable: currentMcpServer() !== null,
+        });
         if (!picked) return;
         mode = picked;
       }
@@ -619,8 +658,23 @@ async function dispatchReviewPayload(
     return;
   }
 
-  if (mode === "terminal") {
-    const sendResult = await sendViaTerminal(payload, tracker, {
+  if (mode === "mcp" && currentMcpServer() === null) {
+    // The chosen mode's server isn't up (window reloaded, port lost). Degrade
+    // rather than fail: the prompt still gets delivered, Claude just edits the
+    // old way. Said out loud, because the human picked MCP on purpose.
+    output.appendLine("Send mode mcp requested but the tool server isn't running; falling back to terminal.");
+    void vscode.window.showWarningMessage(
+      "Markdown Collab: the review tool server isn't running — sending to the terminal without it.",
+    );
+    mode = "terminal";
+  }
+
+  if (mode === "terminal" || mode === "mcp") {
+    const delivered: ReviewPayload =
+      mode === "mcp"
+        ? { ...payload, prompt: `${payload.prompt}\n\n${mcpToolsDirective()}` }
+        : payload;
+    const sendResult = await sendViaTerminal(delivered, tracker, {
       offerStartTerminal: async () => {
         const choice = await vscode.window.showInformationMessage(
           "No Claude terminal detected.",
@@ -636,7 +690,9 @@ async function dispatchReviewPayload(
           return terminal;
         }
         if (choice === "Switch to clipboard") {
-          await vscode.env.clipboard.writeText(payload.prompt);
+          // `delivered`, not `payload`: in mcp mode the tools directive is part
+          // of the prompt, and a hand-paste needs it too.
+          await vscode.env.clipboard.writeText(delivered.prompt);
           void vscode.window.showInformationMessage(
             "Prompt copied — paste into Claude Code.",
           );
@@ -716,6 +772,7 @@ async function dispatchReviewPayload(
 async function pickSendMode(
   unresolvedCount: number,
   intent: DispatchIntent = { kind: "address" },
+  opts: { mcpAvailable?: boolean } = {},
 ): Promise<SendMode | null> {
   const items: Array<vscode.QuickPickItem & { mode: SendMode }> = [
     {
@@ -723,6 +780,17 @@ async function pickSendMode(
       description: "Type the prompt into a running Claude REPL",
       mode: "terminal",
     },
+    // Only offered when the tool server is actually up. Listing a mode that
+    // can't work is worse than not listing it.
+    ...(opts.mcpAvailable
+      ? [
+          {
+            label: "Send to terminal + use the review tools",
+            description: "Claude edits through the editor (undoable, checked before it writes)",
+            mode: "mcp" as SendMode,
+          },
+        ]
+      : []),
     {
       label: "Append to event log",
       description: "For a Claude `tail -f` + Monitor watch loop",
