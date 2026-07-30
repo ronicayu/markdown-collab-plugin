@@ -1,0 +1,18 @@
+{
+  "//": "Type-checks the webview e2e specs. They mix Node (Playwright, fs paths) with DOM (page.evaluate bodies), which neither tsconfig.json (no DOM lib) nor tsconfig.webview.json (no Node) covers. Checked by `npm run test:webview`; Playwright itself only transpiles.",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noImplicitAny": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "noEmit": true
+  },
+  "include": ["src/test/webview-e2e/**/*.ts", "playwright.config.ts"]
+}

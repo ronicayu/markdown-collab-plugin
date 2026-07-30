@@ -15,7 +15,11 @@ node_modules/**
 !node_modules/mermaid/dist/mermaid.min.js
 tsconfig.json
 tsconfig.webview.json
+tsconfig.e2e.json
 vitest.config.ts
+playwright.config.ts
+playwright-report/**
+test-results/**
 .gitignore
 .github/**
 .claude/**

@@ -290,4 +290,12 @@ describe("threadSignature", () => {
       threadSignature(base),
     );
   });
+
+  it("changes when the thread starts (or stops) waiting on Claude", () => {
+    // A dispatch flips the pending flag with no content change at all. When
+    // that wasn't part of the signature, the live editor's reconciler kept the
+    // old card and the "Claude is working…" row never appeared.
+    expect(threadSignature(base, true)).not.toBe(threadSignature(base, false));
+    expect(threadSignature(base)).toBe(threadSignature(base, false));
+  });
 });

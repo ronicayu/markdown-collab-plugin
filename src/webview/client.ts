@@ -613,7 +613,7 @@ function reconcileComments(): void {
       `.mdc-comment[data-id="${cssEscape(c.id)}"]`,
     );
     let card: HTMLElement;
-    if (existing && existing.dataset.sig === threadSignature(c)) {
+    if (existing && existing.dataset.sig === threadSignature(c, sidebarState.pending.has(c.id))) {
       card = existing; // unchanged — leave the DOM (and any focused reply) alone
     } else {
       card = renderCommentCard(c);
@@ -663,7 +663,7 @@ function renderCommentCard(c: CommentSummary): HTMLElement {
   const article = document.createElement("article");
   article.className = c.resolved ? "mdc-comment mdc-comment--resolved" : "mdc-comment";
   article.dataset.id = c.id;
-  article.dataset.sig = threadSignature(c);
+  article.dataset.sig = threadSignature(c, sidebarState.pending.has(c.id));
 
   const head = document.createElement("div");
   head.className = "mdc-thread-head";

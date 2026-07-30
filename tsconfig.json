@@ -15,5 +15,14 @@
     "resolveJsonModule": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "out", ".vscode-test", "src/webview", "src/inlineComments/webview", "src/pr/webview", "src/webviewShared"]
+  "exclude": [
+    "node_modules",
+    "out",
+    ".vscode-test",
+    "src/webview",
+    "src/inlineComments/webview",
+    "src/pr/webview",
+    "src/webviewShared",
+    "src/test/webview-e2e"
+  ]
 }

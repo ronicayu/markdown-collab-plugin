@@ -1,5 +1,9 @@
 # Markdown Collab — 10x Improvement Plan
 
+> **Status: COMPLETE** (v0.34.41–0.34.60). The live roadmap is now
+> [`10x-plan-2.md`](10x-plan-2.md). Kept for the rationale and the
+> "What NOT to do" rules, which Round 2 inherits.
+
 **Audience:** Opus 4.8, acting as implementing engineer. Each initiative below is scoped to be actionable: motivation, design direction, key files, and acceptance criteria. Work top-to-bottom within a priority tier; tiers are ordered by leverage.
 
 **Product north star (unchanged):** one human + Claude collaborating on Markdown, with all review state living inline in the `.md` file. "Collab" means human ↔ AI, not multi-human. Do not reintroduce multi-user sync.

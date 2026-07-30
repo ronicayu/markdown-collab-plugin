@@ -63,3 +63,35 @@ jobs:
       # tests skip themselves, the rest run.
       - name: Integration tests
         run: xvfb-run -a npm run test:integration
+
+  # The click layer: the shipped webview bundles driven by a real pointer in
+  # real Chromium, asserting the exact message each control posts to the host.
+  # These are the flows that used to be signed off by a manual dev-host pass
+  # before every release (accept/reject, Send, suggest toggle, live-editor
+  # accept + composer) — the reason a batch of versions could sit unreleased.
+  webview-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Chromium only: the webviews run in VS Code's Electron (Chromium), so
+      # Firefox/WebKit would be testing engines the product never sees.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Webview e2e tests
+        run: npm run test:webview
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: webview-e2e-report
+          path: playwright-report/
+          retention-days: 7

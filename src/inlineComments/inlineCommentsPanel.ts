@@ -23,17 +23,19 @@ import { checkClaudeSkill, type SkillStatus } from "../skill";
 import { runDrawioRead } from "../collab/drawioService";
 import { claudePending, onPendingChanged } from "../claudePendingService";
 import { detectUrlScheme, parseLinkHref, slugifyHeading } from "./linkParse";
-import {
-  findFrontmatter,
-  parse,
-  type InlineComment,
-  type ParsedDocument,
-} from "./format";
+import { findFrontmatter, parse, type ParsedDocument } from "./format";
 import { minimalEdit } from "./minimalEdit";
 import { applyClientMutation, type MutationMessage } from "./mutations";
 import { mapProseToSource } from "./proseMapping";
+import { serialize, type SerializedState } from "./serializeState";
+import { inlineCommentsAppBody } from "./webviewShell";
 import { buildInlinePayload, buildSingleThreadPayload } from "./sendToClaude";
 import type { ReviewPayload } from "../sendToClaude";
+
+// Re-exported from here since v0.27: callers (and tests) import the serializer
+// from the panel. The implementation moved to a vscode-free module so the
+// webview e2e harness can build real init payloads outside the Extension Host.
+export { serialize, type SerializedState } from "./serializeState";
 
 interface InitMessage {
   type: "init";
@@ -209,38 +211,6 @@ export interface InlinePanelDeps {
   dispatchToClaude: (payload: ReviewPayload) => Promise<void>;
 }
 
-/** Serializable view of `ParsedDocument` for the webview. */
-export interface SerializedState {
-  /** Markdown source with anchor markers AND threads region stripped — what the preview renders. */
-  prose: string;
-  /**
-   * Per-thread anchor mapped into prose-offset space. `null` if the thread
-   * has no paired markers (unanchored — show with a "broken anchor" badge).
-   */
-  threads: Array<{
-    id: string;
-    quote: string;
-    status: "open" | "resolved";
-    resolvedBy?: string;
-    resolvedTs?: string;
-    comments: InlineComment[];
-    /** Position in `prose` (offset-into-stripped-source). Null when unanchored. */
-    anchor: { proseStart: number; proseEnd: number } | null;
-  }>;
-  /** Pending suggestions (suggest mode), anchored into the same prose space. */
-  suggestions: Array<{
-    anchorId: string;
-    threadId?: string;
-    author: string;
-    ts: string;
-    original: string;
-    proposed: string;
-    note?: string;
-    /** Null when the suggestion's anchor markers were lost (can't be applied). */
-    anchor: { proseStart: number; proseEnd: number } | null;
-  }>;
-}
-
 const VIEW_TYPE = "markdownCollab.inlineCommentsView";
 
 const panels = new Map<string, InlineCommentsPanel>();
@@ -404,53 +374,7 @@ export class InlineCommentsPanel {
 <title>Inline Comments</title>
 </head>
 <body>
-<div id="app">
-  <div id="preview-pane">
-    <div id="find-bar" hidden role="search">
-      <input id="find-input" type="search" placeholder="Find in preview…" aria-label="Find in preview" />
-      <span id="find-count" class="find-count">0 / 0</span>
-      <button id="find-prev" class="btn-link" title="Previous match (Shift+Enter)" aria-label="Previous match">↑</button>
-      <button id="find-next" class="btn-link" title="Next match (Enter)" aria-label="Next match">↓</button>
-      <button id="find-close" class="btn-link" title="Close (Esc)" aria-label="Close find">×</button>
-    </div>
-    <header id="preview-header">
-      <h2 id="file-name"></h2>
-      <p class="hint">Select text in the preview to add a comment. <kbd>⌘F</kbd> to find.</p>
-    </header>
-    <article id="preview"></article>
-    <button id="floating-add" hidden>+ Comment on selection</button>
-    <button id="expand-threads" class="collapsed-toggle" title="Show comments" hidden>‹ Comments</button>
-  </div>
-  <aside id="threads-pane">
-    <header id="threads-header">
-      <div class="title-row">
-        <h2>Comments</h2>
-        <span id="thread-count"></span>
-        <button id="collapse-all" class="btn-link" title="Collapse / expand all comment threads">Collapse all</button>
-        <button id="collapse-threads" class="btn-link" title="Hide comments panel" aria-label="Hide comments panel">›</button>
-      </div>
-      <div id="claude-summary" hidden>
-        <span id="claude-summary-text"></span>
-        <button id="claude-next" class="btn-link" title="Jump to the next unread thread from Claude.">Next</button>
-      </div>
-      <div class="filter-row">
-        <label><input type="radio" name="filter" value="open" checked> Open</label>
-        <label><input type="radio" name="filter" value="all"> All</label>
-        <label><input type="radio" name="filter" value="resolved"> Resolved</label>
-        <label id="filter-claude-label" hidden><input type="radio" name="filter" value="claude-unread"> New from Claude</label>
-        <button id="send-to-claude" title="Send the prompt to a running Claude terminal (or your configured send mode).">Send to Claude</button>
-        <button id="copy-prompt" class="btn-ghost" title="Copy the prompt to your clipboard.">Copy</button>
-        <button id="suggest-mode-toggle" class="btn-ghost" role="switch" aria-checked="false" title="When on, Send to Claude asks Claude to propose edits as suggestions you accept or reject.">Suggest: off</button>
-      </div>
-      <div id="skill-warning" class="skill-warning" hidden>
-        <span id="skill-warning-text"></span>
-        <button id="skill-install" class="btn-link"></button>
-      </div>
-    </header>
-    <div id="threads-list"></div>
-    <div id="composer" hidden></div>
-  </aside>
-</div>
+${inlineCommentsAppBody()}
 <script src="${mermaidUri}"></script>
 <script src="${scriptUri}"></script>
 </body>
@@ -901,40 +825,6 @@ export function findHeadingLine(
     if (slugifyHeading(cleaned) === target) return i + 1;
   }
   return null;
-}
-
-export function serialize(parsed: ParsedDocument): SerializedState {
-  const { prose, anchorsInProse } = mapProseToSource(parsed);
-  return {
-    prose,
-    threads: parsed.threads.map((t) => {
-      const a = anchorsInProse.get(t.id);
-      return {
-        id: t.id,
-        quote: t.quote,
-        status: t.status,
-        resolvedBy: t.resolvedBy,
-        resolvedTs: t.resolvedTs,
-        comments: t.comments,
-        anchor: a ? { proseStart: a.proseStart, proseEnd: a.proseEnd } : null,
-      };
-    }),
-    suggestions: parsed.suggestions.map((s) => {
-      // Suggestion anchors live in the same `anchorsInProse` map as thread
-      // anchors (keyed by anchorId), already mapped to prose space.
-      const a = anchorsInProse.get(s.anchorId);
-      return {
-        anchorId: s.anchorId,
-        threadId: s.threadId,
-        author: s.author,
-        ts: s.ts,
-        original: s.original,
-        proposed: s.proposed,
-        note: s.note,
-        anchor: a ? { proseStart: a.proseStart, proseEnd: a.proseEnd } : null,
-      };
-    }),
-  };
 }
 
 function readPlantumlConfig(): { serverUrl: string; format: "svg" | "png" } {

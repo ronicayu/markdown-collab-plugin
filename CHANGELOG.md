@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.34.61 — 2026-07-30 (trial)
+
+### Added: click-level CI for the webviews (10x-plan-2 P2.1)
+
+Every release used to end at the same gate: a manual dev-host pass over
+accept/reject, the panel's **Send** button, the suggest toggle, and the live
+editor. The logic under each of those was well covered; the click never was. A
+batch of twenty-one versions sat unreleased partly for that reason.
+
+There is now a `webview-e2e` CI job that boots the **shipped** webview bundles
+(`out/**/client.js`) in real Chromium with `acquireVsCodeApi` stubbed, drives
+them with a real pointer, and asserts the exact message each control posts to
+the extension host. The host half of every one of those messages is already
+contract-tested (`mutations.ts`, `inlineBridge.ts`), so message-equality closes
+the loop end to end. 18 specs, ~8 seconds.
+
+Covered: suggestion accept/reject in both surfaces, Send to Claude, the
+suggest-mode toggle (including that the webview does *not* flip its own label
+before the host confirms), reply, resolve, two-step delete confirm, the pending
+"Claude is working…" row, the live editor's select-text→add-comment composer,
+and an external (Claude) change landing without echoing back as a local edit.
+
+The live editor got the same treatment as the inline view, which retires the
+standing "verified by construction, not observation" caveat on that surface —
+Milkdown wouldn't boot in the old JSDOM-ish harness, but it runs fine in
+Chromium.
+
+To keep the harness honest rather than merely green:
+
+- **The DOM skeleton has one source.** `inlineCommentsAppBody()` (new
+  `src/inlineComments/webviewShell.ts`) is what the panel serves *and* what the
+  harness boots. A copy in the test would have kept passing through a rename; a
+  unit test now also asserts the skeleton carries every id the client resolves
+  at load.
+- **Fixtures are built by the real format engine.** Init payloads come from
+  `serialize`/`commentsOf`/`suggestionsOf` — the same functions the host uses —
+  so a wire-shape change breaks the fixture instead of sliding past it.
+  `serialize` moved to `src/inlineComments/serializeState.ts` (vscode-free) and
+  is re-exported from the panel.
+
+### Fixed: "Claude is working…" never appeared in the live editor
+
+Found by the new suite on its first run. The live editor's sidebar reconciler
+skips repainting a card whose content signature is unchanged, and the signature
+didn't include the pending flag — the one thing that flips with no content
+change at all. So a dispatch marked the thread, the host pushed the update, and
+the card stayed exactly as it was. The inline comments view was unaffected (it
+re-renders wholesale).
+
 ## 0.34.60 — 2026-07-28 (trial)
 
 ### Added: "Claude is working…" on threads awaiting a reply (completes 10x-plan P1.2)

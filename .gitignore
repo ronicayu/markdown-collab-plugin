@@ -7,3 +7,7 @@ out/
 
 # Playwright MCP scratch output from headless webview checks.
 .playwright-mcp/
+
+# Webview e2e run output (npm run test:webview).
+test-results/
+playwright-report/
