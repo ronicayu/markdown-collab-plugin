@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.34.64 — 2026-07-30 (trial)
+
+### Changed: the Claude skill is tools-first (10x-plan-2 P0.3)
+
+The skill carried three separate warnings about dropping a `-->` while
+hand-editing markers — a tell that prose was doing a job code should do. Now
+that the tools enforce it, the instructions can stop.
+
+The workflow phases read as orchestration: `mc_list` to see what's waiting,
+`mc_reply` / `mc_open` / `mc_rewrite` / `mc_suggest` to act, `mc_check` to
+finish. Each step names the MCP tool first and the `mdc` CLI command beside it —
+they're two front ends over one implementation, so the skill treats them as one
+instruction with two spellings rather than a preferred path and a degraded one.
+
+Every *Fallback (no helper)* block — build an Edit around the raw markers, mint
+a base36 id by hand, hand-write the thread JSON — moved into a single
+**Appendix: hand-editing markers (last resort)** at the end, with the rule that
+it applies only when neither the tools nor the CLI exist. That's ~57 lines Claude
+skips entirely in the normal case, instead of marker surgery sitting inside the
+step that has a tool for it.
+
+Two things the skill now says that it couldn't before:
+
+- **`mc_check` ends the pass.** It was already the correctness check; since
+  0.34.63 it's also what clears the human's "Claude is working…" row. The skill
+  says so, because a skipped check now leaves someone watching a spinner.
+- **`mc_status` is free.** A three-file review pass is minutes of silence
+  otherwise.
+
+Phase 6's invariants got split: the judgement calls Claude must make (never
+change `status`, never re-anchor an orphan, never initiate a thread unasked,
+never edit prose in Review Mode) stay as rules; the mechanical ones (comment id
+sequence, thread ids, threads-region formatting) are noted as enforced by the
+tools and left to the appendix, where they're actually the reader's problem.
+
+Untouched, deliberately: the Review Mode rubric, the worked examples, the
+never-cap rule ("If you find 30 issues, leave 30 threads"), the focus directive
+as primary filter, and the multi-file pass rules. Those are judgement, not
+mechanics — no tool replaces them, and tests now pin them verbatim.
+
+*On the plan's "⅓ of today's" target:* the marker-mechanics prose did collapse
+that far — it's an appendix Claude doesn't read. The document as a whole grew
+slightly (a tool table and a setup section arrived), because the parts that
+aren't mechanics are exactly the parts worth keeping.
+
+New tests: the tools-first body may not contain marker-surgery instructions
+(they must live in the appendix and nowhere else); the skill and the server may
+not disagree about tool names in either direction; and the three corpus
+documents now get a full review pass driven entirely through `callTool` —
+open → reply → suggest → rewrite → accept → check — asserting integrity holds
+and prose is untouched.
+
 ## 0.34.63 — 2026-07-30 (trial)
 
 ### Changed: "Claude is working…" stopped guessing (10x-plan-2 P0.2)

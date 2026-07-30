@@ -45,6 +45,71 @@ describe("SKILL_CONTENT instructions", () => {
   });
 });
 
+// 10x-plan-2 P0.3. The tools enforce what the prose used to warn about, so the
+// happy path should read as orchestration — and the marker-surgery lore has to
+// stay quarantined in the appendix, or Claude will reach for it while holding a
+// tool that does the same thing safely.
+describe("SKILL_CONTENT — tools-first structure", () => {
+  const appendixStart = SKILL_CONTENT.indexOf("## Appendix: hand-editing markers");
+  const body = SKILL_CONTENT.slice(0, appendixStart);
+  const appendix = SKILL_CONTENT.slice(appendixStart);
+
+  it("has a fallback appendix, at the end", () => {
+    expect(appendixStart).toBeGreaterThan(0);
+    expect(appendix).toContain("last resort");
+    // The body is the thing Claude reads first; the appendix must not dominate.
+    expect(appendix.length).toBeLessThan(body.length / 2);
+  });
+
+  it("names every tool the server exposes", () => {
+    for (const tool of [
+      "mc_list",
+      "mc_reply",
+      "mc_open",
+      "mc_rewrite",
+      "mc_resolve",
+      "mc_suggest",
+      "mc_check",
+      "mc_status",
+    ]) {
+      expect(body, `body should mention ${tool}`).toContain(tool);
+    }
+  });
+
+  it("keeps marker surgery out of the happy path", () => {
+    // These are the instructions that told Claude to build an Edit around raw
+    // markers. Anywhere but the appendix, they compete with a tool call that
+    // does the same thing and can't drop a marker. (Describing the storage
+    // format is fine and stays — knowing what the file looks like is not the
+    // same as being told to hand-edit it.)
+    for (const phrase of ["old_string", "new_string", "base36 id", "Edit the passage to"]) {
+      expect(body, `body should not carry ${phrase}`).not.toContain(phrase);
+      expect(appendix, `appendix should carry ${phrase}`).toContain(phrase);
+    }
+  });
+
+  it("tells Claude that the closing check is what ends the human's wait", () => {
+    expect(body).toMatch(/mc_check[\s\S]{0,400}Claude is\s+working/);
+  });
+
+  it("keeps the never-cap rule verbatim", () => {
+    // Ronica's standing constraint on Review Mode: never ration findings.
+    expect(SKILL_CONTENT).toContain("There is **no maximum number of threads**");
+    expect(SKILL_CONTENT).toContain("If you find 30 issues, leave 30 threads.");
+    expect(SKILL_CONTENT).toContain('Do not "leave the top N"');
+  });
+
+  it("keeps the focus directive as the primary filter", () => {
+    expect(SKILL_CONTENT).toContain("It is the **primary filter**");
+    expect(SKILL_CONTENT).toContain("Do not fabricate threads to feel productive.");
+  });
+
+  it("still documents the CLI as a first-class path, not a deprecation", () => {
+    expect(body).toContain("mdc.mjs");
+    expect(body).toMatch(/CLI[\s\S]{0,200}same verbs/i);
+  });
+});
+
 describe("SKILL_REL_PATH", () => {
   it("points to the vs-markdown-collab skill under .claude/skills", () => {
     expect(SKILL_REL_PATH).toBe(".claude/skills/vs-markdown-collab/SKILL.md");

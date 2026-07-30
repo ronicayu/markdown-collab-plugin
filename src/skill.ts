@@ -426,13 +426,54 @@ If a named file has no threads region:
 - If the user is asking you to **address** comments, there are none — tell the user and stop.
 - If the user is asking you to **initiate** a thread (opt-in, see Phase 5), create the inline threads region.
 
-## The \`mdc\` helper — use it for every marker-level change
+## How to change a document — the two safe paths
 
-Marker surgery by hand is the single most common way this workflow breaks:
-one dropped \`-->\` silently orphans a reviewer's comment. The extension
-installs a helper next to this skill that performs every marker-level
-mutation through the same engine the editor itself uses, so you never have to
-hand-edit a marker or a thread line.
+Marker surgery by hand is the single most common way this workflow breaks: one
+dropped \`-->\` silently orphans a reviewer's comment. So you never hand-edit a
+marker or a thread line. Every change goes through one of two front ends over
+the *same* engine the editor itself uses. They accept and refuse exactly the
+same things; pick whichever is available:
+
+1. **The \`markdown-collab\` MCP tools** — first choice when they're in your tool
+   list. They run inside the extension, so your edits go through the editor:
+   ordered against the human's unsaved buffer instead of racing it, undoable
+   with Cmd+Z, and validated before they land.
+2. **The \`mdc\` CLI** — same verbs, run as a command. Use it when the tools
+   aren't there: a Claude session outside that VS Code window, MCP disabled by
+   policy, or the server not running.
+
+Hand-editing markers with the Edit tool is a distant third and only when
+neither exists — see *Appendix: hand-editing markers* at the end of this file.
+
+### Path 1 — the MCP tools
+
+| Tool | What it does |
+| --- | --- |
+| \`mc_list(file, actionable?)\` | Threads and pending suggestions as JSON, including each thread's live anchored text. \`actionable: true\` keeps only open threads whose last comment is not yours. |
+| \`mc_reply(file, threadId, body)\` | Appends a reply authored by \`claude\` with the correct \`c<N>\` id and timestamp. |
+| \`mc_rewrite(file, threadId, with)\` | Replaces the text between a thread's markers and updates its \`quote\`. Both markers are preserved by construction. |
+| \`mc_open(file, quote, body, occurrence?)\` | Opens a new thread on a passage: mints a unique id, wraps the passage, appends the thread line. |
+| \`mc_resolve(file, threadId)\` | Marks a thread resolved. Only when the human asks. |
+| \`mc_suggest(file, quote, with, note?, occurrence?)\` | Proposes an edit without applying it (suggest mode). |
+| \`mc_accept(file, anchorId)\` / \`mc_reject(file, anchorId)\` | Apply / drop a pending suggestion. Normally the human's call in the UI. |
+| \`mc_check(file)\` | Integrity report. **Run this last on every file you touched** — see below. |
+| \`mc_status(note, file?)\` | Say what you're doing right now ("reading 2 of 3 files", "opening threads on §Setup"). |
+
+Two of these do more than they look like they do:
+
+- **\`mc_check\` ends the pass.** The extension shows the human a "Claude is
+  working…" row on every thread it sent you, and your closing \`mc_check\` on a
+  file is what clears it. Skip the check and they are left watching a spinner
+  after you've finished. Run it once per file you touched, at the end.
+- **\`mc_status\` is free and worth it.** A review pass over three files is
+  minutes of silence otherwise. One short present-tense phrase per phase
+  ("reading 2 of 3 files", "opening threads") shows up next to the indicator
+  and in the status bar.
+
+Ordinary prose edits — text that isn't inside an anchored span — still use the
+Edit tool as normal. The tools are for *marker-level* changes.
+
+### Path 2 — the \`mdc\` CLI
 
 \`\`\`
 node ~/.claude/skills/vs-markdown-collab/mdc.mjs <command> <file> [args]
@@ -450,33 +491,28 @@ node ~/.claude/skills/vs-markdown-collab/mdc.mjs <command> <file> [args]
 | \`check <file> [--repair]\` | Integrity report as JSON. \`--repair\` fixes what can be fixed without guessing. |
 
 Every command prints JSON to stdout. Exit codes: \`0\` ok, \`1\` usage error,
-\`2\` integrity violation. Mutating commands re-check the document before
+\`2\` integrity violation. Mutating commands validate the document before
 writing and refuse if the change would introduce a new integrity problem, so
 a failed command leaves the file untouched rather than half-edited.
 
-**The helper refuses rather than guesses.** If it reports that a passage
-appears three times, pass \`--occurrence\`; if it reports that a passage is
-inside a code span, choose a different anchor. Never work around a refusal by
-hand-editing the file — the refusal is the helper telling you that edit was
-unsafe.
+**Both paths refuse rather than guess.** If a passage appears three times, pass
+the occurrence; if it is inside a code span, choose a different anchor. Never
+work around a refusal by hand-editing the file — the refusal is telling you
+that edit was unsafe, and the hand-edit would perform it anyway.
 
-**If the helper is unavailable** (older install, or no \`node\` on PATH), use
-the steps marked *Fallback* in the phases below, and run \`mdc check\` as soon
-as it is available again.
+**If neither path is available** (older install, no \`node\` on PATH, no tools),
+follow the appendix, and run a check as soon as either is back.
 
 ## Workflow
 
 ### Phase 1 — Discover
 
-1. Read the \`.md\` file.
-2. Locate the threads region: everything between \`<!--mc:threads:begin-->\` and \`<!--mc:threads:end-->\`. Each \`<!--mc:t {JSON}-->\` line is one thread.
-3. Filter to **actionable** threads only:
-   - \`status === "open"\` AND
-   - The last non-deleted entry in \`comments\` has \`author !== "claude"\` (and is not an AI alias you chose previously).
-Steps 2 and 3 are one command:
+One call lists the threads still waiting on you — open, and last spoken to by
+someone other than you:
 
 \`\`\`
-node ~/.claude/skills/vs-markdown-collab/mdc.mjs list <file> --actionable
+mc_list(file, actionable: true)
+CLI: node ~/.claude/skills/vs-markdown-collab/mdc.mjs list <file> --actionable
 \`\`\`
 
 It returns each actionable thread with its \`id\`, \`quote\`, \`comments\`, and
@@ -484,9 +520,8 @@ It returns each actionable thread with its \`id\`, \`quote\`, \`comments\`, and
 is the passage the reviewer is talking about. A thread with \`"anchored": false\`
 has lost its markers; treat its \`quote\` as the locator and see Phase 7.
 
-*Fallback (no helper):* read the file, take everything between
-\`<!--mc:threads:begin-->\` and \`<!--mc:threads:end-->\`, filter as above, and
-locate each anchored passage with a regex search for \`<!--mc:a:<thread-id>-->\`.
+Read the file itself too — you are about to edit its prose, and the threads are
+only the part of the document someone commented on.
 
 ### Phase 2 — Plan
 
@@ -498,13 +533,13 @@ For each thread, in order:
 
 1. **Make the prose change.**
 
-   - **Rewriting the anchored passage itself** — use the helper. It replaces
-     the text *between* the markers, so neither marker can be dropped,
-     duplicated, or split, and it updates the thread's \`quote\` (the fallback
-     locator) in the same operation:
+   - **Rewriting the anchored passage itself** — replace the text *between* the
+     markers, so neither marker can be dropped, duplicated, or split. The
+     thread's \`quote\` (the fallback locator) is updated in the same operation:
 
      \`\`\`
-     node ~/.claude/skills/vs-markdown-collab/mdc.mjs rewrite <file> <threadId> --with "the new wording"
+     mc_rewrite(file, threadId, with: "the new wording")
+     CLI: node ~/.claude/skills/vs-markdown-collab/mdc.mjs rewrite <file> <threadId> --with "the new wording"
      \`\`\`
 
    - **Editing prose that does not touch the anchored span** — use the Edit
@@ -515,39 +550,20 @@ For each thread, in order:
      and surface in the UI as "broken anchor". That is the correct outcome —
      do NOT re-anchor to nearby unrelated text.
 
-   *Fallback (no helper), rewriting in place:* put the markers *inside* your
-   Edit — \`old_string\` = open marker + old passage + close marker;
-   \`new_string\` = the same open marker + the NEW passage + the same close
-   marker. Do NOT Edit the bare visible text: the markers sit flush against
-   it, so a bare-text \`old_string\` either fails to match or drops a marker.
-   Example — renaming an anchored heading:
-       - \`old_string\`: \`### <!--mc:a:aopzy-->Main business flows<!--mc:/a:aopzy-->\`
-       - \`new_string\`: \`### <!--mc:a:aopzy-->Core business processes<!--mc:/a:aopzy-->\`
-   Same id, both markers kept, only the wrapped text changed. Then update that
-   thread's \`quote\` field to the new text.
-
 2. **Append a reply to the thread:**
 
    \`\`\`
-   node ~/.claude/skills/vs-markdown-collab/mdc.mjs reply <file> <threadId> --body "what you changed and where"
+   mc_reply(file, threadId, body: "what you changed and where")
+   CLI: node ~/.claude/skills/vs-markdown-collab/mdc.mjs reply <file> <threadId> --body "…"
    \`\`\`
 
-   The helper assigns the next sequential \`c<N>\` id, sets \`author\` to
-   \`"claude"\` and \`ts\` to the current UTC timestamp, appends to the end of the
-   thread, and leaves \`status\` and every existing comment untouched.
+   This assigns the next sequential \`c<N>\` id, sets \`author\` to \`"claude"\` and
+   \`ts\` to the current UTC timestamp, appends to the end of the thread, and
+   leaves \`status\` and every existing comment untouched.
 
    Write a body that is one or two sentences quoting the new wording, naming
    the section, or naming the file/function you changed. Be specific. Don't
    say "done".
-
-   *Fallback (no helper):* locate the matching \`<!--mc:t {…}-->\` line by its
-   \`"id":"<thread-id>"\` and Edit only that line — append a comment object at
-   the END of the \`comments\` array with the next sequential \`c<N>\` id,
-   \`"parent"\` set to the last non-deleted comment's id, \`"author":"claude"\`,
-   an ISO-8601 UTC \`"ts"\`, and your \`"body"\`. Preserve the JSON exactly
-   otherwise: same key order, same escaping, same trailing \`-->\`, all on one
-   line. **Do NOT change \`status\`** — the human reviewer resolves threads.
-   **Do NOT mutate any existing comment.**
 
 3. **For threads you cannot fully address** (ambiguous request, missing info,
    conflicting with another thread), still reply explaining what you tried and
@@ -570,55 +586,49 @@ Use it when:
 
 When asked to add a thread:
 
-1. **Pick the passage to anchor.** It must:
-   - Be a verbatim substring of the current \`.md\` text.
-   - Be a meaningful span (at least a word) — markers store exact offsets, so there's no minimum length, but a one-character anchor is rarely useful.
-   - Sit OUTSIDE fenced code blocks and inline code spans (markers inside code are deliberately ignored by the parser, so a thread anchored there would be invisible).
-   - Occur in a location where adding the marker pair won't break neighbouring markdown syntax (don't split a link target, an image alt, a table cell delimiter, or a heading underline).
+1. **Pick the passage to anchor.** A verbatim substring of the current text, and
+   a meaningful span — a word at minimum, a sentence usually. Anchors inside code,
+   frontmatter, or the threads region are refused for you, so you don't have to
+   check for them; what you do have to judge is whether the span is the *right*
+   one, and whether wrapping it would split something markdown cares about (a
+   link target, an image alt, a table cell delimiter).
 
-2. **Open the thread with the helper.** It mints a unique id, wraps the
-   passage in paired markers, and appends a well-formed thread line — creating
-   the threads region if the file has none yet:
+2. **Open the thread.** This mints a unique id, wraps the passage in paired
+   markers, and appends a well-formed thread line — creating the threads region
+   if the file has none yet:
 
    \`\`\`
-   node ~/.claude/skills/vs-markdown-collab/mdc.mjs open <file> --quote "the exact passage" --body "your note"
+   mc_open(file, quote: "the exact passage", body: "your note")
+   CLI: node ~/.claude/skills/vs-markdown-collab/mdc.mjs open <file> --quote "…" --body "…"
    \`\`\`
 
-   If the passage appears more than once the helper refuses and tells you how
-   many times; re-run with \`--occurrence N\` to pick the one you mean. If the
-   passage is inside a code span, a fenced block, the frontmatter, or the
-   threads region, it refuses — pick a different anchor.
+   If the passage appears more than once you are told how many times; re-run
+   with \`occurrence\` to pick the one you mean. If the passage is inside a code
+   span, a fenced block, the frontmatter, or the threads region, it is refused —
+   pick a different anchor.
 
-   *Fallback (no helper):* pick a 5-char lowercase base36 id (\`[a-z0-9]{5}\`)
-   that is unique across every \`<!--mc:a:ID-->\` marker and every \`"id":"…"\` in
-   existing thread lines; Edit the passage to \`<!--mc:a:ID-->\` + passage +
-   \`<!--mc:/a:ID-->\` with no extra whitespace; then insert a line just before
-   \`<!--mc:threads:end-->\` (or append a fresh region at the end of the file):
-   \`\`\`
-
-   <!--mc:threads:begin-->
-   <!--mc:t {"id":"ID","quote":"<anchored text>","status":"open","comments":[{"id":"c1","author":"claude","ts":"<ISO-8601 UTC>","body":"<your note>"}]}-->
-   <!--mc:threads:end-->
-   \`\`\`
-   The thread JSON must be on a single line. \`quote\` is the verbatim anchored
-   text. \`status\` is always \`"open"\` — never seed a thread as resolved.
-
-3. **Verify** with \`mdc check <file>\` (see Phase 7).
+3. **Verify** with \`mc_check\` (see Phase 7).
 
 If you need to add **multiple** threads in one turn, do them one at a time, re-reading after each to make sure earlier marker offsets weren't invalidated by intervening prose edits.
 
 ### Phase 6 — Invariants (inline mode)
 
-You MUST NOT:
-- Change any thread's \`status\` field. Only the human resolves.
-- Edit any comment object other than to APPEND new entries.
+These are judgement calls the tools can't make for you. You MUST NOT:
+
+- Change any thread's \`status\`. Only the human resolves.
+- Edit any comment other than to APPEND a new one. The record is history.
 - Re-anchor an orphaned thread to nearby unrelated text. Let it orphan.
-- Move existing anchor markers to a new location unless you also moved the passage they wrap.
-- Change \`thread.id\`, \`thread.quote\`, existing comment \`id\` / \`author\` / \`ts\` / \`body\`, or any other historical field.
-- Introduce comment ids that don't follow the \`c<N>\` sequence within a thread (\`c1\` for the first comment, \`c2\` next, etc.).
-- Initiate a new thread (Phase 5) unless the human explicitly asked. The Review Mode trigger ("review this doc", "leave your thoughts on X", "do a review pass") counts as an explicit ask and unlocks one or more thread initiations — see the Review Mode section below.
-- Reformat the threads region (drop newlines, merge lines, reorder threads). Only line-level edits to one thread JSON at a time.
-- Edit prose in Review Mode. In review mode you OPEN threads, you do not modify the doc text. Even obvious typos go in a thread unless the human said "fix as you go".
+- Move anchor markers unless you also moved the passage they wrap.
+- Initiate a new thread (Phase 5) unless the human explicitly asked. The Review
+  Mode trigger ("review this doc", "leave your thoughts on X", "do a review
+  pass") counts as an explicit ask and unlocks thread initiation — see below.
+- Edit prose in Review Mode. There you OPEN threads, you do not modify the doc
+  text. Even obvious typos go in a thread unless the human said "fix as you go".
+
+The mechanical invariants — comment ids following the \`c<N>\` sequence, thread
+ids and quotes staying put, the threads region keeping its formatting — are
+enforced by the tools and the CLI. They are only yours to maintain when you are
+hand-editing (see the appendix).
 
 ### Review Mode (inline) — Claude as the reviewer
 
@@ -717,53 +727,48 @@ A Review Mode prompt may name **several files** instead of one — the extension
 4. **Anchor a cross-document thread in the file that is wrong.** When neither is clearly wrong, anchor in the more prominent one (the entry-point doc, the one a reader hits first). Name the other file and quote its conflicting text in the body — the human is reading the thread without the other file open.
    *Good:* *"\`docs/api.md\` calls this the \\"channel token\\"; here it's the \\"session key\\". Same value, two names — pick one and update the other file."*
 5. **The focus directive and the no-upper-bound rule apply per pass, not per file.** Don't ration threads across files to keep any one file's count down.
-6. **Verify each file** with \`mdc check <file>\` before moving to the next. A broken marker in file 1 is much cheaper to fix before you've edited files 2 and 3.
+6. **Verify each file** with \`mc_check\` before moving to the next — it is both the correctness check and the signal that ends the human's wait on that file. A broken marker in file 1 is much cheaper to fix before you've edited files 2 and 3.
 7. **Report per file** — how many threads you opened in each, plus the cross-document findings called out separately, so the human knows what the sidebar's per-file counts mean.
 
 #### Workflow — Review Mode pass
 
 1. **Read the doc end to end** before opening any threads. Cross-referencing the focus directive against the whole doc avoids redundant or contradictory threads.
 2. **List concerns mentally** with anchor candidate, severity (in your head — do not encode it in JSON), and one-sentence body. Discard anything that fails the specificity rule.
-3. **Initiate threads one at a time**, in document order (earlier anchors first). Use the Phase 5 mechanics:
-   - Verbatim anchor passage (a meaningful span, outside code fences).
-   - 5-char lowercase base36 id, unique against existing markers and \`<!--mc:t …-->\` ids.
-   - Paired markers wrap the passage; \`<!--mc:t {…}-->\` line appended in the threads region (create the region if absent).
-   - \`c1\` comment: \`author:"claude"\`, current UTC ISO-8601 \`ts\`, body following the specificity rule.
-4. **Re-read after each Edit.** Anchor offsets may shift; the next thread's anchor must still be a unique substring.
+3. **Initiate threads one at a time**, in document order (earlier anchors first), with \`mc_open\` (or \`mdc open\`). The anchor must be a verbatim passage, a meaningful span, outside code fences; everything else — the id, the markers, the thread line, the \`c1\` comment authored as \`claude\` — is handled for you.
+4. **Say what you're doing** with \`mc_status\` when the pass runs long ("reading 3 files", "opening threads on §Setup"). The human sees silence otherwise.
 5. **Do not edit prose.** Even if the fix is obvious. Open a thread; the human decides.
-6. **Verify.** Re-read the file. Confirm every new thread has a paired marker, a \`<!--mc:t …-->\` line with valid JSON, \`status:"open"\`, and a single \`c1\` from \`"claude"\`. Confirm no existing thread or prose was disturbed.
+6. **Verify** with \`mc_check\`, which also tells the extension the pass is over.
 
-### Phase 7 — Verify
+### Phase 7 — Verify, and end the pass
 
-Before reporting done, run the integrity check:
+Finish every file you touched with the integrity check:
 
 \`\`\`
-node ~/.claude/skills/vs-markdown-collab/mdc.mjs check <file>
+mc_check(file)
+CLI: node ~/.claude/skills/vs-markdown-collab/mdc.mjs check <file>
 \`\`\`
 
-Exit \`0\` with \`"ok": true\` means every marker is paired, every thread is
-anchored, and every thread line is valid JSON. Exit \`2\` lists what is broken:
-unpaired markers, orphaned anchors, unanchored threads, malformed thread JSON,
-duplicate ids. Each issue says whether it is \`repairable\`.
+\`"ok": true\` means every marker is paired, every thread is anchored, and every
+thread line is valid JSON. Otherwise you get the list: unpaired markers,
+orphaned anchors, unanchored threads, malformed thread JSON, duplicate ids —
+each saying whether it is \`repairable\`. (The CLI also exits \`2\`.)
 
-If the check reports damage you introduced, fix it. \`check --repair\` will
-strip stray markers and re-anchor threads whose quote still matches exactly
-one place in the prose; it never alters prose and never guesses at an
-ambiguous quote. Damage it cannot repair is yours to fix by hand.
+This call does double duty. It is your correctness check, **and** it is how the
+extension learns your pass on that file is over: it clears the "Claude is
+working…" row the human is watching. One check per file you touched, at the end.
+Not checking leaves them waiting on a spinner for work you already finished.
+
+If the check reports damage you introduced, fix it. The CLI's \`check --repair\`
+will strip stray markers and re-anchor threads whose quote still matches exactly
+one place in the prose; it never alters prose and never guesses at an ambiguous
+quote. Damage it cannot repair is yours to fix by hand.
 
 One case is not damage: **a thread whose passage you deliberately removed is
 expected to be unanchored.** Deletions become orphans by design — report it,
 don't "fix" it by re-anchoring to unrelated text.
 
-Then confirm, from \`mdc list <file>\`, that each addressed thread ends with a
-comment authored by you and is still \`"status":"open"\`.
-
-*Fallback (no helper):* re-read the threads region and check by hand that
-each addressed thread ends with your comment; that every rewritten passage
-still has exactly one matched marker pair; that removed passages have both
-markers gone; that opt-in deletions removed both the thread line and the
-marker pair; and that any thread you initiated has a paired marker plus a
-valid single-\`c1\` thread line with a unique id.
+Then confirm, from \`mc_list\`, that each addressed thread ends with a comment
+authored by you and is still \`"status":"open"\`.
 
 ## Suggest Mode — propose edits instead of applying them
 
@@ -774,23 +779,24 @@ prose directly. Every change becomes a pending suggestion the human accepts or
 rejects:
 
 \`\`\`
-node ~/.claude/skills/vs-markdown-collab/mdc.mjs suggest <file> --quote "the exact text to change" --with "your proposed replacement" --note "why"
+mc_suggest(file, quote: "the exact text to change", with: "your proposed replacement", note: "why")
+CLI: node ~/.claude/skills/vs-markdown-collab/mdc.mjs suggest <file> --quote "…" --with "…" --note "…"
 \`\`\`
 
 - The original text stays in the file; the proposal is recorded separately, so
   the document still reads as the original until the human accepts. \`--note\`
   is your rationale, shown on the suggestion card — always include it.
-- Same anchoring rules as \`open\`: if the passage appears more than once the
-  helper refuses; pass \`--occurrence N\`. Passages inside code, frontmatter, or
-  the threads region are refused — pick a different span.
-- One suggestion per contiguous change. For several edits, run \`suggest\` once
-  per change, re-reading between them so offsets stay valid.
-- **Do NOT accept or reject your own suggestions.** \`accept\`/\`reject\` are the
+- Same anchoring rules as opening a thread: an ambiguous passage is refused, so
+  pass the occurrence. Passages inside code, frontmatter, or the threads region
+  are refused — pick a different span.
+- One suggestion per contiguous change. For several edits, suggest once per
+  change, re-reading between them so offsets stay valid.
+- **Do NOT accept or reject your own suggestions.** Accept/reject are the
   human's decision, made in the review UI. Only run them if the human
   explicitly tells you to.
-- Verify with \`mdc check <file>\` and \`mdc list <file>\` (which reports each
-  suggestion's \`original\` and \`proposed\`) — confirm each proposal landed and
-  the prose still shows the original.
+- Verify with \`mc_check\` and \`mc_list\` (which reports each suggestion's
+  \`original\` and \`proposed\`) — confirm each proposal landed and the prose
+  still shows the original.
 
 Suggest mode and direct-edit mode are mutually exclusive per request: if the
 human wants suggestions, route ALL changes through \`suggest\`; never mix a few
@@ -809,17 +815,31 @@ Invoke when:
 
 Whenever you modify a \`.md\` file in a Markdown Collab workspace — for any reason, not only when addressing review comments — you MUST also reconcile that file's anchors after the edit. Rewording a sentence, refactoring a heading, fixing a typo: any of these can break an existing anchor.
 
-1. After your Edit, run \`mdc check <file>\`. It reports every unpaired,
-   dropped, or duplicated marker — the bugs an ordinary prose edit introduces.
-   Fix anything it reports before moving on.
+1. After your Edit, run \`mc_check\` (or \`mdc check <file>\`). It reports every
+   unpaired, dropped, or duplicated marker — the bugs an ordinary prose edit
+   introduces. Fix anything it reports before moving on.
 2. For each thread id whose markers are still paired, confirm the wrapped text still reflects the same idea the reviewer commented on:
-   - **You rewrote the passage in place** → keep the markers wrapping the new wording (use \`mdc rewrite\`, which cannot drop a marker).
+   - **You rewrote the passage in place** → keep the markers wrapping the new wording (use \`mc_rewrite\` / \`mdc rewrite\`, which cannot drop a marker).
    - **You removed the passage** → both markers should now be gone; the thread will surface as unanchored in the UI. That is the correct outcome. Do NOT re-add markers to wrap unrelated nearby text.
 3. Do NOT change any \`<!--mc:t {…}-->\` line during maintenance — only the human reviewer and the inline-mode reply workflow append to threads.
 
-*Fallback (no helper):* search the \`.md\` text for \`<!--mc:a:\` and \`<!--mc:/a:\` markers by hand. Each opener must have a matching closer with the same id.
-
 The maintenance pass applies in addition to the comment-driven workflows above; do not skip it just because no review batch was active.
+
+## Getting the MCP tools (if you don't have them)
+
+If \`mc_list\` and friends aren't in your tool list, the human can add them in one
+step: **Markdown Collab: Register Review Tools with Claude Code** in VS Code,
+then restart the session. That writes a \`markdown-collab\` entry into the
+workspace's \`.mcp.json\` pointing at the server the extension already runs.
+
+Two things worth knowing before you suggest it:
+
+- The tools only exist while that VS Code window is open, because the extension
+  *is* the server. A session on another machine, or with MCP disabled by policy,
+  will never see them — that is what the CLI is for, and it is not a degraded
+  path, just a different one.
+- Nothing about the human's send mode changes. They keep sending work however
+  they already do; the tools only change how your edits reach the file.
 
 ## MCP channel mode (preferred when supported)
 
@@ -901,6 +921,64 @@ Use the thread id so the human can find each thread in VS Code (thread IDs are 1
 - Don't delete a thread the human didn't explicitly tell you to delete.
 - Don't initiate a new thread the human didn't explicitly ask for. The skill is reply-driven by default.
 - Don't operate on a file with no \`<!--mc:threads:begin-->\` block — surface this rather than invent state.
+- Don't hand-edit markers when the tools or the CLI are available. The appendix is for when neither is.
+
+## Appendix: hand-editing markers (last resort)
+
+**Only when neither the \`markdown-collab\` MCP tools nor \`mdc.mjs\` is
+available.** Everything below is string surgery on a format that is unforgiving
+about it — one dropped \`-->\` silently orphans a reviewer's comment. If either
+path exists, use it instead; if one comes back mid-task, switch to it and run a
+check.
+
+**Rewriting an anchored passage.** Put the markers *inside* your Edit:
+\`old_string\` = open marker + old passage + close marker; \`new_string\` = the same
+open marker + the NEW passage + the same close marker. Do NOT Edit the bare
+visible text — the markers sit flush against it, so a bare-text \`old_string\`
+either fails to match or eats a marker.
+
+- \`old_string\`: \`### <!--mc:a:aopzy-->Main business flows<!--mc:/a:aopzy-->\`
+- \`new_string\`: \`### <!--mc:a:aopzy-->Core business processes<!--mc:/a:aopzy-->\`
+
+Same id, both markers kept, only the wrapped text changed. Then update that
+thread's \`quote\` field to the new text.
+
+**Appending a reply.** Locate the matching \`<!--mc:t {…}-->\` line by its
+\`"id":"<thread-id>"\` and Edit only that line — append a comment object at the
+END of the \`comments\` array with the next sequential \`c<N>\` id, \`"parent"\` set
+to the last non-deleted comment's id, \`"author":"claude"\`, an ISO-8601 UTC
+\`"ts"\`, and your \`"body"\`. Preserve the JSON exactly otherwise: same key order,
+same escaping, same trailing \`-->\`, all on one line. **Do NOT change \`status\`.**
+**Do NOT mutate any existing comment.**
+
+**Opening a thread.** Pick a 5-char lowercase base36 id (\`[a-z0-9]{5}\`) unique
+across every \`<!--mc:a:ID-->\` marker and every \`"id":"…"\` in existing thread
+lines. Edit the passage to \`<!--mc:a:ID-->\` + passage + \`<!--mc:/a:ID-->\` with no
+extra whitespace, then insert a line just before \`<!--mc:threads:end-->\` (or
+append a fresh region at the end of the file):
+
+\`\`\`
+
+<!--mc:threads:begin-->
+<!--mc:t {"id":"ID","quote":"<anchored text>","status":"open","comments":[{"id":"c1","author":"claude","ts":"<ISO-8601 UTC>","body":"<your note>"}]}-->
+<!--mc:threads:end-->
+\`\`\`
+
+The thread JSON must be on a single line. \`quote\` is the verbatim anchored text.
+\`status\` is always \`"open"\` — never seed a thread as resolved. Adding several
+threads means re-reading between each one, because earlier edits shift the
+offsets the next anchor depends on.
+
+**Verifying by hand.** Re-read the threads region and confirm: each addressed
+thread ends with your comment; every rewritten passage still has exactly one
+matched marker pair; removed passages have both markers gone; opt-in deletions
+removed both the thread line and the marker pair; any thread you initiated has a
+paired marker plus a valid single-\`c1\` thread line with a unique id. Search for
+\`<!--mc:a:\` and \`<!--mc:/a:\` — every opener needs a closer with the same id.
+
+Hand-edits skip the two things the other paths give you for free: the pre-write
+integrity check, and the signal that ends the human's "Claude is working…" wait.
+Say in your report that you worked without them.
 `;
 
 export async function installClaudeSkill(
