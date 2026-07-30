@@ -15,6 +15,8 @@
 // don't want a literal `<!--mc:a:xxx-->` shown in a code example to be
 // interpreted as a real anchor.
 
+import { hashAnchorText } from "./staleness";
+
 export interface InlineComment {
   /** Unique within the thread. Convention: c1, c2, ... */
   id: string;
@@ -40,6 +42,15 @@ export interface InlineThread {
   resolvedBy?: string;
   resolvedTs?: string;
   comments: InlineComment[];
+  /**
+   * Hash of the anchored span as it read when the last comment was written
+   * (10x-plan-2 P1.3). Distinct from `quote`, which is the creation-time text
+   * kept as a re-anchoring locator and must not move.
+   *
+   * Optional on purpose: a file written by an older version has no hash, and
+   * "unknown" is the honest answer for it — never "unchanged".
+   */
+  anchorHash?: string;
 }
 
 /**
@@ -307,6 +318,7 @@ function parseThreads(body: string, malformed?: MalformedThreadLine[]): InlineTh
         resolvedBy: obj.resolvedBy,
         resolvedTs: obj.resolvedTs,
         comments: Array.isArray(obj.comments) ? obj.comments.filter(isValidComment) : [],
+        anchorHash: typeof obj.anchorHash === "string" ? obj.anchorHash : undefined,
       });
     } catch {
       // Malformed JSON — skipped by `parse()` so a damaged line never takes
@@ -532,6 +544,7 @@ export function renderThreadsRegion(
     };
     if (t.resolvedBy) obj.resolvedBy = t.resolvedBy;
     if (t.resolvedTs) obj.resolvedTs = t.resolvedTs;
+    if (t.anchorHash) obj.anchorHash = t.anchorHash;
     obj.comments = t.comments;
     lines.push(`<!--mc:t ${safeStringify(obj)}-->`);
   }
@@ -659,6 +672,9 @@ export function addThread(
     quote,
     status: "open",
     comments: [{ id: "c1", author: comment.author, ts, body: comment.body }],
+    // The author is looking at this text right now, so it is the baseline the
+    // "text changed since this comment" badge compares against (P1.3).
+    anchorHash: hashAnchorText(quote),
   };
   assertAnchorable(parsed, source, selStart, selEnd);
   const withMarkers =

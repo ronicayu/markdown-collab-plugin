@@ -7,7 +7,7 @@
 
 import { expect, test } from "@playwright/test";
 import { awaitPosted, bootLiveEditor, posted, pushToWebview } from "./harness";
-import { liveInit, liveProse, liveSidecar, reviewFixture } from "./fixtures";
+import { editAnchoredText, liveInit, liveProse, liveSidecar, replyTo, reviewFixture } from "./fixtures";
 
 const fixture = reviewFixture();
 
@@ -174,4 +174,22 @@ test("an external (Claude) change lands in the editor without echoing back an ed
   // Waited out past the 250ms edit debounce, so a late post would be caught.
   await page.waitForTimeout(500);
   expect((await posted(page)).filter((m) => m.type === "edit")).toEqual([]);
+});
+
+test("a thread whose passage was rewritten shows a 'text changed' badge", async ({ page }) => {
+  const stale = editAnchoredText(fixture.source, fixture.openThreadId, "behind a different setting");
+  await pushToWebview(page, { type: "sidecar-changed", ...liveSidecar(stale) });
+
+  const card = page.locator(`.mdc-comment[data-id="${fixture.openThreadId}"]`);
+  await expect(card.locator(".mc-badge--stale")).toHaveText("text changed");
+  await expect(
+    page.locator(`.mdc-comment[data-id="${fixture.answeredThreadId}"] .mc-badge--stale`),
+  ).toHaveCount(0);
+
+  // Replying resets the baseline: the replier read the passage as it now reads.
+  await pushToWebview(page, {
+    type: "sidecar-changed",
+    ...liveSidecar(replyTo(stale, fixture.openThreadId, "Fine as rewritten.")),
+  });
+  await expect(card.locator(".mc-badge--stale")).toHaveCount(0);
 });

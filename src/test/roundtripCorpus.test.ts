@@ -37,6 +37,7 @@ import {
   type InlineThread,
 } from "../inlineComments/format";
 import { checkIntegrity, repairIntegrity } from "../inlineComments/integrity";
+import { hashAnchorText } from "../inlineComments/staleness";
 
 const FIXTURE_DIR = path.join(__dirname, "fixtures", "roundtrip");
 const TS = "2026-07-25T12:00:00.000Z";
@@ -608,4 +609,54 @@ describe("round-trip corpus: comment bodies with comment-terminating sequences",
       expect(checkIntegrity(r.source).ok).toBe(true);
     });
   }
+});
+
+// 10x-plan-2 P1.3. The anchor hash is a new optional field on every thread, so
+// it has to survive the same round trips as the rest of the record — and its
+// absence has to survive too, because that is what every file written before
+// this version looks like.
+describe("round-trip corpus: the anchor hash", () => {
+  const FIXTURES = ["tables.md", "frontmatter-lists.md", "code-and-markers.md"];
+
+  for (const name of FIXTURES) {
+    it(`${name}: survives parse → serialize → parse`, () => {
+      const source = fixture(name);
+      const at = source.indexOf("\n#") > 0 ? source.indexOf("\n#") + 1 : 0;
+      const line = source.slice(at, source.indexOf("\n", at + 1));
+      const quote = line.replace(/^#+\s*/, "").trim();
+      if (!quote) return;
+      const start = source.indexOf(quote);
+      const r = addThread(source, start, start + quote.length, {
+        author: "ronica",
+        body: "hash me",
+        ts: TS,
+      });
+      const parsed = parse(r.source);
+      const thread = parsed.threads.find((t) => t.id === r.thread.id)!;
+      expect(thread.anchorHash, `${name}: hash missing after parse`).toBe(
+        hashAnchorText(quote),
+      );
+      // Re-serializing must not drop or alter it.
+      const again = parse(withThreads(r.source, parsed.threads));
+      expect(again.threads.find((t) => t.id === r.thread.id)!.anchorHash).toBe(thread.anchorHash);
+      expect(checkIntegrity(r.source).ok).toBe(true);
+    });
+  }
+
+  it("a document written without the field stays without it", () => {
+    // Older versions wrote no anchorHash. Reserializing such a file must not
+    // invent one — an invented hash would read as "unchanged" forever after.
+    const source = fixture("tables.md");
+    const at = source.indexOf("Ops");
+    const r = addThread(source, at, at + 3, { author: "ronica", body: "legacy", ts: TS });
+    const legacy = withThreads(
+      r.source,
+      parse(r.source).threads.map((t) => ({ ...t, anchorHash: undefined })),
+    );
+    expect(legacy).not.toContain("anchorHash");
+    const reparsed = parse(legacy);
+    expect(reparsed.threads[0]!.anchorHash).toBeUndefined();
+    expect(withThreads(legacy, reparsed.threads)).not.toContain("anchorHash");
+    expect(checkIntegrity(legacy).ok).toBe(true);
+  });
 });

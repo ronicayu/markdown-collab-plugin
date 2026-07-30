@@ -8,6 +8,7 @@
 
 import type { InlineComment, ParsedDocument } from "./format";
 import { mapProseToSource } from "./proseMapping";
+import { staleThreadIds } from "./staleness";
 
 /** Serializable view of `ParsedDocument` for the webview. */
 export interface SerializedState {
@@ -26,6 +27,8 @@ export interface SerializedState {
     comments: InlineComment[];
     /** Position in `prose` (offset-into-stripped-source). Null when unanchored. */
     anchor: { proseStart: number; proseEnd: number } | null;
+    /** The anchored text changed after this thread's last comment (P1.3). */
+    stale: boolean;
   }>;
   /** Pending suggestions (suggest mode), anchored into the same prose space. */
   suggestions: Array<{
@@ -43,6 +46,7 @@ export interface SerializedState {
 
 export function serialize(parsed: ParsedDocument): SerializedState {
   const { prose, anchorsInProse } = mapProseToSource(parsed);
+  const stale = new Set(staleThreadIds(parsed));
   return {
     prose,
     threads: parsed.threads.map((t) => {
@@ -55,6 +59,7 @@ export function serialize(parsed: ParsedDocument): SerializedState {
         resolvedTs: t.resolvedTs,
         comments: t.comments,
         anchor: a ? { proseStart: a.proseStart, proseEnd: a.proseEnd } : null,
+        stale: stale.has(t.id),
       };
     }),
     suggestions: parsed.suggestions.map((s) => {

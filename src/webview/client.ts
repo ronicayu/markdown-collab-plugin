@@ -60,6 +60,8 @@ interface CommentSummary {
   anchor: { text: string; contextBefore: string; contextAfter: string };
   /** Which occurrence of `anchor.text` the marker wraps (0-based; -1 if unanchored). */
   anchorOrdinal: number;
+  /** The anchored text changed after this thread's last comment (P1.3). */
+  stale?: boolean;
   replies: Array<{ id: string; author: string; body: string; createdAt: string }>;
 }
 
@@ -694,6 +696,16 @@ function renderCommentCard(c: CommentSummary): HTMLElement {
     jumpToAnchor(c);
   });
   head.appendChild(quote);
+
+  if (c.stale && c.anchorOrdinal >= 0) {
+    // Same rule as the inline view: only when the anchor still exists (P1.3).
+    const badge = document.createElement("span");
+    badge.className = "mc-badge mc-badge--stale";
+    badge.textContent = "text changed";
+    badge.title =
+      "The anchored passage was edited after the last comment on this thread — the comment may be answering text that is no longer there.";
+    head.appendChild(badge);
+  }
 
   const actions = document.createElement("div");
   actions.className = "mdc-thread-actions";

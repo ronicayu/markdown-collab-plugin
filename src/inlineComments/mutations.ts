@@ -22,6 +22,7 @@ import {
   type ParsedDocument,
 } from "./format";
 import { mapProseToSource } from "./proseMapping";
+import { withRefreshedAnchorHash } from "./staleness";
 
 /** The webview messages that rewrite the document. */
 export type MutationMessage =
@@ -76,7 +77,11 @@ export function applyClientMutation(
         body: msg.body,
         parent: msg.parentCommentId,
       });
-      return { source: replaceThread(parsed.source, t.id, next) };
+      // The replier just read the passage as it stands, so this reply is the
+      // new baseline for "text changed since this comment" (P1.3).
+      return {
+        source: replaceThread(parsed.source, t.id, withRefreshedAnchorHash(parsed, next)),
+      };
     }
     case "edit-comment": {
       const t = findThread(parsed, msg.threadId);

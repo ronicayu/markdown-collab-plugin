@@ -9,6 +9,7 @@
 import { addSuggestion, addThread, appendReply, parse, replaceThread } from "../../inlineComments/format";
 import { serialize } from "../../inlineComments/serializeState";
 import { commentsOf, frontmatterOf, proseOf, suggestionsOf } from "../../collab/inlineBridge";
+import { withRefreshedAnchorHash } from "../../inlineComments/staleness";
 
 const BASE = `# Release notes
 
@@ -82,6 +83,16 @@ export function reviewFixture(): ReviewFixture {
   };
 }
 
+/**
+ * Rewrite the text between a thread's markers, the way an editor would — which
+ * is what makes the thread stale (its last comment predates the new text).
+ */
+export function editAnchoredText(source: string, threadId: string, next: string): string {
+  const a = parse(source).anchors.get(threadId);
+  if (!a) throw new Error(`thread ${threadId} has no anchor`);
+  return source.slice(0, a.openEnd) + next + source.slice(a.closeStart);
+}
+
 /** The `init` message body the inline-comments panel would push for `source`. */
 export function inlineInit(
   source: string,
@@ -131,4 +142,23 @@ export function liveInit(
 /** The prose the live editor shows for `source` (markers + threads region gone). */
 export function liveProse(source: string): string {
   return proseOf(source);
+}
+
+/**
+ * Append a human reply to a thread, exactly as the panel's mutation handler
+ * would — including refreshing the anchor hash, since the replier has just read
+ * the passage as it now stands.
+ */
+export function replyTo(source: string, threadId: string, body: string): string {
+  const parsed = parse(source);
+  const thread = parsed.threads.find((t) => t.id === threadId);
+  if (!thread) throw new Error(`no thread ${threadId}`);
+  return replaceThread(
+    source,
+    threadId,
+    withRefreshedAnchorHash(
+      parsed,
+      appendReply(thread, { author: "ronica", body, ts: "2026-07-02T09:00:00.000Z" }),
+    ),
+  );
 }

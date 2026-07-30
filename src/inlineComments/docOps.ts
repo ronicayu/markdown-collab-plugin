@@ -26,6 +26,7 @@ import {
   type InlineThread,
 } from "./format";
 import { checkIntegrity, type IntegrityIssue } from "./integrity";
+import { hashAnchorText, staleThreadIds, withRefreshedAnchorHash } from "./staleness";
 
 /** Machine-readable reason an operation refused. */
 export type DocOpCode =
@@ -147,6 +148,8 @@ export interface ListedThread {
   anchored: boolean;
   /** The live text between the markers — what the reviewer is pointing at. */
   anchoredText: string | null;
+  /** The anchored text changed after the thread's last comment (P1.3). */
+  stale: boolean;
   comments: Array<{ id: string; author: string; ts: string; body: string }>;
 }
 
@@ -173,6 +176,7 @@ export interface ListResult {
  */
 export function opList(source: string, actionable = false): ListResult {
   const parsed = parse(source);
+  const stale = new Set(staleThreadIds(parsed));
   const threads = parsed.threads
     .filter((t) => {
       if (!actionable) return true;
@@ -188,6 +192,9 @@ export function opList(source: string, actionable = false): ListResult {
         quote: t.quote,
         anchored: a !== undefined,
         anchoredText: a ? source.slice(a.openEnd, a.closeStart) : null,
+        // True when the passage moved after the last comment — read this one
+        // first, the comment may be answering text that no longer exists.
+        stale: stale.has(t.id),
         comments: t.comments
           .filter((c) => !c.deleted)
           .map((c) => ({ id: c.id, author: c.author, ts: c.ts, body: c.body })),
@@ -220,11 +227,13 @@ export function opReply(
   now = () => new Date().toISOString(),
 ): OpOutcome<{ threadId: string; commentId: string }> {
   const thread = findThread(source, threadId);
-  const next = replaceThread(
-    source,
-    threadId,
+  // Claude just read this passage to answer about it, so its reply is the new
+  // baseline for "text changed since this comment" (P1.3).
+  const replied = withRefreshedAnchorHash(
+    parse(source),
     appendReply(thread, { author: "claude", body, ts: now() }),
   );
+  const next = replaceThread(source, threadId, replied);
   assertNoNewIssues(source, next);
   const updated = findThread(next, threadId);
   return {
@@ -259,7 +268,13 @@ export function opRewrite(
   }
   const previous = source.slice(a.openEnd, a.closeStart);
   const spliced = source.slice(0, a.openEnd) + replacement + source.slice(a.closeStart);
-  const next = replaceThread(spliced, threadId, { ...thread, quote: replacement });
+  // The rewriter wrote this text, so it is not "changed since the last
+  // comment" — it IS what the next reader will see.
+  const next = replaceThread(spliced, threadId, {
+    ...thread,
+    quote: replacement,
+    anchorHash: hashAnchorText(replacement),
+  });
   assertNoNewIssues(source, next);
   return { next, result: { threadId, previous, replacement } };
 }

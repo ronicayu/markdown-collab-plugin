@@ -150,6 +150,12 @@
   background: color-mix(in srgb, var(--mc-accent) 22%, transparent);
   color: var(--vscode-foreground);
 }
+/* "text changed since this comment" — a caution, not an error: the thread is
+   still live, it just may be answering text that moved (10x-plan-2 P1.3). */
+.mc-badge--stale {
+  background: color-mix(in srgb, var(--vscode-charts-yellow, #d7ba7d) 22%, transparent);
+  color: var(--vscode-foreground);
+}
 
 /* --- suggestion (tracked-change) card ------------------------------------ */
 .mc-suggestion__diff {

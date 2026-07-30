@@ -394,6 +394,9 @@ mark.mc-hl.mc-hl--suggestion {
   text-transform: uppercase;
 }
 .badge.broken { background: rgba(255, 80, 80, 0.2); border-color: rgba(255, 80, 80, 0.4); color: #ff9090; }
+/* A caution, not an error: the thread is live, its passage just moved after
+   the last comment (10x-plan-2 P1.3). */
+.badge.stale { background: rgba(215, 186, 125, 0.22); border-color: rgba(215, 186, 125, 0.45); color: var(--vscode-foreground); }
 
 .comment {
   padding: 6px 0;

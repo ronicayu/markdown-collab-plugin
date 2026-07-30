@@ -61,6 +61,8 @@ interface ThreadState {
   resolvedTs?: string;
   comments: InlineComment[];
   anchor: { proseStart: number; proseEnd: number } | null;
+  /** The anchored text changed after this thread's last comment (P1.3). */
+  stale?: boolean;
 }
 
 interface SuggestionState {
@@ -1022,6 +1024,15 @@ function renderThreadCard(t: ThreadState): HTMLElement {
     badge.className = "badge broken";
     badge.textContent = "broken anchor";
     badge.title = "Anchor marker missing from prose. Fix by re-anchoring.";
+    quote.appendChild(badge);
+  } else if (t.stale) {
+    // Only when the anchor is intact: a broken anchor is already the louder
+    // problem, and two badges about one failure is noise (P1.3).
+    const badge = document.createElement("span");
+    badge.className = "badge stale";
+    badge.textContent = "text changed";
+    badge.title =
+      "The anchored passage was edited after the last comment on this thread — the comment may be answering text that is no longer there.";
     quote.appendChild(badge);
   }
   headRow.appendChild(quote);

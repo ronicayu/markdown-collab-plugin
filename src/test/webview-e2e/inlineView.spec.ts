@@ -6,7 +6,7 @@
 
 import { expect, test } from "@playwright/test";
 import { awaitPosted, bootInlineView, clearPosted, posted, pushToWebview } from "./harness";
-import { inlineInit, reviewFixture } from "./fixtures";
+import { editAnchoredText, inlineInit, replyTo, reviewFixture } from "./fixtures";
 
 const fixture = reviewFixture();
 
@@ -138,4 +138,46 @@ test("a pending thread shows 'Claude is working…' and drops it when the reply 
     pendingThreadIds: [],
   });
   await expect(card.locator(".mc-card__pending")).toHaveCount(0);
+});
+
+test("a thread whose passage was rewritten shows a 'text changed' badge", async ({ page }) => {
+  // 10x-plan-2 P1.3: the comment may be answering text that is no longer there,
+  // and nothing in the card said so before.
+  const stale = editAnchoredText(fixture.source, fixture.openThreadId, "behind a different setting");
+  await pushToWebview(page, {
+    type: "update",
+    state: inlineInit(stale).state,
+    suggestMode: false,
+    pendingThreadIds: [],
+  });
+
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  await expect(card.locator(".badge.stale")).toHaveText("text changed");
+  // The other thread is untouched and must stay unbadged — a badge on
+  // everything is the same as a badge on nothing.
+  await expect(
+    page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"] .badge.stale`),
+  ).toHaveCount(0);
+});
+
+test("replying to a stale thread clears the badge", async ({ page }) => {
+  const stale = editAnchoredText(fixture.source, fixture.openThreadId, "behind a different setting");
+  await pushToWebview(page, {
+    type: "update",
+    state: inlineInit(stale).state,
+    suggestMode: false,
+    pendingThreadIds: [],
+  });
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  await expect(card.locator(".badge.stale")).toBeVisible();
+
+  // The host applies the reply and pushes fresh state; the reply resets the
+  // baseline because the replier just read the new text.
+  await pushToWebview(page, {
+    type: "update",
+    state: inlineInit(replyTo(stale, fixture.openThreadId, "Noted — the new wording is fine.")).state,
+    suggestMode: false,
+    pendingThreadIds: [],
+  });
+  await expect(card.locator(".badge.stale")).toHaveCount(0);
 });

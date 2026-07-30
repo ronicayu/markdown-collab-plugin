@@ -28,6 +28,7 @@ import {
   type InlineThread,
   type ParsedDocument,
 } from "../inlineComments/format";
+import { isThreadStale } from "../inlineComments/staleness";
 import {
   collapseWs,
   locateAnchorInLiveText,
@@ -54,6 +55,8 @@ export interface CollabComment {
   anchor: CollabCommentAnchor;
   /** Which occurrence of `anchor.text` the marker wraps, 0-based; -1 if unanchored. */
   anchorOrdinal: number;
+  /** The anchored text changed after this thread's last comment (P1.3). */
+  stale: boolean;
   replies: Array<{ id: string; author: string; body: string; createdAt: string }>;
 }
 
@@ -231,6 +234,7 @@ export function commentsOf(source: string): CollabComment[] {
       anchor,
       // Which occurrence of `anchor.text` the marker wraps (-1 when unanchored).
       anchorOrdinal: span ? occurrenceIndex(prose, anchor.text, span.proseStart) : -1,
+      stale: isThreadStale(parsed, thread.id),
       replies: visible.slice(1).map((r) => ({ id: r.id, author: r.author, body: r.body, createdAt: r.ts })),
     });
   }

@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.34.65 — 2026-07-30 (trial)
+
+### Added: threads say when their text moved out from under them (10x-plan-2 P1.3)
+
+A thread whose anchored passage was rewritten after the last comment looked
+exactly like a live one — same quote in the header, same replies, no hint that
+the comment might be answering text that no longer exists. You'd triage it, or
+send it to Claude, and only find out mid-conversation.
+
+Threads now carry an optional hash of their anchored span as it read when the
+last comment was written. When the live span hashes differently, the card shows
+a muted **text changed** badge — in the inline comments view and the live
+editor, from the same shared card. Replying resets the baseline, because the
+replier just read the passage as it now stands. `mc_list` reports it too
+(`"stale": true`), so Claude re-evaluates those threads first instead of
+answering a passage that moved.
+
+Three deliberate restraints:
+
+- **Absent means unknown, never unchanged.** Files written before this version
+  carry no hash, and they render no badge — an invented hash would read as a
+  clean bill of health forever.
+- **`quote` was not reused.** It's the creation-time text kept as the
+  re-anchoring locator, and moving it whenever someone commented would break the
+  repair path that depends on it. The hash is a separate field with separate
+  semantics.
+- **No badge on a broken anchor.** That thread already has the louder problem;
+  two badges about one failure is noise.
+
+The hash is FNV-1a over the span — not cryptographic, and it doesn't need to be:
+both sides are the extension's own data, and the question is only "same string
+or not". No `crypto` import, so the same code runs in the webviews and in the
+dependency-free `mdc.mjs`.
+
 ## 0.34.64 — 2026-07-30 (trial)
 
 ### Changed: the Claude skill is tools-first (10x-plan-2 P0.3)
