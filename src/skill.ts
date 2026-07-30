@@ -646,6 +646,25 @@ The prompt may include a \`Focus:\` line — a free-form instruction from the hu
 
 Without a focus directive, do a general review against the rubric below.
 
+#### Standing conventions
+
+A payload may carry a **Conventions:** block — the project's standing rules, from
+\`.markdown-collab/conventions.md\`. Terminology, tone, house style, and the
+"we know, don't flag it" exceptions.
+
+- They apply to **every** pass, where a \`Focus:\` line applies to one. Focus says
+  what to look for this time; conventions say how this project wants things said.
+- Where they pull in different directions, focus wins on **scope** (what warrants
+  a thread) and conventions still hold on **wording** (how you phrase it, and
+  which house rules count as violations).
+- A convention violation is a legitimate thread even without a matching focus —
+  that is what makes it standing.
+- Anything the block lists as known and accepted is **not** a finding. Flagging
+  it is exactly the re-litigation the file exists to stop.
+- If the human dismisses a thread by stating a rule ("we always write it this
+  way"), **suggest** they add it to the conventions file. Do not write to that
+  file yourself — it is theirs.
+
 #### What warrants a thread
 
 - Factual error or claim that's wrong.

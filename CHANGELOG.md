@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.34.67 — 2026-07-30 (trial)
+
+### Added: standing review conventions (10x-plan-2 P1.2)
+
+Every review started from zero. The product's name, the house tone, the
+code-example rule, the thing you've already decided not to care about — all of it
+had to be retyped into the focus prompt each time, or Claude re-litigated it
+forever.
+
+**Markdown Collab: Edit Review Conventions** creates `.markdown-collab/conventions.md`
+from a commented template and opens it. It is plain prose you own — terminology,
+tone, standing focuses, known-and-accepted — and every review request appends it
+under a `Conventions:` header.
+
+The distinction the skill now draws: a `Focus:` line applies to one pass;
+conventions apply to all of them. Where they pull apart, focus decides **what**
+warrants a thread and conventions decide **how** it's phrased — and a convention
+violation is a legitimate finding with no focus at all. Anything the file lists
+as known and accepted stops being a finding, which is the re-litigation the file
+exists to end. When you dismiss a thread by stating a rule, the skill suggests
+adding it to the file; it never writes there itself.
+
+Four restraints worth naming:
+
+- **Prose, not schema.** No keys, no validation, no settings UI. The moment it
+  grows those it becomes config sprawl to document, migrate, and keep in sync.
+- **HTML comments are stripped before sending**, so the template's own
+  instructions and your notes-to-self never reach Claude.
+- **A file that's still just the scaffold weighs nothing.** Headings alone don't
+  count as content — otherwise every payload would carry a block that says
+  nothing and Claude would treat it as if it did.
+- **4 KB cap, and it says when it truncated.** Silent truncation would look
+  exactly like Claude ignoring a rule that was never actually sent.
+
+Appended inside `dispatchReviewPayload`, before the mode branches — so every send
+path carries it and no payload builder can be the one that forgets. A guard test
+enforces both halves of that.
+
 ## 0.34.66 — 2026-07-30 (trial)
 
 ### Added: review only what changed (10x-plan-2 P1.1)

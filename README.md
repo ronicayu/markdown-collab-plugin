@@ -62,6 +62,25 @@ A thread counts as "reviewed" once you reply or resolve it; the indicator clears
 
 Files larger than 50 KB prompt a soft confirm before sending (Claude's review can use significant context on big docs). In review mode the skill never edits prose — every concern goes in a thread for you to gate. Expect *"Reviewed `<path>` — no concerns found"* via the send channel if Claude reads the doc and finds nothing matching the focus.
 
+#### Standing conventions
+
+Some things are true of every review: the product's name, the house tone, the code-example
+rule, the thing you've decided not to care about. Retyping those into the focus prompt each
+time — or watching Claude re-raise them — is the tax this removes.
+
+**Markdown Collab: Edit Review Conventions** creates `.markdown-collab/conventions.md` from
+a commented template and opens it. It's plain prose you own; write what you'd tell a new
+reviewer on their first day. Every review request appends it under a `Conventions:` header.
+
+- A `Focus:` line applies to one pass; conventions apply to all of them. Where they pull
+  apart, focus decides *what* warrants a thread and conventions decide *how* it's phrased —
+  and a convention violation is a legitimate finding with no focus at all.
+- Anything you list as known and accepted stops being a finding.
+- HTML comments in the file are stripped before sending, so the template's instructions and
+  your own notes-to-self never reach Claude.
+- Capped at 4 KB per request, and if it's over, the payload says it was truncated rather
+  than quietly dropping the rest.
+
 #### Reviewing changes since the last pass
 
 Once Claude has reviewed a file, **Markdown Collab: Review Changes Since Last Pass**
@@ -271,12 +290,17 @@ The only files Markdown Collab writes under `.markdown-collab/` are runtime stat
     ├── .events.jsonl         ← channel-mode event log (gitignore)
     ├── .events.acked.jsonl   ← addressed-event ids (gitignore)
     ├── .channel.json         ← mcp-channel endpoint descriptor (gitignore)
-    └── .mcp-server.json      ← review tool server address + session token (gitignore)
+    ├── .mcp-server.json      ← review tool server address + session token (gitignore)
+    └── conventions.md        ← standing review conventions (COMMIT this one)
 ```
 
 ```gitignore
 .markdown-collab/
+!.markdown-collab/conventions.md
 ```
+
+Everything under `.markdown-collab/` is runtime state except `conventions.md`, which is
+project prose your team should share — hence the negation above.
 
 ## Troubleshooting
 

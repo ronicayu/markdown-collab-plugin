@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with Claude Code — inline comments, a live AI co-editor, and GitHub/GitLab PR review, all anchored in the file.",
-  "version": "0.34.66",
+  "version": "0.34.67",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -50,7 +50,8 @@
     "onCommand:markdownCollab.nextUnreadFromClaude",
     "onCommand:markdownCollab.startPrReview",
     "onView:markdownCollab.prReviewFiles",
-    "onCommand:markdownCollab.askClaudeToReviewChanges"
+    "onCommand:markdownCollab.askClaudeToReviewChanges",
+    "onCommand:markdownCollab.editReviewConventions"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -164,6 +165,11 @@
       {
         "command": "markdownCollab.registerMcpServer",
         "title": "Markdown Collab: Register Review Tools with Claude Code (.mcp.json)",
+        "category": "Markdown Collab"
+      },
+      {
+        "command": "markdownCollab.editReviewConventions",
+        "title": "Markdown Collab: Edit Review Conventions",
         "category": "Markdown Collab"
       }
     ],

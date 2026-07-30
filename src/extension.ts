@@ -28,6 +28,7 @@ import {
 import { parse as parseInline } from "./inlineComments/format";
 import { claudePending } from "./claudePendingService";
 import { activateClaudeStatusBar } from "./claudeStatusBar";
+import { CONVENTIONS_REL, CONVENTIONS_TEMPLATE, withConventions } from "./reviewConventions";
 import type { PendingEvidence } from "./inlineComments/claudePending";
 import { buildInlinePayload, buildSingleThreadPayload } from "./inlineComments/sendToClaude";
 import { checkClaudeSkill, installClaudeSkill, skillFingerprint } from "./skill";
@@ -107,6 +108,9 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("markdownCollab.installClaudeSkill", async () => {
       await invokeInstallClaudeSkill(output);
+    }),
+    vscode.commands.registerCommand("markdownCollab.editReviewConventions", async () => {
+      await invokeEditReviewConventions(output);
     }),
     vscode.commands.registerCommand("markdownCollab.registerMcpServer", async () => {
       const handle = currentMcpServer();
@@ -389,6 +393,58 @@ export function activate(context: vscode.ExtensionContext): void {
   void maybePromptSkillUpdate(context, output);
 }
 
+/** The workspace's standing review conventions, or null when there are none. */
+async function readConventions(folder: vscode.WorkspaceFolder): Promise<string | null> {
+  const uri = vscode.Uri.joinPath(folder.uri, ...CONVENTIONS_REL.split("/"));
+  try {
+    return Buffer.from(await vscode.workspace.fs.readFile(uri)).toString("utf8");
+  } catch {
+    // Absent is the normal case, not an error: most workspaces never write one.
+    return null;
+  }
+}
+
+/**
+ * Open the conventions file, creating it from the template first time. The
+ * scaffold matters more than it looks: an empty file gives no clue what belongs
+ * in it, and this is prose whose whole value is being specific.
+ */
+async function invokeEditReviewConventions(output: vscode.OutputChannel): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) {
+    void vscode.window.showWarningMessage(
+      "Markdown Collab: open a workspace folder first — conventions are per project.",
+    );
+    return;
+  }
+  const uri = vscode.Uri.joinPath(folder.uri, ...CONVENTIONS_REL.split("/"));
+  let existed = true;
+  try {
+    await vscode.workspace.fs.stat(uri);
+  } catch {
+    existed = false;
+  }
+  if (!existed) {
+    try {
+      await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(folder.uri, ".markdown-collab"));
+      await vscode.workspace.fs.writeFile(uri, Buffer.from(CONVENTIONS_TEMPLATE, "utf8"));
+    } catch (e) {
+      void vscode.window.showErrorMessage(
+        `Markdown Collab: could not create ${CONVENTIONS_REL} — ${(e as Error).message}`,
+      );
+      return;
+    }
+    output.appendLine(`Created ${CONVENTIONS_REL}`);
+  }
+  const doc = await vscode.workspace.openTextDocument(uri);
+  await vscode.window.showTextDocument(doc, { preview: false });
+  if (!existed) {
+    void vscode.window.showInformationMessage(
+      "Write your standing review conventions here. They're sent with every review request.",
+    );
+  }
+}
+
 const SKILL_PROMPT_KEY = "markdownCollab.skillPromptedFingerprint";
 
 async function maybePromptSkillUpdate(
@@ -626,6 +682,11 @@ async function dispatchReviewPayload(
   folder: vscode.WorkspaceFolder,
   intent: DispatchIntent = { kind: "address" },
 ): Promise<void> {
+  // Standing conventions ride along on every dispatch, whatever the mode
+  // (10x-plan-2 P1.2). Done here rather than in each payload builder so no send
+  // path can be the one that forgets them.
+  payload = { ...payload, prompt: withConventions(payload.prompt, await readConventions(folder)) };
+
   const config = vscode.workspace.getConfiguration("markdownCollab");
   const rawMode = config.get<unknown>("sendMode", "ask");
   let mode = normalizeSendMode(rawMode);
