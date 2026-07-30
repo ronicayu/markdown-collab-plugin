@@ -93,6 +93,8 @@ interface InitMsg {
   skillStatus?: SkillStatus;
   suggestMode?: boolean;
   pendingThreadIds?: string[];
+  /** Host-decided wording for the waiting row (10x-plan-2 P0.2). */
+  pendingLabel?: string;
 }
 
 type SkillStatus = "missing" | "outdated" | "current";
@@ -107,6 +109,7 @@ interface UpdateMsg {
   state: SerializedState;
   suggestMode?: boolean;
   pendingThreadIds?: string[];
+  pendingLabel?: string;
 }
 
 interface ReviewPendingMsg {
@@ -536,6 +539,9 @@ let filter: ThreadFilter = "open";
 // Threads dispatched to Claude and not yet answered — the host owns this, so
 // it survives a webview reload and matches whatever the live editor shows.
 let pendingThreadIds: ReadonlySet<string> = new Set();
+// What the waiting row says. The host owns the wording because only it knows
+// whether the wait is inferred or protocol-backed.
+let pendingLabelText = "Claude is working\u2026";
 // How many thread cards the list is currently allowed to build. Grows by a
 // chunk each time the user clicks "Show more"; resets when the filter changes,
 // since that is a new list.
@@ -1215,6 +1221,7 @@ function renderComment(thread: ThreadState, c: InlineComment, pending = false): 
     reply: !!c.parent,
     actions,
     pending,
+    pendingLabel: pendingLabelText,
   });
 }
 
@@ -1487,10 +1494,12 @@ window.addEventListener("message", (ev) => {
     renderSkillWarning(msg.skillStatus);
     updateSuggestModeToggle(msg.suggestMode ?? false);
     pendingThreadIds = new Set(msg.pendingThreadIds ?? []);
+    if (msg.pendingLabel) pendingLabelText = msg.pendingLabel;
     render(msg.state);
   } else if (msg.type === "update") {
     updateSuggestModeToggle(msg.suggestMode ?? false);
     pendingThreadIds = new Set(msg.pendingThreadIds ?? []);
+    if (msg.pendingLabel) pendingLabelText = msg.pendingLabel;
     render(msg.state);
   } else if (msg.type === "review-pending") {
     pendingReviewSnapshot = new Set(msg.existingIds);

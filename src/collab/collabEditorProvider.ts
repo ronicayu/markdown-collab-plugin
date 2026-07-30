@@ -25,6 +25,7 @@ import { runDrawioRead, type DrawioReadResult } from "./drawioService";
 
 export type { DrawioReadResult };
 import { claudePending, onPendingChanged } from "../claudePendingService";
+import { pendingLabel } from "../inlineComments/claudePending";
 import { classifyLink } from "./linkRouter";
 import { isExternalLinkSafe } from "./urlAllowlist";
 
@@ -38,6 +39,8 @@ interface InitPayload {
   suggestions: CollabSuggestion[];
   /** Threads dispatched to Claude that haven't been answered yet (P1.2). */
   pendingThreadIds: string[];
+  /** Wording for the waiting row — protocol evidence earns a specific phrase. */
+  pendingLabel: string;
   /** Raw frontmatter block, shown in a dedicated read-only panel. "" when absent. */
   frontmatter: string;
   /** Webview URIs for resolving relative image src in the markdown. */
@@ -59,6 +62,8 @@ interface CommentsChangedPayload {
   comments: CollabComment[];
   suggestions: CollabSuggestion[];
   pendingThreadIds: string[];
+  /** Wording for the waiting row — protocol evidence earns a specific phrase. */
+  pendingLabel: string;
 }
 
 interface EditMessage {
@@ -402,14 +407,13 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
 
     const pushComments = (): void => {
       const source = document.getText();
+      const waiting = claudePending.status(document.uri.toString(), parseInline(source).threads);
       void panel.webview.postMessage({
         type: "sidecar-changed",
         comments: commentsOf(source),
         suggestions: suggestionsOf(source),
-        pendingThreadIds: claudePending.pending(
-          document.uri.toString(),
-          parseInline(source).threads,
-        ),
+        pendingThreadIds: waiting.threadIds,
+        pendingLabel: pendingLabel(waiting),
       } satisfies CommentsChangedPayload);
     };
 
@@ -429,13 +433,15 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         lastFrontmatter = frontmatterOf(source);
         const docDirUri = vscode.Uri.file(path.dirname(document.uri.fsPath));
         const wsFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+        const waiting = claudePending.status(document.uri.toString(), parseInline(source).threads);
         const payload: InitPayload = {
           type: "init",
           text,
           user,
           comments: commentsOf(source),
           suggestions: suggestionsOf(source),
-          pendingThreadIds: claudePending.pending(document.uri.toString(), parseInline(source).threads),
+          pendingThreadIds: waiting.threadIds,
+          pendingLabel: pendingLabel(waiting),
           frontmatter: lastFrontmatter,
           imageBaseUris: {
             docDir: panel.webview.asWebviewUri(docDirUri).toString(),

@@ -16,6 +16,7 @@ import {
 import {
   currentMcpServer,
   ensureMcpJsonRegistration,
+  pendingSignalsFromToolCalls,
   resetMcpJsonConsent,
   startMcpServer,
 } from "./mcpServer";
@@ -26,6 +27,8 @@ import {
 } from "./multiFileReview";
 import { parse as parseInline } from "./inlineComments/format";
 import { claudePending } from "./claudePendingService";
+import { activateClaudeStatusBar } from "./claudeStatusBar";
+import type { PendingEvidence } from "./inlineComments/claudePending";
 import { buildInlinePayload, buildSingleThreadPayload } from "./inlineComments/sendToClaude";
 import { checkClaudeSkill, installClaudeSkill, skillFingerprint } from "./skill";
 import { EVENT_LOG_REL, EventLog } from "./transports/eventLog";
@@ -81,13 +84,20 @@ export function activate(context: vscode.ExtensionContext): void {
   terminalTracker.activate(context.subscriptions);
   context.subscriptions.push(terminalTracker);
 
+  // Visible from anywhere while Claude works through the tools — the panels
+  // own the per-thread row, this is for when the human has gone back to the
+  // editor (10x-plan-2 P0.2).
+  context.subscriptions.push(activateClaudeStatusBar());
+
   // The MCP tool server (10x-plan-2 P0.1). Started for every workspace so the
   // tools are there when Claude reaches for them, but nothing depends on it:
   // it is never the default send mode, and a failure to bind is logged and
   // ignored. Registration in `.mcp.json` is a separate, asked-once step.
   void startMcpServer(context, {
     output,
-    onToolCall: () => undefined,
+    // Tool calls are the lifecycle signal: they say Claude is working, which
+    // file, and — via mc_check — when it's done (10x-plan-2 P0.2).
+    onToolCall: pendingSignalsFromToolCalls,
   }).then(async (handle) => {
     if (!handle) return;
     context.subscriptions.push({ dispose: () => handle.dispose() });
@@ -553,13 +563,20 @@ async function invokeSendAllToClaude(
 async function markPayloadPending(
   payload: ReviewPayload,
   folder: vscode.WorkspaceFolder,
+  /**
+   * "protocol" only when the dispatch asked Claude to work through the MCP
+   * tools — then the tool calls, not a timer, decide when the wait ends
+   * (10x-plan-2 P0.2). Every other transport is fire-and-forget, and the
+   * indicator says so.
+   */
+  evidence: PendingEvidence = "inferred",
 ): Promise<void> {
   const threadIds = payload.comments.map((c) => c.id);
   if (threadIds.length === 0) return;
   try {
     const uri = vscode.Uri.joinPath(folder.uri, payload.file);
     const doc = await vscode.workspace.openTextDocument(uri);
-    claudePending.mark(uri.toString(), parseInline(doc.getText()).threads, threadIds);
+    claudePending.mark(uri.toString(), parseInline(doc.getText()).threads, threadIds, evidence);
   } catch {
     // The indicator is a nicety; never fail a successful send over it.
   }
@@ -705,7 +722,7 @@ async function dispatchReviewPayload(
       return;
     }
     if (!sendResult.ok) return;
-    await markPayloadPending(payload, folder);
+    await markPayloadPending(payload, folder, mode === "mcp" ? "protocol" : "inferred");
     const msg =
       intent.kind === "review-request"
         ? `Claude is reviewing — threads will appear when it's done. (Sent to "${sendResult.terminalName}".)`

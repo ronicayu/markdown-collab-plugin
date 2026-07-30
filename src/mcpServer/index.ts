@@ -22,6 +22,7 @@ import { randomBytes } from "node:crypto";
 import * as path from "path";
 import * as vscode from "vscode";
 import { isInsideRoot } from "../pathUtils";
+import { claudePending } from "../claudePendingService";
 import { minimalEdit } from "../inlineComments/minimalEdit";
 import { serveMcp, type McpHttpServer } from "./httpServer";
 import { callTool, TOOLS, ToolRefusal, type ToolDeps } from "./tools";
@@ -140,6 +141,35 @@ export function buildToolDeps(deps: McpHostDeps): ToolDeps {
       deps.onToolCall?.(event);
     },
   };
+}
+
+/**
+ * Turn tool calls into lifecycle signals (10x-plan-2 P0.2).
+ *
+ * This is what replaces the guessing. A call against a document is hard
+ * evidence Claude is working on it; `mc_status` says what it's doing; and the
+ * closing `mc_check` — which the skill runs on every file it touched — is the
+ * end of the pass. The timer stays only as a silence detector.
+ *
+ * `mc_status` without a file applies to every document currently waiting: the
+ * beacon is about the pass, and a multi-file pass reports phases like "reading
+ * 2 of 3" that belong to all of them.
+ */
+export function pendingSignalsFromToolCalls(event: {
+  tool: string;
+  file?: string;
+  note?: string;
+}): void {
+  if (event.tool === "mc_status") {
+    if (event.file) claudePending.noteActivity(event.file, { phase: event.note });
+    else claudePending.noteActivityEverywhere({ phase: event.note });
+    return;
+  }
+  if (!event.file) return;
+  // The skill ends each file with mc_check, so that call is the completion
+  // signal. Anything else is progress.
+  if (event.tool === "mc_check") claudePending.noteComplete(event.file);
+  else claudePending.noteActivity(event.file);
 }
 
 /**

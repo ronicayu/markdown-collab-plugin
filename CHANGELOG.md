@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.34.63 — 2026-07-30 (trial)
+
+### Changed: "Claude is working…" stopped guessing (10x-plan-2 P0.2)
+
+The waiting indicator was honest guessing: marked at dispatch, cleared by
+watching for a reply-shaped file change, expired by a ten-minute timer. With the
+tool server from 0.34.62 in play, the guessing can stop — tool calls are facts.
+
+Waits now carry their evidence grade, and the two grades read differently:
+
+- **`inferred`** (terminal, event log, clipboard) — unchanged. Still
+  "Claude is working…", still resolved by a Claude-authored comment appearing,
+  still backstopped by the timeout. It's a guess and it reads like one.
+- **`protocol`** (the `mcp` send mode) — the first tool call against the file
+  turns *"Sent to Claude…"* into *"Claude is working on this file…"*; an
+  `mc_status` beacon replaces that with what Claude is actually doing
+  (*"Claude: reading 2 of 3 files"*); and the pass's closing `mc_check` clears
+  the wait outright — no reply required, because a review pass can legitimately
+  end without one.
+
+The timeout stops being a guess about Claude's lifetime and becomes a silence
+detector: it runs from the last signal rather than from dispatch, so a
+forty-minute pass that keeps reporting never expires mid-work, while a session
+that dies still stops claiming to be in flight.
+
+Also new: a status-bar item carrying the phase, for when you've gone back to the
+editor and aren't looking at the panel. It stays **silent for inferred waits** —
+putting the extension's least reliable claim in its most prominent spot is the
+same lie the timeout exists to avoid.
+
+Both surfaces render the row from the host's wording, so there is one place that
+decides what the extension is willing to claim.
+
+*Build note:* the live editor's reconciler skips cards whose content signature is
+unchanged, and a phase update changes nothing else about a thread — so the
+signature now carries the row's text, not just "is waiting". Same class of bug as
+the one 0.34.61 fixed, caught the same way, before it shipped.
+
 ## 0.34.62 — 2026-07-30 (trial)
 
 ### Added: the extension is now an MCP server Claude can call (10x-plan-2 P0.1)

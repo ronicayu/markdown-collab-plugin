@@ -83,6 +83,7 @@ interface InitMessage {
   comments: CommentSummary[];
   suggestions?: SuggestionSummary[];
   pendingThreadIds?: string[];
+  pendingLabel?: string;
   frontmatter?: string;
   imageBaseUris?: ImageBaseUris;
 }
@@ -111,6 +112,8 @@ interface SidecarChangedMessage {
   comments: CommentSummary[];
   suggestions?: SuggestionSummary[];
   pendingThreadIds?: string[];
+  /** Host-decided wording for the waiting row (10x-plan-2 P0.2). */
+  pendingLabel?: string;
 }
 
 interface AddCommentResultMessage {
@@ -197,10 +200,14 @@ const sidebarState: {
   notice: string | null;
   /** Threads dispatched to Claude and not yet answered — owned by the host. */
   pending: ReadonlySet<string>;
+  /** What the waiting row says. The host owns the wording because only it
+   *  knows whether the wait is inferred or protocol-backed. */
+  pendingLabel: string;
 } = {
   comments: [],
   suggestions: [],
   pending: new Set<string>(),
+  pendingLabel: "Claude is working\u2026",
   hideResolved: false,
   collapsed: false,
   notice: null,
@@ -325,6 +332,7 @@ async function init(msg: InitMessage): Promise<void> {
   sidebarState.comments = msg.comments ?? [];
   sidebarState.suggestions = msg.suggestions ?? [];
   sidebarState.pending = new Set(msg.pendingThreadIds ?? []);
+  if (msg.pendingLabel) sidebarState.pendingLabel = msg.pendingLabel;
   cachedMarkdown = msg.text;
   renderFrontmatter(msg.frontmatter ?? "");
   renderSidebar();
@@ -583,6 +591,15 @@ function updateSidebarCounts(): void {
 
 
 
+/**
+ * The waiting state as the card renders it: false when not waiting, otherwise
+ * the row's text — so a phase change repaints the card even though nothing
+ * about the thread's content moved.
+ */
+function pendingSignature(threadId: string): boolean | string {
+  return sidebarState.pending.has(threadId) ? sidebarState.pendingLabel : false;
+}
+
 // Patch the comment list in place: keep unchanged thread cards (so a reply
 // you're typing isn't interrupted), rebuild only the threads whose content
 // changed, insert new ones, and drop removed ones.
@@ -613,7 +630,7 @@ function reconcileComments(): void {
       `.mdc-comment[data-id="${cssEscape(c.id)}"]`,
     );
     let card: HTMLElement;
-    if (existing && existing.dataset.sig === threadSignature(c, sidebarState.pending.has(c.id))) {
+    if (existing && existing.dataset.sig === threadSignature(c, pendingSignature(c.id))) {
       card = existing; // unchanged — leave the DOM (and any focused reply) alone
     } else {
       card = renderCommentCard(c);
@@ -663,7 +680,7 @@ function renderCommentCard(c: CommentSummary): HTMLElement {
   const article = document.createElement("article");
   article.className = c.resolved ? "mdc-comment mdc-comment--resolved" : "mdc-comment";
   article.dataset.id = c.id;
-  article.dataset.sig = threadSignature(c, sidebarState.pending.has(c.id));
+  article.dataset.sig = threadSignature(c, pendingSignature(c.id));
 
   const head = document.createElement("div");
   head.className = "mdc-thread-head";
@@ -740,6 +757,7 @@ function renderInnerCard(
     bodyEl: buildLinkifiedBody(body),
     reply,
     pending,
+    pendingLabel: sidebarState.pendingLabel,
     actions: [
       {
         label: "Delete",
@@ -2004,6 +2022,7 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     sidebarState.comments = msg.comments ?? [];
     sidebarState.suggestions = msg.suggestions ?? [];
     sidebarState.pending = new Set(msg.pendingThreadIds ?? []);
+    if (msg.pendingLabel) sidebarState.pendingLabel = msg.pendingLabel;
     reconcileComments();
     renderSuggestions();
     forceHighlightRefresh();

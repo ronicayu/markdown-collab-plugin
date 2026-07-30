@@ -135,6 +135,26 @@ test("a pending thread shows 'Claude is working…' until the sidecar update cle
   await expect(card.locator(".mc-card__pending")).toHaveCount(0);
 });
 
+test("the waiting row follows the phase Claude reports", async ({ page }) => {
+  // 10x-plan-2 P0.2. The reconciler skips cards whose content is unchanged, and
+  // a phase update changes nothing else about the thread — so this is also the
+  // regression test for the repaint.
+  const card = page.locator(`.mdc-comment[data-id="${fixture.openThreadId}"]`);
+  await pushToWebview(page, {
+    type: "sidecar-changed",
+    ...liveSidecar(fixture.source, { pendingThreadIds: [fixture.openThreadId] }),
+    pendingLabel: "Claude: reading 2 of 3 files",
+  });
+  await expect(card.locator(".mc-card__pending")).toContainText("Claude: reading 2 of 3 files");
+
+  await pushToWebview(page, {
+    type: "sidecar-changed",
+    ...liveSidecar(fixture.source, { pendingThreadIds: [fixture.openThreadId] }),
+    pendingLabel: "Claude: opening threads",
+  });
+  await expect(card.locator(".mc-card__pending")).toContainText("Claude: opening threads");
+});
+
 test("an external (Claude) change lands in the editor without echoing back an edit", async ({ page }) => {
   const nextProse = liveProse(fixture.source).replace(
     "Suggest mode ships behind a setting.",

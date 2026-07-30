@@ -3,6 +3,7 @@ import {
   ClaudePendingTracker,
   PENDING_TIMEOUT_MS,
   isAnswered,
+  pendingLabel,
   snapshotPending,
   stillPending,
   type PendingInputThread,
@@ -28,10 +29,13 @@ function thread(
 describe("snapshotPending", () => {
   it("records the live comment count at dispatch", () => {
     const threads = [thread("a1", ["ronica", "claude"]), thread("b2", ["ronica"])];
-    expect(snapshotPending(threads, ["a1", "b2"], T0)).toEqual([
-      { threadId: "a1", commentCount: 2, since: T0 },
-      { threadId: "b2", commentCount: 1, since: T0 },
-    ]);
+    expect(snapshotPending(threads, ["a1", "b2"], T0)).toEqual([snap("a1", 2), snap("b2", 1)]);
+  });
+
+  it("defaults to inferred evidence, and records protocol when told", () => {
+    const threads = [thread("a1", ["ronica"])];
+    expect(snapshotPending(threads, ["a1"], T0)[0]!.evidence).toBe("inferred");
+    expect(snapshotPending(threads, ["a1"], T0, "protocol")[0]!.evidence).toBe("protocol");
   });
 
   it("ignores tombstoned comments in the count", () => {
@@ -44,45 +48,58 @@ describe("snapshotPending", () => {
   });
 });
 
+/** A snapshot as `snapshotPending` would produce it. */
+function snap(
+  threadId: string,
+  commentCount: number,
+  opts: { since?: number; evidence?: "inferred" | "protocol"; lastSignal?: number } = {},
+) {
+  const since = opts.since ?? T0;
+  return {
+    threadId,
+    commentCount,
+    since,
+    evidence: opts.evidence ?? ("inferred" as const),
+    lastSignal: opts.lastSignal ?? since,
+  };
+}
+
 describe("isAnswered", () => {
-  const snap = { threadId: "a1", commentCount: 1, since: T0 };
+  const snap1 = snap("a1", 1);
 
   it("is false while nothing new has arrived", () => {
-    expect(isAnswered(snap, thread("a1", ["ronica"]))).toBe(false);
+    expect(isAnswered(snap1, thread("a1", ["ronica"]))).toBe(false);
   });
 
   it("is true once Claude adds a comment", () => {
-    expect(isAnswered(snap, thread("a1", ["ronica", "claude"]))).toBe(true);
+    expect(isAnswered(snap1, thread("a1", ["ronica", "claude"]))).toBe(true);
   });
 
   it("stays false when the HUMAN adds a comment while waiting", () => {
     // Counting alone would clear the indicator here, which is wrong: Claude
     // still owes a reply.
-    expect(isAnswered(snap, thread("a1", ["ronica", "ronica"]))).toBe(false);
+    expect(isAnswered(snap1, thread("a1", ["ronica", "ronica"]))).toBe(false);
   });
 
   it("stays false for a thread Claude had already answered before dispatch", () => {
     // Snapshot taken when the thread already ended with a claude comment;
     // checking only the author would clear it immediately.
-    const prior = { threadId: "a1", commentCount: 2, since: T0 };
+    const prior = snap("a1", 2);
     expect(isAnswered(prior, thread("a1", ["ronica", "claude"]))).toBe(false);
     expect(isAnswered(prior, thread("a1", ["ronica", "claude", "claude"]))).toBe(true);
   });
 
   it("is true when the thread was resolved while waiting", () => {
-    expect(isAnswered(snap, thread("a1", ["ronica"], { status: "resolved" }))).toBe(true);
+    expect(isAnswered(snap1, thread("a1", ["ronica"], { status: "resolved" }))).toBe(true);
   });
 
   it("is true when the thread was deleted while waiting", () => {
-    expect(isAnswered(snap, undefined)).toBe(true);
+    expect(isAnswered(snap1, undefined)).toBe(true);
   });
 });
 
 describe("stillPending", () => {
-  const snaps = [
-    { threadId: "a1", commentCount: 1, since: T0 },
-    { threadId: "b2", commentCount: 1, since: T0 },
-  ];
+  const snaps = [snap("a1", 1), snap("b2", 1)];
 
   it("keeps threads with no reply yet", () => {
     const threads = [thread("a1", ["ronica"]), thread("b2", ["ronica"])];
@@ -245,5 +262,140 @@ describe("ClaudePendingTracker", () => {
     tracker.mark(DOC, [thread("a1", ["ronica"])], ["a1"]);
     tracker.dispose();
     expect(cancel).toHaveBeenCalled();
+  });
+});
+
+// 10x-plan-2 P0.2: with the MCP tools in play the tracker stops guessing. Tool
+// calls say "working", mc_status says what, and the closing mc_check says done.
+describe("ClaudePendingTracker — protocol evidence", () => {
+  function makeTracker(timeoutMs = 1000) {
+    let now = T0;
+    const changes: string[] = [];
+    const tracker = new ClaudePendingTracker(
+      (docKey) => changes.push(docKey),
+      () => now,
+      timeoutMs,
+      () => 0 as unknown as ReturnType<typeof setTimeout>,
+      () => undefined,
+    );
+    return { tracker, changes, advance: (ms: number) => (now += ms) };
+  }
+
+  const DOC = "/ws/docs/guide.md";
+  const threads = [thread("a1", ["ronica"])];
+
+  it("reports how it knows, not just that it is waiting", () => {
+    const { tracker } = makeTracker();
+    tracker.mark(DOC, threads, ["a1"], "protocol");
+    const status = tracker.status(DOC, threads);
+    expect(status).toMatchObject({ threadIds: ["a1"], evidence: "protocol", active: false });
+  });
+
+  it("a tool call upgrades the wait from sent to active", () => {
+    const { tracker, changes } = makeTracker();
+    tracker.mark(DOC, threads, ["a1"], "protocol");
+    changes.length = 0;
+    tracker.noteActivity(DOC);
+    expect(tracker.status(DOC, threads).active).toBe(true);
+    // No file changed, so the views only re-render if the tracker says so.
+    expect(changes).toEqual([DOC]);
+  });
+
+  it("carries the phase Claude reported", () => {
+    const { tracker } = makeTracker();
+    tracker.mark(DOC, threads, ["a1"], "protocol");
+    tracker.noteActivity(DOC, { phase: "reading 2 of 3 files" });
+    expect(tracker.status(DOC, threads).phase).toBe("reading 2 of 3 files");
+    // A later call with no phase keeps the last one rather than blanking it.
+    tracker.noteActivity(DOC);
+    expect(tracker.status(DOC, threads).phase).toBe("reading 2 of 3 files");
+  });
+
+  it("a long pass that keeps reporting never times out mid-work", () => {
+    const { tracker, advance } = makeTracker(1000);
+    tracker.mark(DOC, threads, ["a1"], "protocol");
+    for (let i = 0; i < 5; i++) {
+      advance(900);
+      tracker.noteActivity(DOC, { phase: `step ${i}` });
+    }
+    // 4.5s elapsed against a 1s timeout: the old rule would have given up long
+    // ago, which was the whole complaint.
+    expect(tracker.pending(DOC, threads)).toEqual(["a1"]);
+  });
+
+  it("still gives up when the protocol goes silent", () => {
+    const { tracker, advance } = makeTracker(1000);
+    tracker.mark(DOC, threads, ["a1"], "protocol");
+    tracker.noteActivity(DOC);
+    advance(1001);
+    expect(tracker.pending(DOC, threads)).toEqual([]);
+  });
+
+  it("an inferred wait is not extended by someone else's tool call", () => {
+    // Terminal-mode sends have no back channel; a tool call from an unrelated
+    // pass must not be read as evidence about them.
+    const { tracker, advance } = makeTracker(1000);
+    tracker.mark(DOC, threads, ["a1"], "inferred");
+    advance(900);
+    tracker.noteActivity(DOC);
+    advance(200);
+    expect(tracker.pending(DOC, threads)).toEqual([]);
+  });
+
+  it("the closing check ends the wait with no reply-shaped change at all", () => {
+    // A review pass can legitimately end without replying to a thread. Waiting
+    // for a reply would leave the indicator up forever in that case.
+    const { tracker, changes } = makeTracker();
+    tracker.mark(DOC, threads, ["a1"], "protocol");
+    changes.length = 0;
+    tracker.noteComplete(DOC);
+    expect(tracker.pending(DOC, threads)).toEqual([]);
+    expect(changes).toEqual([DOC]);
+  });
+
+  it("completing a document nobody is waiting on notifies nothing", () => {
+    const { tracker, changes } = makeTracker();
+    tracker.noteComplete(DOC);
+    expect(changes).toEqual([]);
+  });
+
+  it("a phase with no file reaches every waiting document", () => {
+    const { tracker } = makeTracker();
+    const other = "/ws/docs/other.md";
+    tracker.mark(DOC, threads, ["a1"], "protocol");
+    tracker.mark(other, threads, ["a1"], "protocol");
+    tracker.noteActivityEverywhere({ phase: "reading 2 of 3 files" });
+    expect(tracker.status(DOC, threads).phase).toBe("reading 2 of 3 files");
+    expect(tracker.status(other, threads).phase).toBe("reading 2 of 3 files");
+  });
+
+  it("a new dispatch forgets the previous pass's progress", () => {
+    const { tracker } = makeTracker();
+    tracker.mark(DOC, threads, ["a1"], "protocol");
+    tracker.noteActivity(DOC, { phase: "old news" });
+    tracker.mark(DOC, threads, ["a1"], "protocol");
+    expect(tracker.status(DOC, threads)).toMatchObject({ active: false, phase: undefined });
+  });
+});
+
+describe("pendingLabel", () => {
+  it("keeps the vague wording when the wait is inferred", () => {
+    // It is a guess, and it should read like one.
+    expect(pendingLabel({ evidence: "inferred", active: true, phase: "ignored" })).toBe(
+      "Claude is working…",
+    );
+  });
+
+  it("names the phase when Claude reported one", () => {
+    expect(pendingLabel({ evidence: "protocol", active: true, phase: "opening threads" })).toBe(
+      "Claude: opening threads",
+    );
+  });
+
+  it("claims work only once a tool call has actually arrived", () => {
+    expect(pendingLabel({ evidence: "protocol", active: false })).toBe("Sent to Claude…");
+    expect(pendingLabel({ evidence: "protocol", active: true })).toBe(
+      "Claude is working on this file…",
+    );
   });
 });

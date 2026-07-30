@@ -144,11 +144,17 @@ export interface CommentCardOptions {
   badges?: string[];
   /**
    * Claude has been sent this thread and hasn't replied yet. Renders a muted
-   * "Claude is working…" row under the body — deliberately in the card rather
-   * than a toast, because the wait belongs to a specific thread and the human
-   * is looking at the list, not at the corner of the screen.
+   * row under the body — deliberately in the card rather than a toast, because
+   * the wait belongs to a specific thread and the human is looking at the list,
+   * not at the corner of the screen.
    */
   pending?: boolean;
+  /**
+   * What that row says. The host decides the wording from how much it actually
+   * knows: a phase Claude reported over MCP, or the vaguer inferred default
+   * (10x-plan-2 P0.2). Omitted means the default.
+   */
+  pendingLabel?: string;
   /** Render as a nested reply (indented, lighter chrome). */
   reply?: boolean;
   actions?: CardAction[];
@@ -202,7 +208,7 @@ export function buildCommentCard(opts: CommentCardOptions): HTMLElement {
     dot.className = "mc-card__pending-dot";
     working.appendChild(dot);
     const label = document.createElement("span");
-    label.textContent = "Claude is working\u2026";
+    label.textContent = opts.pendingLabel ?? "Claude is working\u2026";
     working.appendChild(label);
     card.appendChild(working);
   }

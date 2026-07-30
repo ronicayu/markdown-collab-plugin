@@ -298,4 +298,12 @@ describe("threadSignature", () => {
     expect(threadSignature(base, true)).not.toBe(threadSignature(base, false));
     expect(threadSignature(base)).toBe(threadSignature(base, false));
   });
+
+  it("changes when the waiting row's text changes", () => {
+    // `mc_status` moves the phase while everything else stands still, so the
+    // row's text is what has to be in the signature, not merely "is waiting".
+    expect(threadSignature(base, "Claude: reading 2 of 3")).not.toBe(
+      threadSignature(base, "Claude: opening threads"),
+    );
+  });
 });

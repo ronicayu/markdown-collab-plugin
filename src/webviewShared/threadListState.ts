@@ -182,13 +182,15 @@ export interface SignatureThread {
  * doesn't display must stay out, or every unrelated update destroys the card
  * the human is typing in.
  *
- * `pending` is part of the signature because the card renders a "Claude is
- * working…" row from it, and that row is the one thing that changes with no
- * accompanying content change — a dispatch flips it on while author, body, and
- * replies all stay identical. Leaving it out kept the indicator off the live
- * editor entirely (caught by the webview e2e suite, 10x-plan-2 P2.1).
+ * `pending` is part of the signature because the card renders a waiting row
+ * from it, and that row is the one thing that changes with no accompanying
+ * content change — a dispatch flips it on while author, body, and replies all
+ * stay identical. Leaving it out kept the indicator off the live editor
+ * entirely (caught by the webview e2e suite, 10x-plan-2 P2.1). Pass the row's
+ * *text* rather than a flag when there is one, so a phase update from
+ * `mc_status` repaints too (10x-plan-2 P0.2).
  */
-export function threadSignature(c: SignatureThread, pending = false): string {
+export function threadSignature(c: SignatureThread, pending: boolean | string = false): string {
   return JSON.stringify({
     a: c.author,
     t: c.createdAt,

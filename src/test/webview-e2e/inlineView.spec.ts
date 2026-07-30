@@ -105,6 +105,21 @@ test("deleting a thread needs a second click to confirm", async ({ page }) => {
   });
 });
 
+test("the waiting row shows the phase Claude reported over MCP", async ({ page }) => {
+  // 10x-plan-2 P0.2: with protocol evidence the host sends specific wording
+  // instead of the inferred default, and the card renders whatever it is given.
+  await pushToWebview(page, {
+    type: "update",
+    state: inlineInit(fixture.source).state,
+    suggestMode: false,
+    pendingThreadIds: [fixture.openThreadId],
+    pendingLabel: "Claude: reading 2 of 3 files",
+  });
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  await expect(card.locator(".mc-card__pending")).toContainText("Claude: reading 2 of 3 files");
+  await expect(card.locator(".mc-card__pending")).not.toContainText("Claude is working");
+});
+
 test("a pending thread shows 'Claude is working…' and drops it when the reply lands", async ({ page }) => {
   await pushToWebview(page, {
     type: "update",

@@ -22,6 +22,7 @@ import { isInsideRoot } from "../pathUtils";
 import { checkClaudeSkill, type SkillStatus } from "../skill";
 import { runDrawioRead } from "../collab/drawioService";
 import { claudePending, onPendingChanged } from "../claudePendingService";
+import { pendingLabel } from "./claudePending";
 import { detectUrlScheme, parseLinkHref, slugifyHeading } from "./linkParse";
 import { findFrontmatter, parse, type ParsedDocument } from "./format";
 import { minimalEdit } from "./minimalEdit";
@@ -60,6 +61,8 @@ interface InitMessage {
   suggestMode: boolean;
   /** Threads dispatched to Claude that haven't been answered yet (P1.2). */
   pendingThreadIds: string[];
+  /** What to say under those threads — protocol evidence earns a specific phrase. */
+  pendingLabel: string;
 }
 
 interface UpdateMessage {
@@ -67,6 +70,7 @@ interface UpdateMessage {
   state: SerializedState;
   suggestMode: boolean;
   pendingThreadIds: string[];
+  pendingLabel: string;
 }
 
 interface SkillStatusMessage {
@@ -637,6 +641,15 @@ ${inlineCommentsAppBody()}
   }
 
   /**
+   * The line to show under a waiting thread. With MCP evidence this names the
+   * phase Claude reported; otherwise it stays the vaguer inferred wording,
+   * because that state IS a guess (10x-plan-2 P0.2).
+   */
+  private pendingLabelText(): string {
+    return pendingLabel(claudePending.status(this.doc.uri.toString(), parse(this.doc.getText()).threads));
+  }
+
+  /**
    * Run one webview mutation through the pure handler and apply the result.
    * The handler decides what the document becomes; the panel owns the
    * `WorkspaceEdit`, the save, and the warning toast.
@@ -718,6 +731,7 @@ ${inlineCommentsAppBody()}
       skillStatus: await checkClaudeSkill(os.homedir()),
       suggestMode: readSuggestMode(),
       pendingThreadIds: this.pendingThreadIds(),
+      pendingLabel: this.pendingLabelText(),
     };
     await this.panel.webview.postMessage(msg);
   }
@@ -741,6 +755,7 @@ ${inlineCommentsAppBody()}
       state,
       suggestMode: readSuggestMode(),
       pendingThreadIds: this.pendingThreadIds(),
+      pendingLabel: this.pendingLabelText(),
     };
     await this.panel.webview.postMessage(msg);
   }
