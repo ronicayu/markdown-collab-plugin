@@ -1,5 +1,12 @@
 # Markdown Collab — 10x Plan, Round 2
 
+> **Status: COMPLETE** (v0.34.61–0.34.69). Every initiative below is implemented,
+> tested, and committed with a CHANGELOG entry. Two things are deliberately NOT
+> done because they are Ronica's calls, not the plan's: the **dev-host pass** over
+> the flows no harness reaches (explorer right-click, skill install, a live Claude
+> session), and any **public release** — P2.2 built the pre-release pipeline but
+> firing it is a separate, confirmed act.
+
 **Audience:** Opus 5, acting as implementing engineer. Each initiative has motivation, design direction, key files, and acceptance criteria. Work top-to-bottom within a tier; tiers are ordered by leverage. Round 1 (`docs/10x-plan.md`) is complete — read its "What NOT to do" section first; every rule there still stands.
 
 **Product north star (unchanged):** one human + Claude collaborating on Markdown, all review state inline in the `.md` file. "Collab" means human ↔ AI, not multi-human.
