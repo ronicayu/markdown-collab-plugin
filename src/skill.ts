@@ -713,6 +713,30 @@ Do not "leave the top N" — dropping findings to hit a count target risks suppr
 
 If you read the doc carefully and find no concerns that match the focus (or no general-rubric concerns if no focus was given), say so explicitly via the send channel. Do **not** open a thread to comment "looks good" — threads are for actionable concerns. A short reply of *"Reviewed \`<path>\` against focus \`<focus>\`. No concerns found."* is the correct outcome.
 
+#### Delta passes — "review changes since last pass"
+
+A prompt may ask you to review **only what changed since your last pass**. It
+names the changed sections, includes their current text, and lists the threads
+that already exist. When you get one:
+
+- **Do not review unchanged prose.** It was reviewed already, and re-raising it
+  is noise in the human's triage queue.
+- **Cross-reference by id instead of duplicating.** If a concern is already
+  covered by a listed thread, reply to that thread rather than opening a second
+  one about the same passage.
+- **A resolved thread is settled.** Don't raise it again unless the new text
+  genuinely reintroduces the problem — and if it does, say which thread it was
+  ("this brings back the issue from a1b2c").
+- **Threads flagged "text changed" first.** Their comment was written about a
+  passage that has since been edited, so the concern may already be handled or
+  may have moved. Re-read those before opening anything new.
+- **Text outside the changed sections is fair game only when the change made it
+  wrong** — a renamed heading that other sections still link to, a claim the
+  edit now contradicts. Say why in the body so the human can see the connection.
+
+Finish with \`mc_check\` as always: it records the state you reviewed, which is
+what makes the *next* delta pass possible.
+
 #### Multi-file review passes
 
 A Review Mode prompt may name **several files** instead of one — the extension's "Ask Claude to Review These Docs" command builds one pass over a folder or a multi-select. The prompt lists the files; treat that list as the work order.

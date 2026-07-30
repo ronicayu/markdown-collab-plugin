@@ -79,6 +79,28 @@ export interface InlineSuggestion {
   note?: string;
 }
 
+/**
+ * A per-file record of "Claude reviewed the document in this state"
+ * (10x-plan-2 P1.1). Written when a review pass finishes; read to work out what
+ * has changed since, so the next pass costs what the edit cost instead of what
+ * the document costs.
+ */
+export interface ReviewCheckpoint {
+  /** ISO-8601 UTC of the pass that recorded it. */
+  ts: string;
+  /** Hash of the prose (markers and region stripped) as reviewed. */
+  contentHash: string;
+  /** Git ref the file was at, when the workspace could tell us. */
+  gitRef?: string;
+  /**
+   * A hash per heading-section, in document order. This is what makes a delta
+   * review possible without keeping a copy of the old file: comparing these
+   * says exactly which sections moved. Absent on a checkpoint written before
+   * they existed, which degrades to a full pass.
+   */
+  sections?: Array<{ heading: string | null; hash: string }>;
+}
+
 export interface ParsedDocument {
   /**
    * Raw markdown source (input unchanged). All offset references in the
@@ -99,6 +121,8 @@ export interface ParsedDocument {
   unanchoredThreadIds: string[];
   /** Suggestions in `<!--mc:s ...-->` whose anchor markers are missing. */
   unanchoredSuggestionIds: string[];
+  /** The last recorded review checkpoint, when the file carries one (P1.1). */
+  checkpoint: ReviewCheckpoint | null;
   /**
    * Half-open `[start, end)` range covering the threads region (including
    * the begin/end fences). `null` if no threads region present yet.
@@ -131,6 +155,7 @@ const THREADS_BEGIN = "<!--mc:threads:begin-->";
 const THREADS_END = "<!--mc:threads:end-->";
 const THREAD_LINE_RE = /<!--mc:t\s+(\{[\s\S]*?\})\s*-->/g;
 const SUGGESTION_LINE_RE = /<!--mc:s\s+(\{[\s\S]*?\})\s*-->/g;
+const CHECKPOINT_LINE_RE = /<!--mc:rev\s+(\{[\s\S]*?\})\s*-->/g;
 
 /** Compute a [start, end) bitmap of "this offset is inside code". */
 function buildCodeMask(source: string): Uint8Array {
@@ -329,6 +354,37 @@ function parseThreads(body: string, malformed?: MalformedThreadLine[]): InlineTh
   return threads;
 }
 
+/**
+ * The review checkpoint from a threads-region body, or null. A malformed record
+ * reads as "no checkpoint", which degrades to a full review — the safe direction.
+ */
+function parseCheckpoint(body: string): ReviewCheckpoint | null {
+  CHECKPOINT_LINE_RE.lastIndex = 0;
+  let last: ReviewCheckpoint | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = CHECKPOINT_LINE_RE.exec(body)) !== null) {
+    try {
+      const obj = JSON.parse(m[1]) as Partial<ReviewCheckpoint>;
+      if (typeof obj?.ts === "string" && typeof obj.contentHash === "string") {
+        last = {
+          ts: obj.ts,
+          contentHash: obj.contentHash,
+          gitRef: typeof obj.gitRef === "string" ? obj.gitRef : undefined,
+          sections: Array.isArray(obj.sections)
+            ? obj.sections.filter(
+                (s): s is { heading: string | null; hash: string } =>
+                  !!s && typeof s.hash === "string" && (s.heading === null || typeof s.heading === "string"),
+              )
+            : undefined,
+        };
+      }
+    } catch {
+      /* a damaged record is no record */
+    }
+  }
+  return last;
+}
+
 function parseSuggestions(body: string): InlineSuggestion[] {
   const suggestions: InlineSuggestion[] = [];
   let m: RegExpExecArray | null;
@@ -434,6 +490,7 @@ export function parse(source: string): ParsedDocument {
   const region = findThreadsRegion(source);
   const threads = region ? parseThreads(region.body) : [];
   const suggestions = region ? parseSuggestions(region.body) : [];
+  const checkpoint = region ? parseCheckpoint(region.body) : null;
   const frontmatter = findFrontmatter(source);
 
   // Sort threads by anchor position; threads without an anchor go to the end.
@@ -457,6 +514,7 @@ export function parse(source: string): ParsedDocument {
     source,
     threads,
     suggestions,
+    checkpoint,
     anchors,
     unanchoredThreadIds,
     unanchoredSuggestionIds,
@@ -533,8 +591,9 @@ export function inspect(source: string): DocumentInspection {
 export function renderThreadsRegion(
   threads: InlineThread[],
   suggestions: InlineSuggestion[] = [],
+  checkpoint: ReviewCheckpoint | null = null,
 ): string {
-  if (threads.length === 0 && suggestions.length === 0) return "";
+  if (threads.length === 0 && suggestions.length === 0 && !checkpoint) return "";
   const lines = [THREADS_BEGIN];
   for (const t of threads) {
     const obj: Record<string, unknown> = {
@@ -557,6 +616,15 @@ export function renderThreadsRegion(
     obj.proposed = s.proposed;
     if (s.note) obj.note = s.note;
     lines.push(`<!--mc:s ${safeStringify(obj)}-->`);
+  }
+  if (checkpoint) {
+    const obj: Record<string, unknown> = {
+      ts: checkpoint.ts,
+      contentHash: checkpoint.contentHash,
+    };
+    if (checkpoint.gitRef) obj.gitRef = checkpoint.gitRef;
+    if (checkpoint.sections) obj.sections = checkpoint.sections;
+    lines.push(`<!--mc:rev ${safeStringify(obj)}-->`);
   }
   lines.push(THREADS_END);
   return lines.join("\n");
@@ -586,10 +654,18 @@ export function withThreads(
   source: string,
   threads: InlineThread[],
   suggestions?: InlineSuggestion[],
+  /**
+   * Pass a checkpoint to record one; omit to keep whatever the file already has.
+   * Every existing caller mutates threads or suggestions and must not silently
+   * drop the review checkpoint while doing it.
+   */
+  checkpoint?: ReviewCheckpoint | null,
 ): string {
   const region = findThreadsRegion(source);
-  const keepSuggestions = suggestions ?? parse(source).suggestions;
-  const rendered = renderThreadsRegion(threads, keepSuggestions);
+  const existing = parse(source);
+  const keepSuggestions = suggestions ?? existing.suggestions;
+  const keepCheckpoint = checkpoint === undefined ? existing.checkpoint : checkpoint;
+  const rendered = renderThreadsRegion(threads, keepSuggestions, keepCheckpoint);
   if (region) {
     const before = source.slice(0, region.start);
     const after = source.slice(region.end);

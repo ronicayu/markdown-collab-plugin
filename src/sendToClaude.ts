@@ -1,6 +1,9 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import type { Comment } from "./types";
+import { parse as parseInline } from "./inlineComments/format";
+import { deltaScope } from "./inlineComments/deltaReview";
+import { buildDeltaPrompt } from "./inlineComments/deltaPrompt";
 
 export type SendMode =
   | "terminal"
@@ -68,11 +71,36 @@ export function reviewModeClosing(fileCount: number): string {
 export function buildReviewRequestPayload(
   doc: vscode.TextDocument,
   focus: string | undefined,
-): { kind: "ok"; payload: ReviewPayload } | { kind: "no-workspace" } {
+  opts: { delta?: boolean } = {},
+):
+  | { kind: "ok"; payload: ReviewPayload; fullPass: boolean }
+  | { kind: "no-workspace" }
+  /** Delta pass on a file that hasn't moved since the last one. */
+  | { kind: "unchanged" } {
   const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
   if (!folder) return { kind: "no-workspace" };
   const rel = path.relative(folder.uri.fsPath, doc.uri.fsPath);
   const trimmedFocus = focus?.trim();
+
+  if (opts.delta) {
+    // 10x-plan-2 P1.1: cost the pass at what the edit cost, not what the
+    // document costs. The scope comes from the checkpoint the last pass left.
+    const scope = deltaScope(parseInline(doc.getText()));
+    if (scope.kind === "unchanged") return { kind: "unchanged" };
+    const prompt = buildDeltaPrompt(rel, scope, trimmedFocus);
+    if (prompt === null) return { kind: "unchanged" };
+    return {
+      kind: "ok",
+      fullPass: scope.kind === "no-checkpoint",
+      payload: {
+        prompt: `${prompt}\n\n${reviewModeClosing(1)}`,
+        file: rel,
+        unresolvedCount: 0,
+        comments: [],
+      },
+    };
+  }
+
   const promptLines: string[] = [
     `Use the vs-markdown-collab skill in Review Mode on \`${rel}\`.`,
   ];
@@ -80,6 +108,7 @@ export function buildReviewRequestPayload(
   promptLines.push(reviewModeClosing(1));
   return {
     kind: "ok",
+    fullPass: true,
     payload: {
       prompt: promptLines.join("\n"),
       file: rel,

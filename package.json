@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with Claude Code — inline comments, a live AI co-editor, and GitHub/GitLab PR review, all anchored in the file.",
-  "version": "0.34.65",
+  "version": "0.34.66",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -49,7 +49,8 @@
     "onCommand:markdownCollab.askClaudeToReviewFolder",
     "onCommand:markdownCollab.nextUnreadFromClaude",
     "onCommand:markdownCollab.startPrReview",
-    "onView:markdownCollab.prReviewFiles"
+    "onView:markdownCollab.prReviewFiles",
+    "onCommand:markdownCollab.askClaudeToReviewChanges"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -105,6 +106,11 @@
       {
         "command": "markdownCollab.askClaudeToReviewFolder",
         "title": "Markdown Collab: Ask Claude to Review These Docs",
+        "category": "Markdown Collab"
+      },
+      {
+        "command": "markdownCollab.askClaudeToReviewChanges",
+        "title": "Markdown Collab: Review Changes Since Last Pass",
         "category": "Markdown Collab"
       },
       {
@@ -302,6 +308,11 @@
           "command": "markdownCollab.askClaudeToReviewFolder",
           "when": "explorerResourceIsFolder",
           "group": "navigation@31"
+        },
+        {
+          "command": "markdownCollab.askClaudeToReviewChanges",
+          "when": "resourceExtname == .md",
+          "group": "navigation@32"
         }
       ],
       "editor/title/context": [
@@ -314,6 +325,11 @@
           "command": "markdownCollab.askClaudeToReview",
           "when": "resourceExtname == .md",
           "group": "1_open@2"
+        },
+        {
+          "command": "markdownCollab.askClaudeToReviewChanges",
+          "when": "resourceExtname == .md",
+          "group": "1_open@3"
         }
       ],
       "editor/context": [

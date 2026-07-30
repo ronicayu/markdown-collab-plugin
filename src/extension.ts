@@ -364,6 +364,20 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("markdownCollab.askClaudeToReview", askClaudeToReview),
     vscode.commands.registerCommand("markdownCollab.askClaudeToReviewFolder", askClaudeToReview),
+    vscode.commands.registerCommand(
+      "markdownCollab.askClaudeToReviewChanges",
+      async (arg?: vscode.Uri, selected?: vscode.Uri[]) => {
+        await invokeAskClaudeToReviewSelection(
+          resolveSelection(arg, selected),
+          output,
+          terminalTracker,
+          eventLogs,
+          context.workspaceState,
+          context.globalState,
+          true,
+        );
+      },
+    ),
     vscode.commands.registerCommand("markdownCollab.nextUnreadFromClaude", async () => {
       await invokeNextUnreadFromClaude(reviewView, output);
     }),
@@ -907,6 +921,7 @@ async function invokeAskClaudeToReviewSelection(
   eventLogs: Map<string, EventLog>,
   workspaceState: vscode.Memento,
   globalState: vscode.Memento,
+  delta = false,
 ): Promise<void> {
   if (selection.length === 0) {
     void vscode.window.showWarningMessage(
@@ -934,7 +949,17 @@ async function invokeAskClaudeToReviewSelection(
       );
       return;
     }
-    await invokeAskClaudeToReview(doc, output, tracker, eventLogs, workspaceState, globalState);
+    await invokeAskClaudeToReview(doc, output, tracker, eventLogs, workspaceState, globalState, delta);
+    return;
+  }
+
+  if (delta) {
+    // A delta pass is per-file by construction: the checkpoint, the changed
+    // sections, and the existing threads are all per-document. Reviewing a
+    // folder incrementally would mean N prompts, which is a different feature.
+    void vscode.window.showWarningMessage(
+      "Review changes since last pass works on one file at a time. Open the file and run it again.",
+    );
     return;
   }
 
@@ -1106,6 +1131,8 @@ async function invokeAskClaudeToReview(
   eventLogs: Map<string, EventLog>,
   workspaceState: vscode.Memento,
   globalState: vscode.Memento,
+  /** Review only what changed since the last recorded pass (10x-plan-2 P1.1). */
+  delta = false,
 ): Promise<void> {
   const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
   if (!folder) {
@@ -1132,12 +1159,24 @@ async function invokeAskClaudeToReview(
   if (focus === undefined) return; // user cancelled
   const trimmedFocus = focus === "" ? undefined : focus;
 
-  const result = buildReviewRequestPayload(doc, trimmedFocus);
+  const result = buildReviewRequestPayload(doc, trimmedFocus, { delta });
   if (result.kind === "no-workspace") {
     void vscode.window.showWarningMessage(
       "Ask Claude to Review: the file must live inside a workspace folder.",
     );
     return;
+  }
+  if (result.kind === "unchanged") {
+    // The whole point of a delta pass is not re-reading an unchanged file.
+    void vscode.window.showInformationMessage(
+      `Nothing has changed in ${path.basename(doc.uri.fsPath)} since Claude's last review pass.`,
+    );
+    return;
+  }
+  if (delta && result.fullPass) {
+    void vscode.window.showInformationMessage(
+      "No previous review pass is recorded for this file — reviewing all of it. The next pass can be incremental.",
+    );
   }
 
   if (trimmedFocus) await pushRecentFocus(globalState, trimmedFocus);

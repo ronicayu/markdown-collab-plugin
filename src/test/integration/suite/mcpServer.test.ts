@@ -10,6 +10,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
 import { parse } from "../../../inlineComments/format";
+import { deltaScope } from "../../../inlineComments/deltaReview";
 import { buildToolDeps } from "../../../mcpServer";
 import { callTool, TOOLS } from "../../../mcpServer/tools";
 import { serveMcp, type McpHttpServer } from "../../../mcpServer/httpServer";
@@ -208,5 +209,49 @@ suite("mcpServer: over HTTP", () => {
     const payload = JSON.parse(called.result.content[0].text);
     assert.ok(payload.threadId, "expected a thread id from the HTTP round trip");
     assert.strictEqual(parse(doc.getText()).threads.length, 1);
+  });
+});
+
+suite("mcpServer: the review checkpoint", () => {
+  suiteTeardown(cleanup);
+
+  test("mc_check records a checkpoint through the editor, and a delta pass sees it", async () => {
+    const { doc, name } = await openFixture();
+    const checked = json(await callTool("mc_check", { file: name }, deps()));
+    assert.strictEqual(checked.ok, true);
+    assert.ok(checked.checkpointed, "expected mc_check to record a checkpoint");
+
+    // The record is in the buffer, saved, and parses back.
+    const parsed = parse(doc.getText());
+    assert.ok(parsed.checkpoint, "no checkpoint in the document");
+    assert.strictEqual(parsed.checkpoint!.ts, checked.checkpointed);
+    assert.ok((parsed.checkpoint!.sections ?? []).length > 0, "no section hashes recorded");
+    assert.strictEqual(doc.isDirty, false, "checkpoint left the buffer unsaved");
+
+    // Nothing has changed yet, so a delta pass has nothing to review.
+    assert.strictEqual(deltaScope(parse(doc.getText())).kind, "unchanged");
+  });
+
+  test("editing one section makes exactly that section the delta scope", async () => {
+    const { doc, name } = await openFixture();
+    json(await callTool("mc_check", { file: name }, deps()));
+
+    const editor = await vscode.window.showTextDocument(doc, { preview: false });
+    const target = doc.getText().indexOf("Suggest mode ships behind a setting.");
+    await editor.edit((b) =>
+      b.replace(
+        new vscode.Range(doc.positionAt(target), doc.positionAt(target + "Suggest mode ships behind a setting.".length)),
+        "Suggest mode ships behind a setting, off by default.",
+      ),
+    );
+    await doc.save();
+
+    const scope = deltaScope(parse(doc.getText()));
+    assert.strictEqual(scope.kind, "incremental");
+    if (scope.kind !== "incremental") return;
+    // The fixture has one heading, so the edit lands in that section and the
+    // scope names it rather than the whole file.
+    assert.strictEqual(scope.changed.length, 1);
+    assert.ok(scope.changed[0]!.text.includes("off by default"));
   });
 });

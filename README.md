@@ -62,6 +62,25 @@ A thread counts as "reviewed" once you reply or resolve it; the indicator clears
 
 Files larger than 50 KB prompt a soft confirm before sending (Claude's review can use significant context on big docs). In review mode the skill never edits prose — every concern goes in a thread for you to gate. Expect *"Reviewed `<path>` — no concerns found"* via the send channel if Claude reads the doc and finds nothing matching the focus.
 
+#### Reviewing changes since the last pass
+
+Once Claude has reviewed a file, **Markdown Collab: Review Changes Since Last Pass**
+(right-click a `.md` file, or the command palette) reviews only what moved since then.
+A second pass costs what the edit cost, not what the document costs.
+
+The bookkeeping is inline like everything else: when Claude finishes a pass it records a
+`<!--mc:rev …-->` checkpoint holding a hash of each heading-section. The next delta pass
+compares those hashes, sends only the sections that changed, and tells Claude which
+threads already exist — so a concern you resolved stays resolved instead of being raised
+again, and a passage that was edited after its comment gets re-read first.
+
+- Nothing changed since the last pass? You get a toast saying so, and nothing is sent.
+- No checkpoint yet (first review, or a pass that ran before this feature)? It reviews the
+  whole file and says so; the pass after that one can be incremental.
+- The checkpoint is written by the closing integrity check, which only happens when Claude
+  works through the MCP tools or the `mdc` CLI — so delta passes need one of those, not
+  bare terminal editing.
+
 #### Reviewing a whole folder
 
 Real doc work is rarely one file, so the same command takes a **folder or a multi-select**: right-click a folder in the explorer → **Markdown Collab: Ask Claude to Review These Docs**, or select several `.md` files and use the same action. Every `.md` under the folder (excluding `node_modules`) goes into **one** review pass, so Claude can do the thing a per-file pass structurally can't — compare the documents against each other. Cross-document consistency is part of the pass: terminology that drifts between files, a claim in one file contradicted by another, duplicated guidance that has since diverged, and cross-references that no longer resolve. Such a thread is anchored in the file that's wrong and names the other file in its body.

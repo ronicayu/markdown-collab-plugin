@@ -14,6 +14,7 @@ import {
   DocOpError,
   opAccept,
   opCheck,
+  opCheckpoint,
   opList,
   opOpen,
   opReject,
@@ -202,8 +203,9 @@ export const TOOLS: readonly McpTool[] = [
     name: "mc_check",
     title: "Check document integrity",
     description:
-      "Report anchor/thread integrity for a document. End every pass with this: it is how the extension learns " +
-      "your work on that file is finished, and it clears the 'Claude is working…' indicator.",
+      "Report anchor/thread integrity for a document, and record that you reviewed it in this state. " +
+      "End every pass with this: it clears the human's 'Claude is working…' indicator, and the record it " +
+      "leaves is what lets the next pass review only what changed.",
     inputSchema: {
       type: "object",
       properties: { ...FILE_PROP },
@@ -297,7 +299,22 @@ export async function callTool(
       return text({ file: key, ...opList(source, args.actionable === true) });
     }
     if (name === "mc_check") {
-      return text({ file: key, ...opCheck(source) });
+      const report = opCheck(source);
+      // A healthy document also gets a review checkpoint: this call is the one
+      // moment we know a pass over this file finished (P1.1). A broken one is
+      // reported and left alone — checkpointing damage would tell the next pass
+      // the damage had been reviewed.
+      if (report.ok) {
+        try {
+          const stamped = opCheckpoint(source, now);
+          await deps.writeDoc(key, stamped.next);
+          return text({ file: key, ...report, checkpointed: stamped.result.checkpoint.ts });
+        } catch {
+          // The checkpoint is a nicety; never turn a clean check into a failure.
+          return text({ file: key, ...report });
+        }
+      }
+      return text({ file: key, ...report });
     }
 
     const write = async <T>(outcome: OpOutcome<T>, action: string): Promise<ToolResult> => {

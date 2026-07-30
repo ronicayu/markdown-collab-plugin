@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.34.66 — 2026-07-30 (trial)
+
+### Added: review only what changed (10x-plan-2 P1.1)
+
+A second review pass used to cost exactly what the first one did — the whole
+file went out, Claude re-read all of it, and it re-raised things you had already
+triaged. Real review work is iterative; pass N+1 should cost what the edit cost.
+
+**Markdown Collab: Review Changes Since Last Pass** (right-click a `.md`, or the
+palette) sends only the sections that moved since Claude's last pass, plus the
+list of threads that already exist.
+
+The bookkeeping is inline and self-contained. When Claude ends a pass with
+`mc_check`, the extension records a `<!--mc:rev …-->` checkpoint holding a hash
+per heading-section — about twenty bytes a heading, invisible in any rendered
+view. The next delta pass compares those hashes to name exactly which sections
+changed. **No sidecar, no git dependency**, and it works on a file that was never
+committed. (`gitRef` is in the record for later; nothing needs it.)
+
+What the delta prompt carries beyond the changed text:
+
+- **Existing threads, by id**, so a concern already covered gets a reply instead
+  of a duplicate.
+- **Resolved means settled** — not to be raised again unless the new text
+  genuinely reintroduces it, and then by name ("this brings back a1b2c").
+- **Stale threads first** (the badge from 0.34.65): their comment was written
+  about a passage that has since been edited.
+- Sections that were **deleted** since the last pass, as context — something
+  else may still point at them.
+
+Three ways it declines to overclaim:
+
+- Nothing changed → a toast, and nothing is sent. Not re-reading an unchanged
+  file is the entire point.
+- No checkpoint (first review, or a pass from before this existed) → a full pass,
+  said out loud, and the pass after that one is incremental.
+- A checkpoint with no section hashes → also a full pass. Guessing "everything
+  changed" would be a full pass wearing a delta's clothes.
+
+`mc_check` grew the one job it didn't have: it now records the checkpoint as
+well as reporting integrity. That is the only moment we actually know a pass
+finished — and it **refuses to checkpoint a document with integrity problems**,
+because a checkpoint over damage tells the next pass the damage was reviewed and
+approved.
+
+*Build note:* writing the threads region appends a trailing newline, so the
+content hash normalizes trailing whitespace. Without that, every thread Claude
+opened would have made the document look edited, and every "delta" pass would
+have quietly been a full one.
+
 ## 0.34.65 — 2026-07-30 (trial)
 
 ### Added: threads say when their text moved out from under them (10x-plan-2 P1.3)

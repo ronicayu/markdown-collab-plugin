@@ -23,8 +23,11 @@ import {
   parse,
   rejectSuggestion,
   replaceThread,
+  withThreads,
   type InlineThread,
+  type ReviewCheckpoint,
 } from "./format";
+import { checkpointFor } from "./deltaReview";
 import { checkIntegrity, type IntegrityIssue } from "./integrity";
 import { hashAnchorText, staleThreadIds, withRefreshedAnchorHash } from "./staleness";
 
@@ -396,7 +399,7 @@ export interface CheckResult {
   }>;
 }
 
-/** Integrity report. Read-only — repair stays a CLI/command affordance. */
+/** Integrity report. Never repairs — that stays a CLI/command affordance. */
 export function opCheck(source: string): CheckResult {
   const report = checkIntegrity(source);
   return {
@@ -410,4 +413,32 @@ export function opCheck(source: string): CheckResult {
       message: i.message,
     })),
   };
+}
+
+/**
+ * Record "this document was reviewed in this state" (10x-plan-2 P1.1).
+ *
+ * Called by `mc_check`, which the skill runs at the end of every file — the one
+ * moment we actually know a pass finished. The record is what makes the *next*
+ * pass incremental, so writing it anywhere earlier would claim a review that
+ * hadn't happened yet.
+ *
+ * Refuses on a broken document: checkpointing damage would tell the next pass
+ * that the damage was reviewed and approved.
+ */
+export function opCheckpoint(
+  source: string,
+  now: () => string = () => new Date().toISOString(),
+  gitRef?: string,
+): OpOutcome<{ checkpoint: ReviewCheckpoint }> {
+  const report = checkIntegrity(source);
+  if (!report.ok) {
+    throw new DocOpError("integrity", "refusing to checkpoint a document with integrity problems", {
+      issues: report.issues,
+    });
+  }
+  const checkpoint = checkpointFor(source, now, gitRef);
+  const next = withThreads(source, parse(source).threads, undefined, checkpoint);
+  assertNoNewIssues(source, next);
+  return { next, result: { checkpoint } };
 }
