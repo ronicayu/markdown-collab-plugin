@@ -20,7 +20,7 @@ import {
   type CollabSuggestion,
 } from "./inlineBridge";
 import { acceptSuggestion, rejectSuggestion, parse as parseInline } from "../inlineComments/format";
-import { summarizeChange } from "./changeSummary";
+import { proseRefreshMessage, summarizeChange } from "./changeSummary";
 import { runDrawioRead, type DrawioReadResult } from "./drawioService";
 
 export type { DrawioReadResult };
@@ -511,8 +511,21 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
           if (!found || (mode === "accept" && !parsed.anchors.has(anchorId))) return;
           const next =
             mode === "accept" ? acceptSuggestion(source, anchorId) : rejectSuggestion(source, anchorId);
+          // Accept rewrites the anchored prose, and writeDocument re-baselines
+          // the echo guard (`lastWebviewProse`) to what it writes — so the
+          // doc-change handler will never push the new text to the editor.
+          // Capture the prose the editor is showing now and push the refresh
+          // ourselves after the write, or the editor keeps the old wording
+          // until the next external edit.
+          const shownProse = lastWebviewProse;
           const ok = await writeDocument(next, { save: true });
-          if (ok) pushComments();
+          if (!ok) return;
+          const refresh = proseRefreshMessage(shownProse, proseOf(document.getText()));
+          if (refresh) {
+            lastWebviewProse = refresh.text;
+            void panel.webview.postMessage(refresh);
+          }
+          pushComments();
         })();
       } else if (msg.type === "open-link") {
         void this.handleOpenLink(msg, panel, document);

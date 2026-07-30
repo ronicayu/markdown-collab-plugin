@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.34.70 — 2026-07-30 (trial)
+
+### Fixed: accepting a suggestion in the live editor now refreshes the text
+
+Accepting a suggestion in the live editor updated the file — but the editor kept
+showing the old wording until the next external edit. The cause was the editor's
+own echo guard: `writeDocument` re-baselines it to whatever it just wrote (so
+the provider's writes aren't bounced back as "external changes"), which also
+suppressed the one push that would have shown the accepted text. The
+accept/reject path now captures what the editor is showing before the write and
+pushes the refreshed prose itself, with the same changed-span summary a Claude
+edit gets — so the accepted text lands with the usual "edited §Heading" flash.
+Reject is unaffected (it never changed the prose, which is why it always looked
+fine).
+
 ## 0.34.69 — 2026-07-30 (trial)
 
 ### Added: a playground, a walkthrough, a session digest, and accept-all (10x-plan-2 P3)

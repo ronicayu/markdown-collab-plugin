@@ -49,6 +49,34 @@ export function summarizeChange(oldText: string, newText: string): ChangeSummary
   return { start, end, text: newText.slice(start, end), heading: nearestHeadingAbove(newText, start) };
 }
 
+/** `externalChange` push that brings the live editor up to date after a host-side write. */
+export interface ProseRefreshMessage {
+  type: "externalChange";
+  text: string;
+  changed: ChangeSummary | null;
+}
+
+/**
+ * The message that refreshes the live editor after a write the provider made
+ * itself. Accepting a suggestion rewrites the anchored prose, and
+ * `writeDocument` re-baselines the echo guard to the written text — so the
+ * doc-change handler sees "nothing new" and never pushes it. The provider must
+ * push the refresh explicitly; this builds it. Returns null when the prose the
+ * editor is showing is already current (e.g. a reject, which only removes
+ * markers and records).
+ */
+export function proseRefreshMessage(
+  shownProse: string,
+  newProse: string,
+): ProseRefreshMessage | null {
+  if (newProse === shownProse) return null;
+  return {
+    type: "externalChange",
+    text: newProse,
+    changed: summarizeChange(shownProse, newProse),
+  };
+}
+
 /**
  * The most recent ATX heading (`# …` through `###### …`) on or before the line
  * containing `offset`. Returns the heading's text (without the `#`s or a
