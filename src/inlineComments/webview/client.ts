@@ -544,6 +544,8 @@ let pendingThreadIds: ReadonlySet<string> = new Set();
 // What the waiting row says. The host owns the wording because only it knows
 // whether the wait is inferred or protocol-backed.
 let pendingLabelText = "Claude is working\u2026";
+/** First click on "Accept all" arms it; the second applies (P3.3). */
+let acceptAllArmed = false;
 // How many thread cards the list is currently allowed to build. Grows by a
 // chunk each time the user clicks "Show more"; resets when the filter changes,
 // since that is a new list.
@@ -911,6 +913,7 @@ function renderThreads(state: SerializedState): void {
 
   // Pending suggestions render above the comment threads, regardless of the
   // comment filter — an unreviewed edit is the most actionable thing here.
+  if (state.suggestions.length > 1) list.appendChild(renderAcceptAll(state.suggestions.length));
   for (const s of state.suggestions) {
     list.appendChild(renderSuggestion(s));
   }
@@ -943,6 +946,41 @@ function renderThreads(state: SerializedState): void {
     });
     list.appendChild(more);
   }
+}
+
+/**
+ * "Accept all N" — only worth showing when there is more than one, and armed
+ * with a two-step confirm because it rewrites the document in one go (P3.3).
+ * The same confirm affordance the destructive card actions use.
+ */
+function renderAcceptAll(count: number): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "accept-all-row";
+  const btn = document.createElement("button");
+  btn.className = "btn-ghost";
+  btn.textContent = acceptAllArmed ? `Accept all ${count}? Click again` : `Accept all ${count}`;
+  if (acceptAllArmed) btn.classList.add("armed");
+  btn.title = "Apply every pending suggestion in this file. One undo step.";
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (acceptAllArmed) {
+      acceptAllArmed = false;
+      vscode.postMessage({ type: "accept-all-suggestions" });
+      return;
+    }
+    acceptAllArmed = true;
+    // Auto-disarm, so a half-pressed button doesn't sit there waiting to
+    // rewrite the file on an unrelated click later.
+    setTimeout(() => {
+      if (acceptAllArmed) {
+        acceptAllArmed = false;
+        if (currentState) renderThreads(currentState);
+      }
+    }, 4000);
+    if (currentState) renderThreads(currentState);
+  });
+  row.appendChild(btn);
+  return row;
 }
 
 function renderSuggestion(s: SuggestionState): HTMLElement {

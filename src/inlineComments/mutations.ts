@@ -15,6 +15,7 @@ import {
   acceptSuggestion,
   addThread,
   appendReply,
+  parse,
   rejectSuggestion,
   replaceThread,
   type InlineComment,
@@ -33,7 +34,9 @@ export type MutationMessage =
   | { type: "delete-thread"; threadId: string }
   | { type: "delete-comment"; threadId: string; commentId: string }
   | { type: "accept-suggestion"; anchorId: string }
-  | { type: "reject-suggestion"; anchorId: string };
+  | { type: "reject-suggestion"; anchorId: string }
+  /** Accept every anchored suggestion in the file, in one undoable step (P3.3). */
+  | { type: "accept-all-suggestions" };
 
 export interface MutationContext {
   /** Author attributed to new comments and to resolving. */
@@ -115,6 +118,31 @@ export function applyClientMutation(
       return { source: acceptSuggestion(parsed.source, msg.anchorId) };
     case "reject-suggestion":
       return { source: rejectSuggestion(parsed.source, msg.anchorId) };
+    case "accept-all-suggestions": {
+      // Applied one at a time against the running source, because each accept
+      // moves the offsets the next one depends on. Unanchored suggestions are
+      // skipped and reported rather than guessed at, exactly as a single accept
+      // treats them.
+      let source = parsed.source;
+      let applied = 0;
+      let skipped = 0;
+      for (const s of parsed.suggestions) {
+        if (!parse(source).anchors.has(s.anchorId)) {
+          skipped++;
+          continue;
+        }
+        source = acceptSuggestion(source, s.anchorId);
+        applied++;
+      }
+      if (applied === 0 && skipped === 0) return { source: parsed.source };
+      return {
+        source,
+        warning:
+          skipped > 0
+            ? `Accepted ${applied} suggestion${applied === 1 ? "" : "s"}; skipped ${skipped} that lost their anchors — reject those.`
+            : undefined,
+      };
+    }
   }
 }
 

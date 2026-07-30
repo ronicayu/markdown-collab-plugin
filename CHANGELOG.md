@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.34.69 — 2026-07-30 (trial)
+
+### Added: a playground, a walkthrough, a session digest, and accept-all (10x-plan-2 P3)
+
+**Try it in one minute.** `Markdown Collab: Open Tutorial Playground` writes a
+scratch document that arrives *mid-review* — two threads (one already answered by
+Claude), two pending suggestions, and a short list of things to click — and opens
+it in the review view. No skill install, no send mode, no Claude session, no
+network. The install-to-value path was previously six steps long and none of them
+showed what the thing feels like.
+
+It's built by the real format engine rather than hand-written, so what you click
+is the machinery a real review uses; a fixture would drift, and would teach the
+wrong thing when it did. Timestamps are fixed, because a tutorial that says
+"3 minutes ago" every single time is a lie.
+
+**A walkthrough** in VS Code's Get Started page, five steps, each completing when
+you actually run the command. The step pages explain the storage format, the send
+modes, and what the skill installs — the questions the README answers on page
+three.
+
+**`Markdown Collab: Review Session Summary`** builds a Markdown digest of the
+review state — headline counts, what's still waiting on whom, every thread by id
+with its gist and latest reply, resolved ones, pending suggestions — into an
+untitled document you can paste into a PR description. Multi-file selections group
+by file. It's a pure read: everything it says is already in the files, and asking
+a model to restate facts it can read would be slower, costlier, and occasionally
+wrong.
+
+**Accept all N** appears above the suggestion cards when there's more than one
+(with one, it would be a second button doing what Accept already does). Two-step
+confirm, since it rewrites the document in one go; applied sequentially against
+the running source because each accept moves the next one's offsets; and a
+suggestion that lost its anchor is skipped and counted rather than guessed at —
+the same rule a single accept follows.
+
+**Listing polish:** README restructured around the loop (comment → send → Claude
+edits and replies → accept → resolve) with the playground up top, and the
+marketplace categories corrected to `AI` + `Other`.
+
+### Fixed: a release-commit body could choose the publish channel
+
+Found while writing 0.34.68's own entry. The publish gate matched `[skip-publish]`
+and `[pre-release]` anywhere in the commit message, so a release commit whose body
+*described* a marker — as that one's did — would have picked the channel from a
+sentence of prose. Both the workflow and the checklist now read the subject line
+only.
+
 ## 0.34.68 — 2026-07-30 (trial)
 
 ### Added: a pre-release channel, and gates that decide "is this safe to ship" (10x-plan-2 P2.2)

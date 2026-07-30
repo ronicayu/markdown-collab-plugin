@@ -104,7 +104,10 @@ jobs:
       - name: Gate marketplace publish
         id: gate
         run: |
-          MSG="$(git log -1 --pretty=%B)"
+          # Subject line only: a release commit's body routinely describes these
+          # markers, and matching there would let a changelog sentence choose
+          # the publish channel.
+          MSG="$(git log -1 --pretty=%s)"
           if printf '%s' "$MSG" | grep -q '\[skip-publish\]'; then
             echo "publish=false" >> "$GITHUB_OUTPUT"
             echo "channel=none" >> "$GITHUB_OUTPUT"

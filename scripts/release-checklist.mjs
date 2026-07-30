@@ -65,9 +65,12 @@ function git(...args) {
   }
 }
 
-const message = git("log", "-1", "--pretty=%B");
-const isSkipPublish = /\[skip-publish\]/.test(message);
-const isPreRelease = /\[pre-release\]/.test(message);
+// Subject line only. The body of a release commit routinely *describes* these
+// markers — this one does — and matching there would let a changelog sentence
+// choose the publish channel.
+const subject = git("log", "-1", "--pretty=%s");
+const isSkipPublish = /\[skip-publish\]/.test(subject);
+const isPreRelease = /\[pre-release\]/.test(subject);
 
 if (isSkipPublish && isPreRelease) {
   problems.push("the release commit says both [skip-publish] and [pre-release] — pick one");

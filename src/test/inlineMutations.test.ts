@@ -7,11 +7,13 @@
 // exercised through a running Extension Host.
 
 import { describe, expect, it } from "vitest";
-import { addThread, addSuggestion, parse } from "../inlineComments/format";
+import { addThread, addSuggestion, parse, stripAnchorMarkers } from "../inlineComments/format";
+import { checkIntegrity } from "../inlineComments/integrity";
 import { applyClientMutation, type MutationMessage } from "../inlineComments/mutations";
 import { mapProseToSource } from "../inlineComments/proseMapping";
 
 const CTX = { author: "ronica", now: () => "2026-07-28T12:00:00.000Z" };
+const TS = "2026-07-28T12:00:00.000Z";
 
 /** Apply a message to a document, the way the panel does. */
 function apply(source: string, msg: MutationMessage, ctx = CTX) {
@@ -410,5 +412,57 @@ describe("addThread offset contract", () => {
       mapProseToSource(parse(direct)).prose,
     );
     expect(parse(viaMessage).threads[0].quote).toBe(parse(direct).threads[0].quote);
+  });
+});
+
+// 10x-plan-2 P3.3: accepting suggestions one at a time is fine for one; a
+// review pass that proposes twelve makes it a chore with twelve chances to
+// mis-click.
+describe("accept-all-suggestions", () => {
+  const DOC = `# Guide
+
+The parser handles nested lists correctly.
+
+Suggest mode ships behind a setting.
+`;
+
+  function withSuggestions(): string {
+    const first = addSuggestion(DOC, DOC.indexOf("nested lists"), DOC.indexOf("nested lists") + 12, {
+      author: "claude",
+      proposed: "nested and ordered lists",
+      ts: TS,
+    });
+    const at = first.source.indexOf("behind a setting");
+    return addSuggestion(first.source, at, at + "behind a setting".length, {
+      author: "claude",
+      proposed: "behind a setting flag",
+      ts: TS,
+    }).source;
+  }
+
+  it("applies every pending suggestion in one result", () => {
+    const source = withSuggestions();
+    const { source: next } = applyClientMutation(parse(source), { type: "accept-all-suggestions" }, CTX);
+    expect(next).toContain("nested and ordered lists");
+    expect(next).toContain("behind a setting flag");
+    expect(parse(next).suggestions).toEqual([]);
+    expect(checkIntegrity(next).ok).toBe(true);
+  });
+
+  it("is a no-op when there are none", () => {
+    const parsed = parse(DOC);
+    expect(applyClientMutation(parsed, { type: "accept-all-suggestions" }, CTX).source).toBe(DOC);
+  });
+
+  it("skips a suggestion that lost its anchor, and says how many", () => {
+    // Same rule as a single accept: an unanchored suggestion can't place its
+    // change, so it is left for the human to reject rather than guessed at.
+    const source = withSuggestions();
+    const orphanId = parse(source).suggestions[0]!.anchorId;
+    const stripped = stripAnchorMarkers(source, orphanId);
+    const result = applyClientMutation(parse(stripped), { type: "accept-all-suggestions" }, CTX);
+    expect(result.warning).toContain("skipped 1");
+    expect(parse(result.source).suggestions).toHaveLength(1);
+    expect(parse(result.source).suggestions[0]!.anchorId).toBe(orphanId);
   });
 });

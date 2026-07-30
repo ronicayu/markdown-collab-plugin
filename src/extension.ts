@@ -29,6 +29,8 @@ import { parse as parseInline } from "./inlineComments/format";
 import { claudePending } from "./claudePendingService";
 import { activateClaudeStatusBar } from "./claudeStatusBar";
 import { CONVENTIONS_REL, CONVENTIONS_TEMPLATE, withConventions } from "./reviewConventions";
+import { buildReviewDigest, type DigestFile } from "./reviewDigest";
+import { buildTutorialDocument, TUTORIAL_REL } from "./tutorial";
 import type { PendingEvidence } from "./inlineComments/claudePending";
 import { buildInlinePayload, buildSingleThreadPayload } from "./inlineComments/sendToClaude";
 import { checkClaudeSkill, installClaudeSkill, skillFingerprint } from "./skill";
@@ -112,6 +114,15 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("markdownCollab.editReviewConventions", async () => {
       await invokeEditReviewConventions(output);
     }),
+    vscode.commands.registerCommand("markdownCollab.openTutorial", async () => {
+      await invokeOpenTutorial(output);
+    }),
+    vscode.commands.registerCommand(
+      "markdownCollab.reviewSummary",
+      async (arg?: vscode.Uri, selected?: vscode.Uri[]) => {
+        await invokeReviewSummary(resolveSelection(arg, selected), output);
+      },
+    ),
     vscode.commands.registerCommand("markdownCollab.registerMcpServer", async () => {
       const handle = currentMcpServer();
       if (!handle) {
@@ -443,6 +454,87 @@ async function invokeEditReviewConventions(output: vscode.OutputChannel): Promis
       "Write your standing review conventions here. They're sent with every review request.",
     );
   }
+}
+
+/**
+ * Summarize the review state of the selection into a scratch document
+ * (10x-plan-2 P3.2). Everything it says is already in the files, so this is a
+ * pure read — no Claude round trip to restate facts it could read itself.
+ */
+async function invokeReviewSummary(
+  selection: vscode.Uri[],
+  output: vscode.OutputChannel,
+): Promise<void> {
+  const uris = await expandMarkdownSelection(selection);
+  if (uris.length === 0) {
+    void vscode.window.showWarningMessage(
+      "Open a Markdown file (or select some) first, then run this command.",
+    );
+    return;
+  }
+  const files: DigestFile[] = [];
+  for (const uri of uris) {
+    try {
+      const doc = await vscode.workspace.openTextDocument(uri);
+      files.push({ rel: vscode.workspace.asRelativePath(uri), parsed: parseInline(doc.getText()) });
+    } catch (e) {
+      output.appendLine(`Review summary: skipped ${uri.fsPath} — ${(e as Error).message}`);
+    }
+  }
+  if (files.length === 0) {
+    void vscode.window.showWarningMessage("Review summary: none of the selected files could be read.");
+    return;
+  }
+  // An untitled document, not a file: this is something to read, copy, and
+  // close — writing it to disk would leave litter in the workspace.
+  const doc = await vscode.workspace.openTextDocument({
+    language: "markdown",
+    content: buildReviewDigest(files),
+  });
+  await vscode.window.showTextDocument(doc, { preview: false });
+}
+
+/**
+ * Write the playground document and open it in the inline comments view
+ * (10x-plan-2 P3.1). The point is that the accept/reject loop is clickable in
+ * the first minute, with no skill install, no send mode, and no Claude session.
+ */
+async function invokeOpenTutorial(output: vscode.OutputChannel): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) {
+    void vscode.window.showWarningMessage(
+      "Markdown Collab: open a folder first — the playground is written into your workspace.",
+    );
+    return;
+  }
+  const uri = vscode.Uri.joinPath(folder.uri, TUTORIAL_REL);
+  let exists = true;
+  try {
+    await vscode.workspace.fs.stat(uri);
+  } catch {
+    exists = false;
+  }
+  if (exists) {
+    // Never silently overwrite: by the time someone re-runs this, the file is
+    // usually full of their own experiments.
+    const choice = await vscode.window.showWarningMessage(
+      `${TUTORIAL_REL} already exists. Start over with a fresh copy?`,
+      { modal: false },
+      "Open the existing one",
+      "Replace it",
+    );
+    if (choice === undefined) return;
+    if (choice === "Replace it") {
+      await vscode.workspace.fs.writeFile(uri, Buffer.from(buildTutorialDocument(), "utf8"));
+    }
+  } else {
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(buildTutorialDocument(), "utf8"));
+    output.appendLine(`Created ${TUTORIAL_REL}`);
+  }
+
+  const doc = await vscode.workspace.openTextDocument(uri);
+  // Straight into the review surface — the text file is not the point.
+  await vscode.commands.executeCommand("markdownCollab.openInlineCommentsView", doc.uri);
 }
 
 const SKILL_PROMPT_KEY = "markdownCollab.skillPromptedFingerprint";

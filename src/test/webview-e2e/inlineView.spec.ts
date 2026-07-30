@@ -6,7 +6,7 @@
 
 import { expect, test } from "@playwright/test";
 import { awaitPosted, bootInlineView, clearPosted, posted, pushToWebview } from "./harness";
-import { editAnchoredText, inlineInit, replyTo, reviewFixture } from "./fixtures";
+import { editAnchoredText, inlineInit, replyTo, reviewFixture, twoSuggestions } from "./fixtures";
 
 const fixture = reviewFixture();
 
@@ -180,4 +180,29 @@ test("replying to a stale thread clears the badge", async ({ page }) => {
     pendingThreadIds: [],
   });
   await expect(card.locator(".badge.stale")).toHaveCount(0);
+});
+
+test("Accept all needs a second click, and only appears for more than one suggestion", async ({ page }) => {
+  // 10x-plan-2 P3.3. One suggestion is the fixture's default: the bulk action
+  // would be a second button doing what Accept already does.
+  await expect(page.locator(".accept-all-row")).toHaveCount(0);
+
+  await pushToWebview(page, {
+    type: "update",
+    state: inlineInit(twoSuggestions(fixture.source)).state,
+    suggestMode: false,
+    pendingThreadIds: [],
+  });
+  const button = page.locator(".accept-all-row button");
+  await expect(button).toHaveText("Accept all 2");
+
+  await button.click();
+  // Armed, not fired: this rewrites the whole document.
+  expect(await posted(page)).toEqual([]);
+  await expect(button).toHaveText(/Click again/);
+
+  await button.click();
+  expect(await awaitPosted(page, "accept-all-suggestions")).toEqual({
+    type: "accept-all-suggestions",
+  });
 });

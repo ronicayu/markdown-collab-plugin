@@ -162,3 +162,15 @@ export function replyTo(source: string, threadId: string, body: string): string 
     ),
   );
 }
+
+/** The fixture with a second pending suggestion, for the bulk-accept affordance. */
+export function twoSuggestions(source: string): string {
+  const at = source.indexOf("nested lists");
+  if (at < 0) throw new Error("fixture text not found");
+  return addSuggestion(source, at, at + "nested lists".length, {
+    author: "claude",
+    proposed: "nested and ordered lists",
+    note: "Be explicit about both.",
+    ts: "2026-07-01T12:00:00.000Z",
+  }).source;
+}

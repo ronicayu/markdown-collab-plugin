@@ -118,3 +118,20 @@ describe("release-checklist.mjs", () => {
     expect(out).toContain("dev-host pass");
   });
 });
+
+// Found while writing P2.2's own changelog entry: the gate matched the markers
+// anywhere in the commit message, so a release commit that *described*
+// `[pre-release]` in its body would have chosen the publish channel from a
+// sentence of prose.
+describe("markers are read from the subject line only", () => {
+  it("the workflow greps the subject, not the whole message", () => {
+    expect(release).toContain("git log -1 --pretty=%s");
+    expect(release).not.toContain("git log -1 --pretty=%B");
+  });
+
+  it("the checklist does the same", () => {
+    const script = readFileSync(resolve(ROOT, "scripts/release-checklist.mjs"), "utf8");
+    expect(script).toContain('"--pretty=%s"');
+    expect(script).not.toContain('"--pretty=%B"');
+  });
+});

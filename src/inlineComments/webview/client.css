@@ -521,3 +521,15 @@ button.btn-link.danger { color: #e08080; }
   #app { grid-template-columns: 1fr; }
   #threads-pane { max-height: 50vh; border-top: 1px solid var(--border); }
 }
+
+/* "Accept all N" sits above the suggestion cards. Deliberately quiet — the
+   per-card Accept is the normal path and this one rewrites everything. */
+.accept-all-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 6px;
+}
+.accept-all-row .armed {
+  background: color-mix(in srgb, var(--vscode-charts-yellow, #d7ba7d) 25%, transparent);
+  color: var(--vscode-foreground);
+}

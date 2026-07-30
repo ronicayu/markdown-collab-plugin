@@ -185,6 +185,10 @@ interface ToggleSuggestModeRequest {
   type: "toggle-suggest-mode";
 }
 
+interface AcceptAllSuggestionsRequest {
+  type: "accept-all-suggestions";
+}
+
 type ClientMessage =
   | ReadyMessage
   | AddCommentRequest
@@ -202,6 +206,7 @@ type ClientMessage =
   | InstallSkillRequest
   | AcceptSuggestionRequest
   | RejectSuggestionRequest
+  | AcceptAllSuggestionsRequest
   | ToggleSuggestModeRequest;
 
 /** Dependencies the panel needs from the extension host (kept narrow so tests can stub them). */
@@ -406,6 +411,7 @@ ${inlineCommentsAppBody()}
       case "delete-comment":
       case "accept-suggestion":
       case "reject-suggestion":
+      case "accept-all-suggestions":
         return this.applyClientMutation(msg);
       case "send-to-claude":
         return this.handleSendToClaude();

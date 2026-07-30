@@ -3,15 +3,34 @@
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/markdown-collab.markdown-collab-plugin?label=VS%20Code%20Marketplace&color=4F46E5)](https://marketplace.visualstudio.com/items?itemName=markdown-collab.markdown-collab-plugin)
 [![Open VSX](https://img.shields.io/open-vsx/v/markdown-collab/markdown-collab-plugin?label=Open%20VSX&color=4F46E5)](https://open-vsx.org/extension/markdown-collab/markdown-collab-plugin)
 
-A VS Code extension for reviewing Markdown *with* Claude Code (and other agentic AIs). Comments are anchored to the text and stored **inline in the `.md` file itself**, so review state travels with the document — no sidecar to commit.
+Review Markdown *with* Claude Code, in VS Code. Comments anchor to the text and live **inside
+the `.md` file**, so review state survives a commit, a branch switch, and a colleague opening
+the file. There is no sidecar and no database.
 
-**Three ways to use it:**
+## The loop
 
-- **Inline comments** — highlight a passage in the rendered preview, drop a review comment, click **Send to Claude**. Claude reads the comment, edits the doc, and replies. Loop until you resolve the thread.
-- **Live editor** — a WYSIWYG Markdown editor where you and Claude co-edit the same file: you type, Claude edits the file on disk, and each side's changes show up live. Comment, reply, resolve, and send threads to Claude without leaving the editor.
-- **PR / MR review** — review the Markdown files changed in a GitHub Pull Request or GitLab Merge Request, comment on the diff, reply to existing comments, and post back to the platform.
+**Comment → send → Claude edits and replies → accept → resolve.**
 
-You can also flip the direction and **ask Claude to be the reviewer**: right-click a `.md` file → **Markdown Collab: Ask Claude to Review This Doc**, optionally tell Claude what to focus on, and Claude opens one inline-comment thread per substantive concern for you to triage in the sidebar.
+1. **Comment.** Select a passage in the rendered preview and write a note. The thread is
+   written into the file, wrapped around the exact text it points at.
+2. **Send.** One button. Claude gets your unresolved threads plus the document.
+3. **Claude works.** It edits the doc and replies in each thread — or, in suggest mode,
+   proposes changes you accept or reject. The thread card says what it's doing while it does it.
+4. **Accept.** A suggestion is a tracked change: Accept applies it, Reject keeps your wording,
+   and both are ordinary editor edits you can undo.
+5. **Resolve** when you're satisfied. Or reply, and go round again.
+
+**Flip it:** right-click a `.md` → **Ask Claude to Review This Doc**, optionally say what to
+focus on, and Claude opens a thread per concern for you to triage. No cap — if thirty things
+warrant a thread, you get thirty.
+
+## Try it in one minute
+
+`Cmd-Shift-P` → **Markdown Collab: Open Tutorial Playground**.
+
+You get a scratch document that arrives mid-review: two threads (one already answered), two
+pending suggestions, and a short list of things to click. No skill install, no Claude session,
+no configuration. Delete the file when you're done.
 
 ## Quick start
 
@@ -22,14 +41,24 @@ You can also flip the direction and **ask Claude to be the reviewer**: right-cli
      ```
    - **Cursor / Windsurf / VSCodium / Gitpod** (Open VSX) — search **Markdown Collab** in Extensions, or install from the [Open VSX listing](https://open-vsx.org/extension/markdown-collab/markdown-collab-plugin).
    - **Manual / fallback** — grab the latest `.vsix` from the [GitHub Releases page](https://github.com/ronicayu/markdown-collab-plugin/releases) (`code --install-extension markdown-collab-plugin-*.vsix`), or build from source (see [Development](#development)).
-2. **Install the Claude skill (one-time per machine).** In VS Code: `Cmd-Shift-P` → **Markdown Collab: Install Claude Skill**. This drops the skill instructions and bundled helpers into `~/.claude/skills/vs-markdown-collab/`.
-3. **Open a Markdown file** in a folder/workspace. Right-click the file → **Markdown Collab: Open Inline Comments View**, or use the command palette.
-4. **Highlight a passage in the rendered view** → click the **Comment** popup → write your review note → submit.
-5. **Click Send to Claude** in the comments sidebar. The first time, you'll be asked which delivery mode to use; the answer is remembered. **For most users, pick `terminal`** (see [Choosing a send mode](#choosing-a-send-mode)).
+2. **Install the Claude skill (one-time per machine).** `Cmd-Shift-P` → **Markdown Collab: Install Claude Skill**. This drops the skill instructions and bundled helpers into `~/.claude/skills/vs-markdown-collab/`.
+3. **Open a Markdown file**, then right-click it → **Markdown Collab: Open Inline Comments View**.
+4. **Select a passage in the rendered view** → **+ Comment on selection** → write your note.
+5. **Click Send to Claude.** The first time you'll pick a delivery mode; the answer is
+   remembered. **For most people that's `terminal`** — see [Choosing a send mode](#choosing-a-send-mode).
 
-> Comments are stored **inline** in the `.md` file itself — anchored spans are wrapped in `<!--mc:a:ID-->…<!--mc:/a:ID-->` markers and threads live in a single `<!--mc:threads:begin-->`…`<!--mc:threads:end-->` block at the end of the file. Everything ships with the document; no sidecar to commit.
+> What lands in the file: anchored spans wrapped in `<!--mc:a:ID-->…<!--mc:/a:ID-->`, and one
+> `<!--mc:threads:begin-->`…`<!--mc:threads:end-->` block at the end holding the threads. Both
+> are HTML comments, so they're invisible in GitHub, your docs site, and every other preview.
 
-That's it — Claude reads the comments, edits the doc, posts a reply per thread. You toggle resolved when you're satisfied.
+## Three surfaces
+
+- **Inline comments view** — rendered preview on the left, threads on the right. The default,
+  and where the loop above happens.
+- **Live editor** — a WYSIWYG Markdown editor you and Claude share: you type, Claude edits the
+  file on disk, both sides show up live. Same threads, same suggestions, no leaving the editor.
+- **PR / MR review** — review the Markdown changed in a GitHub PR or GitLab MR, comment on the
+  diff, reply to existing comments, post back to the platform.
 
 ## How to use, day to day
 

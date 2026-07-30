@@ -1,8 +1,8 @@
 {
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
-  "description": "Review Markdown with Claude Code — inline comments, a live AI co-editor, and GitHub/GitLab PR review, all anchored in the file.",
-  "version": "0.34.68",
+  "description": "Review Markdown with Claude Code — inline comments anchored in the file, a live AI co-editor, suggestions you accept or reject, and GitHub/GitLab PR review.",
+  "version": "0.34.69",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -19,6 +19,7 @@
     "node": ">=20"
   },
   "categories": [
+    "AI",
     "Other"
   ],
   "keywords": [
@@ -26,12 +27,17 @@
     "review",
     "comments",
     "claude",
+    "claude code",
     "ai",
+    "agent",
+    "mcp",
     "collaboration",
     "pull request",
     "code review",
     "wysiwyg",
-    "gitlab"
+    "gitlab",
+    "technical writing",
+    "docs"
   ],
   "activationEvents": [
     "onLanguage:markdown",
@@ -51,7 +57,9 @@
     "onCommand:markdownCollab.startPrReview",
     "onView:markdownCollab.prReviewFiles",
     "onCommand:markdownCollab.askClaudeToReviewChanges",
-    "onCommand:markdownCollab.editReviewConventions"
+    "onCommand:markdownCollab.editReviewConventions",
+    "onCommand:markdownCollab.reviewSummary",
+    "onCommand:markdownCollab.openTutorial"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -170,6 +178,16 @@
       {
         "command": "markdownCollab.editReviewConventions",
         "title": "Markdown Collab: Edit Review Conventions",
+        "category": "Markdown Collab"
+      },
+      {
+        "command": "markdownCollab.openTutorial",
+        "title": "Markdown Collab: Open Tutorial Playground",
+        "category": "Markdown Collab"
+      },
+      {
+        "command": "markdownCollab.reviewSummary",
+        "title": "Markdown Collab: Review Session Summary",
         "category": "Markdown Collab"
       }
     ],
@@ -374,6 +392,67 @@
           }
         ],
         "priority": "option"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "markdownCollab.gettingStarted",
+        "title": "Review Markdown with Claude",
+        "description": "Leave review comments anchored in the file itself, send them to Claude, and accept its suggestions — all without leaving VS Code.",
+        "steps": [
+          {
+            "id": "playground",
+            "title": "Try the loop in a playground",
+            "description": "Open a scratch document that arrives mid-review — threads, a reply, and two pending suggestions. Click Accept, reply to a thread, resolve one. Nothing to configure.\n[Open the playground](command:markdownCollab.openTutorial)",
+            "media": {
+              "markdown": "media/walkthrough/playground.md"
+            }
+          },
+          {
+            "id": "install-skill",
+            "title": "Install the Claude skill",
+            "description": "Claude needs the skill to know how to act on your comments. One command, once per machine.\n[Install the skill](command:markdownCollab.installClaudeSkill)",
+            "media": {
+              "markdown": "media/walkthrough/skill.md"
+            },
+            "completionEvents": [
+              "onCommand:markdownCollab.installClaudeSkill"
+            ]
+          },
+          {
+            "id": "comment",
+            "title": "Comment on your own document",
+            "description": "Open any .md file in the inline comments view, select a passage in the preview, and write a note. The thread is stored in the file itself.\n[Open a document](command:markdownCollab.openInlineCommentsView)",
+            "media": {
+              "markdown": "media/walkthrough/comment.md"
+            },
+            "completionEvents": [
+              "onCommand:markdownCollab.openInlineCommentsView"
+            ]
+          },
+          {
+            "id": "send",
+            "title": "Send it to Claude",
+            "description": "Click Send to Claude in the sidebar. The first time, pick how it should be delivered — 'Send to active terminal' works everywhere with no setup.\n[Send unresolved comments](command:markdownCollab.sendAllToClaude)",
+            "media": {
+              "markdown": "media/walkthrough/send.md"
+            },
+            "completionEvents": [
+              "onCommand:markdownCollab.sendAllToClaude"
+            ]
+          },
+          {
+            "id": "ask-review",
+            "title": "Or ask Claude to review you",
+            "description": "Flip the direction: Claude reads the doc and opens a thread per concern, for you to triage.\n[Ask Claude to review](command:markdownCollab.askClaudeToReview)",
+            "media": {
+              "markdown": "media/walkthrough/review.md"
+            },
+            "completionEvents": [
+              "onCommand:markdownCollab.askClaudeToReview"
+            ]
+          }
+        ]
       }
     ]
   },
