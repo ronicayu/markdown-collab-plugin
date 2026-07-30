@@ -323,16 +323,43 @@ npm run compile
 npm test
 ```
 
-Unit tests run under Vitest. The VS Code API surface is stubbed in `src/test/vscode-stub.ts` for tests of pure helpers.
+Three suites, all run in CI and again on every tag:
 
-Press **F5** in VS Code to launch an Extension Development Host for manual verification.
+```bash
+npm test               # Vitest — pure helpers, format engine, prompts
+npm run test:integration   # a real Extension Host: TextDocuments, WorkspaceEdits, undo
+npm run test:webview       # the shipped webview bundles in Chromium, driven by a real pointer
+```
+
+The VS Code API surface is stubbed in `src/test/vscode-stub.ts` for tests of pure helpers.
+Press **F5** to launch an Extension Development Host for the handful of things no harness
+reaches (explorer context menus, the skill install flow, a live Claude session).
 
 To produce a `.vsix` for distribution:
 ```bash
 npx @vscode/vsce package
 ```
 
-Releases: bump the version in `package.json`, prepend a `## X.Y.Z — <date>` block to `CHANGELOG.md`, commit, then tag `vX.Y.Z` and push the tag. The release workflow gates on the CHANGELOG entry's existence and pulls the section into the GitHub Release notes automatically.
+### Releasing
+
+Bump the version in `package.json`, prepend a `## X.Y.Z — <date>` block to `CHANGELOG.md`,
+commit, then tag `vX.Y.Z` and push the tag. Run `node scripts/release-checklist.mjs` first —
+it prints where the tag will publish and fails on anything a script can decide.
+
+The release commit message picks the destination:
+
+| Marker in the commit | What the tag does |
+|---|---|
+| `[skip-publish]` | GitHub Release with the `.vsix`. Nothing goes public. |
+| `[pre-release]` | **Publishes publicly** to the VS Code Marketplace and Open VSX pre-release channels. Users who opted into pre-releases get it as an auto-update; everyone else stays on stable. |
+| *(neither)* | **Publishes publicly** as a stable release to both marketplaces. |
+
+A marketplace version must be plain `x.y.z`, so the channel can't be encoded in the tag
+name — it lives in the commit message, the same way `[skip-publish]` already did.
+
+The workflow refuses to publish unless the tag matches `package.json`, the CHANGELOG has a
+non-empty section for that version, all three test suites pass, and `verify-package` is
+happy with the built `.vsix`.
 
 ## Out of scope (v1)
 

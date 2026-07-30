@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.34.68 — 2026-07-30 (trial)
+
+### Added: a pre-release channel, and gates that decide "is this safe to ship" (10x-plan-2 P2.2)
+
+Twenty-eight versions of work exist only as GitHub pre-releases, which means
+dogfooding requires hand-installing a `.vsix` while the marketplace build ages.
+The gap itself then makes releasing feel riskier, which is how a backlog like
+this one forms.
+
+A release commit can now say `[pre-release]`, and the tag publishes **publicly**
+to the VS Code Marketplace and Open VSX pre-release channels — users who opted
+into pre-releases get it as an ordinary auto-update, everyone else stays on
+stable. The GitHub Release is marked as a prerelease too, so both channels agree
+about what "latest" means. `[skip-publish]` still means nothing goes public;
+neither marker still means a stable release. (The channel lives in the commit
+message rather than the tag because a marketplace version must be plain `x.y.z`.)
+
+And the gates. A tag used to run the unit suite; it now runs **everything the
+project has** — unit, integration, webview e2e — and `verify-package` on the
+built `.vsix`, the same assertion CI makes on every push. Plus
+`scripts/release-checklist.mjs`, which prints where the tag will publish and
+fails on what a script can decide: version mismatch, a missing CHANGELOG
+section, an *empty* CHANGELOG section, contradictory markers. What it can't
+decide it prints — dev-host-only flows, whether the notes say anything a user
+would want to know, whether a stable release was dogfooded first.
+
+The pipeline is the deliverable here. **Using it is a separate, confirmed act:**
+publishing is outward-facing and irreversible, so the first pre-release tag ships
+when Ronica says so, not because the machinery exists.
+
 ## 0.34.67 — 2026-07-30 (trial)
 
 ### Added: standing review conventions (10x-plan-2 P1.2)
