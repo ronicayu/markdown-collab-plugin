@@ -10,13 +10,34 @@
 
 import { getCliRunner } from "../cli";
 import { mergeBaseSha, parseRemoteUrl } from "../diff";
-import type { ExistingPrComment, PrPlatform } from "../types";
+import type { ExistingPrComment, PrContext, PrPlatform } from "../types";
 
 const GLAB = "glab";
 
 function glabEnvForHost(host: string): Record<string, string | undefined> | undefined {
   if (host === "gitlab.com") return undefined;
   return { GITLAB_HOST: host };
+}
+
+/**
+ * GitLab rejects a `position` whose SHAs it doesn't recognize, and the raw
+ * error ("400 Bad Request") says nothing a user can act on. By far the most
+ * common cause is reviewing a branch with unpushed commits: the line being
+ * commented on exists locally but not in the MR's diff. Say that.
+ *
+ * Exported for tests — the wording is the whole point of it.
+ */
+export function positionFailureMessage(
+  ctx: PrContext,
+  path: string,
+  line: number,
+  detail: string,
+): string {
+  const unpushed = ctx.localHeadSha !== undefined && ctx.localHeadSha !== ctx.headSha;
+  const hint = unpushed
+    ? ` This branch has commits that aren't pushed — ${path}:${line} may not exist in the MR diff yet. Push the branch and refresh the review, then submit again.`
+    : ` Check that ${path}:${line} is part of the MR's diff against ${ctx.baseRef}.`;
+  return `GitLab rejected the comment on ${path}:${line}.${hint} (glab: ${detail})`;
 }
 
 export const gitlabPlatform: PrPlatform = {
@@ -121,25 +142,33 @@ export const gitlabPlatform: PrPlatform = {
         { cwd: ctx.repoRoot, env, stdin: JSON.stringify(payload) },
       );
       if (res.code !== 0) {
-        throw new Error(
-          `glab api discussion failed on ${c.path}:${c.line}: ${res.stderr.trim() || res.stdout.trim()}`,
-        );
+        throw new Error(positionFailureMessage(ctx, c.path, c.line, res.stderr.trim() || res.stdout.trim()));
       }
       // Verify the server actually anchored the note. GitLab returns the
       // discussion JSON; if `notes[0].position` is null the comment posted
       // as an unanchored MR note instead of a diff thread.
+      //
+      // The parse and the check are kept apart on purpose: they used to share
+      // a try block, so the "not anchored" error was caught by its own catch
+      // and rewritten into the generic parse failure unless its wording
+      // happened to match a string test.
+      let anchored: boolean;
       try {
         const body = JSON.parse(res.stdout) as { notes?: Array<{ position?: unknown }> };
-        if (!body.notes?.[0]?.position) {
-          throw new Error(
-            `GitLab accepted the comment on ${c.path}:${c.line} but did not anchor it to the diff (likely a SHA mismatch or out-of-diff line). Raw response: ${res.stdout.slice(0, 400)}`,
-          );
-        }
-      } catch (parseErr) {
-        if (parseErr instanceof Error && parseErr.message.startsWith("GitLab accepted")) throw parseErr;
-        // Couldn't parse JSON — bubble up the raw response for the user.
+        anchored = Boolean(body.notes?.[0]?.position);
+      } catch {
         throw new Error(
           `glab api discussion: unexpected response for ${c.path}:${c.line}: ${res.stdout.slice(0, 400)}`,
+        );
+      }
+      if (!anchored) {
+        throw new Error(
+          positionFailureMessage(
+            ctx,
+            c.path,
+            c.line,
+            `accepted the note but did not anchor it to the diff — ${res.stdout.slice(0, 200)}`,
+          ),
         );
       }
     }

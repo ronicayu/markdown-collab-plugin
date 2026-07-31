@@ -71,6 +71,11 @@ interface ActiveSession {
  * Hash of `(remoteUrl, baseSha, headSha)`. Keys are scoped per PR + per
  * head, so a force-push moves the user onto a fresh draft slot rather
  * than mixing old + new comments.
+ *
+ * `headSha` here is the *platform's* head, not the local checkout's. Keying
+ * on the local HEAD (which is what happened while `ctx.headSha` was being
+ * overwritten) discarded the draft slot on every local commit — drafts
+ * vanished mid-review for anyone who kept editing the branch.
  */
 function makeKey(ctx: PrContext): string {
   const h = crypto.createHash("sha1");
@@ -190,14 +195,22 @@ export class PrReviewController implements vscode.Disposable {
         { location: vscode.ProgressLocation.Notification, title: "Markdown Collab: loading PR…" },
         () => platform.loadContext(repoRoot, remoteUrl, parsed.host),
       );
-      // Verify HEAD still matches what the platform reported (a `pull --rebase`
-      // mid-load would otherwise leave us anchored to a stale SHA).
+      // The local checkout can sit ahead of what the platform has (unpushed
+      // commits, a mid-load `pull --rebase`). Record it separately — it keys
+      // the draft store and drives the local diff — but leave `ctx.headSha`
+      // as the platform's own head. Posting a SHA the server has never seen
+      // is how GitLab submits used to fail: `position[head_sha]` went out as
+      // a local-only commit, so GitLab rejected the position outright or
+      // accepted the note without anchoring it to the diff.
       const localHead = await readHeadSha(repoRoot).catch(() => ctx.headSha);
+      ctx.localHeadSha = localHead;
       if (localHead !== ctx.headSha) {
         this.output.appendLine(
-          `PR review: local HEAD (${localHead.slice(0, 7)}) differs from PR head (${ctx.headSha.slice(0, 7)}); using local HEAD.`,
+          `PR review: local HEAD (${localHead.slice(0, 7)}) is ahead of the ${ctx.platform === "gitlab" ? "MR" : "PR"} head (${ctx.headSha.slice(0, 7)}). Comments post against the pushed head.`,
         );
-        ctx.headSha = localHead;
+        void vscode.window.showWarningMessage(
+          `This branch has commits that aren't pushed yet. Comments will be posted against the pushed head (${ctx.headSha.slice(0, 7)}) — lines that exist only locally can't be commented on until you push.`,
+        );
       }
       const changed = await listChangedMarkdownFiles(repoRoot, `origin/${ctx.baseRef}`);
       if (changed.length === 0) {

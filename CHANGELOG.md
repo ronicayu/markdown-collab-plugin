@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.34.71 — 2026-07-31 (trial)
+
+### Fixed: submitting review drafts to GitLab
+
+Drafts failed to post as MR diff comments. The PR controller overwrote the
+context's head SHA with the local `git rev-parse HEAD` at session start, and
+the GitLab adapter sends that value as `position[head_sha]` — so the moment the
+branch had a commit that wasn't pushed, GitLab was handed a SHA it had never
+seen. It rejected the position outright, or accepted the note without anchoring
+it to the diff. GitHub's `commit_id` had the same exposure.
+
+The platform's head SHA and the local checkout's HEAD are now separate fields:
+`headSha` stays whatever GitHub or GitLab reported (and is the only one that
+goes into an API payload), while the new `localHeadSha` records the local
+checkout. Starting a review on a branch with unpushed commits now says so up
+front, rather than looking fine until submit.
+
+Two things fell out of the same read:
+
+- **GitLab errors say what to do.** "400 Bad Request" is now "GitLab rejected
+  the comment on `docs/a.md:12`. This branch has commits that aren't pushed —
+  push and refresh the review, then submit again."
+- **A swallowed error.** The "GitLab accepted the note but didn't anchor it"
+  check lived inside the same `try` as the JSON parse, so its own error was
+  caught and rewritten as a generic parse failure unless the message text
+  matched a string test. Parse and check are now separate.
+
+Drafts also survive local commits again: the draft store was keyed on the
+overwritten (local) head, so every commit while reviewing moved the drafts to a
+fresh slot and they disappeared from the panel. It keys on the PR/MR head now,
+which is what its own comment always said it did.
+
 ## 0.34.70 — 2026-07-30 (trial)
 
 ### Fixed: accepting a suggestion in the live editor now refreshes the text

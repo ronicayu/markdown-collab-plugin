@@ -33,8 +33,22 @@ export interface PrContext {
   repoRoot: string;
   /** Merge-base of the base ref and HEAD. */
   baseSha: string;
-  /** HEAD SHA at the time the context was loaded. */
+  /**
+   * The head SHA **the platform knows** for this PR/MR — GitHub's
+   * `headRefOid`, GitLab's `diff_refs.head_sha`. Every value posted back to
+   * the API (GitHub `commit_id`, GitLab `position[head_sha]`) must use this
+   * one: a SHA the server has never seen is rejected, and on GitLab a
+   * position whose SHAs disagree either 400s or posts unanchored.
+   *
+   * Never overwrite this with the local HEAD — that is `localHeadSha`.
+   */
   headSha: string;
+  /**
+   * The local checkout's HEAD, which drifts ahead of `headSha` the moment
+   * there are unpushed commits. Used only for local work: keying the draft
+   * store and diffing the working tree. Absent means "same as `headSha`".
+   */
+  localHeadSha?: string;
   /** Human-friendly base ref name, e.g. "main". */
   baseRef: string;
   /** Pull request number (GitHub) or merge request IID (GitLab). */
