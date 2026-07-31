@@ -5,6 +5,7 @@
  */
 
 import { spawn } from "child_process";
+import type { Logger } from "../logging";
 
 export interface RunCliOptions {
   cwd?: string;
@@ -65,8 +66,40 @@ let activeRunner: CliRunner = runCli;
 export function setCliRunner(runner: CliRunner): void {
   activeRunner = runner;
 }
+
+/**
+ * Where CLI invocations are logged, when a logger has been installed. PR/MR
+ * work is entirely `gh`/`glab` subprocesses, so "the review didn't post" is
+ * almost always a non-zero exit nobody saw. Set once at activation.
+ */
+let cliLog: Logger | null = null;
+export function setCliLogger(log: Logger | null): void {
+  cliLog = log;
+}
+
+/**
+ * The runner every caller goes through: the active runner, wrapped so each
+ * invocation is logged with its exit code and duration. Request bodies are
+ * omitted (they carry comment text) and the output is truncated by the
+ * logger; redaction strips anything token-shaped.
+ */
 export function getCliRunner(): CliRunner {
-  return activeRunner;
+  const runner = activeRunner;
+  if (!cliLog) return runner;
+  const log = cliLog;
+  return async (bin, args, opts) => {
+    const started = Date.now();
+    try {
+      const res = await runner(bin, args, opts);
+      const line = { bin, args: args.join(" "), code: res.code, ms: Date.now() - started };
+      if (res.code === 0) log.trace("cli", line);
+      else log.warn("cli exited non-zero", { ...line, stderr: res.stderr.trim().slice(0, 300) });
+      return res;
+    } catch (e) {
+      log.error(`cli ${bin} ${args.join(" ")} threw after ${Date.now() - started}ms`, e);
+      throw e;
+    }
+  };
 }
 
 /** Convenience: throws when the CLI exits non-zero. */

@@ -2,6 +2,10 @@ import * as os from "os";
 import * as path from "path";
 import { repairIntegrity } from "./inlineComments/integrity";
 import * as vscode from "vscode";
+import { createLogger, type Logger } from "./logging";
+import { setCliLogger } from "./pr/cli";
+import { collectDiagnostics } from "./diagnosticsHost";
+import { formatDiagnostics } from "./diagnostics";
 import { ensureAgentsSnippet } from "./agents";
 import { CollabEditorProvider } from "./collab/collabEditorProvider";
 import { InlineCommentsPanel } from "./inlineComments/inlineCommentsPanel";
@@ -45,21 +49,33 @@ import { sendViaTerminal, startClaudeTerminal } from "./transports/terminal";
 import { TerminalTracker } from "./transports/terminalTracker";
 
 export function activate(context: vscode.ExtensionContext): void {
-  const output = vscode.window.createOutputChannel("Markdown Collab");
-  context.subscriptions.push(output);
+  const rootLog = createLogger();
+  context.subscriptions.push(rootLog);
+  const log = rootLog.scope("activation");
+  const skillLog = rootLog.scope("skill");
+  const reviewLog = rootLog.scope("review");
+  const sendLog = rootLog.scope("send");
+  log.info("activating", {
+    version: context.extension?.packageJSON?.version ?? "unknown",
+    vscode: vscode.version,
+    folders: vscode.workspace.workspaceFolders?.length ?? 0,
+  });
+
+  // Every `gh` / `glab` invocation lands in the log from here on.
+  setCliLogger(rootLog.scope("pr"));
+  context.subscriptions.push({ dispose: () => setCliLogger(null) });
 
   // PR review init is wrapped because it pulls in the comments API in a
   // configuration the legacy controller doesn't use; any failure here must
   // not take down the rest of the extension (terminal, send-to-claude,
   // inline view, etc. all live below).
   try {
-    const prReviewController = new PrReviewController(context, output);
+    const prReviewController = new PrReviewController(context, rootLog.scope("pr"));
     prReviewController.activate(context.subscriptions);
     context.subscriptions.push(prReviewController);
   } catch (e) {
     const err = e as Error;
-    output.appendLine(`[fatal] PR review init failed: ${err.message}`);
-    if (err.stack) output.appendLine(err.stack);
+    log.error("PR review init failed", err);
     void vscode.window.showErrorMessage(
       `Markdown Collab: PR review feature failed to initialize — ${err.message}. Other commands still work. See the "Markdown Collab" output channel for the stack trace.`,
     );
@@ -74,7 +90,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // scan fires on first root-level getChildren when the user expands the view,
   // keeping activation cheap. It reads inline-comment threads straight from
   // each `.md` and refreshes single files via a `**/*.md` watcher.
-  const reviewView = new ReviewView(output);
+  const reviewView = new ReviewView(rootLog.scope("review"));
   const reviewTree = vscode.window.createTreeView("markdownCollab.review", {
     treeDataProvider: reviewView,
   });
@@ -97,30 +113,36 @@ export function activate(context: vscode.ExtensionContext): void {
   // it is never the default send mode, and a failure to bind is logged and
   // ignored. Registration in `.mcp.json` is a separate, asked-once step.
   void startMcpServer(context, {
-    output,
+    log: rootLog.scope("mcp"),
     // Tool calls are the lifecycle signal: they say Claude is working, which
     // file, and — via mc_check — when it's done (10x-plan-2 P0.2).
     onToolCall: pendingSignalsFromToolCalls,
   }).then(async (handle) => {
     if (!handle) return;
     context.subscriptions.push({ dispose: () => handle.dispose() });
-    await ensureMcpJsonRegistration(context, handle, output);
+    await ensureMcpJsonRegistration(context, handle, rootLog.scope("mcp"));
   });
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("markdownCollab.showOutput", () => {
+      rootLog.show();
+    }),
+    vscode.commands.registerCommand("markdownCollab.reportDiagnostics", async () => {
+      await invokeReportDiagnostics(context, rootLog.scope("diagnostics"));
+    }),
     vscode.commands.registerCommand("markdownCollab.installClaudeSkill", async () => {
-      await invokeInstallClaudeSkill(output);
+      await invokeInstallClaudeSkill(skillLog);
     }),
     vscode.commands.registerCommand("markdownCollab.editReviewConventions", async () => {
-      await invokeEditReviewConventions(output);
+      await invokeEditReviewConventions(reviewLog);
     }),
     vscode.commands.registerCommand("markdownCollab.openTutorial", async () => {
-      await invokeOpenTutorial(output);
+      await invokeOpenTutorial(reviewLog);
     }),
     vscode.commands.registerCommand(
       "markdownCollab.reviewSummary",
       async (arg?: vscode.Uri, selected?: vscode.Uri[]) => {
-        await invokeReviewSummary(resolveSelection(arg, selected), output);
+        await invokeReviewSummary(resolveSelection(arg, selected), reviewLog);
       },
     ),
     vscode.commands.registerCommand("markdownCollab.registerMcpServer", async () => {
@@ -134,7 +156,7 @@ export function activate(context: vscode.ExtensionContext): void {
       // Clear the remembered answer so a previous "Not now" doesn't silently
       // swallow an explicit request.
       await resetMcpJsonConsent(context);
-      await ensureMcpJsonRegistration(context, handle, output);
+      await ensureMcpJsonRegistration(context, handle, rootLog.scope("mcp"));
     }),
     vscode.commands.registerCommand("markdownCollab.toggleSuggestMode", async () => {
       const next = !isSuggestMode();
@@ -151,11 +173,11 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       "markdownCollab.repairInlineComments",
       async (fsPathArg?: string) => {
-        await invokeRepairInlineComments(output, fsPathArg);
+        await invokeRepairInlineComments(rootLog.scope("format"), fsPathArg);
       },
     ),
     vscode.commands.registerCommand("markdownCollab.initializeAgents", async () => {
-      await invokeInitializeAgents(output);
+      await invokeInitializeAgents(log);
     }),
     vscode.commands.registerCommand("markdownCollab.copyClaudePrompt", async () => {
       await invokeCopyClaudePrompt();
@@ -172,9 +194,7 @@ export function activate(context: vscode.ExtensionContext): void {
           // Opening the doc is enough — the inline markers travel with the
           // file. Scrolling to the exact thread is non-critical, so skip it.
         } catch (e) {
-          output.appendLine(
-            `revealComment failed for ${node.docPath}: ${(e as Error).message}`,
-          );
+          log.error(`revealComment failed for ${node.docPath}`, e);
         }
       },
     ),
@@ -208,7 +228,7 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         await invokeSendAllToClaude(
           doc,
-          output,
+          sendLog,
           terminalTracker,
           eventLogs,
           context.workspaceState,
@@ -249,7 +269,7 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         await dispatchReviewPayload(
           payload,
-          output,
+          sendLog,
           terminalTracker,
           eventLogs,
           context.workspaceState,
@@ -297,7 +317,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // is no multi-human relay: the human edits here, Claude edits the .md on
   // disk, and the two converge through the file (the provider pushes external
   // file changes into the editor, and writes the editor's edits back to disk).
-  context.subscriptions.push(CollabEditorProvider.register(context, output));
+  context.subscriptions.push(CollabEditorProvider.register(context, rootLog.scope("live-editor")));
 
   context.subscriptions.push(
     vscode.commands.registerCommand(
@@ -348,7 +368,7 @@ export function activate(context: vscode.ExtensionContext): void {
             }
             await dispatchReviewPayload(
               payload,
-              output,
+              sendLog,
               terminalTracker,
               eventLogs,
               context.workspaceState,
@@ -369,7 +389,7 @@ export function activate(context: vscode.ExtensionContext): void {
   ): Promise<void> => {
     await invokeAskClaudeToReviewSelection(
       resolveSelection(arg, selected),
-      output,
+      reviewLog,
       terminalTracker,
       eventLogs,
       context.workspaceState,
@@ -384,7 +404,7 @@ export function activate(context: vscode.ExtensionContext): void {
       async (arg?: vscode.Uri, selected?: vscode.Uri[]) => {
         await invokeAskClaudeToReviewSelection(
           resolveSelection(arg, selected),
-          output,
+          reviewLog,
           terminalTracker,
           eventLogs,
           context.workspaceState,
@@ -394,14 +414,14 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     ),
     vscode.commands.registerCommand("markdownCollab.nextUnreadFromClaude", async () => {
-      await invokeNextUnreadFromClaude(reviewView, output);
+      await invokeNextUnreadFromClaude(reviewView, reviewLog);
     }),
   );
 
   // On startup, nudge the user to install/update the Claude skill if it's
   // missing or out of date — otherwise they only find out by opening the
   // comments panel. Gated per skill version so it prompts once, not every time.
-  void maybePromptSkillUpdate(context, output);
+  void maybePromptSkillUpdate(context, skillLog);
 }
 
 /** The workspace's standing review conventions, or null when there are none. */
@@ -420,7 +440,7 @@ async function readConventions(folder: vscode.WorkspaceFolder): Promise<string |
  * scaffold matters more than it looks: an empty file gives no clue what belongs
  * in it, and this is prose whose whole value is being specific.
  */
-async function invokeEditReviewConventions(output: vscode.OutputChannel): Promise<void> {
+async function invokeEditReviewConventions(log: Logger): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
     void vscode.window.showWarningMessage(
@@ -445,7 +465,7 @@ async function invokeEditReviewConventions(output: vscode.OutputChannel): Promis
       );
       return;
     }
-    output.appendLine(`Created ${CONVENTIONS_REL}`);
+    log.info("created review conventions file", { file: CONVENTIONS_REL });
   }
   const doc = await vscode.workspace.openTextDocument(uri);
   await vscode.window.showTextDocument(doc, { preview: false });
@@ -463,7 +483,7 @@ async function invokeEditReviewConventions(output: vscode.OutputChannel): Promis
  */
 async function invokeReviewSummary(
   selection: vscode.Uri[],
-  output: vscode.OutputChannel,
+  log: Logger,
 ): Promise<void> {
   const uris = await expandMarkdownSelection(selection);
   if (uris.length === 0) {
@@ -478,7 +498,7 @@ async function invokeReviewSummary(
       const doc = await vscode.workspace.openTextDocument(uri);
       files.push({ rel: vscode.workspace.asRelativePath(uri), parsed: parseInline(doc.getText()) });
     } catch (e) {
-      output.appendLine(`Review summary: skipped ${uri.fsPath} — ${(e as Error).message}`);
+      log.warn("review summary: skipping unreadable file", { file: uri.fsPath, error: (e as Error).message });
     }
   }
   if (files.length === 0) {
@@ -499,7 +519,7 @@ async function invokeReviewSummary(
  * (10x-plan-2 P3.1). The point is that the accept/reject loop is clickable in
  * the first minute, with no skill install, no send mode, and no Claude session.
  */
-async function invokeOpenTutorial(output: vscode.OutputChannel): Promise<void> {
+async function invokeOpenTutorial(log: Logger): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
     void vscode.window.showWarningMessage(
@@ -529,7 +549,7 @@ async function invokeOpenTutorial(output: vscode.OutputChannel): Promise<void> {
     }
   } else {
     await vscode.workspace.fs.writeFile(uri, Buffer.from(buildTutorialDocument(), "utf8"));
-    output.appendLine(`Created ${TUTORIAL_REL}`);
+    log.info("created playground document", { file: TUTORIAL_REL });
   }
 
   const doc = await vscode.workspace.openTextDocument(uri);
@@ -541,13 +561,13 @@ const SKILL_PROMPT_KEY = "markdownCollab.skillPromptedFingerprint";
 
 async function maybePromptSkillUpdate(
   context: vscode.ExtensionContext,
-  output: vscode.OutputChannel,
+  log: Logger,
 ): Promise<void> {
   let status: Awaited<ReturnType<typeof checkClaudeSkill>>;
   try {
     status = await checkClaudeSkill(os.homedir());
   } catch (e) {
-    output.appendLine(`Skill check failed: ${(e as Error).message}`);
+    log.error("skill check failed", e);
     return;
   }
   if (status === "current") return;
@@ -577,8 +597,39 @@ export function deactivate(): void {
 // Command implementations
 // -----------------------------------------------------------
 
+/**
+ * Build the diagnostics report, open it, and mirror it into the log so the
+ * channel a user copies already carries the environment it was produced in
+ * (10x-plan-3 support work).
+ */
+async function invokeReportDiagnostics(
+  context: vscode.ExtensionContext,
+  log: Logger,
+): Promise<void> {
+  let report: string;
+  try {
+    report = formatDiagnostics(await collectDiagnostics(context));
+  } catch (e) {
+    log.error("could not collect diagnostics", e);
+    void vscode.window.showErrorMessage(
+      `Markdown Collab: could not collect diagnostics — ${(e as Error).message}`,
+    );
+    return;
+  }
+  log.info(`diagnostics report\n${report}`);
+  const doc = await vscode.workspace.openTextDocument({ language: "markdown", content: report });
+  await vscode.window.showTextDocument(doc, { preview: false });
+  const choice = await vscode.window.showInformationMessage(
+    "Diagnostics collected. Copy this into your bug report, along with the output channel.",
+    "Copy to clipboard",
+    "Show output channel",
+  );
+  if (choice === "Copy to clipboard") await vscode.env.clipboard.writeText(report);
+  if (choice === "Show output channel") log.show();
+}
+
 async function invokeInstallClaudeSkill(
-  output: vscode.OutputChannel,
+  log: Logger,
 ): Promise<void> {
   try {
     const result = await installClaudeSkill(os.homedir());
@@ -604,14 +655,14 @@ async function invokeInstallClaudeSkill(
       }
     }
   } catch (e) {
-    output.appendLine(`installClaudeSkill failed: ${(e as Error).message}`);
+    log.error("skill install failed", e);
     void vscode.window.showErrorMessage(
       `Failed to install Claude skill: ${(e as Error).message}`,
     );
   }
 }
 
-async function invokeInitializeAgents(output: vscode.OutputChannel): Promise<void> {
+async function invokeInitializeAgents(log: Logger): Promise<void> {
   const folder = await pickWorkspaceFolder();
   if (!folder) {
     void vscode.window.showWarningMessage(
@@ -631,7 +682,7 @@ async function invokeInitializeAgents(output: vscode.OutputChannel): Promise<voi
       `AGENTS.md ${verb} in ${folder.name}.`,
     );
   } catch (e) {
-    output.appendLine(`initializeAgents failed: ${(e as Error).message}`);
+    log.error("initializeAgents failed", e);
     void vscode.window.showErrorMessage(
       `Failed to initialize AGENTS.md: ${(e as Error).message}`,
     );
@@ -681,7 +732,7 @@ function normalizeSendMode(v: unknown): SendMode {
 
 async function invokeSendAllToClaude(
   doc: vscode.TextDocument,
-  output: vscode.OutputChannel,
+  log: Logger,
   tracker: TerminalTracker,
   eventLogs: Map<string, EventLog>,
   workspaceState: vscode.Memento,
@@ -704,7 +755,7 @@ async function invokeSendAllToClaude(
   }
   await dispatchReviewPayload(
     inlinePayload,
-    output,
+    log,
     tracker,
     eventLogs,
     workspaceState,
@@ -767,23 +818,37 @@ type DispatchIntent =
  */
 async function dispatchReviewPayload(
   payload: ReviewPayload,
-  output: vscode.OutputChannel,
+  log: Logger,
   tracker: TerminalTracker,
   eventLogs: Map<string, EventLog>,
   workspaceState: vscode.Memento,
   folder: vscode.WorkspaceFolder,
   intent: DispatchIntent = { kind: "address" },
 ): Promise<void> {
+  // Every send starts here, so this is the line that tells a stuck dispatch
+  // apart from one that never began.
+  log.info("dispatch requested", {
+    file: payload.file,
+    intent: intent.kind,
+    unresolved: payload.unresolvedCount,
+    threads: payload.comments.length,
+  });
+
   // Standing conventions ride along on every dispatch, whatever the mode
   // (10x-plan-2 P1.2). Done here rather than in each payload builder so no send
   // path can be the one that forgets them.
-  payload = { ...payload, prompt: withConventions(payload.prompt, await readConventions(folder)) };
+  const conventions = await readConventions(folder);
+  payload = { ...payload, prompt: withConventions(payload.prompt, conventions) };
+  log.trace("payload built", {
+    promptChars: payload.prompt.length,
+    conventions: conventions ? `${conventions.length} chars` : "none",
+  });
 
   const config = vscode.workspace.getConfiguration("markdownCollab");
   const rawMode = config.get<unknown>("sendMode", "ask");
   let mode = normalizeSendMode(rawMode);
   if (mode !== rawMode) {
-    output.appendLine(
+    log.warn(
       `markdownCollab.sendMode "${String(rawMode)}" is not recognized; falling back to "ask". ` +
         `Valid values: ask, terminal, channel, clipboard. (The "ipc" mode was renamed to "channel" in 0.11.0.)`,
     );
@@ -798,6 +863,7 @@ async function dispatchReviewPayload(
     const remembered = workspaceState.get<unknown>(REMEMBERED_SEND_MODE_KEY);
     if (isConcreteSendMode(remembered)) {
       mode = remembered;
+      log.trace("using the send mode remembered for this workspace", { mode });
     } else {
       // Before asking, look at what's actually running. A visible Claude REPL
       // or a live MCP channel answers the question the quick-pick was asking,
@@ -808,7 +874,7 @@ async function dispatchReviewPayload(
       });
       if (detected) {
         mode = detected.mode;
-        output.appendLine(`Send mode auto-detected: ${detected.mode} (${detected.reason})`);
+        log.info("send mode auto-detected", { mode: detected.mode, reason: detected.reason });
       } else {
         // MCP is offered, never auto-selected: it can be disabled entirely on
         // Claude's side (enterprise policy, --strict-mcp-config), so a default
@@ -816,8 +882,12 @@ async function dispatchReviewPayload(
         const picked = await pickSendMode(payload.unresolvedCount, intent, {
           mcpAvailable: currentMcpServer() !== null,
         });
-        if (!picked) return;
+        if (!picked) {
+          log.info("send cancelled at the mode picker");
+          return;
+        }
         mode = picked;
+        log.info("send mode picked by the user", { mode });
       }
       await workspaceState.update(REMEMBERED_SEND_MODE_KEY, mode);
       justRemembered = true;
@@ -830,8 +900,11 @@ async function dispatchReviewPayload(
       ? ' Run "Markdown Collab: Reset Send Mode" to change later.'
       : "";
 
+  log.info("delivering", { mode, file: payload.file });
+
   if (mode === "clipboard") {
     await vscode.env.clipboard.writeText(payload.prompt);
+    log.info("prompt copied to the clipboard", { chars: payload.prompt.length });
     const msg =
       intent.kind === "review-request"
         ? `Review-request prompt for \`${payload.file}\` copied — paste into Claude Code.`
@@ -846,7 +919,7 @@ async function dispatchReviewPayload(
     // The chosen mode's server isn't up (window reloaded, port lost). Degrade
     // rather than fail: the prompt still gets delivered, Claude just edits the
     // old way. Said out loud, because the human picked MCP on purpose.
-    output.appendLine("Send mode mcp requested but the tool server isn't running; falling back to terminal.");
+    log.warn("send mode mcp requested but the tool server is not running; falling back to terminal");
     void vscode.window.showWarningMessage(
       "Markdown Collab: the review tool server isn't running — sending to the terminal without it.",
     );
@@ -859,6 +932,7 @@ async function dispatchReviewPayload(
         ? { ...payload, prompt: `${payload.prompt}\n\n${mcpToolsDirective()}` }
         : payload;
     const sendResult = await sendViaTerminal(delivered, tracker, {
+      log,
       offerStartTerminal: async () => {
         const choice = await vscode.window.showInformationMessage(
           "No Claude terminal detected.",
@@ -867,8 +941,9 @@ async function dispatchReviewPayload(
           "Switch to clipboard",
           "Cancel",
         );
+        log.info("no Claude terminal detected", { choice: choice ?? "dismissed" });
         if (choice === "Start Claude in new terminal") {
-          const terminal = startClaudeTerminal(tracker);
+          const terminal = startClaudeTerminal(tracker, log);
           // Give the REPL a beat to initialize before we paste into it.
           await new Promise((r) => setTimeout(r, 1500));
           return terminal;
@@ -886,9 +961,18 @@ async function dispatchReviewPayload(
     });
     if (!sendResult.ok && sendResult.reason === "no-target") {
       // The clipboard fallback toast above already fired; nothing more to do.
+      log.warn("send abandoned: no terminal to deliver to");
       return;
     }
-    if (!sendResult.ok) return;
+    if (!sendResult.ok) {
+      log.info("send cancelled", { reason: sendResult.reason });
+      return;
+    }
+    log.info("delivered to terminal", {
+      terminal: sendResult.terminalName,
+      mode,
+      chars: delivered.prompt.length,
+    });
     await markPayloadPending(payload, folder, mode === "mcp" ? "protocol" : "inferred");
     const msg =
       intent.kind === "review-request"
@@ -900,16 +984,16 @@ async function dispatchReviewPayload(
 
   if (mode === "channel" || mode === "mcp-channel") {
     const folderKey = folder.uri.fsPath;
-    let log = eventLogs.get(folderKey);
-    if (!log) {
-      log = new EventLog(folderKey);
-      eventLogs.set(folderKey, log);
+    let eventLog = eventLogs.get(folderKey);
+    if (!eventLog) {
+      eventLog = new EventLog(folderKey);
+      eventLogs.set(folderKey, eventLog);
     }
     let envelope;
     try {
-      envelope = await log.append(payload);
+      envelope = await eventLog.append(payload);
     } catch (e) {
-      output.appendLine(`Event log append failed: ${(e as Error).message}`);
+      log.error("event log append failed", e);
       void vscode.window.showErrorMessage(
         `Could not write to event log: ${(e as Error).message}`,
       );
@@ -925,6 +1009,7 @@ async function dispatchReviewPayload(
     // mcp-channel: also push directly to the running MCP channel server so
     // the event arrives as a <channel> tag on Claude's next turn.
     const result = await sendViaMcpChannel(folderKey, envelope);
+    log.info("mcp-channel push", { ok: result.ok, reason: result.ok ? undefined : result.reason });
     if (result.ok) {
       void vscode.window.showInformationMessage(
         `Sent via MCP channel.${rememberedSuffix}`,
@@ -940,9 +1025,7 @@ async function dispatchReviewPayload(
         "MCP channel server isn't running. Start Claude with `--dangerously-load-development-channels server:markdown-collab` or run 'Markdown Collab: Install Claude Skill' if mdc-channel.mjs is missing. The payload was still appended to the events log.",
       );
     } else {
-      output.appendLine(
-        `mcp-channel push failed (${result.reason}): ${result.detail ?? "no detail"}`,
-      );
+      log.error("mcp-channel push failed", { reason: result.reason, detail: result.detail });
       void vscode.window.showErrorMessage(
         `MCP channel push failed: ${result.reason}${
           result.detail ? ` (${result.detail})` : ""
@@ -1069,7 +1152,7 @@ async function expandMarkdownSelection(uris: vscode.Uri[]): Promise<vscode.Uri[]
  */
 async function invokeAskClaudeToReviewSelection(
   selection: vscode.Uri[],
-  output: vscode.OutputChannel,
+  log: Logger,
   tracker: TerminalTracker,
   eventLogs: Map<string, EventLog>,
   workspaceState: vscode.Memento,
@@ -1102,7 +1185,7 @@ async function invokeAskClaudeToReviewSelection(
       );
       return;
     }
-    await invokeAskClaudeToReview(doc, output, tracker, eventLogs, workspaceState, globalState, delta);
+    await invokeAskClaudeToReview(doc, log, tracker, eventLogs, workspaceState, globalState, delta);
     return;
   }
 
@@ -1118,7 +1201,7 @@ async function invokeAskClaudeToReviewSelection(
 
   await invokeAskClaudeToReviewMulti(
     files,
-    output,
+    log,
     tracker,
     eventLogs,
     workspaceState,
@@ -1133,7 +1216,7 @@ async function invokeAskClaudeToReviewSelection(
  */
 async function invokeAskClaudeToReviewMulti(
   uris: vscode.Uri[],
-  output: vscode.OutputChannel,
+  log: Logger,
   tracker: TerminalTracker,
   eventLogs: Map<string, EventLog>,
   workspaceState: vscode.Memento,
@@ -1190,9 +1273,7 @@ async function invokeAskClaudeToReviewMulti(
   for (const uri of inFolder) InlineCommentsPanel.notifyReviewPending(uri);
 
   if (skipped > 0) {
-    output.appendLine(
-      `Ask Claude to Review: skipped ${skipped} file(s) outside ${folder.name}.`,
-    );
+    log.warn("review: files outside the folder were skipped", { skipped, folder: folder.name });
     void vscode.window.showInformationMessage(
       `Reviewing ${files.length} file(s) in ${folder.name}; ${skipped} outside it were skipped — run the command again from that folder.`,
     );
@@ -1200,7 +1281,7 @@ async function invokeAskClaudeToReviewMulti(
 
   await dispatchReviewPayload(
     payload,
-    output,
+    log,
     tracker,
     eventLogs,
     workspaceState,
@@ -1225,7 +1306,7 @@ let unreadWalkCursor: { docPath: string; threadId: string } | null = null;
 
 async function invokeNextUnreadFromClaude(
   reviewView: ReviewView,
-  output: vscode.OutputChannel,
+  log: Logger,
 ): Promise<void> {
   await reviewView.ensureScanned();
   const unread = reviewView.listClaudeUnread();
@@ -1262,9 +1343,7 @@ async function invokeNextUnreadFromClaude(
       preview: false,
     });
   } catch (e) {
-    output.appendLine(
-      `Next unread failed for ${next.docPath}: ${(e as Error).message}`,
-    );
+    log.error(`next-unread failed for ${next.docPath}`, e);
     void vscode.window.showErrorMessage(
       `Could not open ${path.basename(next.docPath)}.`,
     );
@@ -1279,7 +1358,7 @@ async function invokeNextUnreadFromClaude(
 
 async function invokeAskClaudeToReview(
   doc: vscode.TextDocument,
-  output: vscode.OutputChannel,
+  log: Logger,
   tracker: TerminalTracker,
   eventLogs: Map<string, EventLog>,
   workspaceState: vscode.Memento,
@@ -1341,7 +1420,7 @@ async function invokeAskClaudeToReview(
 
   await dispatchReviewPayload(
     result.payload,
-    output,
+    log,
     tracker,
     eventLogs,
     workspaceState,
@@ -1449,7 +1528,7 @@ async function pickWorkspaceFolder(): Promise<vscode.WorkspaceFolder | undefined
  * through a WorkspaceEdit so it lands in the undo stack like any other change.
  */
 async function invokeRepairInlineComments(
-  output: vscode.OutputChannel,
+  log: Logger,
   fsPathArg?: string,
 ): Promise<void> {
   const fsPath = fsPathArg ?? vscode.window.activeTextEditor?.document.uri.fsPath;
@@ -1485,7 +1564,7 @@ async function invokeRepairInlineComments(
     void vscode.window.showErrorMessage("Could not apply the comment-anchor repair.");
     return;
   }
-  for (const r of result.repairs) output.appendLine(`Repair [${path.basename(fsPath)}] ${r.description}`);
+  for (const r of result.repairs) log.info("repaired anchor", { file: path.basename(fsPath), repair: r.description });
   const remaining = result.remaining.length;
   void vscode.window.showInformationMessage(
     remaining === 0

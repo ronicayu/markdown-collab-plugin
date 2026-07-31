@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import type { Logger } from "../logging";
 import type { ReviewPayload } from "../sendToClaude";
 import type { TerminalTracker } from "./terminalTracker";
 
@@ -53,9 +54,19 @@ function resolveTerminal(tracker: TerminalTracker): Resolution | null {
 export async function sendViaTerminal(
   payload: ReviewPayload,
   tracker: TerminalTracker,
-  options?: { offerStartTerminal?: () => Promise<vscode.Terminal | null> },
+  options?: { offerStartTerminal?: () => Promise<vscode.Terminal | null>; log?: Logger },
 ): Promise<SendResult> {
+  const log = options?.log;
   let resolution = resolveTerminal(tracker);
+  // Which terminal, and on what evidence. When a paste lands in the wrong
+  // place — a plain shell instead of the Claude REPL — this line is the
+  // difference between "it silently did nothing" and a one-look diagnosis.
+  log?.trace("terminal resolution", {
+    open: vscode.window.terminals.length,
+    picked: resolution?.terminal.name ?? null,
+    via: resolution?.source ?? null,
+    reliability: resolution?.reliability ?? null,
+  });
 
   if (!resolution) {
     if (options?.offerStartTerminal) {
@@ -71,6 +82,10 @@ export async function sendViaTerminal(
   terminal.sendText(BP_START + payload.prompt + BP_END, false);
   terminal.sendText("", true);
   terminal.show(true);
+  log?.trace("bracketed paste written", {
+    terminal: terminal.name,
+    chars: payload.prompt.length,
+  });
   return { ok: true, terminalName: terminal.name };
 }
 
@@ -79,8 +94,9 @@ export async function sendViaTerminal(
  * detection ladder picks it up on subsequent sends. Caller is responsible
  * for the post-spawn delay if it wants to inject immediately.
  */
-export function startClaudeTerminal(tracker: TerminalTracker): vscode.Terminal {
+export function startClaudeTerminal(tracker: TerminalTracker, log?: Logger): vscode.Terminal {
   const terminal = vscode.window.createTerminal({ name: "Claude Review" });
+  log?.info("spawned a Claude terminal");
   tracker.markOwned(terminal);
   terminal.sendText("claude", true);
   terminal.show(true);

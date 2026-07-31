@@ -168,6 +168,21 @@ describe("acceptance: corrupt a marker with a raw edit", () => {
   });
 });
 
+/** A Logger that records nothing — these tests assert behaviour, not logs. */
+function silentLogger(): import("../logging").Logger {
+  const noop = (): void => {};
+  const log: import("../logging").Logger = {
+    trace: noop,
+    info: noop,
+    warn: noop,
+    error: noop,
+    scope: () => log,
+    time: (_l, fn) => fn(),
+    show: noop,
+  };
+  return log;
+}
+
 describe("ReviewView integration", () => {
   it("notifies once for a damaged file seen through the watcher", async () => {
     const { ReviewView } = await import("../reviewView");
@@ -175,8 +190,7 @@ describe("ReviewView integration", () => {
     const broken = source.replace(`<!--mc:/a:${id}-->`, "");
     const onIntegrityIssues = vi.fn();
 
-    const output = { appendLine: vi.fn() } as unknown as import("vscode").OutputChannel;
-    const view = new ReviewView(output, {
+    const view = new ReviewView(silentLogger(), {
       findFiles: async () => [],
       readFile: async () => broken,
       watch: () => ({ dispose: () => {} }),
@@ -197,8 +211,7 @@ describe("ReviewView integration", () => {
     const { ReviewView } = await import("../reviewView");
     const { source } = withThread();
     const onIntegrityIssues = vi.fn();
-    const output = { appendLine: vi.fn() } as unknown as import("vscode").OutputChannel;
-    const view = new ReviewView(output, {
+    const view = new ReviewView(silentLogger(), {
       findFiles: async () => [],
       readFile: async () => source,
       watch: () => ({ dispose: () => {} }),

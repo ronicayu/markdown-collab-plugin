@@ -42,6 +42,8 @@ export interface ToolDeps {
    * it is the first hard evidence that Claude is actually working.
    */
   onCall?(event: { tool: string; file?: string; note?: string }): void;
+  /** Fired when a call is refused. The result still goes back to Claude. */
+  onRefusal?(event: { tool: string; code: string; message: string }): void;
   now?(): string;
 }
 
@@ -277,6 +279,19 @@ function occurrenceOf(args: Record<string, unknown>): number {
  * that would break integrity — comes back as an `isError` result carrying a
  * machine-readable code, and the document is left untouched.
  */
+/** Read the machine-readable code back out of a refusal result, for logging. */
+function refusalCode(r: ToolResult): string {
+  try {
+    const first = r.content?.[0];
+    if (first && first.type === "text") {
+      return String((JSON.parse(first.text) as { code?: unknown }).code ?? "unknown");
+    }
+  } catch {
+    /* the log line is worth less than the refusal it describes */
+  }
+  return "unknown";
+}
+
 export async function callTool(
   name: string,
   args: Record<string, unknown>,
@@ -357,10 +372,15 @@ export async function callTool(
         return refusal("unknown_tool", `unknown tool: ${name}`);
     }
   } catch (e) {
-    if (e instanceof DocOpError) return refusal(e.code, e.message, e.details);
-    if (e instanceof ToolRefusal) return refusal(e.code, e.message, e.details);
-    // Host-side failures (file gone, edit rejected by the editor) are refusals
-    // too as far as Claude is concerned: the operation did not happen.
-    return refusal("host_error", (e as Error).message);
+    // Refusals are reported to Claude as `isError` results, which means the
+    // human never sees them — the model reads the error and moves on, and the
+    // document simply doesn't change. Log every one, or "Claude said it was
+    // done but nothing happened" has no evidence behind it.
+    const r =
+      e instanceof DocOpError || e instanceof ToolRefusal
+        ? refusal(e.code, e.message, e.details)
+        : refusal("host_error", (e as Error).message);
+    deps.onRefusal?.({ tool: name, code: refusalCode(r), message: (e as Error).message });
+    return r;
   }
 }

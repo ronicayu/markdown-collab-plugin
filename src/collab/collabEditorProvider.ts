@@ -28,6 +28,7 @@ import { claudePending, onPendingChanged } from "../claudePendingService";
 import { pendingLabel } from "../inlineComments/claudePending";
 import { classifyLink } from "./linkRouter";
 import { isExternalLinkSafe } from "./urlAllowlist";
+import type { Logger } from "../logging";
 
 const VIEW_TYPE = "markdownCollab.collabEditor";
 
@@ -223,14 +224,14 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
 
   constructor(
     private readonly extensionUri: vscode.Uri,
-    private readonly output: vscode.OutputChannel,
+    private readonly log: Logger,
   ) {}
 
   static register(
     context: vscode.ExtensionContext,
-    output: vscode.OutputChannel,
+    log: Logger,
   ): vscode.Disposable {
-    const provider = new CollabEditorProvider(context.extensionUri, output);
+    const provider = new CollabEditorProvider(context.extensionUri, log);
     return vscode.window.registerCustomEditorProvider(VIEW_TYPE, provider, {
       webviewOptions: { retainContextWhenHidden: true, enableFindWidget: true },
       supportsMultipleEditorsPerDocument: true,
@@ -283,7 +284,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       try {
         await document.save();
       } catch (e) {
-        this.output.appendLine(`CollabEditor save failed: ${(e as Error).message}`);
+        this.log.error("save failed", e);
         return;
       }
       // A save participant (format-on-save, trim-trailing-whitespace,
@@ -322,7 +323,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       try {
         await document.save();
       } catch (e) {
-        this.output.appendLine(`CollabEditor autosave failed: ${(e as Error).message}`);
+        this.log.error("autosave failed", e);
       } finally {
         lastWebviewProse = proseOf(document.getText());
         lastFrontmatter = frontmatterOf(document.getText());
@@ -373,7 +374,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         if (ok && opts?.save) await saveDocument();
         return ok;
       } catch (e) {
-        this.output.appendLine(`CollabEditor applyEdit failed: ${(e as Error).message}`);
+        this.log.error("applyEdit failed", e);
         return false;
       } finally {
         pendingApply = false;
@@ -455,7 +456,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         void applyProseEdit(msg.text, msg.anchors);
       } else if (msg.type === "ready-with-content") {
         lastReadyByUri.set(document.uri.toString(), msg);
-        this.output.appendLine(
+        this.log.info(
           `CollabEditor: webview ready for ${document.uri.fsPath} — content length=${msg.length}, synced=${msg.synced}${msg.error ? `, error=${msg.error}` : ""}`,
         );
       } else if (msg.type === "highlight-report") {
@@ -465,7 +466,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         // schema mismatches, etc.) into the extension's output channel so
         // they're visible without opening the webview devtools.
         lastWebviewErrorByUri.set(document.uri.toString(), msg);
-        this.output.appendLine(
+        this.log.info(
           `CollabEditor: webview error for ${document.uri.fsPath} (${msg.stage}): ${msg.message}`,
         );
       } else if (msg.type === "add-comment") {
@@ -632,14 +633,14 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       result = addThreadFromAnchor(document.getText(), anchor, newComment, ordinal);
     }
     if (!result.ok) {
-      this.output.appendLine(`CollabEditor: addComment failed for ${document.uri.fsPath}: ${result.error}`);
+      this.log.warn("addComment refused", { file: document.uri.fsPath, error: result.error });
       return { type: "add-comment-result", ok: false, error: result.error };
     }
     const wrote = await writeDocument(result.source, { save: true });
     if (!wrote) {
       return { type: "add-comment-result", ok: false, error: "Could not write the comment into the document." };
     }
-    this.output.appendLine(
+    this.log.info(
       `CollabEditor: added comment on ${document.uri.fsPath} (anchor=${JSON.stringify(anchor.text.slice(0, 40))})`,
     );
     return { type: "add-comment-result", ok: true };
@@ -746,7 +747,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     };
 
     if (decision.kind === "blocked") {
-      this.output.appendLine(
+      this.log.info(
         `CollabEditor: refused to open link ${JSON.stringify(msg.href)} — ${decision.reason}`,
       );
       post(false, decision.reason);
@@ -763,7 +764,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       // re-validate with the dedicated allowlist before handing the URL
       // to vscode.env.openExternal.
       if (!isExternalLinkSafe(msg.href)) {
-        this.output.appendLine(
+        this.log.info(
           `CollabEditor: external link failed allowlist re-check ${JSON.stringify(msg.href)}`,
         );
         post(false, "external link rejected by allowlist");
@@ -799,7 +800,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       try {
         await vscode.commands.executeCommand("markdownCollab.sendAllToClaude", document.uri);
       } catch (e) {
-        this.output.appendLine(
+        this.log.info(
           `CollabEditor: sendAllToClaude failed: ${(e as Error).message}`,
         );
       }
@@ -822,7 +823,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
           "Prompt copied — paste into Claude Code.",
         );
       } catch (e) {
-        this.output.appendLine(
+        this.log.info(
           `CollabEditor: copy-prompt failed: ${(e as Error).message}`,
         );
       }
@@ -834,7 +835,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
           msg.commentId,
         );
       } catch (e) {
-        this.output.appendLine(
+        this.log.info(
           `CollabEditor: sendThreadToClaude failed: ${(e as Error).message}`,
         );
       }
@@ -846,7 +847,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
           msg.commentId,
         );
       } catch (e) {
-        this.output.appendLine(
+        this.log.info(
           `CollabEditor: copyThreadToClaude failed: ${(e as Error).message}`,
         );
       }
@@ -869,7 +870,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(absPath));
         return Buffer.from(bytes).toString("utf8");
       },
-      (line) => this.output.appendLine(`CollabEditor: ${line}`),
+      (line) => this.log.trace(line),
     );
   }
 

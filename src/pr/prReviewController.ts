@@ -26,6 +26,7 @@ import {
 import { detectPlatform } from "./platform";
 import { PrReviewPanel } from "./prReviewPanel";
 import { PrReviewTreeProvider } from "./prReviewTreeProvider";
+import type { Logger } from "../logging";
 import type {
   ExistingPrComment,
   PrComment,
@@ -100,16 +101,16 @@ interface PrReviewComment extends vscode.Comment {
 
 export class PrReviewController implements vscode.Disposable {
   private readonly controller: vscode.CommentController;
-  private readonly output: vscode.OutputChannel;
+  private readonly log: Logger;
   private readonly context: vscode.ExtensionContext;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly treeProvider: PrReviewTreeProvider;
   private treeView: vscode.TreeView<unknown> | null = null;
   private session: ActiveSession | null = null;
 
-  constructor(context: vscode.ExtensionContext, output: vscode.OutputChannel) {
+  constructor(context: vscode.ExtensionContext, log: Logger) {
     this.context = context;
-    this.output = output;
+    this.log = log;
     // The controller is retained for the legacy native-gutter surface
     // (kept dormant in the preview-mode flow but still registered so
     // existing menu contributions resolve cleanly). Drafts are
@@ -205,7 +206,7 @@ export class PrReviewController implements vscode.Disposable {
       const localHead = await readHeadSha(repoRoot).catch(() => ctx.headSha);
       ctx.localHeadSha = localHead;
       if (localHead !== ctx.headSha) {
-        this.output.appendLine(
+        this.log.info(
           `PR review: local HEAD (${localHead.slice(0, 7)}) is ahead of the ${ctx.platform === "gitlab" ? "MR" : "PR"} head (${ctx.headSha.slice(0, 7)}). Comments post against the pushed head.`,
         );
         void vscode.window.showWarningMessage(
@@ -245,7 +246,7 @@ export class PrReviewController implements vscode.Disposable {
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
       void vscode.window.showErrorMessage(`PR review failed: ${msg}`);
-      this.output.appendLine(`startPrReview error: ${msg}`);
+      this.log.error("startPrReview failed", e);
     }
   }
 
@@ -353,7 +354,7 @@ export class PrReviewController implements vscode.Disposable {
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
       void vscode.window.showErrorMessage(`PR review refresh failed: ${msg}`);
-      this.output.appendLine(`refreshReview error: ${msg}`);
+      this.log.error("refreshReview failed", e);
     }
   }
 
@@ -369,7 +370,7 @@ export class PrReviewController implements vscode.Disposable {
         session.existingComments = comments;
         return comments;
       } catch (e) {
-        this.output.appendLine(
+        this.log.info(
           `PR review: failed to fetch existing comments: ${(e as Error).message}`,
         );
         session.existingComments = [];
@@ -614,7 +615,7 @@ export class PrReviewController implements vscode.Disposable {
       if (!lineInRanges(d.line, ranges)) {
         // Line no longer in diff (force-push, rebase). Surface but keep
         // the draft around so the user can copy/repaste manually.
-        this.output.appendLine(
+        this.log.info(
           `PR review: draft on ${d.path}:${d.line} is no longer in the diff.`,
         );
         continue;

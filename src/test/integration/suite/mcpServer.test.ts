@@ -9,6 +9,7 @@ import * as assert from "assert";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
+import type { Logger } from "../../../logging";
 import { parse } from "../../../inlineComments/format";
 import { deltaScope } from "../../../inlineComments/deltaReview";
 import { buildToolDeps } from "../../../mcpServer";
@@ -28,19 +29,19 @@ function fixturePath(name: string): string {
   return path.resolve(__dirname, "..", "fixtures", name);
 }
 
-const output: vscode.OutputChannel = {
-  name: "test",
-  append: () => undefined,
-  appendLine: () => undefined,
-  clear: () => undefined,
-  show: () => undefined,
-  hide: () => undefined,
-  replace: () => undefined,
-  dispose: () => undefined,
-} as unknown as vscode.OutputChannel;
+const noop = (): void => undefined;
+const testLogger: Logger = {
+  trace: noop,
+  info: noop,
+  warn: noop,
+  error: noop,
+  scope: () => testLogger,
+  time: (_label, fn) => fn(),
+  show: noop,
+};
 
 function deps() {
-  return buildToolDeps({ output });
+  return buildToolDeps({ log: testLogger });
 }
 
 /** Fixture names are unique per test: rewriting a file underneath a document

@@ -21,6 +21,7 @@
 import { randomBytes } from "node:crypto";
 import * as path from "path";
 import * as vscode from "vscode";
+import type { Logger } from "../logging";
 import { isInsideRoot } from "../pathUtils";
 import { claudePending } from "../claudePendingService";
 import { minimalEdit } from "../inlineComments/minimalEdit";
@@ -51,7 +52,7 @@ export interface McpServerHandle {
 
 /** Callbacks the rest of the extension wires in (lifecycle signals land here). */
 export interface McpHostDeps {
-  output: vscode.OutputChannel;
+  log: Logger;
   /** Fired for every tool call, before it runs. */
   onToolCall?(event: { tool: string; file?: string; note?: string }): void;
 }
@@ -133,12 +134,20 @@ export function buildToolDeps(deps: McpHostDeps): ToolDeps {
     readDoc: async (key) => (await vscode.workspace.openTextDocument(vscode.Uri.parse(key))).getText(),
     writeDoc: async (key, next) => applyDocumentEdit(vscode.Uri.parse(key), next),
     onCall: (event) => {
-      deps.output.appendLine(
-        `MCP: ${event.tool}${event.file ? ` ${vscode.workspace.asRelativePath(vscode.Uri.parse(event.file))}` : ""}${
-          event.note ? ` — ${event.note}` : ""
-        }`,
-      );
+      // One line per tool call is the transcript of what Claude actually did.
+      // Without it a refused or misrouted call is invisible: the model sees the
+      // error, the human sees a document that didn't change.
+      deps.log.info("tool call", {
+        tool: event.tool,
+        file: event.file
+          ? vscode.workspace.asRelativePath(vscode.Uri.parse(event.file))
+          : undefined,
+        note: event.note,
+      });
       deps.onToolCall?.(event);
+    },
+    onRefusal: (event) => {
+      deps.log.warn("tool call refused", event);
     },
   };
 }
@@ -195,7 +204,7 @@ export async function startMcpServer(
     server = await serveMcp({
       token,
       port: preferredPort(folder.uri.fsPath),
-      onError: (m) => deps.output.appendLine(`MCP: ${m}`),
+      onError: (m) => deps.log.warn("transport error", m),
       handlers: {
         serverInfo: { name: MCP_SERVER_NAME, version: extensionVersion(context) },
         instructions: SERVER_INSTRUCTIONS,
@@ -204,7 +213,7 @@ export async function startMcpServer(
       },
     });
   } catch (e) {
-    deps.output.appendLine(`MCP: could not start the tool server: ${(e as Error).message}`);
+    deps.log.error("could not start the tool server", e);
     return null;
   }
 
@@ -217,7 +226,8 @@ export async function startMcpServer(
 
   await writeDescriptor(folder.uri, { url: server.url, port: server.port, token, version: extensionVersion(context) });
 
-  deps.output.appendLine(`MCP: tool server listening on ${server.url}`);
+  // The port, not the URL: the URL carries the session token.
+  deps.log.info("tool server listening", { port: server.port });
 
   const handle = {
     url: server.url,
@@ -229,7 +239,7 @@ export async function startMcpServer(
       context.environmentVariableCollection.clear();
       void removeDescriptor(folder.uri);
       void server.close();
-      deps.output.appendLine("MCP: tool server stopped");
+      deps.log.info("tool server stopped");
     },
   };
   running = handle;
@@ -273,7 +283,7 @@ const CONSENT_KEY = "markdownCollab.mcpJsonConsent";
 export async function ensureMcpJsonRegistration(
   context: vscode.ExtensionContext,
   handle: McpServerHandle,
-  output: vscode.OutputChannel,
+  log: Logger,
 ): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) return;
@@ -310,7 +320,7 @@ export async function ensureMcpJsonRegistration(
     const merged = mergeMcpJson(existing, handle.port);
     if (merged.text === null) return;
     await vscode.workspace.fs.writeFile(uri, Buffer.from(merged.text, "utf8"));
-    output.appendLine(`MCP: ${merged.replaced ? "updated" : "added"} the ${MCP_SERVER_NAME} entry in .mcp.json`);
+    log.info("registered in .mcp.json", { action: merged.replaced ? "updated" : "added", server: MCP_SERVER_NAME });
   } catch (e) {
     void vscode.window.showWarningMessage(`Markdown Collab: could not update .mcp.json — ${(e as Error).message}`);
   }

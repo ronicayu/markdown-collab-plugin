@@ -1,5 +1,6 @@
 import * as path from "path";
 import * as vscode from "vscode";
+import type { Logger } from "./logging";
 import { isClaudeUnread } from "./inlineComments/claudeUnread";
 import { parse, type InlineThread } from "./inlineComments/format";
 import { IntegrityGuard, summarize, type GuardDecision } from "./inlineComments/integrityGuard";
@@ -83,7 +84,7 @@ export class ReviewView
   private disposed = false;
 
   constructor(
-    private readonly output: vscode.OutputChannel,
+    private readonly log: Logger,
     deps: ReviewViewDeps = {},
   ) {
     this.findFiles =
@@ -249,7 +250,7 @@ export class ReviewView
         try {
           uris = await this.findFiles(folder);
         } catch (e) {
-          this.output.appendLine(
+          this.log.info(
             `ReviewView findFiles failed for ${folder.uri.fsPath}: ${(e as Error).message}`,
           );
           continue;
@@ -276,7 +277,7 @@ export class ReviewView
       this.syncHasReviewContext();
       this._onDidChangeTreeData.fire();
     } catch (e) {
-      this.output.appendLine(`ReviewView scan failed: ${(e as Error).message}`);
+      this.log.error("workspace scan failed", e);
     }
   }
 
@@ -344,11 +345,11 @@ export class ReviewView
       const decision = this.guard.consider(mdPath, text);
       if (!decision) return;
       for (const issue of decision.issues) {
-        this.output.appendLine(`Integrity [${path.basename(mdPath)}] ${issue.kind}: ${issue.message}`);
+        this.log.warn("integrity issue", { file: path.basename(mdPath), kind: issue.kind, message: issue.message });
       }
       this.onIntegrityIssues(decision);
     } catch (e) {
-      this.output.appendLine(`Integrity check failed for ${mdPath}: ${(e as Error).message}`);
+      this.log.error(`integrity check failed for ${mdPath}`, e);
     }
   }
 

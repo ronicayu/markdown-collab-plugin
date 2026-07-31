@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.34.72 — 2026-07-31 (trial)
+
+### Added: logs you can actually diagnose from
+
+The extension had 46 log lines and 63 silent `catch` blocks. When a send didn't
+arrive, a tool call was refused, or a panel came up empty, the output channel
+said nothing — every diagnosis started by adding logging and asking for a
+reproduction.
+
+**The channel is now a `LogOutputChannel`**, so VS Code stamps each line with a
+level and a timestamp and gives the Output panel a level picker: a user can turn
+on Trace for one reproduction without a setting or a reload. Lines are tagged
+with the subsystem that wrote them (`[send]`, `[mcp]`, `[pr]`, `[live-editor]`,
+`[review]`, `[skill]`, `[format]`).
+
+What now leaves a trace, all of it previously silent:
+
+- **Sends.** Every dispatch logs its file, intent, thread count, and prompt
+  size; how the mode was decided (configured, remembered, auto-detected with the
+  reason, or picked); and the delivery outcome. Cancelling at the picker is a
+  logged fact rather than a shrug.
+- **Terminal delivery.** Which terminal was chosen and on what evidence —
+  owned, shell-integration, name match, or merely the active one. A paste that
+  lands in a plain shell instead of the Claude REPL used to be indistinguishable
+  from nothing happening.
+- **MCP tool calls, and refusals especially.** A refusal goes back to Claude as
+  an `isError` result, which means the human never sees it: the model reads the
+  error and moves on and the document simply doesn't change. Every refusal is
+  now logged with its code.
+- **`gh` / `glab` invocations.** Command, exit code, duration, and stderr on
+  failure. PR/MR work is entirely subprocesses, so "the review didn't post" was
+  almost always a non-zero exit nobody saw.
+- **Failures at the right level.** Save, autosave, `applyEdit`, scan, integrity,
+  and skill errors logged at `error` with their stack instead of `info` with
+  their message.
+
+**`Markdown Collab: Report a Problem (collect diagnostics)`** builds the
+environment report a bug should open with — versions, send mode, skill status,
+tool-server port and registration, visible terminals, and each open document's
+thread/suggestion/broken-anchor counts — into a scratch document to paste into
+an issue. **`Markdown Collab: Show Logs`** opens the channel.
+
+**Nothing credential-shaped is written.** Bearer tokens, `token=`/`api_key=`
+style values, and bare 32+ char hex runs (the shape of the MCP session token)
+are redacted from every line, in the logger itself rather than at chosen call
+sites, so a future call site can't leak by forgetting. The MCP server logs its
+port, never its URL — the URL carries the token. Guard tests hold all of it,
+including that no other module opens a second output channel.
+
 ## 0.34.71 — 2026-07-31 (trial)
 
 ### Fixed: submitting review drafts to GitLab
