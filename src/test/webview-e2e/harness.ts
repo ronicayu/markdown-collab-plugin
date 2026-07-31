@@ -14,6 +14,15 @@
 
 import * as path from "path";
 import { expect, type Page } from "@playwright/test";
+// Statically imported, deliberately. This was `await import(...)` inside
+// bootInlineView, and on the v0.34.72 tag every inline-view spec died there
+// with `SyntaxError: Unexpected token 'export'` on GitHub's runner while all
+// 24 passed locally — a runtime module resolution that only agreed with one of
+// the two environments. A static import is resolved by Playwright's own
+// transform, the same way every spec imports this file, so there is no
+// resolution left to disagree about. `webviewShell` imports nothing, so there
+// was never a host build to be lazy about.
+import { inlineCommentsAppBody } from "../../inlineComments/webviewShell";
 
 export const REPO_ROOT = path.resolve(__dirname, "../../..");
 const outFile = (...parts: string[]): string => path.join(REPO_ROOT, "out", ...parts);
@@ -85,8 +94,6 @@ async function bootPage(page: Page, body: string, styles: string[], script: stri
  * an `init`. Resolves once the thread list has rendered.
  */
 export async function bootInlineView(page: Page, init: Record<string, unknown>): Promise<void> {
-  // Imported lazily so this module stays importable without the host build.
-  const { inlineCommentsAppBody } = await import("../../inlineComments/webviewShell");
   await bootPage(
     page,
     inlineCommentsAppBody(),

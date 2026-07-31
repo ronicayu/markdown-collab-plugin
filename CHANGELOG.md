@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.34.73 — 2026-07-31 (trial)
+
+### Fixed: the webview e2e suite on CI
+
+The v0.34.72 tag failed its release run: all 13 inline-view specs died with
+`SyntaxError: Unexpected token 'export'` on GitHub's runner while all 24 passed
+locally. The harness reached for the webview's DOM skeleton through a runtime
+`await import("../../inlineComments/webviewShell")` — a module resolution that
+only the local environment agreed with. It is a static import now, resolved by
+Playwright's own transform like every other import in the suite, so there is
+nothing left for the two environments to disagree about. A guard test keeps
+runtime imports out of the harness.
+
+This was the webview e2e job's first run on a pushed tag — it was added in this
+same unreleased batch, so nothing before it had exercised the job in CI.
+
 ## 0.34.72 — 2026-07-31 (trial)
 
 ### Added: logs you can actually diagnose from

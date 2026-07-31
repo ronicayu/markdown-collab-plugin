@@ -157,3 +157,25 @@ describe("logging invariants", () => {
     expect(mcp).not.toMatch(/log\.(info|warn|trace|error)\([^)]*\btoken\b/);
   });
 });
+
+// Not about logging, but it is the same class of defect: something that works
+// on a developer's machine and only there.
+describe("the webview e2e harness resolves its imports the same way everywhere", () => {
+  it("imports TypeScript statically, never through a runtime import()", () => {
+    // A runtime `await import("../../inlineComments/webviewShell")` passed
+    // locally and failed on GitHub's runner with `SyntaxError: Unexpected
+    // token 'export'`, taking all 13 inline-view specs with it on the v0.34.72
+    // tag. Static imports go through Playwright's transform, which is the one
+    // path both environments agree on.
+    const harness = readFileSync(
+      resolve(__dirname, "webview-e2e/harness.ts"),
+      "utf8",
+    );
+    // Comments stripped first: the comment above the fixed import names the
+    // construct it replaced, and a guard that a comment can trip is a guard
+    // that gets deleted.
+    const code = harness.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+    expect(code).not.toMatch(/await import\(/);
+    expect(harness).toContain('import { inlineCommentsAppBody } from "../../inlineComments/webviewShell"');
+  });
+});
