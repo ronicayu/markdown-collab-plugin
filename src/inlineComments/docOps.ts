@@ -45,6 +45,10 @@ export type DocOpCode =
   | "unanchored"
   /** The span can't carry an anchor (frontmatter, threads region, code). */
   | "not_anchorable"
+  /** An empty or inverted range was given where a passage was required. */
+  | "empty_selection"
+  /** The given range falls outside the document. */
+  | "out_of_range"
   /** The result would introduce integrity problems; nothing was changed. */
   | "integrity";
 
@@ -299,6 +303,40 @@ export function opOpen(
   }
   assertNoNewIssues(source, result.source);
   return { next: result.source, result: { threadId: result.thread.id, quote } };
+}
+
+/**
+ * Open a thread on an exact source range, for a caller that already knows
+ * where the passage is (10x-plan-3 P0.2 — a selection in the text editor).
+ *
+ * Distinct from `opOpen`, which finds the passage by its text: Claude describes
+ * a quote and must be refused when it is ambiguous, whereas a human has pointed
+ * at one specific range and "that quote appears three times" would be a
+ * nonsense answer to a selection. Same integrity gate, same refusals from
+ * `addThread` (frontmatter, the threads region, code spans).
+ */
+export function opOpenAt(
+  source: string,
+  start: number,
+  end: number,
+  body: string,
+  author: string,
+  now = () => new Date().toISOString(),
+): OpOutcome<{ threadId: string; quote: string }> {
+  if (end <= start) {
+    throw new DocOpError("empty_selection", "select some text to comment on", { start, end });
+  }
+  if (start < 0 || end > source.length) {
+    throw new DocOpError("out_of_range", "the selection is outside the document", { start, end });
+  }
+  let result;
+  try {
+    result = addThread(source, start, end, { author, body, ts: now() });
+  } catch (e) {
+    throw new DocOpError("not_anchorable", (e as Error).message, { start, end });
+  }
+  assertNoNewIssues(source, result.source);
+  return { next: result.source, result: { threadId: result.thread.id, quote: result.thread.quote } };
 }
 
 export function opResolve(

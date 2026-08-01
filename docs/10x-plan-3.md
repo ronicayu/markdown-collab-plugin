@@ -1,7 +1,7 @@
 # Markdown Collab — 10x Plan, Round 3: the UX round
 
-> **Progress:** P0.1 (editor presence) and P0.3 (threads land where threads live)
-> are done — v0.34.74. P0.2, P1, P2, P3 remain.
+> **Progress:** P0 is complete — P0.1 + P0.3 in v0.34.74, P0.2 in v0.34.75.
+> P1, P2, P3 remain.
 
 **Audience:** Opus 5, acting as implementing engineer. Each initiative has motivation, design direction, key files, and acceptance criteria. Work top-to-bottom within a tier; tiers are ordered by leverage. Rounds 1 and 2 are complete — their "What NOT to do" rules all still stand, plus the ones at the end of this file.
 
@@ -56,7 +56,7 @@ The highest-leverage tier. Markdown authors live in the source view; today the e
 
 **Acceptance:** integration test asserts decorations are applied to a fixture with threads and not to a clean file; folding provider unit-tested on the golden corpus; hover content unit-tested; a guard test asserts the decoration pass never mutates the document. e2e not required (decorations aren't in the webview), but the integration suite must cover open → decorate → edit → re-decorate.
 
-### P0.2 Comment from anywhere: selection → thread, no webview
+### P0.2 Comment from anywhere: selection → thread, no webview ✅ *(v0.34.75)*
 
 **Problem.** Creating a thread requires the inline view and a mouse. The format engine can already anchor to any prose offset; only the UI path is missing.
 

@@ -139,3 +139,41 @@ suite("Editor presence providers", () => {
     assert.strictEqual(doc.isDirty, false, "document became dirty");
   });
 });
+
+suite("Comment on Selection", () => {
+  suiteSetup(async () => {
+    const ext = vscode.extensions.getExtension("markdown-collab.markdown-collab-plugin");
+    await ext?.activate();
+  });
+
+  test("is registered and is a no-op with no selection", async () => {
+    const doc = await openDoc(CLEAN);
+    const editor = vscode.window.activeTextEditor!;
+    editor.selection = new vscode.Selection(0, 0, 0, 0);
+    // The input box never opens, so this resolves without a stub.
+    await vscode.commands.executeCommand("markdownCollab.commentOnSelection");
+    assert.strictEqual(doc.getText(), CLEAN, "an empty selection must not change the file");
+  });
+
+  test("the shared verb writes an anchored thread through the editor", async () => {
+    // The command itself blocks on showInputBox, which has no headless stub.
+    // What is host-specific — that a WorkspaceEdit over the whole document
+    // lands, keeps the buffer live, and is undoable — is exercised directly.
+    const doc = await openDoc(CLEAN);
+    const { opOpenAt } = await import("../../../inlineComments/docOps");
+    const at = CLEAN.indexOf("Nothing to review");
+    const { next, result } = opOpenAt(doc.getText(), at, at + 17, "does this hold?", "tester");
+
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(
+      doc.uri,
+      new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length)),
+      next,
+    );
+    assert.ok(await vscode.workspace.applyEdit(edit), "applyEdit was rejected");
+
+    assert.ok(doc.getText().includes(`<!--mc:a:${result.threadId}-->`), "anchor marker missing");
+    assert.ok(doc.getText().includes("does this hold?"), "comment body missing");
+    assert.ok(doc.isDirty, "the edit should live in the buffer, not be written behind it");
+  });
+});

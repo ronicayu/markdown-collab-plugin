@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.34.75 — 2026-08-01 (trial)
+
+### Added: Comment on Selection — a thread without the webview (10x-plan-3 P0.2)
+
+The only way to open a thread was: open the rendered view, select text with the
+mouse, click the floating button. A keyboard-driven author with the source file
+in front of them had no path at all. The format engine could always anchor to
+any range in the document; what was missing was a way to reach it.
+
+**`Markdown Collab: Comment on Selection`** takes the selection in the text
+editor, asks for the comment, and writes the thread into the file. It is on the
+editor's right-click menu whenever there is a selection in a Markdown file.
+
+It refuses what it should, with a reason: an empty selection, a range in
+frontmatter, and a range inside a fenced code block (the parser strips markers
+in code, so a thread anchored there would be orphaned the moment it was
+written).
+
+Behind it is a new shared verb, `opOpenAt`, alongside the existing `opOpen`.
+They aren't the same operation: `opOpen` finds a passage by its text and must
+refuse an ambiguous quote, because Claude describes what it wants; a human has
+already pointed at one specific range, where "that text appears three times"
+would be a nonsense answer. It runs the same integrity gate as every other
+verb, attributes the comment to the human rather than to `claude`, and writes
+through a `WorkspaceEdit` — so the comment is undoable with Cmd+Z like any
+other edit. A guard test holds extension.ts to the rule the CLI and the MCP
+tools already follow: no front end calls the format engine's mutators itself.
+
 ## 0.34.74 — 2026-08-01 (trial)
 
 ### Added: the extension shows up in the plain text editor (10x-plan-3 P0.1, P0.3)

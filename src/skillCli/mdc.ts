@@ -87,6 +87,11 @@ const EXIT_FOR_CODE: Record<DocOpCode, number> = {
   passage_ambiguous: EXIT_USAGE,
   not_anchorable: EXIT_USAGE,
   unanchored: EXIT_USAGE,
+  // Only reachable through the editor's selection path, but the map is
+  // exhaustive over DocOpCode on purpose: a new refusal must be given an exit
+  // status deliberately rather than defaulting to one.
+  empty_selection: EXIT_USAGE,
+  out_of_range: EXIT_USAGE,
   integrity: EXIT_INTEGRITY,
 };
 

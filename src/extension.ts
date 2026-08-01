@@ -31,6 +31,7 @@ import {
   type ReviewFile,
 } from "./multiFileReview";
 import { parse as parseInline } from "./inlineComments/format";
+import { DocOpError, opOpenAt } from "./inlineComments/docOps";
 import { claudePending } from "./claudePendingService";
 import { activateClaudeStatusBar } from "./claudeStatusBar";
 import { CONVENTIONS_REL, CONVENTIONS_TEMPLATE, withConventions } from "./reviewConventions";
@@ -135,6 +136,9 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand("markdownCollab.reportDiagnostics", async () => {
       await invokeReportDiagnostics(context, rootLog.scope("diagnostics"));
+    }),
+    vscode.commands.registerCommand("markdownCollab.commentOnSelection", async () => {
+      await invokeCommentOnSelection(reviewLog);
     }),
     vscode.commands.registerCommand("markdownCollab.installClaudeSkill", async () => {
       await invokeInstallClaudeSkill(skillLog);
@@ -636,6 +640,85 @@ export function deactivate(): void {
 // -----------------------------------------------------------
 // Command implementations
 // -----------------------------------------------------------
+
+/**
+ * Comment on the text editor's selection, with no webview and no mouse
+ * (10x-plan-3 P0.2).
+ *
+ * The format engine could always anchor to any source range; what was missing
+ * was a path to it that didn't start with "open the rendered view and drag".
+ * The write goes through the shared `opOpenAt` verb and a `WorkspaceEdit`, so
+ * it is integrity-checked before it lands and undoable once it has.
+ */
+async function invokeCommentOnSelection(log: Logger): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor || editor.document.languageId !== "markdown") {
+    void vscode.window.showWarningMessage(
+      "Open a Markdown file and select the passage you want to comment on.",
+    );
+    return;
+  }
+  const doc = editor.document;
+  const selection = editor.selection;
+  if (selection.isEmpty) {
+    void vscode.window.showWarningMessage("Select some text first — a comment needs a passage to anchor to.");
+    return;
+  }
+
+  const start = doc.offsetAt(selection.start);
+  const end = doc.offsetAt(selection.end);
+  const quote = doc.getText(selection);
+
+  const body = await vscode.window.showInputBox({
+    prompt: `Comment on “${quote.length > 60 ? `${quote.slice(0, 59)}…` : quote}”`,
+    placeHolder: "What should Claude know about this passage?",
+    ignoreFocusOut: true,
+    validateInput: (v) => (v.trim().length === 0 ? "A comment needs a body." : null),
+  });
+  if (body === undefined) return; // cancelled
+
+  const author = vscode.workspace
+    .getConfiguration("markdownCollab")
+    .get<string>("collab.userName", "") || os.userInfo().username || "anonymous";
+
+  let next: string;
+  let threadId: string;
+  try {
+    const outcome = opOpenAt(doc.getText(), start, end, body.trim(), author);
+    next = outcome.next;
+    threadId = outcome.result.threadId;
+  } catch (e) {
+    const err = e as DocOpError;
+    log.warn("comment on selection refused", { code: err.code, message: err.message });
+    void vscode.window.showWarningMessage(
+      err.code === "not_anchorable"
+        ? `That selection can't hold a comment: ${err.message}`
+        : `Could not add the comment: ${err.message}`,
+    );
+    return;
+  }
+
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(
+    doc.uri,
+    new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length)),
+    next,
+  );
+  if (!(await vscode.workspace.applyEdit(edit))) {
+    log.error("comment on selection: applyEdit was rejected");
+    void vscode.window.showErrorMessage("Could not write the comment into the document.");
+    return;
+  }
+  log.info("thread opened from the editor selection", { file: doc.uri.fsPath, threadId });
+
+  const action = await vscode.window.showInformationMessage(
+    "Comment added to the file.",
+    "Open review view",
+  );
+  if (action === "Open review view") {
+    await vscode.commands.executeCommand("markdownCollab.revealThread", doc.uri, threadId);
+  }
+}
 
 /**
  * Build the diagnostics report, open it, and mirror it into the log so the
