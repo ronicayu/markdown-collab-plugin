@@ -5,6 +5,7 @@ import * as vscode from "vscode";
 import { createLogger, type Logger } from "./logging";
 import { setCliLogger } from "./pr/cli";
 import { collectDiagnostics } from "./diagnosticsHost";
+import { activateEditorPresence } from "./editorPresence";
 import { formatDiagnostics } from "./diagnostics";
 import { ensureAgentsSnippet } from "./agents";
 import { CollabEditorProvider } from "./collab/collabEditorProvider";
@@ -103,6 +104,11 @@ export function activate(context: vscode.ExtensionContext): void {
   terminalTracker.activate(context.subscriptions);
   context.subscriptions.push(terminalTracker);
 
+  // Decorations, folding, and hovers in the raw text editor (10x-plan-3 P0.1):
+  // the markers stop reading as corruption and a thread can be read without
+  // leaving the source view.
+  context.subscriptions.push(activateEditorPresence(rootLog.scope("format")));
+
   // Visible from anywhere while Claude works through the tools — the panels
   // own the per-thread row, this is for when the human has gone back to the
   // editor (10x-plan-2 P0.2).
@@ -187,12 +193,10 @@ export function activate(context: vscode.ExtensionContext): void {
       async (node: ReviewNode | undefined) => {
         if (!node || node.kind !== "comment") return;
         try {
-          const doc = await vscode.workspace.openTextDocument(
-            vscode.Uri.file(node.docPath),
-          );
-          await vscode.window.showTextDocument(doc);
-          // Opening the doc is enough — the inline markers travel with the
-          // file. Scrolling to the exact thread is non-critical, so skip it.
+          // Into the review view, scrolled to the thread. This used to open
+          // the raw source and not even scroll ("opening the doc is enough"),
+          // which left the reader looking at markers.
+          await revealThread(vscode.Uri.file(node.docPath), node.thread.id);
         } catch (e) {
           log.error(`revealComment failed for ${node.docPath}`, e);
         }
@@ -342,6 +346,48 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
   );
 
+  // One way into the review view, used by the command, the explorer menus, and
+  // the source-editor affordances (hover link, unread walk). `opts` carries an
+  // optional scroll target so a caller can land on a specific thread.
+  const openInlineView = async (uri: vscode.Uri, opts?: { line?: number }): Promise<void> => {
+    const doc = await vscode.workspace.openTextDocument(uri);
+    InlineCommentsPanel.reveal(
+      context,
+      doc,
+      {
+        dispatchToClaude: async (payload) => {
+          const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
+          if (!folder) {
+            void vscode.window.showWarningMessage(
+              "Inline comments: send-to-claude needs the file to live inside a workspace folder.",
+            );
+            return;
+          }
+          await dispatchReviewPayload(
+            payload,
+            sendLog,
+            terminalTracker,
+            eventLogs,
+            context.workspaceState,
+            folder,
+          );
+        },
+      },
+      opts,
+    );
+  };
+
+  /**
+   * Open the review view scrolled to one thread. The source line of the
+   * thread's anchor is the scroll target, so this reuses the panel's existing
+   * line-based reveal rather than adding a second addressing scheme.
+   */
+  const revealThread = async (uri: vscode.Uri, threadId: string): Promise<void> => {
+    const doc = await vscode.workspace.openTextDocument(uri);
+    const anchor = parseInline(doc.getText()).anchors.get(threadId);
+    await openInlineView(uri, anchor ? { line: doc.positionAt(anchor.openEnd).line + 1 } : undefined);
+  };
+
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "markdownCollab.openInlineCommentsView",
@@ -356,26 +402,20 @@ export function activate(context: vscode.ExtensionContext): void {
           );
           return;
         }
-        const doc = await vscode.workspace.openTextDocument(uri);
-        InlineCommentsPanel.reveal(context, doc, {
-          dispatchToClaude: async (payload) => {
-            const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
-            if (!folder) {
-              void vscode.window.showWarningMessage(
-                "Inline comments: send-to-claude needs the file to live inside a workspace folder.",
-              );
-              return;
-            }
-            await dispatchReviewPayload(
-              payload,
-              sendLog,
-              terminalTracker,
-              eventLogs,
-              context.workspaceState,
-              folder,
-            );
-          },
-        });
+        await openInlineView(uri);
+      },
+    ),
+    // Invoked from the source editor's hover. Internal: not in the palette.
+    vscode.commands.registerCommand(
+      "markdownCollab.revealThread",
+      async (uriArg?: string | vscode.Uri, threadId?: string) => {
+        if (!uriArg || !threadId) return;
+        const uri = uriArg instanceof vscode.Uri ? uriArg : vscode.Uri.parse(uriArg);
+        try {
+          await revealThread(uri, threadId);
+        } catch (e) {
+          reviewLog.error(`revealThread failed for ${uri.fsPath}`, e);
+        }
       },
     ),
   );
@@ -414,7 +454,7 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     ),
     vscode.commands.registerCommand("markdownCollab.nextUnreadFromClaude", async () => {
-      await invokeNextUnreadFromClaude(reviewView, reviewLog);
+      await invokeNextUnreadFromClaude(reviewView, reviewLog, revealThread);
     }),
   );
 
@@ -1307,6 +1347,7 @@ let unreadWalkCursor: { docPath: string; threadId: string } | null = null;
 async function invokeNextUnreadFromClaude(
   reviewView: ReviewView,
   log: Logger,
+  revealThread: (uri: vscode.Uri, threadId: string) => Promise<void>,
 ): Promise<void> {
   await reviewView.ensureScanned();
   const unread = reviewView.listClaudeUnread();
@@ -1328,20 +1369,11 @@ async function invokeNextUnreadFromClaude(
   unreadWalkCursor = { docPath: next.docPath, threadId: next.thread.id };
 
   try {
-    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(next.docPath));
-    const anchor = parseInline(doc.getText()).anchors.get(next.thread.id);
-    // Select the anchored passage itself (between the markers) so the thread's
-    // subject is highlighted, not the marker comment around it.
-    const selection = anchor
-      ? new vscode.Range(
-          doc.positionAt(anchor.openEnd),
-          doc.positionAt(anchor.closeStart),
-        )
-      : undefined;
-    await vscode.window.showTextDocument(doc, {
-      selection,
-      preview: false,
-    });
+    // The review view, not the source file (10x-plan-3 P0.3). The thing being
+    // walked is a thread, and a thread's home is the panel that can show its
+    // replies and let you answer. This walk used to end on the raw text
+    // editor, i.e. on the marker soup the thread is stored in.
+    await revealThread(vscode.Uri.file(next.docPath), next.thread.id);
   } catch (e) {
     log.error(`next-unread failed for ${next.docPath}`, e);
     void vscode.window.showErrorMessage(

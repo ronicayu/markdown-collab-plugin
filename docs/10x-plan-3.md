@@ -1,5 +1,8 @@
 # Markdown Collab — 10x Plan, Round 3: the UX round
 
+> **Progress:** P0.1 (editor presence) and P0.3 (threads land where threads live)
+> are done — v0.34.74. P0.2, P1, P2, P3 remain.
+
 **Audience:** Opus 5, acting as implementing engineer. Each initiative has motivation, design direction, key files, and acceptance criteria. Work top-to-bottom within a tier; tiers are ordered by leverage. Rounds 1 and 2 are complete — their "What NOT to do" rules all still stand, plus the ones at the end of this file.
 
 **Product north star (unchanged):** one human + Claude collaborating on Markdown, all review state inline in the `.md` file. "Collab" means human ↔ AI, not multi-human.
@@ -39,7 +42,7 @@ The 10x version: **the product becomes legible from the surfaces the user alread
 
 The highest-leverage tier. Markdown authors live in the source view; today the extension is at best absent there and at worst actively ugly.
 
-### P0.1 Markers stop looking like corruption
+### P0.1 Markers stop looking like corruption ✅ *(v0.34.74)*
 
 **Problem.** Anchors and the threads block are exposed plumbing in the text editor. A collaborator without the extension sees noise (acceptable — HTML comments are the format's deal); a collaborator *with* the extension sees the same noise (not acceptable — the extension knows exactly what every marker means and says nothing).
 
@@ -66,7 +69,7 @@ The highest-leverage tier. Markdown authors live in the source view; today the e
 
 **Acceptance:** integration test: select prose in a fixture, invoke command programmatically with a stubbed input box, assert the thread lands with the right quote and the buffer is dirty-safe (WorkspaceEdit, undoable — assert `undo` removes it, or the source-level guard from round 2 if undo won't deliver headless). Unit tests for the selection→prose edge cases (selection touching a marker, inside code, empty).
 
-### P0.3 Threads land where threads live
+### P0.3 Threads land where threads live ✅ *(v0.34.74)*
 
 **Problem.** `invokeNextUnreadFromClaude` opens the raw source; the review tree's `revealComment` opens the raw source and doesn't even scroll ("Opening the doc is enough"). Both walks end on marker soup.
 

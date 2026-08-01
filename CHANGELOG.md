@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.34.74 — 2026-08-01 (trial)
+
+### Added: the extension shows up in the plain text editor (10x-plan-3 P0.1, P0.3)
+
+Open a reviewed `.md` in the ordinary text editor and until now you saw
+`<!--mc:a:x7k2p-->` marker soup and a wall of thread JSON at the bottom. The
+inline format is the product's core virtue — review state travels inside the
+document — and its first impression on a collaborator was "something corrupted
+my file." The extension knew what every one of those bytes meant and said
+nothing.
+
+- **Markers are dimmed, anchored text is tinted.** Open threads get a highlight,
+  resolved ones a quiet dotted underline, a suggestion's original the diff
+  colour, each with an overview-ruler mark so you can see where the review is
+  from the scrollbar. Colours are theme colours, so this reads correctly in
+  light, dark, and high contrast. The markers are dimmed rather than hidden:
+  a user who wants to see exactly what is in their file still can.
+- **The threads region folds.** One collapsed line instead of a screen of JSON,
+  via a folding provider — so your own fold or unfold always wins.
+- **Hovering an anchored passage shows the thread**: how many comments, badges
+  for resolved / new-from-Claude / has-a-suggestion, and the latest comment with
+  its author and age, plus a link into the review view.
+- **One CodeLens at the top of a reviewed file** — "3 comments · 1 unresolved ·
+  1 new from Claude — open review view". A clean file gets nothing; unreviewed
+  documents stay uncluttered.
+
+**Threads now open where threads live.** "Next Unread from Claude" and clicking a
+comment in the Markdown Review tree both used to open the *raw source* — the
+former with a selection, the latter not even scrolling ("opening the doc is
+enough"). Both dropped you on the marker soup the thread is stored in. They now
+open the review view scrolled to the thread.
+
+None of this costs anything on files that aren't reviewed: a substring test
+skips the parse entirely, and decoration passes are debounced per document.
+
 ## 0.34.73 — 2026-07-31 (trial)
 
 ### Fixed: the webview e2e suite on CI

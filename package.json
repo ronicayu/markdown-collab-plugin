@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with Claude Code — inline comments anchored in the file, a live AI co-editor, suggestions you accept or reject, and GitHub/GitLab PR review.",
-  "version": "0.34.73",
+  "version": "0.34.74",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -201,6 +201,10 @@
         "command": "markdownCollab.reportDiagnostics",
         "title": "Markdown Collab: Report a Problem (collect diagnostics)",
         "category": "Markdown Collab"
+      },
+      {
+        "command": "markdownCollab.revealThread",
+        "title": "Reveal Markdown Collab Thread"
       }
     ],
     "configuration": {
@@ -281,6 +285,10 @@
         },
         {
           "command": "markdownCollab.openPrReviewFile",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.revealThread",
           "when": "false"
         }
       ],
