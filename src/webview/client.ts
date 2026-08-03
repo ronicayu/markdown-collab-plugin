@@ -43,6 +43,7 @@ import { locateAnchorInLiveText, locateNthOccurrence } from "../collab/liveAncho
 import { renderedRangeToPmRange } from "../collab/pmPositionMapper";
 import { slugifyHeading } from "../inlineComments/linkParse";
 import { resolveImageSrc, type ImageBaseUris } from "../webviewShared/imageSrc";
+import { parseHtmlImage } from "../webviewShared/htmlImage";
 
 declare function acquireVsCodeApi(): {
   postMessage: (msg: unknown) => void;
@@ -1418,6 +1419,8 @@ function makeDrawioPlugin(): Plugin {
 // nodeView rewrites the src for DISPLAY only — the underlying node keeps the
 // original path, so the markdown round-trips unchanged on save.
 type PmImageNode = { attrs: Record<string, unknown>; type: { name: string } };
+/** Milkdown keeps raw HTML as an opaque node whose `value` attr is the source. */
+type PmHtmlNode = { attrs: Record<string, unknown>; type: { name: string } };
 function makeImageResolvePlugin(): Plugin {
   const apply = (img: HTMLImageElement, node: PmImageNode): void => {
     img.setAttribute("src", resolveImageSrc(String(node.attrs.src ?? ""), imageBaseUris));
@@ -1428,6 +1431,27 @@ function makeImageResolvePlugin(): Plugin {
     if (title) img.setAttribute("title", title);
     else img.removeAttribute("title");
   };
+  // Markdown can't centre an image or set its width, so documents write those
+  // as raw HTML. Milkdown keeps raw HTML as an opaque `html` node and renders
+  // its source as escaped text — so `<img src="x.png" width="400">` showed up
+  // as literal angle brackets. `parseHtmlImage` recognizes the image case only
+  // (strict attribute whitelist, safe schemes, refuses anything with another
+  // element or an `on*` handler); everything else keeps the escaped rendering.
+  const applyHtml = (dom: HTMLElement, node: PmHtmlNode): boolean => {
+    const parsed = parseHtmlImage(String(node.attrs.value ?? ""));
+    if (!parsed) return false;
+    dom.className = parsed.centered ? "mdc-html-image mdc-html-image--center" : "mdc-html-image";
+    const img = document.createElement("img");
+    img.className = "mdc-image";
+    img.setAttribute("src", resolveImageSrc(parsed.src, imageBaseUris));
+    if (parsed.alt !== undefined) img.setAttribute("alt", parsed.alt);
+    if (parsed.title !== undefined) img.setAttribute("title", parsed.title);
+    if (parsed.width !== undefined) img.setAttribute("width", parsed.width);
+    if (parsed.height !== undefined) img.setAttribute("height", parsed.height);
+    dom.replaceChildren(img);
+    return true;
+  };
+
   return new Plugin({
     props: {
       nodeViews: {
@@ -1440,6 +1464,27 @@ function makeImageResolvePlugin(): Plugin {
             update: (next: PmImageNode) => {
               if (next.type.name !== "image") return false;
               apply(dom, next);
+              return true;
+            },
+          };
+        },
+        html: (node: PmHtmlNode) => {
+          const raw = String(node.attrs.value ?? "");
+          // Not an image: fall back to what Milkdown does, escaped source text.
+          const dom = document.createElement("span");
+          dom.setAttribute("contenteditable", "false");
+          if (!applyHtml(dom, node)) {
+            dom.className = "mdc-html-raw";
+            dom.textContent = raw;
+          }
+          return {
+            dom,
+            update: (next: PmHtmlNode) => {
+              if (next.type.name !== "html") return false;
+              if (!applyHtml(dom, next)) {
+                dom.className = "mdc-html-raw";
+                dom.textContent = String(next.attrs.value ?? "");
+              }
               return true;
             },
           };

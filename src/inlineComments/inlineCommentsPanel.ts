@@ -18,6 +18,7 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
+import { imageResourceRootPaths } from "../webviewShared/resourceRoots";
 import { isInsideRoot } from "../pathUtils";
 import { checkClaudeSkill, type SkillStatus } from "../skill";
 import { runDrawioRead } from "../collab/drawioService";
@@ -233,20 +234,14 @@ function imageResourceRoots(
   context: vscode.ExtensionContext,
   doc: vscode.TextDocument,
 ): vscode.Uri[] {
-  const roots: vscode.Uri[] = [
-    vscode.Uri.joinPath(context.extensionUri, "out", "inlineComments"),
-    vscode.Uri.joinPath(context.extensionUri, "node_modules", "mermaid", "dist"),
-  ];
-  const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
-  if (folder) {
-    roots.push(folder.uri);
-  } else {
-    // No workspace folder — at least grant access to the file's own
-    // directory so sibling images resolve.
-    const dir = vscode.Uri.file(path.dirname(doc.uri.fsPath));
-    roots.push(dir);
-  }
-  return roots;
+  return imageResourceRootPaths({
+    docFsPath: doc.uri.fsPath,
+    workspaceFolders: (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath),
+    extensionDirs: [
+      vscode.Uri.joinPath(context.extensionUri, "out", "inlineComments").fsPath,
+      vscode.Uri.joinPath(context.extensionUri, "node_modules", "mermaid", "dist").fsPath,
+    ],
+  }).map((p) => vscode.Uri.file(p));
 }
 
 export class InlineCommentsPanel {

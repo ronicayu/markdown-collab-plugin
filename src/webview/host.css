@@ -766,3 +766,25 @@ button.mdc-banner--jump:hover {
 @media (max-width: 480px) {
   :root { --mdc-sidebar-width: 100vw; }
 }
+
+/* Raw-HTML images (`<img src=… width=…>`, often wrapped in a centering <p>).
+   Milkdown keeps raw HTML as an opaque node; the image nodeView turns the
+   recognized single-image case into a real <img>, and these rules give it the
+   block/centering behaviour the HTML was asking for. */
+.mdc-html-image {
+  display: inline-block;
+  max-width: 100%;
+}
+.mdc-html-image--center {
+  display: block;
+  text-align: center;
+}
+.mdc-html-image img {
+  max-width: 100%;
+  height: auto;
+}
+/* Unrecognized raw HTML keeps its previous look: escaped source text. */
+.mdc-html-raw {
+  font-family: var(--vscode-editor-font-family, monospace);
+  opacity: 0.8;
+}

@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.34.76 — 2026-08-03 (trial)
+
+### Fixed: images that wouldn't load in the review surfaces
+
+Two separate reasons a picture could be missing, both now closed.
+
+**`![](../diagrams/x.png)` could be refused by the host.** A webview may only
+read files under its `localResourceRoots`, and both review surfaces granted the
+workspace folder *or* — for a file opened outside one — only the document's own
+directory. A `../` path climbs straight out of that, so the image was refused.
+Nothing reports this: the `<img src>` is correct, the file exists, and the
+picture is simply absent. Both surfaces now grant every workspace folder plus
+the document's directory and its parent, through one shared computation, and
+the live editor logs the roots it granted.
+
+Never the filesystem root, though: a document sitting at `/proj/x.md` has `/`
+as its parent, and granting that would hand the webview read access to the
+whole disk — and, because nested paths collapse into their ancestors, would
+have quietly replaced every other root in the list. Found by a test written
+against the first version of the fix.
+
+**Raw HTML `<img>` rendered as literal text.** Markdown can't centre an image
+or set its width, so real documents write `<img src="x.png" width="400">` or
+`<p align="center"><img …></p>`. The live editor keeps raw HTML as an opaque
+node and renders its source, so those appeared as angle brackets on screen.
+
+The surfaces escape raw HTML deliberately — the document under review may be
+untrusted — so this narrows that posture rather than dropping it: a blob is
+recognized only when it contains exactly one `<img>` and nothing else but
+whitespace and bare wrappers, only `src`/`alt`/`title`/`width`/`height` survive,
+dimensions must be plain numbers, schemes are limited to http(s)/data-image/
+file/webview, and anything carrying an `on*` handler is refused whole. A
+`<script>`, an `onerror=`, or a `javascript:` src still renders as the escaped
+text it did before.
+
 ## 0.34.75 — 2026-08-01 (trial)
 
 ### Added: Comment on Selection — a thread without the webview (10x-plan-3 P0.2)

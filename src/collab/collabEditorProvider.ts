@@ -28,6 +28,7 @@ import { claudePending, onPendingChanged } from "../claudePendingService";
 import { pendingLabel } from "../inlineComments/claudePending";
 import { classifyLink } from "./linkRouter";
 import { isExternalLinkSafe } from "./urlAllowlist";
+import { imageResourceRootPaths } from "../webviewShared/resourceRoots";
 import type { Logger } from "../logging";
 
 const VIEW_TYPE = "markdownCollab.collabEditor";
@@ -243,13 +244,19 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     panel: vscode.WebviewPanel,
     _token: vscode.CancellationToken,
   ): Promise<void> {
-    const webviewRoot = vscode.Uri.joinPath(this.extensionUri, "out", "webview");
-    // Grant the webview read access to the workspace (or the file's own
-    // directory when loose) so local images referenced from the markdown —
-    // including `../sibling/x.png` paths — can load.
-    const imageRoots: vscode.Uri[] = [webviewRoot];
-    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
-    imageRoots.push(folder ? folder.uri : vscode.Uri.file(path.dirname(document.uri.fsPath)));
+    // Grant every workspace folder plus the document's directory and its
+    // parent, so `![](../diagrams/x.png)` loads whether or not the file is in
+    // a workspace. A path outside these roots is refused by the host with no
+    // visible error — the picture is simply missing — so the roots are logged.
+    const imageRoots = imageResourceRootPaths({
+      docFsPath: document.uri.fsPath,
+      workspaceFolders: (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath),
+      extensionDirs: [vscode.Uri.joinPath(this.extensionUri, "out", "webview").fsPath],
+    }).map((p) => vscode.Uri.file(p));
+    this.log.trace("live editor image roots", {
+      file: document.uri.fsPath,
+      roots: imageRoots.map((u) => u.fsPath),
+    });
     panel.webview.options = {
       enableScripts: true,
       localResourceRoots: imageRoots,
