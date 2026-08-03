@@ -28,6 +28,7 @@ import { claudePending, onPendingChanged } from "../claudePendingService";
 import { pendingLabel } from "../inlineComments/claudePending";
 import { classifyLink } from "./linkRouter";
 import { isExternalLinkSafe } from "./urlAllowlist";
+import { folderForDocument } from "../workspaceFolder";
 import { imageResourceRootPaths } from "../webviewShared/resourceRoots";
 import type { Logger } from "../logging";
 
@@ -603,9 +604,11 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     msg: AddCommentMessage,
     writeDocument: (next: string, opts?: { save?: boolean }) => Promise<boolean>,
   ): Promise<{ type: "add-comment-result"; ok: boolean; error?: string }> {
-    if (!vscode.workspace.getWorkspaceFolder(document.uri)) {
-      return { type: "add-comment-result", ok: false, error: "File is outside any workspace folder." };
-    }
+    // No workspace-folder requirement. Comments live inside the .md itself —
+    // there is no sidecar to place and no relative path to compute — and the
+    // write goes out as a WorkspaceEdit against this document, which works for
+    // any open file. The check here was left over from the sidecar era and
+    // refused every comment on a file opened on its own.
     const anchor: CollabCommentAnchor = {
       text: msg.anchor.text,
       contextBefore: msg.anchor.contextBefore,
@@ -816,13 +819,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         // The existing copyClaudePrompt command operates on the active
         // editor; ours isn't a TextEditor so we can't rely on that path.
         // Mimic its payload directly.
-        const folder = vscode.workspace.getWorkspaceFolder(document.uri);
-        if (!folder) {
-          void vscode.window.showWarningMessage(
-            "Markdown file is outside any workspace folder.",
-          );
-          return;
-        }
+        const folder = folderForDocument(document.uri);
         const rel = path.relative(folder.uri.fsPath, document.uri.fsPath);
         const prompt = `Use the vs-markdown-collab skill to address the unresolved review comments on ${rel}.`;
         await vscode.env.clipboard.writeText(prompt);

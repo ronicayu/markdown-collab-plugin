@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.34.77 — 2026-08-03 (trial)
+
+### Fixed: a Markdown file opened on its own is now fully usable
+
+Adding a comment in the live editor failed with *"Could not save comment: File
+is outside any workspace folder."* The check was left over from the era when
+review state lived in a sidecar file that had to be placed somewhere. It
+doesn't any more — comments live inside the `.md`, and the write goes out as a
+`WorkspaceEdit` against the open document, which works for any file. Nothing
+about adding a comment needs a workspace folder, and the guard was refusing
+every comment on a file opened on its own.
+
+The same assumption had been copied across most of the extension, so the next
+click would have hit it again. Send to Claude, Copy Prompt, Ask Claude to
+Review (single file and multi-select), and the per-thread send all refused a
+loose file outright. They now resolve a base directory instead of demanding
+one: the real workspace folder when there is a workspace, the file's own
+directory when there isn't. That base is only ever used for three things — the
+path Claude is given, where review conventions are looked for, and where the
+event log goes — and a file's own directory answers all three.
+
+Guard tests now fail if any surface starts gating on a workspace folder again.
+
+If you hit the image problem in 0.34.76, this is very likely the same root
+cause wearing a different hat: a file opened outside a workspace was the case
+where `../diagrams/x.png` fell outside the granted resource roots.
+
 ## 0.34.76 — 2026-08-03 (trial)
 
 ### Fixed: images that wouldn't load in the review surfaces

@@ -4,6 +4,7 @@ import { repairIntegrity } from "./inlineComments/integrity";
 import * as vscode from "vscode";
 import { createLogger, type Logger } from "./logging";
 import { setCliLogger } from "./pr/cli";
+import { folderForDocument } from "./workspaceFolder";
 import { collectDiagnostics } from "./diagnosticsHost";
 import { activateEditorPresence } from "./editorPresence";
 import { formatDiagnostics } from "./diagnostics";
@@ -259,13 +260,7 @@ export function activate(context: vscode.ExtensionContext): void {
           );
           return;
         }
-        const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
-        if (!folder) {
-          void vscode.window.showWarningMessage(
-            "Markdown file is outside any workspace folder.",
-          );
-          return;
-        }
+        const folder = folderForDocument(doc.uri);
         const payload = buildSingleThreadPayload(doc, threadId, {
           suggestMode: isSuggestMode(),
         });
@@ -360,13 +355,7 @@ export function activate(context: vscode.ExtensionContext): void {
       doc,
       {
         dispatchToClaude: async (payload) => {
-          const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
-          if (!folder) {
-            void vscode.window.showWarningMessage(
-              "Inline comments: send-to-claude needs the file to live inside a workspace folder.",
-            );
-            return;
-          }
+          const folder = folderForDocument(doc.uri);
           await dispatchReviewPayload(
             payload,
             sendLog,
@@ -821,13 +810,7 @@ async function invokeCopyClaudePrompt(): Promise<void> {
     return;
   }
   const doc = editor.document;
-  const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
-  if (!folder) {
-    void vscode.window.showWarningMessage(
-      "Markdown file is outside any workspace folder.",
-    );
-    return;
-  }
+  const folder = folderForDocument(doc.uri);
   const rel = path.relative(folder.uri.fsPath, doc.uri.fsPath);
   const prompt = `Use the vs-markdown-collab skill to address the unresolved review comments on ${rel}.`;
   await vscode.env.clipboard.writeText(prompt);
@@ -860,13 +843,7 @@ async function invokeSendAllToClaude(
   eventLogs: Map<string, EventLog>,
   workspaceState: vscode.Memento,
 ): Promise<void> {
-  const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
-  if (!folder) {
-    void vscode.window.showWarningMessage(
-      "Markdown file is outside any workspace folder.",
-    );
-    return;
-  }
+  const folder = folderForDocument(doc.uri);
   // Comments live inline in the `.md` itself (in the `<!--mc:threads:begin-->`
   // block). Build the payload from the open inline threads.
   const inlinePayload = buildInlinePayload(doc, { suggestMode: isSuggestMode() });
@@ -1345,18 +1322,12 @@ async function invokeAskClaudeToReviewMulti(
   workspaceState: vscode.Memento,
   globalState: vscode.Memento,
 ): Promise<void> {
-  const folder = vscode.workspace.getWorkspaceFolder(uris[0]);
-  if (!folder) {
-    void vscode.window.showWarningMessage(
-      "Ask Claude to Review: the files must live inside a workspace folder.",
-    );
-    return;
-  }
+  const folder = folderForDocument(uris[0]);
   // The payload's paths are relative to one folder and the event log lives in
   // one folder, so a selection spanning several is reviewed one folder at a
   // time rather than silently mixing incomparable relative paths.
   const inFolder = uris.filter(
-    (u) => vscode.workspace.getWorkspaceFolder(u)?.uri.fsPath === folder.uri.fsPath,
+    (u) => folderForDocument(u).uri.fsPath === folder.uri.fsPath,
   );
   const skipped = uris.length - inFolder.length;
 
@@ -1481,13 +1452,7 @@ async function invokeAskClaudeToReview(
   /** Review only what changed since the last recorded pass (10x-plan-2 P1.1). */
   delta = false,
 ): Promise<void> {
-  const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
-  if (!folder) {
-    void vscode.window.showWarningMessage(
-      "Ask Claude to Review: the file must live inside a workspace folder.",
-    );
-    return;
-  }
+  const folder = folderForDocument(doc.uri);
 
   // Soft size confirm — large docs may take a while; let the user back out.
   const byteSize = Buffer.byteLength(doc.getText(), "utf8");
@@ -1507,12 +1472,6 @@ async function invokeAskClaudeToReview(
   const trimmedFocus = focus === "" ? undefined : focus;
 
   const result = buildReviewRequestPayload(doc, trimmedFocus, { delta });
-  if (result.kind === "no-workspace") {
-    void vscode.window.showWarningMessage(
-      "Ask Claude to Review: the file must live inside a workspace folder.",
-    );
-    return;
-  }
   if (result.kind === "unchanged") {
     // The whole point of a delta pass is not re-reading an unchanged file.
     void vscode.window.showInformationMessage(

@@ -34,12 +34,18 @@ function setFolder(absPath: string): void {
 }
 
 describe("buildReviewRequestPayload", () => {
-  it("returns no-workspace when the doc is outside any folder", () => {
+  it("reviews a file that is in no workspace folder, relative to its own directory", () => {
+    // A .md opened on its own used to be refused outright. Nothing about a
+    // review needs a workspace: the folder is only the base the path is made
+    // relative to, and the file's own directory serves for that.
+    (vscode.workspace as unknown as Record<string, unknown>).getWorkspaceFolder = () => undefined;
     const result = buildReviewRequestPayload(
       stubDoc(path.join(tmpDir, "stray.md")),
       undefined,
     );
-    expect(result.kind).toBe("no-workspace");
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.payload.file).toBe("stray.md");
   });
 
   it("emits a payload naming the rel path with no Focus: line when focus is undefined", () => {

@@ -1,5 +1,6 @@
 import * as path from "path";
 import * as vscode from "vscode";
+import { folderForDocument } from "./workspaceFolder";
 import type { Comment } from "./types";
 import { parse as parseInline } from "./inlineComments/format";
 import { deltaScope } from "./inlineComments/deltaReview";
@@ -74,11 +75,11 @@ export function buildReviewRequestPayload(
   opts: { delta?: boolean } = {},
 ):
   | { kind: "ok"; payload: ReviewPayload; fullPass: boolean }
-  | { kind: "no-workspace" }
   /** Delta pass on a file that hasn't moved since the last one. */
   | { kind: "unchanged" } {
-  const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
-  if (!folder) return { kind: "no-workspace" };
+  // A loose .md still gets a review: the folder is only the base its path is
+  // made relative to, and its own directory serves for that.
+  const folder = folderForDocument(doc.uri);
   const rel = path.relative(folder.uri.fsPath, doc.uri.fsPath);
   const trimmedFocus = focus?.trim();
 

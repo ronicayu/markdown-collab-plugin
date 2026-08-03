@@ -10,6 +10,7 @@
 
 import * as path from "path";
 import * as vscode from "vscode";
+import { folderForDocument } from "../workspaceFolder";
 import type { ReviewPayload } from "../sendToClaude";
 import type { Comment } from "../types";
 import { parse, type InlineComment, type InlineThread } from "./format";
@@ -28,7 +29,7 @@ export function buildSingleThreadPayload(
   threadId: string,
   opts?: { suggestMode?: boolean },
 ): InlineReviewPayload | null {
-  const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
+  const folder = folderForDocument(doc.uri);
   if (!folder) return null;
   const parsed = parse(doc.getText());
   const thread = parsed.threads.find((t) => t.id === threadId && t.status === "open");
@@ -62,7 +63,7 @@ export function buildInlinePayload(
   doc: vscode.TextDocument,
   opts?: { suggestMode?: boolean },
 ): InlineReviewPayload | null {
-  const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
+  const folder = folderForDocument(doc.uri);
   if (!folder) return null;
   const parsed = parse(doc.getText());
   const open = parsed.threads.filter((t) => t.status === "open");
