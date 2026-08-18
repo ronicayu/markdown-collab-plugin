@@ -7,7 +7,7 @@
 import { expect, test } from "@playwright/test";
 import { addThread, appendReply, replaceThread } from "../../inlineComments/format";
 import { bootInlineView, bootLiveEditor } from "./harness";
-import { liveInit, liveSidecar } from "./fixtures";
+import { liveInit } from "./fixtures";
 
 const BODY = "Two problems:\n\n- the retry count is wrong\n- and `maxDelay` is unused\n\n```js\nconst x = 1;\n```\n";
 
