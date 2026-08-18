@@ -25,6 +25,7 @@ import {
 } from "../../webviewShared/threadListState";
 import { buildComposer, buildCommentCard, buildSuggestionCard, type CardAction } from "../../webviewShared/commentUi";
 import { resolveImageSrc, type ImageBaseUris } from "../../webviewShared/imageSrc";
+import { LINE_ATTR, LINE_ENV_KEY, displayLine } from "../../webviewShared/lineNumbers";
 
 declare function acquireVsCodeApi(): {
   postMessage: (msg: unknown) => void;
@@ -80,6 +81,8 @@ interface SerializedState {
   prose: string;
   threads: ThreadState[];
   suggestions: SuggestionState[];
+  /** Source line per prose line. Present only when line numbers are on. */
+  lineMap?: number[];
 }
 
 interface InitMsg {
@@ -615,7 +618,12 @@ function renderPreview(state: SerializedState): void {
   // wraps every text/code token in `<span data-mc-src="START.END">…`,
   // where START/END are prose-offset byte ranges. We then walk those
   // spans to overlay anchor highlights — no fuzzy text matching.
-  dom.preview.innerHTML = md.render(state.prose);
+  // The env flag is what switches the per-block line attribute on, so the
+  // markup carries no line data at all unless the numbers are being shown.
+  const showLines = Array.isArray(state.lineMap);
+  dom.preview.innerHTML = md.render(state.prose, showLines ? { [LINE_ENV_KEY]: true } : {});
+  dom.preview.classList.toggle("with-line-numbers", showLines);
+  if (showLines) paintLineNumbers(state.lineMap!);
   applyAnchorHighlights(state);
   void runMermaid();
   processDrawioPlaceholders();
@@ -628,6 +636,22 @@ function renderPreview(state: SerializedState): void {
     findRun();
   } else {
     updateFindCount();
+  }
+}
+
+/**
+ * Turn each block's prose line into the source line the user would find it on,
+ * and hand it to CSS as `data-mc-srcline`. A block whose line the map doesn't
+ * cover gets no number rather than a guess — the map is built from the same
+ * document revision the prose came from, but a push can race a keystroke, and
+ * a confidently wrong line number is worse than a missing one.
+ */
+function paintLineNumbers(lineMap: number[]): void {
+  for (const el of Array.from(dom.preview.querySelectorAll<HTMLElement>(`[${LINE_ATTR}]`))) {
+    const proseLine = Number(el.getAttribute(LINE_ATTR));
+    const src = Number.isFinite(proseLine) ? displayLine(lineMap, proseLine) : null;
+    if (src === null) el.removeAttribute("data-mc-srcline");
+    else el.setAttribute("data-mc-srcline", String(src));
   }
 }
 

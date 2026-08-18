@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.34.78 — 2026-08-18 (trial)
+
+### Added: `markdownCollab.showLineNumbers`
+
+Off by default. Switch it on and both rendered surfaces — the inline comments
+view and the live editor — show the source line beside each top-level block.
+
+**They are lines in the `.md` file, not lines of what's on screen.** Both
+surfaces render *prose*: the document with anchor markers, the stored threads
+block, and frontmatter stripped out. Counting lines in that puts every number
+off by the height of the frontmatter, which is exactly the kind of number that
+looks authoritative and sends you to the wrong place in your own file. The host
+maps prose lines back through the same offset table the anchoring uses, so what
+you see matches "Go to Line".
+
+Details worth knowing:
+
+- Only top-level blocks are numbered. Numbering each list item would put a
+  cluster of numbers beside every list instead of a tidy column.
+- The inline view carries no line markup at all when the option is off — the
+  attribute is gated per render, not per renderer, so turning the setting on
+  and off takes effect immediately without re-rendering anything for people who
+  leave it off.
+- In the live editor the numbers are ProseMirror widget decorations, never
+  document content, so they cannot reach the markdown that gets saved. A test
+  types into the editor and asserts the serialized text is unchanged.
+- The live editor has no source positions of its own, so blocks are matched to
+  CommonMark's top-level block sequence by position. If the two ever disagree
+  the gutter switches off for that render rather than showing a column that is
+  quietly off by one.
+
 ## 0.34.77 — 2026-08-03 (trial)
 
 ### Fixed: a Markdown file opened on its own is now fully usable

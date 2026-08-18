@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with Claude Code — inline comments anchored in the file, a live AI co-editor, suggestions you accept or reject, and GitHub/GitLab PR review.",
-  "version": "0.34.77",
+  "version": "0.34.78",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -260,6 +260,11 @@
           "type": "boolean",
           "default": false,
           "description": "When on, 'Send to Claude' asks Claude to propose its edits as suggestions (accept/reject) instead of applying them directly. Remembered per workspace."
+        },
+        "markdownCollab.showLineNumbers": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show the source line number beside each block in the inline comments view and the live editor. Numbers are lines in the .md file itself, so frontmatter and the stored threads block are accounted for."
         }
       }
     },

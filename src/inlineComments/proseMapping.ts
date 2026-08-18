@@ -130,3 +130,60 @@ export function findProseIndex(proseToSrc: number[], srcOffset: number): number 
   }
   return found;
 }
+
+/**
+ * Source line number (1-based) for each line of the prose, so a surface that
+ * renders the prose can label a block with the line it occupies in the actual
+ * file (10x-plan-3 follow-on: "show line numbers").
+ *
+ * The two line spaces genuinely differ. Frontmatter and the threads region are
+ * whole blocks the prose never sees, so a naive count is wrong by however many
+ * lines those take — which for a document with frontmatter is every number on
+ * screen. Anchor markers are inline and don't add lines, but they do shift
+ * offsets, so the mapping has to go through the offset table rather than
+ * counting newlines in the prose.
+ *
+ * Index is the 0-based prose line; the value is the 1-based source line, which
+ * is what an editor shows and what a person would type into a "go to line" box.
+ */
+export function sourceLineForProseLine(parsed: ParsedDocument): number[] {
+  const { prose, proseStartToSource } = mapProseToSource(parsed);
+  const srcLineStarts = computeLineStarts(parsed.source);
+
+  const out: number[] = [];
+  let proseOffset = 0;
+  // `split` rather than an index walk: an empty prose still has one line, and
+  // that line still has a source line worth reporting.
+  for (const line of prose.split("\n")) {
+    const srcOffset = proseStartToSource(proseOffset);
+    out.push(srcOffset === null ? 1 : lineOf(srcLineStarts, srcOffset));
+    proseOffset += line.length + 1;
+  }
+  return out;
+}
+
+/** Offsets at which each line of `text` begins. */
+function computeLineStarts(text: string): number[] {
+  const starts = [0];
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) starts.push(i + 1);
+  }
+  return starts;
+}
+
+/** 1-based line containing `offset`. Binary search over line starts. */
+function lineOf(lineStarts: number[], offset: number): number {
+  let lo = 0;
+  let hi = lineStarts.length - 1;
+  let found = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (lineStarts[mid] <= offset) {
+      found = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return found + 1;
+}

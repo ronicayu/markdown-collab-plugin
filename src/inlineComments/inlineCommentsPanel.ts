@@ -322,7 +322,12 @@ export class InlineCommentsPanel {
       // Keep the suggest-mode toggle in sync when the setting is changed
       // elsewhere (command palette, Settings UI).
       vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration("markdownCollab.proposeEditsAsSuggestions")) void this.pushState();
+        if (
+          e.affectsConfiguration("markdownCollab.proposeEditsAsSuggestions") ||
+          e.affectsConfiguration("markdownCollab.showLineNumbers")
+        ) {
+          void this.pushState();
+        }
       }),
       panel,
     );
@@ -716,7 +721,7 @@ ${inlineCommentsAppBody()}
   }
 
   private async pushInit(): Promise<void> {
-    const state = serialize(parse(this.doc.getText()));
+    const state = serialize(parse(this.doc.getText()), { lineNumbers: readLineNumbers() });
     const docDirUri = vscode.Uri.file(path.dirname(this.doc.uri.fsPath));
     const folder = vscode.workspace.getWorkspaceFolder(this.doc.uri);
     const msg: InitMessage = {
@@ -750,7 +755,7 @@ ${inlineCommentsAppBody()}
   }
 
   private async pushState(): Promise<void> {
-    const state = serialize(parse(this.doc.getText()));
+    const state = serialize(parse(this.doc.getText()), { lineNumbers: readLineNumbers() });
     const msg: UpdateMessage = {
       type: "update",
       state,
@@ -849,6 +854,13 @@ function readPlantumlConfig(): { serverUrl: string; format: "svg" | "png" } {
     serverUrl: cfg.get<string>("plantuml.serverUrl") ?? "https://www.plantuml.com/plantuml",
     format: cfg.get<"svg" | "png">("plantuml.format") ?? "svg",
   };
+}
+
+/** Whether the preview should label blocks with their source line. */
+function readLineNumbers(): boolean {
+  return vscode.workspace
+    .getConfiguration("markdownCollab")
+    .get<boolean>("showLineNumbers", false);
 }
 
 function readSuggestMode(): boolean {

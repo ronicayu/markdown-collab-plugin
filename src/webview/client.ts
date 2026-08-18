@@ -37,6 +37,7 @@ import "./host.css";
 import { Plugin, PluginKey, TextSelection } from "prosemirror-state";
 import { CellSelection } from "@milkdown/prose/tables";
 import { Decoration, DecorationSet } from "prosemirror-view";
+import type { Node as PmDocNode } from "prosemirror-model";
 import { buildCommentCard, buildComposer, buildSuggestionCard, type ComposerHandle } from "../webviewShared/commentUi";
 import { sidebarCountLabel, threadSignature } from "../webviewShared/threadListState";
 import { locateAnchorInLiveText, locateNthOccurrence } from "../collab/liveAnchorLocator";
@@ -44,6 +45,7 @@ import { renderedRangeToPmRange } from "../collab/pmPositionMapper";
 import { slugifyHeading } from "../inlineComments/linkParse";
 import { resolveImageSrc, type ImageBaseUris } from "../webviewShared/imageSrc";
 import { parseHtmlImage } from "../webviewShared/htmlImage";
+import { displayLine, topLevelBlockLines } from "../webviewShared/lineNumbers";
 
 declare function acquireVsCodeApi(): {
   postMessage: (msg: unknown) => void;
@@ -89,6 +91,14 @@ interface InitMessage {
   pendingLabel?: string;
   frontmatter?: string;
   imageBaseUris?: ImageBaseUris;
+  /** Source line per prose line; present only when line numbers are on. */
+  lineMap?: number[];
+}
+
+/** Pushed when the line-number setting or the document's line map changes. */
+interface LineMapMessage {
+  type: "line-map";
+  lineMap?: number[];
 }
 
 interface ChangeSummary {
@@ -173,6 +183,7 @@ type IncomingMessage =
   | ToggleResolveResultMessage
   | DeleteCommentResultMessage
   | OpenLinkResultMessage
+  | LineMapMessage
   | DrawioReadResultMessage;
 
 const vscode = acquireVsCodeApi();
@@ -327,11 +338,19 @@ function flashClaudeEdit(changedText: string): boolean {
 // Webview URIs for resolving relative image src; set from the init payload.
 let imageBaseUris: ImageBaseUris = { docDir: "", workspaceFolder: null };
 
+// Source line per prose line, when the user has line numbers on. Null switches
+// the gutter off entirely.
+let lineMap: number[] | null = null;
+
 async function init(msg: InitMessage): Promise<void> {
   userName = msg.user.name || "user";
   if (msg.imageBaseUris) imageBaseUris = msg.imageBaseUris;
+  lineMap = Array.isArray(msg.lineMap) ? msg.lineMap : null;
 
   buildLayout();
+  // After buildLayout: the class goes on the editor root, which does not exist
+  // until the layout is built.
+  applyLineNumberLayout();
   sidebarState.comments = msg.comments ?? [];
   sidebarState.suggestions = msg.suggestions ?? [];
   sidebarState.pending = new Set(msg.pendingThreadIds ?? []);
@@ -351,6 +370,7 @@ async function init(msg: InitMessage): Promise<void> {
           makeDrawioPlugin(),
           makeImageResolvePlugin(),
           makeAnchorHighlightPlugin(),
+          makeLineNumberPlugin(),
           makeClaudeEditPlugin(),
         ]),
       );
@@ -907,6 +927,81 @@ function armDelete(btn: HTMLButtonElement, confirm: () => void): void {
 // ---------------------------------------------------------------------------
 // Bidirectional navigation: anchor highlights in editor + jump from sidebar
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Source line numbers in the live editor
+// ---------------------------------------------------------------------------
+//
+// ProseMirror documents carry no source positions, so the line a block came
+// from has to be recovered. CommonMark's top-level block sequence and the
+// editor's top-level node sequence are the same list, so the Nth block line
+// belongs to the Nth node — and when the two counts disagree (raw HTML, an
+// unusual construct, a doc mid-edit) the gutter switches off for that render
+// instead of showing a column that is silently off by one from some point on.
+//
+// The numbers are painted as widget decorations rather than DOM the editor
+// owns, so they can never end up in the serialized markdown.
+const lineNumberPluginKey = new PluginKey("mdc-line-numbers");
+
+function makeLineNumberPlugin(): Plugin {
+  const build = (doc: PmDocNode): DecorationSet => {
+    if (!lineMap) return DecorationSet.empty;
+    const blockLines = topLevelBlockLines(cachedMarkdown);
+    const decos: Decoration[] = [];
+    let index = 0;
+    let mismatched = false;
+    doc.forEach((_node: PmDocNode, offset: number) => {
+      const proseLine = blockLines[index++];
+      if (proseLine === undefined) {
+        mismatched = true;
+        return;
+      }
+      const src = displayLine(lineMap!, proseLine);
+      if (src === null) return;
+      decos.push(
+        Decoration.widget(offset + 1, () => {
+          const el = document.createElement("span");
+          el.className = "mdc-line-number";
+          el.textContent = String(src);
+          el.setAttribute("contenteditable", "false");
+          return el;
+        }, { side: -1, key: `ln-${offset}-${src}` }),
+      );
+    });
+    // Fewer blocks than nodes means the alignment is already wrong somewhere.
+    if (mismatched || blockLines.length !== doc.childCount) return DecorationSet.empty;
+    return DecorationSet.create(doc, decos);
+  };
+
+  return new Plugin({
+    key: lineNumberPluginKey,
+    state: {
+      init: (_config, state) => build(state.doc),
+      apply: (tr, old: DecorationSet, _oldState, newState) =>
+        tr.docChanged || tr.getMeta(lineNumberPluginKey) ? build(newState.doc) : old,
+    },
+    props: {
+      decorations(state) {
+        return lineNumberPluginKey.getState(state) as DecorationSet | undefined;
+      },
+    },
+  });
+}
+
+/** The gutter width is a layout concern, so it lives on the root, not the plugin. */
+function applyLineNumberLayout(): void {
+  document
+    .querySelector(".mdc-editor-root")
+    ?.classList.toggle("with-line-numbers", lineMap !== null);
+}
+
+/** Repaint the gutter after the setting or the map changes. */
+function refreshLineNumbers(): void {
+  editor?.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.setMeta(lineNumberPluginKey, "refresh"));
+  });
+}
 
 function makeAnchorHighlightPlugin(): Plugin {
   return new Plugin({
@@ -2075,6 +2170,10 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     }
   } else if (msg.type === "frontmatter") {
     renderFrontmatter(msg.frontmatter);
+  } else if (msg.type === "line-map") {
+    lineMap = Array.isArray(msg.lineMap) ? msg.lineMap : null;
+  applyLineNumberLayout();
+    refreshLineNumbers();
   } else if (msg.type === "sidecar-changed") {
     sidebarState.comments = msg.comments ?? [];
     sidebarState.suggestions = msg.suggestions ?? [];

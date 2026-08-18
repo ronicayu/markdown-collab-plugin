@@ -13,6 +13,7 @@
 
 import MarkdownIt from "markdown-it";
 import { installSourceOffsetPlugin } from "../inlineComments/webview/renderWithOffsets";
+import { installLineNumberPlugin } from "./lineNumbers";
 import { installPlantumlPlugin, type PlantumlOptions } from "../plantumlPlugin";
 
 /** markdown-it options both surfaces use. Kept explicit — these are a contract. */
@@ -33,6 +34,10 @@ export const MARKDOWN_OPTIONS = {
 export function createMarkdownRenderer(): MarkdownIt {
   const md = new MarkdownIt({ ...MARKDOWN_OPTIONS });
   installSourceOffsetPlugin(md);
+  // After the offset plugin: this one only sets an attribute on block tokens,
+  // and both surfaces want it available whether or not the user has line
+  // numbers switched on (the client decides whether to paint them).
+  installLineNumberPlugin(md);
   return md;
 }
 

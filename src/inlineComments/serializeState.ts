@@ -7,7 +7,7 @@
 // would have pushed, instead of a hand-written approximation that drifts.
 
 import type { InlineComment, ParsedDocument } from "./format";
-import { mapProseToSource } from "./proseMapping";
+import { mapProseToSource, sourceLineForProseLine } from "./proseMapping";
 import { staleThreadIds } from "./staleness";
 
 /** Serializable view of `ParsedDocument` for the webview. */
@@ -30,6 +30,12 @@ export interface SerializedState {
     /** The anchored text changed after this thread's last comment (P1.3). */
     stale: boolean;
   }>;
+  /**
+   * Source line (1-based) for each prose line, so the preview can label blocks
+   * with lines in the actual file. Only built when the user asked for line
+   * numbers — it is one number per line of the document.
+   */
+  lineMap?: number[];
   /** Pending suggestions (suggest mode), anchored into the same prose space. */
   suggestions: Array<{
     anchorId: string;
@@ -44,10 +50,16 @@ export interface SerializedState {
   }>;
 }
 
-export function serialize(parsed: ParsedDocument): SerializedState {
+export function serialize(
+  parsed: ParsedDocument,
+  opts: { lineNumbers?: boolean } = {},
+): SerializedState {
   const { prose, anchorsInProse } = mapProseToSource(parsed);
   const stale = new Set(staleThreadIds(parsed));
   return {
+    // Built only on request: it is one entry per line of the document, and
+    // every push would otherwise carry it whether or not anything shows it.
+    lineMap: opts.lineNumbers ? sourceLineForProseLine(parsed) : undefined,
     prose,
     threads: parsed.threads.map((t) => {
       const a = anchorsInProse.get(t.id);

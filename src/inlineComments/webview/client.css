@@ -533,3 +533,31 @@ button.btn-link.danger { color: #e08080; }
   background: color-mix(in srgb, var(--vscode-charts-yellow, #d7ba7d) 25%, transparent);
   color: var(--vscode-foreground);
 }
+
+/* --- Source line numbers (markdownCollab.showLineNumbers) -----------------
+   Numbers are lines in the .md file, not in the rendered prose: the host maps
+   them through the offset table so frontmatter and the stored threads block
+   are accounted for. Painted with ::before so no element joins the DOM and
+   nothing about selection, anchoring, or copy-paste changes. */
+#preview.with-line-numbers {
+  padding-left: 3.5rem;
+}
+#preview.with-line-numbers > [data-mc-srcline] {
+  position: relative;
+}
+#preview.with-line-numbers > [data-mc-srcline]::before {
+  content: attr(data-mc-srcline);
+  position: absolute;
+  left: -3.5rem;
+  width: 2.75rem;
+  text-align: right;
+  /* Line up with the first line of the block rather than its box, which for a
+     heading is several pixels taller than the text. */
+  line-height: inherit;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.85em;
+  color: var(--vscode-editorLineNumber-foreground, #858585);
+  opacity: 0.75;
+  user-select: none;
+  pointer-events: none;
+}

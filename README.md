@@ -297,6 +297,7 @@ Copies the prompt to the clipboard. Paste into Claude however you like.
 
 | Setting | Default | Purpose |
 |---|---|---|
+| `markdownCollab.showLineNumbers` | `false` | Show the source line number beside each block in the inline comments view and the live editor. Numbers are lines in the `.md` file itself — frontmatter and the stored threads block are accounted for, so they match what you'd type into "Go to Line". |
 | `markdownCollab.sendMode` | `ask` | One of `ask`, `terminal`, `mcp`, `channel`, `mcp-channel`, `clipboard`. See [Choosing a send mode](#choosing-a-send-mode). |
 
 ## Storage layout

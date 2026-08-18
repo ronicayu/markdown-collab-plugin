@@ -788,3 +788,27 @@ button.mdc-banner--jump:hover {
   font-family: var(--vscode-editor-font-family, monospace);
   opacity: 0.8;
 }
+
+/* Source line numbers in the live editor (markdownCollab.showLineNumbers).
+   Widget decorations, not document content, so they can never reach the
+   serialized markdown. The editor gets a left gutter to sit them in. */
+.mdc-editor-root .milkdown .ProseMirror {
+  --mdc-line-gutter: 0px;
+  padding-left: var(--mdc-line-gutter);
+}
+.mdc-editor-root.with-line-numbers .milkdown .ProseMirror {
+  --mdc-line-gutter: 3.5rem;
+}
+.mdc-line-number {
+  position: absolute;
+  left: 0;
+  width: 2.75rem;
+  text-align: right;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.85em;
+  line-height: inherit;
+  color: var(--vscode-editorLineNumber-foreground, #858585);
+  opacity: 0.75;
+  user-select: none;
+  pointer-events: none;
+}

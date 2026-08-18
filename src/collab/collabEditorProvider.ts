@@ -21,6 +21,7 @@ import {
 } from "./inlineBridge";
 import { acceptSuggestion, rejectSuggestion, parse as parseInline } from "../inlineComments/format";
 import { proseRefreshMessage, summarizeChange } from "./changeSummary";
+import { sourceLineForProseLine } from "../inlineComments/proseMapping";
 import { runDrawioRead, type DrawioReadResult } from "./drawioService";
 
 export type { DrawioReadResult };
@@ -48,6 +49,14 @@ interface InitPayload {
   frontmatter: string;
   /** Webview URIs for resolving relative image src in the markdown. */
   imageBaseUris: { docDir: string; workspaceFolder: string | null };
+  /** Source line per prose line; absent when line numbers are switched off. */
+  lineMap?: number[];
+}
+
+/** Pushed when the line-number setting changes, or the document did. */
+interface LineMapPayload {
+  type: "line-map";
+  lineMap?: number[];
 }
 
 /** Pushed when the frontmatter changes on disk (external edit) without the body changing. */
@@ -414,6 +423,19 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       pushComments();
     };
 
+    /** The prose→source line table, or undefined when the setting is off. */
+    const lineMapFor = (source: string): number[] | undefined =>
+      vscode.workspace.getConfiguration("markdownCollab").get<boolean>("showLineNumbers", false)
+        ? sourceLineForProseLine(parseInline(source))
+        : undefined;
+
+    const pushLineMap = (): void => {
+      void panel.webview.postMessage({
+        type: "line-map",
+        lineMap: lineMapFor(document.getText()),
+      } satisfies LineMapPayload);
+    };
+
     const pushComments = (): void => {
       const source = document.getText();
       const waiting = claudePending.status(document.uri.toString(), parseInline(source).threads);
@@ -452,6 +474,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
           pendingThreadIds: waiting.threadIds,
           pendingLabel: pendingLabel(waiting),
           frontmatter: lastFrontmatter,
+          lineMap: lineMapFor(source),
           imageBaseUris: {
             docDir: panel.webview.asWebviewUri(docDirUri).toString(),
             workspaceFolder: wsFolder
@@ -584,9 +607,17 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       // Comments are cheap to re-derive and may have changed (markers moved,
       // a comment edited elsewhere) even when the prose didn't.
       pushComments();
+      // Every edit can move every line below it, so the map is re-sent with
+      // the change rather than only when the setting is toggled.
+      pushLineMap();
+    });
+
+    const configSub = vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("markdownCollab.showLineNumbers")) pushLineMap();
     });
 
     panel.onDidDispose(() => {
+      configSub.dispose();
       if (autosaveTimer) clearTimeout(autosaveTimer);
       messageSub.dispose();
       docSub.dispose();
