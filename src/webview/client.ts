@@ -38,7 +38,7 @@ import { Plugin, PluginKey, TextSelection } from "prosemirror-state";
 import { CellSelection } from "@milkdown/prose/tables";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import type { Node as PmDocNode } from "prosemirror-model";
-import { buildCommentCard, buildComposer, buildSuggestionCard, type ComposerHandle } from "../webviewShared/commentUi";
+import { buildCommentBody, buildCommentCard, buildComposer, buildSuggestionCard, type ComposerHandle } from "../webviewShared/commentUi";
 import { sidebarCountLabel, threadSignature } from "../webviewShared/threadListState";
 import { locateAnchorInLiveText, locateNthOccurrence } from "../collab/liveAnchorLocator";
 import { renderedRangeToPmRange } from "../collab/pmPositionMapper";
@@ -853,13 +853,17 @@ function renderReplyBox(threadId: string): HTMLElement {
 }
 
 // Escape + linkify http(s)/mailto into anchors the link interceptor handles.
+/**
+ * A comment body, rendered as markdown by the shared builder.
+ *
+ * This used to escape the text and autolink bare URLs by regex, which meant a
+ * reply from Claude containing a list or a code fence appeared verbatim,
+ * hyphens and backticks included. `linkify` in the shared renderer covers the
+ * bare-URL case the regex existed for, and the document-level click handler
+ * below routes every resulting link through the host.
+ */
 function buildLinkifiedBody(body: string): HTMLElement {
-  const el = document.createElement("div");
-  el.innerHTML = escapeHtml(body).replace(
-    /(https?:\/\/[^\s<>"]+)|(mailto:[^\s<>"]+@[^\s<>"]+)/g,
-    (match) => `<a href="${match}" data-mdc-link="1">${match}</a>`,
-  );
-  return el;
+  return buildCommentBody(body);
 }
 
 function attachToolbarHandlers(): void {

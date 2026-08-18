@@ -23,7 +23,7 @@ import {
   threadCountLabel,
   type ThreadFilter,
 } from "../../webviewShared/threadListState";
-import { buildComposer, buildCommentCard, buildSuggestionCard, type CardAction } from "../../webviewShared/commentUi";
+import { buildComposer, buildCommentBody, buildCommentCard, buildSuggestionCard, type CardAction } from "../../webviewShared/commentUi";
 import { resolveImageSrc, type ImageBaseUris } from "../../webviewShared/imageSrc";
 import { LINE_ATTR, LINE_ENV_KEY, displayLine } from "../../webviewShared/lineNumbers";
 
@@ -1246,8 +1246,10 @@ function renderComment(thread: ThreadState, c: InlineComment, pending = false): 
     });
   }
 
-  const bodyEl = document.createElement("div");
-  bodyEl.innerHTML = md.renderInline(c.body);
+  // Full markdown, not `renderInline`: a reply with a bulleted list or a
+  // fenced code block is the normal case, and inline rendering showed both as
+  // a run-on line.
+  const bodyEl = buildCommentBody(c.body);
 
   const cmtKey = editingKey;
   const cmtArmed = pendingDeleteComment.has(cmtKey);

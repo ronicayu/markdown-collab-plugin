@@ -16,7 +16,7 @@
 
 import { createMarkdownRenderer, ensurePlantuml } from "../../webviewShared/markdownPipeline";
 import { slugifyHeading } from "../../inlineComments/linkParse";
-import { buildComposer, buildCommentCard, type ComposerHandle } from "../../webviewShared/commentUi";
+import { buildComposer, buildCommentBody, buildCommentCard, type ComposerHandle } from "../../webviewShared/commentUi";
 import { resolveImageSrc, type ImageBaseUris } from "../../webviewShared/imageSrc";
 
 interface VsCodeApi {
@@ -489,6 +489,18 @@ dom.preview.addEventListener("click", (e) => {
   scrollPreviewToFragment(href.slice(1));
 });
 
+// Links inside comment cards. Nothing routed these before, because comment
+// bodies were plain text and had no links to route; now that they render as
+// markdown, a bare `<a>` in a webview would simply do nothing when clicked.
+document.addEventListener("click", (e) => {
+  const anchor = e.target instanceof Element ? e.target.closest("a[href]") : null;
+  if (!anchor || dom.preview.contains(anchor)) return;
+  const href = anchor.getAttribute("href") ?? "";
+  if (!href || href.startsWith("#")) return;
+  e.preventDefault();
+  window.open(href, "_blank");
+});
+
 /** Scroll the preview to a heading matching `fragment` (by id, else by slug). */
 function scrollPreviewToFragment(fragment: string): void {
   if (!fragment) return;
@@ -662,11 +674,9 @@ function renderDraftCard(d: PrDraft): HTMLElement {
     return editCard;
   }
 
-  const bodyEl = document.createElement("div");
-  bodyEl.textContent = d.body;
   const card = buildCommentCard({
     author: "Your draft",
-    bodyEl,
+    bodyEl: buildCommentBody(d.body),
     actions: [
       {
         label: lineLabel,
@@ -855,7 +865,7 @@ function renderExistingComment(c: ExistingPrComment, isHead: boolean): HTMLEleme
   return buildCommentCard({
     author: c.author,
     timestamp: c.createdAt,
-    body: c.body,
+    bodyEl: buildCommentBody(c.body),
     reply: !isHead,
     actions: [
       {

@@ -42,6 +42,37 @@ export function createMarkdownRenderer(): MarkdownIt {
 }
 
 /**
+ * The renderer for *comment bodies* — replies, review findings, suggestion
+ * notes — as opposed to the document under review.
+ *
+ * Separate from `createMarkdownRenderer` on purpose. Comment bodies want none
+ * of the document machinery (source offsets, line numbers, diagram fences),
+ * and they want two things the document does not:
+ *
+ * - **Hard line breaks.** A comment is written like a message, and every
+ *   comment UI a person has used treats a newline as a newline. CommonMark
+ *   would join the lines of a two-line reply into a paragraph.
+ * - **No remote images.** A comment body can come from anyone — Claude, a
+ *   colleague's commit, another user on a pull request — and rendering
+ *   `![](https://…)` would make opening a review fetch a third-party URL,
+ *   handing whoever wrote it the reader's IP and a read receipt. GitHub
+ *   proxies images for exactly this reason and this extension has no proxy,
+ *   so an image renders as a link instead, labelled so nothing looks lost.
+ */
+export function createCommentRenderer(): MarkdownIt {
+  const md = new MarkdownIt({ ...MARKDOWN_OPTIONS, breaks: true });
+  md.renderer.rules.image = (tokens, idx) => {
+    const token = tokens[idx];
+    const src = token.attrGet("src") ?? "";
+    const alt = token.content || src;
+    const href = md.utils.escapeHtml(src);
+    const label = md.utils.escapeHtml(alt);
+    return `<a class="mc-card__image-link" href="${href}" title="Images in comments are shown as links">🖼 ${label}</a>`;
+  };
+  return md;
+}
+
+/**
  * Install the PlantUML fence renderer once per renderer instance. Both
  * surfaces learn the server URL from their host's init message, which arrives
  * after the renderer is built, so this is idempotent and safe to call on

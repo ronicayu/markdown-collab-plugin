@@ -7,6 +7,8 @@
 // markup and pick up the shared `comments.css` styles. No view-specific data
 // models leak in here: callers pass strings + callbacks.
 
+import type MarkdownIt from "markdown-it";
+import { createCommentRenderer } from "./markdownPipeline";
 import { formatRelativeTime } from "../collab/relativeTime";
 
 export interface ComposerHandle {
@@ -162,6 +164,32 @@ export interface CommentCardOptions {
   onClick?(): void;
 }
 
+/**
+ * Render a comment body as markdown.
+ *
+ * Comment bodies have always *been* markdown — Claude writes lists and fenced
+ * code into them constantly, and every platform whose comments land here treats
+ * them as markdown — but the surfaces showed them three different ways: inline
+ * markdown only in the comments view, autolinked plain text in the live editor,
+ * and flat text in the PR view. So a reply containing a bulleted list read as
+ * a run-on line with stray hyphens in one place and correctly in none.
+ *
+ * Raw HTML is escaped (`html: false`), so a comment cannot inject markup into
+ * the surface displaying it.
+ */
+export function buildCommentBody(body: string): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "mc-card__body-md";
+  el.innerHTML = commentRenderer().render(body);
+  return el;
+}
+
+let sharedCommentRenderer: MarkdownIt | null = null;
+function commentRenderer(): MarkdownIt {
+  if (!sharedCommentRenderer) sharedCommentRenderer = createCommentRenderer();
+  return sharedCommentRenderer;
+}
+
 /** Build a shared comment card (author + relative time + body + actions). */
 export function buildCommentCard(opts: CommentCardOptions): HTMLElement {
   const card = document.createElement("div");
@@ -294,9 +322,9 @@ export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
   card.appendChild(buildDiff(opts.original, opts.proposed));
 
   if (opts.note) {
-    const note = document.createElement("div");
-    note.className = "mc-suggestion__note";
-    note.textContent = opts.note;
+    // Claude's rationale, which is prose it writes like any other comment.
+    const note = buildCommentBody(opts.note);
+    note.classList.add("mc-suggestion__note");
     card.appendChild(note);
   }
 

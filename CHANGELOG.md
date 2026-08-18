@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.34.79 — 2026-08-19 (trial)
+
+### Changed: comment bodies render as markdown
+
+They always were markdown — Claude writes bulleted lists and fenced code into
+replies constantly, and GitHub and GitLab comments are markdown by definition —
+but the three surfaces showed them three different ways: inline-only markdown
+in the inline comments view (so `**bold**` worked but a list did not), escaped
+text with regex autolinking in the live editor, and flat text in the PR view.
+A reply containing a list read as a run-on line with stray hyphens in two of
+the three places it could appear.
+
+All three now use one renderer, and so do suggestion notes. Lists, fenced code,
+tables, block quotes, and headings render; headings are toned down to the
+surrounding text size, because a heading in a comment is emphasis rather than
+document structure.
+
+Two deliberate differences from the document renderer:
+
+- **A single newline is a line break.** A comment is written like a message and
+  every comment UI treats it that way; CommonMark would join the lines of a
+  two-line reply into one paragraph. The document renderer is unchanged — a
+  hard break there would alter how every wrapped paragraph in every `.md`
+  renders.
+- **Images render as a link, not a picture.** A comment body can come from
+  anyone: Claude, a colleague's commit, another user on a pull request.
+  Rendering `![](https://…)` would make opening a review fetch a third-party
+  URL and hand whoever wrote it the reader's IP and a read receipt. GitHub
+  proxies comment images for exactly this reason; there is no proxy here, so
+  the image becomes a labelled link and nothing is silently fetched.
+
+Raw HTML in a comment is escaped, as it always has been — a comment cannot
+inject markup into the surface displaying it, which is now covered by a test
+that puts an `onerror` payload in a comment body and asserts it never fires.
+
+One fix fell out: links inside PR/MR comments now open. Nothing routed them
+before, because those bodies were plain text and had no links to route.
+
 ## 0.34.78 — 2026-08-18 (trial)
 
 ### Added: `markdownCollab.showLineNumbers`
