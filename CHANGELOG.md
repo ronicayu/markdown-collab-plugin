@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.34.86 — 2026-08-20 (pre-release)
+
+### Fixed: the "Remove resolved" button went stale after removing
+
+In the live editor, the button kept its old label and stayed on screen after
+the resolved comments were already gone. Its count only refreshed when the
+whole sidebar re-rendered, and an update from the host does not do that — it
+takes an incremental path that refreshes the counts in place, which knew about
+the filter chip and the Send button but not about this one.
+
+The button is now always present and hidden when the count is zero, and the
+incremental path keeps it in step. Present-but-hidden rather than
+conditionally rendered, because that path finds elements by selector: a button
+that exists only while it is needed can never be told that it no longer is.
+
+The inline comments view was unaffected — its update path rebuilds the whole
+thread list, including the button.
+
+**Why the tests missed it.** The live editor's specs asserted the button on the
+first render only. The inline view's specs did drive an update, which is
+exactly why that surface was correct. Both surfaces now have update-path specs,
+and both fail against the old code.
+
 ## 0.34.85 — 2026-08-20 (pre-release)
 
 ### Changed: "Remove resolved" is in the comment panels

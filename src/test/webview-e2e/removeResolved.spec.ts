@@ -83,6 +83,50 @@ test.describe("inline comments view", () => {
 });
 
 test.describe("live editor", () => {
+  // The bug: updates take an incremental path that refreshes the counts
+  // without re-rendering the toolbar, so the button kept its old label and
+  // stayed visible after the removal had already happened. The original spec
+  // only checked the first render, which is why it passed throughout.
+  test("the button follows an incremental update, not just the first render", async ({ page }) => {
+    const src = fixture(2, 1);
+    await bootLiveEditor(page, {
+      text: src,
+      user: { name: "r", color: "#fff" },
+      ...liveSidecar(src),
+      frontmatter: "",
+      imageBaseUris: { docDir: "", workspaceFolder: null },
+    });
+    const btn = page.locator("[data-action='remove-resolved']");
+    await expect(btn).toContainText("Remove 2 resolved");
+
+    // Exactly what the host pushes after the removal lands: the same message
+    // shape, with the resolved threads gone.
+    const after = fixture(0, 1);
+    await page.evaluate(
+      (payload) => window.postMessage({ type: "sidecar-changed", ...payload }, "*"),
+      liveSidecar(after) as unknown as Record<string, unknown>,
+    );
+    await expect(btn).toBeHidden();
+  });
+
+  test("the label tracks a partial removal", async ({ page }) => {
+    const src = fixture(3, 1);
+    await bootLiveEditor(page, {
+      text: src,
+      user: { name: "r", color: "#fff" },
+      ...liveSidecar(src),
+      frontmatter: "",
+      imageBaseUris: { docDir: "", workspaceFolder: null },
+    });
+    await expect(page.locator("[data-action='remove-resolved']")).toContainText("Remove 3 resolved");
+    const after = fixture(1, 1);
+    await page.evaluate(
+      (payload) => window.postMessage({ type: "sidecar-changed", ...payload }, "*"),
+      liveSidecar(after) as unknown as Record<string, unknown>,
+    );
+    await expect(page.locator("[data-action='remove-resolved']")).toContainText("Remove 1 resolved");
+  });
+
   test("offers the button only when something is resolved", async ({ page }) => {
     const clean = fixture(0, 2);
     await bootLiveEditor(page, {
@@ -92,7 +136,10 @@ test.describe("live editor", () => {
       frontmatter: "",
       imageBaseUris: { docDir: "", workspaceFolder: null },
     });
-    await expect(page.locator("[data-action='remove-resolved']")).toHaveCount(0);
+    // Present but hidden, rather than absent: the incremental update path
+    // finds elements by selector, so a button that only exists when it is
+    // needed can never be told that it no longer is.
+    await expect(page.locator("[data-action='remove-resolved']")).toBeHidden();
   });
 
   test("asks the host to run the command", async ({ page }) => {

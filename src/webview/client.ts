@@ -568,13 +568,11 @@ function renderSidebar(): void {
             <span>☰</span>
             <span>Outline</span>
           </button>
-          ${
-            resolvedCount === 0
-              ? ""
-              : `<button type="button" class="mdc-icon-btn mdc-icon-btn--danger" data-action="remove-resolved" title="Delete every resolved comment from this file. Open comments and pending suggestions are kept.">
-            <span>Remove ${resolvedCount} resolved</span>
-          </button>`
-          }
+          <button type="button" class="mdc-icon-btn mdc-icon-btn--danger" data-action="remove-resolved" ${
+            resolvedCount === 0 ? "hidden" : ""
+          } title="Delete every resolved comment from this file. Open comments and pending suggestions are kept.">
+            <span data-role="remove-resolved-label">Remove ${resolvedCount} resolved</span>
+          </button>
           <button type="button" class="mdc-icon-btn mdc-icon-btn--primary" data-action="add-comment" title="Add a comment on the current selection (Cmd/Ctrl+Shift+M)">
             <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 1.5v5h5v1H8v5H7v-5H2v-1h5v-5h1z"/></svg>
             <span>Add comment</span>
@@ -676,6 +674,17 @@ function updateSidebarCounts(): void {
   }
   const sendBtn = sidebarEl.querySelector<HTMLButtonElement>("[data-action='send-to-claude']");
   if (sendBtn) sendBtn.disabled = open === 0;
+
+  // Updates take this path rather than re-rendering the toolbar, so the
+  // remove button has to be refreshed here too — omitting it left a stale
+  // "Remove N resolved" on screen after the removal had already happened.
+  const removeBtn = sidebarEl.querySelector<HTMLButtonElement>("[data-action='remove-resolved']");
+  if (removeBtn) {
+    const resolved = total - open;
+    removeBtn.hidden = resolved === 0;
+    const label = removeBtn.querySelector<HTMLElement>("[data-role='remove-resolved-label']");
+    if (label) label.textContent = `Remove ${resolved} resolved`;
+  }
 }
 
 
