@@ -76,20 +76,6 @@ jobs:
           fi
           echo "CHANGELOG entry for ${VERSION} found."
 
-      - name: Package
-        run: npx --yes @vscode/vsce package --out markdown-collab-plugin.vsix
-
-      # The same assertion CI makes on every push: every asset the extension
-      # loads by URI is in the vsix, and the host bundle requires nothing that
-      # wasn't bundled.
-      - name: Verify packaged assets and bundled requires
-        run: node scripts/verify-package.mjs markdown-collab-plugin.vsix
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: vsix
-          path: markdown-collab-plugin.vsix
-
       # Three destinations, chosen by markers in the release commit message:
       #
       #   [skip-publish]  GitHub Release only. Nothing goes public.
@@ -121,6 +107,27 @@ jobs:
             echo "channel=stable" >> "$GITHUB_OUTPUT"
             echo "::notice::Publishing a STABLE release to both marketplaces."
           fi
+
+      # `--pre-release` has to be set at PACKAGE time, not just at publish:
+      # vsce refuses to publish a pre-release built from a package that wasn't
+      # marked as one ("Cannot use '--pre-release' flag with a package that was
+      # not packaged as pre-release"). That is why the gate runs before this
+      # step rather than after it.
+      - name: Package
+        env:
+          PRE: ${{ steps.gate.outputs.channel == 'pre-release' && '--pre-release' || '' }}
+        run: npx --yes @vscode/vsce package --out markdown-collab-plugin.vsix $PRE
+
+      # The same assertion CI makes on every push: every asset the extension
+      # loads by URI is in the vsix, and the host bundle requires nothing that
+      # wasn't bundled.
+      - name: Verify packaged assets and bundled requires
+        run: node scripts/verify-package.mjs markdown-collab-plugin.vsix
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: markdown-collab-plugin.vsix
 
       # Prints what this tag will do and fails on anything a script can decide
       # (missing or empty CHANGELOG section, version mismatch, contradictory

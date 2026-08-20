@@ -44,7 +44,26 @@ describe("the pre-release channel", () => {
   it("passes --pre-release to both marketplaces when the commit asks for it", () => {
     expect(release).toContain("pre-release");
     const preFlags = release.match(/steps\.gate\.outputs\.channel == 'pre-release' && '--pre-release'/g);
-    expect(preFlags).toHaveLength(2);
+    // Three: package, plus the two publishes.
+    expect(preFlags).toHaveLength(3);
+  });
+
+  // The v0.34.82 attempt failed here, on the first real use of the channel:
+  // vsce refuses to publish a pre-release built from a package that was not
+  // itself marked as one. The flag has to be set at package time, which means
+  // the gate must run before packaging — an ordering nothing was asserting.
+  it("packages as a pre-release, not just publishes as one", () => {
+    const pkg = release.slice(release.indexOf("- name: Package"));
+    const step = pkg.slice(0, pkg.indexOf("- name:", 1));
+    expect(step).toContain("vsce package");
+    expect(step).toContain("--pre-release");
+  });
+
+  it("decides the channel before it builds the package", () => {
+    // Order matters and is invisible to any other check: with the gate after
+    // Package, `steps.gate.outputs.channel` is empty while the vsix is built,
+    // so the flag silently evaluates to "".
+    expect(release.indexOf("id: gate")).toBeLessThan(release.indexOf("- name: Package"));
   });
 
   it("marks the GitHub release as a prerelease too, so the channels agree", () => {
