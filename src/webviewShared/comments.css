@@ -290,3 +290,75 @@
 }
 .mc-composer__status { font-size: 12px; color: var(--mc-muted); }
 .mc-composer__status--error { color: var(--mc-danger); }
+
+/* --- Table of contents ---------------------------------------------------
+   Shared by the inline comments view and the live editor. Rows are indented by
+   depth via a custom property rather than nested containers, so a deep tree
+   stays one flat list the browser can render cheaply. */
+.mc-outline {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  font-size: 12px;
+}
+.mc-outline__header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 8px 10px 6px;
+  position: sticky;
+  top: 0;
+  background: inherit;
+}
+.mc-outline__title {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.mc-outline__count { opacity: 0.55; font-size: 11px; }
+.mc-outline__list { padding: 0 4px 10px; }
+.mc-outline__row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  /* 0.75rem per level, so the hierarchy reads without pushing deep headings
+     off a narrow panel. */
+  padding-left: calc(var(--mc-outline-depth, 0) * 0.75rem);
+  border-radius: 3px;
+  cursor: pointer;
+  line-height: 1.7;
+}
+.mc-outline__row:hover { background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.15)); }
+.mc-outline__row.active {
+  background: var(--vscode-list-activeSelectionBackground, rgba(100, 150, 255, 0.25));
+  color: var(--vscode-list-activeSelectionForeground, inherit);
+}
+.mc-outline__twisty {
+  flex: 0 0 1rem;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.7;
+  font-size: 10px;
+  line-height: 1;
+}
+.mc-outline__twisty--leaf { visibility: hidden; cursor: default; }
+.mc-outline__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Top-level headings carry a little more weight; deeper ones recede. */
+.mc-outline__label--h1 { font-weight: 600; }
+.mc-outline__label--h2 { font-weight: 500; }
+.mc-outline__label--h4,
+.mc-outline__label--h5,
+.mc-outline__label--h6 { opacity: 0.8; }
+.mc-outline__empty {
+  padding: 4px 8px;
+  opacity: 0.7;
+  line-height: 1.5;
+}

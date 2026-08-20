@@ -290,6 +290,7 @@ Copies the prompt to the clipboard. Paste into Claude however you like.
 | `Markdown Collab: Start Claude Review Terminal` | Spawn a fresh integrated terminal and launch `claude`. |
 | `Markdown Collab: Copy Claude Prompt` | Copy a short "address the comments on this file" prompt to clipboard. |
 | `Markdown Collab: Reset Send Mode` | Clear the remembered `ask` choice for the current workspace. |
+| `Markdown Collab: Remove All Resolved Comments` | Delete every resolved thread from the file at once, markers and all. Open threads and pending suggestions are left alone. Modal confirm; one undo step. |
 | `Markdown Collab: Show Logs` | Open the **Markdown Collab** output channel. Set its level to **Trace** (gear icon in the Output panel) to see per-send and per-tool-call detail. |
 | `Markdown Collab: Report a Problem (collect diagnostics)` | Build an environment report — versions, send mode, skill and tool-server status, per-document review state — into a scratch document, ready to paste into an issue. Contains no tokens. |
 

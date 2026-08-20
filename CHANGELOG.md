@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.34.81 — 2026-08-20 (trial)
+
+### Added: remove all resolved comments
+
+`Markdown Collab: Remove All Resolved Comments` deletes every resolved thread
+from a file in one step — records, replies, and anchor markers. Resolved
+threads are the sediment of a long review: settled, never read again, and in
+the way of the ones still waiting on someone. Clearing them one at a time
+through the per-thread confirm was the tedium this replaces. Also on the
+explorer right-click menu for a `.md`.
+
+It is deliberate about what it leaves: open threads, obviously, but also
+**pending suggestions** — a suggestion nobody has accepted or rejected is
+unfinished business, not sediment, even when the thread beside it is closed.
+The confirm names the count and says it is a single undo step, and the command
+refuses with "no resolved comments in this file" rather than silently doing
+nothing.
+
+### Added: a table-of-contents panel
+
+Both rendered surfaces get a collapsible outline: the inline comments view via
+an **Outline** button in the preview header, the live editor via one in the
+sidebar toolbar. Headings nest by level, each section expands and collapses,
+clicking one scrolls the document to it, and in the inline view the section you
+are reading stays highlighted as you scroll.
+
+The outline is read from the markdown, not from the rendered DOM, so it agrees
+with the document rather than with whatever a renderer happened to produce.
+Some details that follow from that:
+
+- **A `#` inside a fenced code block is not a heading.** A shell comment in an
+  example would otherwise get an entry that scrolls somewhere arbitrary.
+- **Untidy documents still get a full outline.** A file that skips from `h1` to
+  `h3`, or starts at `h2`, nests against whatever is above it rather than
+  dropping headings — an outline that omits sections because the document is
+  irregular is one nobody trusts.
+- **Repeated headings are disambiguated** the way GitHub does (`notes`,
+  `notes-1`), or both entries would scroll to the first one.
+- Setext headings (`===` / `---` underlines) are read too.
+
+Collapse state and the panel's visibility persist across reloads in the inline
+view, keyed by heading slug so an edit above a section does not transfer your
+collapsed state to a different one.
+
 ## 0.34.80 — 2026-08-20
 
 **First stable release since 0.34.39.** Everything below has been shipping as

@@ -46,6 +46,10 @@ import { slugifyHeading } from "../inlineComments/linkParse";
 import { resolveImageSrc, type ImageBaseUris } from "../webviewShared/imageSrc";
 import { parseHtmlImage } from "../webviewShared/htmlImage";
 import { displayLine, topLevelBlockLines } from "../webviewShared/lineNumbers";
+// Navigation reuses scrollEditorToFragment, which slugifies headings itself
+// with the same function the outline uses.
+import { buildOutline } from "../webviewShared/outline";
+import { buildOutlinePanel, type OutlinePanelHandle } from "../webviewShared/outlinePanel";
 
 declare function acquireVsCodeApi(): {
   postMessage: (msg: unknown) => void;
@@ -342,6 +346,27 @@ let imageBaseUris: ImageBaseUris = { docDir: "", workspaceFolder: null };
 // the gutter off entirely.
 let lineMap: number[] | null = null;
 
+// --- Document outline -----------------------------------------------------
+let outlinePaneEl: HTMLElement | null = null;
+let outlineVisible = false;
+const collapsedOutline = new Set<string>();
+
+const outlinePanel: OutlinePanelHandle = buildOutlinePanel({
+  collapsed: collapsedOutline,
+  onNavigate: (node) => scrollEditorToFragment(node.slug),
+});
+
+/** Rebuild the outline from the markdown the editor currently holds. */
+function refreshOutline(): void {
+  outlinePanel.update(buildOutline(cachedMarkdown));
+}
+
+function setOutlineVisible(visible: boolean): void {
+  outlineVisible = visible;
+  if (outlinePaneEl) outlinePaneEl.hidden = !visible;
+  if (visible) refreshOutline();
+}
+
 async function init(msg: InitMessage): Promise<void> {
   userName = msg.user.name || "user";
   if (msg.imageBaseUris) imageBaseUris = msg.imageBaseUris;
@@ -375,6 +400,9 @@ async function init(msg: InitMessage): Promise<void> {
         ]),
       );
       ctx.get(listenerCtx).markdownUpdated((_ctx, markdown, prevMarkdown) => {
+        // The outline is derived from the markdown, so it follows every edit —
+        // including Claude's, which arrive as external changes.
+        if (markdown !== prevMarkdown) queueMicrotask(refreshOutline);
         if (suppressNextPost) {
           suppressNextPost = false;
           return;
@@ -425,6 +453,14 @@ function buildLayout(): void {
   layoutEl = document.createElement("div");
   layoutEl.className = "mdc-layout";
   document.body.appendChild(layoutEl);
+
+  // Outline first in the DOM so it sits to the left of the editor, matching
+  // where every editor puts a file outline.
+  outlinePaneEl = document.createElement("div");
+  outlinePaneEl.className = "mdc-outline-pane";
+  outlinePaneEl.hidden = !outlineVisible;
+  outlinePaneEl.appendChild(outlinePanel.el);
+  layoutEl.appendChild(outlinePaneEl);
 
   const editorPane = document.createElement("div");
   editorPane.className = "mdc-editor-pane";
@@ -509,6 +545,10 @@ function renderSidebar(): void {
           </button>
         </div>
         <div class="mdc-sidebar-toolbar">
+          <button type="button" class="mdc-icon-btn${outlineVisible ? " active" : ""}" data-action="toggle-outline" title="Show or hide the document outline" aria-pressed="${outlineVisible}">
+            <span>☰</span>
+            <span>Outline</span>
+          </button>
           <button type="button" class="mdc-icon-btn mdc-icon-btn--primary" data-action="add-comment" title="Add a comment on the current selection (Cmd/Ctrl+Shift+M)">
             <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 1.5v5h5v1H8v5H7v-5H2v-1h5v-5h1z"/></svg>
             <span>Add comment</span>
@@ -869,6 +909,11 @@ function buildLinkifiedBody(body: string): HTMLElement {
 function attachToolbarHandlers(): void {
   if (!sidebarEl) return;
   // Filter chip
+  const outlineChip = sidebarEl.querySelector<HTMLButtonElement>("[data-action='toggle-outline']");
+  outlineChip?.addEventListener("click", () => {
+    setOutlineVisible(!outlineVisible);
+    renderSidebar();
+  });
   const filterChip = sidebarEl.querySelector<HTMLButtonElement>("[data-action='toggle-filter']");
   filterChip?.addEventListener("click", () => {
     sidebarState.hideResolved = !sidebarState.hideResolved;

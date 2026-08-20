@@ -812,3 +812,14 @@ button.mdc-banner--jump:hover {
   user-select: none;
   pointer-events: none;
 }
+
+/* Document outline panel — left of the editor, where editors put outlines. */
+.mdc-outline-pane {
+  flex: 0 0 15rem;
+  min-width: 10rem;
+  max-width: 22rem;
+  overflow-y: auto;
+  border-right: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  background: var(--vscode-sideBar-background, transparent);
+}
+.mdc-outline-pane[hidden] { display: none; }

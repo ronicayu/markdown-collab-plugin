@@ -561,3 +561,17 @@ button.btn-link.danger { color: #e08080; }
   user-select: none;
   pointer-events: none;
 }
+
+/* --- Document outline panel ---------------------------------------------- */
+#outline-pane {
+  flex: 0 0 15rem;
+  min-width: 10rem;
+  max-width: 22rem;
+  overflow-y: auto;
+  border-right: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  background: var(--vscode-sideBar-background, transparent);
+}
+#outline-pane[hidden] { display: none; }
+#outline-toggle.active {
+  color: var(--vscode-textLink-activeForeground, inherit);
+}

@@ -26,6 +26,10 @@ import {
 import { buildComposer, buildCommentBody, buildCommentCard, buildSuggestionCard, type CardAction } from "../../webviewShared/commentUi";
 import { resolveImageSrc, type ImageBaseUris } from "../../webviewShared/imageSrc";
 import { LINE_ATTR, LINE_ENV_KEY, displayLine } from "../../webviewShared/lineNumbers";
+// `activeSlug` is line-based; this surface reads scroll position from the DOM
+// instead, which is what the reader actually sees.
+import { buildOutline, slugify as slugifyOutline } from "../../webviewShared/outline";
+import { buildOutlinePanel, type OutlinePanelHandle } from "../../webviewShared/outlinePanel";
 
 declare function acquireVsCodeApi(): {
   postMessage: (msg: unknown) => void;
@@ -198,7 +202,82 @@ const dom = {
   findPrev: document.getElementById("find-prev") as HTMLButtonElement,
   findNext: document.getElementById("find-next") as HTMLButtonElement,
   findClose: document.getElementById("find-close") as HTMLButtonElement,
+  outlinePane: document.getElementById("outline-pane") as HTMLElement,
+  // The scroll container is the pane, not #preview inside it — a listener on
+  // the wrong one silently never fires.
+  previewPane: document.getElementById("preview-pane") as HTMLElement,
+  outlineToggle: document.getElementById("outline-toggle") as HTMLButtonElement,
 };
+
+// --- Document outline -----------------------------------------------------
+// Built from the prose the preview renders, so its line numbers index the same
+// text the headings are found in. Visibility and per-node collapse both persist
+// via vscode.setState, like the other panel preferences.
+const collapsedOutline: Set<string> = ((): Set<string> => {
+  const saved = vscode.getState() as { collapsedOutline?: string[] } | undefined;
+  return new Set(saved?.collapsedOutline ?? []);
+})();
+
+let outlineVisible: boolean = ((): boolean => {
+  const saved = vscode.getState() as { outlineVisible?: boolean } | undefined;
+  return saved?.outlineVisible ?? false;
+})();
+
+const outlinePanel: OutlinePanelHandle = buildOutlinePanel({
+  collapsed: collapsedOutline,
+  onCollapseChanged: () => {
+    vscode.setState({
+      ...(vscode.getState() as Record<string, unknown> | undefined),
+      collapsedOutline: Array.from(collapsedOutline),
+    });
+  },
+  onNavigate: (node) => scrollPreviewToHeading(node.slug),
+});
+dom.outlinePane.appendChild(outlinePanel.el);
+
+function applyOutlineVisibility(): void {
+  dom.outlinePane.hidden = !outlineVisible;
+  dom.outlineToggle.setAttribute("aria-pressed", String(outlineVisible));
+  dom.outlineToggle.classList.toggle("active", outlineVisible);
+}
+applyOutlineVisibility();
+
+dom.outlineToggle.addEventListener("click", () => {
+  outlineVisible = !outlineVisible;
+  vscode.setState({
+    ...(vscode.getState() as Record<string, unknown> | undefined),
+    outlineVisible,
+  });
+  applyOutlineVisibility();
+});
+
+/** Scroll the preview to the heading with this slug. */
+function scrollPreviewToHeading(slug: string): void {
+  for (const h of Array.from(
+    dom.preview.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6"),
+  )) {
+    if (slugifyOutline(h.textContent || "") === slug) {
+      h.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+  }
+}
+
+/** Highlight the outline entry for whatever heading is at the top of the view. */
+function syncOutlineActive(): void {
+  if (!outlineVisible || !currentState) return;
+  const previewTop = dom.previewPane.getBoundingClientRect().top;
+  let activeHeading: string | null = null;
+  for (const h of Array.from(
+    dom.preview.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6"),
+  )) {
+    // The last heading whose top has passed the fold is the section being read.
+    if (h.getBoundingClientRect().top - previewTop <= 8) {
+      activeHeading = slugifyOutline(h.textContent || "");
+    } else break;
+  }
+  outlinePanel.setActive(activeHeading);
+}
 
 // Thread IDs the user has collapsed (folded to just the quote). Persisted so
 // the choice survives a webview reload.
@@ -625,6 +704,8 @@ function renderPreview(state: SerializedState): void {
   dom.preview.classList.toggle("with-line-numbers", showLines);
   if (showLines) paintLineNumbers(state.lineMap!);
   applyAnchorHighlights(state);
+  outlinePanel.update(buildOutline(state.prose));
+  syncOutlineActive();
   void runMermaid();
   processDrawioPlaceholders();
   // The rerender just blew away any <mark> nodes we'd inserted. Reset
@@ -1541,6 +1622,8 @@ function openComposer(sel: { proseStart: number; proseEnd: number }): void {
   dom.composer.appendChild(composer.el);
 }
 
+// Follow the reader down the document so the outline shows where they are.
+dom.previewPane.addEventListener("scroll", () => syncOutlineActive(), { passive: true });
 document.addEventListener("selectionchange", () => positionFloatingButton());
 window.addEventListener("scroll", () => positionFloatingButton(), true);
 

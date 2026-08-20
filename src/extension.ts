@@ -32,7 +32,7 @@ import {
   type ReviewFile,
 } from "./multiFileReview";
 import { parse as parseInline } from "./inlineComments/format";
-import { DocOpError, opOpenAt } from "./inlineComments/docOps";
+import { DocOpError, opOpenAt, opPurgeResolved } from "./inlineComments/docOps";
 import { claudePending } from "./claudePendingService";
 import { activateClaudeStatusBar } from "./claudeStatusBar";
 import { CONVENTIONS_REL, CONVENTIONS_TEMPLATE, withConventions } from "./reviewConventions";
@@ -138,6 +138,12 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("markdownCollab.reportDiagnostics", async () => {
       await invokeReportDiagnostics(context, rootLog.scope("diagnostics"));
     }),
+    vscode.commands.registerCommand(
+      "markdownCollab.removeResolvedComments",
+      async (arg?: vscode.Uri) => {
+        await invokeRemoveResolvedComments(arg, reviewLog);
+      },
+    ),
     vscode.commands.registerCommand("markdownCollab.commentOnSelection", async () => {
       await invokeCommentOnSelection(reviewLog);
     }),
@@ -629,6 +635,75 @@ export function deactivate(): void {
 // -----------------------------------------------------------
 // Command implementations
 // -----------------------------------------------------------
+
+/**
+ * Delete every resolved thread in a document.
+ *
+ * Resolved threads accumulate: they are settled, nobody reads them again, and
+ * they crowd the ones still waiting on someone. Removing them one at a time
+ * through the per-thread confirm is the tedium this exists to end.
+ *
+ * Confirmed with a modal that names the count, because it removes review
+ * history from the file. It is one undo step, which the modal says.
+ */
+async function invokeRemoveResolvedComments(arg: vscode.Uri | undefined, log: Logger): Promise<void> {
+  const uri = arg instanceof vscode.Uri ? arg : vscode.window.activeTextEditor?.document.uri;
+  if (!uri) {
+    void vscode.window.showWarningMessage("Open a Markdown file first, then run this command.");
+    return;
+  }
+  let doc: vscode.TextDocument;
+  try {
+    doc = await vscode.workspace.openTextDocument(uri);
+  } catch (e) {
+    log.error(`could not open ${uri.fsPath}`, e);
+    void vscode.window.showErrorMessage(`Could not open ${path.basename(uri.fsPath)}.`);
+    return;
+  }
+
+  const source = doc.getText();
+  const resolved = parseInline(source).threads.filter((t) => t.status === "resolved");
+  if (resolved.length === 0) {
+    void vscode.window.showInformationMessage("No resolved comments in this file.");
+    return;
+  }
+
+  const choice = await vscode.window.showWarningMessage(
+    `Remove ${resolved.length} resolved comment${resolved.length === 1 ? "" : "s"} from ${path.basename(uri.fsPath)}?`,
+    {
+      modal: true,
+      detail:
+        "Their replies are deleted from the file along with them. Open comments and pending suggestions are left alone. This is a single undo step.",
+    },
+    "Remove",
+  );
+  if (choice !== "Remove") return;
+
+  let next: string;
+  let removed: string[];
+  try {
+    const outcome = opPurgeResolved(source);
+    next = outcome.next;
+    removed = outcome.result.removed;
+  } catch (e) {
+    const err = e as DocOpError;
+    log.warn("remove resolved refused", { code: err.code, message: err.message });
+    void vscode.window.showWarningMessage(`Could not remove the resolved comments: ${err.message}`);
+    return;
+  }
+
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(doc.uri, new vscode.Range(doc.positionAt(0), doc.positionAt(source.length)), next);
+  if (!(await vscode.workspace.applyEdit(edit))) {
+    log.error("remove resolved: applyEdit was rejected");
+    void vscode.window.showErrorMessage("Could not write the change into the document.");
+    return;
+  }
+  log.info("removed resolved comments", { file: doc.uri.fsPath, count: removed.length });
+  void vscode.window.showInformationMessage(
+    `Removed ${removed.length} resolved comment${removed.length === 1 ? "" : "s"}. Undo with Cmd+Z.`,
+  );
+}
 
 /**
  * Comment on the text editor's selection, with no webview and no mouse

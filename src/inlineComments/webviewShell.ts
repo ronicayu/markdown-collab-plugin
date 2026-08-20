@@ -14,6 +14,7 @@
  */
 export function inlineCommentsAppBody(): string {
   return `<div id="app">
+  <aside id="outline-pane" hidden></aside>
   <div id="preview-pane">
     <div id="find-bar" hidden role="search">
       <input id="find-input" type="search" placeholder="Find in preview…" aria-label="Find in preview" />
@@ -25,6 +26,7 @@ export function inlineCommentsAppBody(): string {
     <header id="preview-header">
       <h2 id="file-name"></h2>
       <p class="hint">Select text in the preview to add a comment. <kbd>⌘F</kbd> to find.</p>
+      <button id="outline-toggle" class="btn-link" title="Show or hide the document outline" aria-pressed="false">☰ Outline</button>
     </header>
     <article id="preview"></article>
     <button id="floating-add" hidden>+ Comment on selection</button>

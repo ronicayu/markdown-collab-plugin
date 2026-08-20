@@ -92,6 +92,7 @@ const EXIT_FOR_CODE: Record<DocOpCode, number> = {
   // status deliberately rather than defaulting to one.
   empty_selection: EXIT_USAGE,
   out_of_range: EXIT_USAGE,
+  nothing_to_do: EXIT_USAGE,
   integrity: EXIT_INTEGRITY,
 };
 

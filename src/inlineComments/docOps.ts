@@ -49,6 +49,8 @@ export type DocOpCode =
   | "empty_selection"
   /** The given range falls outside the document. */
   | "out_of_range"
+  /** The operation had nothing to act on; the document is unchanged. */
+  | "nothing_to_do"
   /** The result would introduce integrity problems; nothing was changed. */
   | "integrity";
 
@@ -353,6 +355,39 @@ export function opResolve(
   });
   assertNoNewIssues(source, next);
   return { next, result: { threadId } };
+}
+
+/**
+ * Remove every resolved thread from the document, markers and all.
+ *
+ * Resolved threads are the sediment of a long review: settled, unread, and in
+ * the way of the ones that still need an answer. Deleting them one at a time
+ * through the two-click confirm is the tedium this replaces.
+ *
+ * Deliberately all-or-nothing about *what* it removes: only threads whose
+ * status is `resolved`. An open thread is never touched, and neither is a
+ * pending suggestion — a suggestion nobody has accepted or rejected is
+ * unfinished business, not sediment, even when the thread beside it is closed.
+ *
+ * Returns the ids it removed so a caller can say how many, and refuses with
+ * `nothing_to_do` when there are none — a command that silently does nothing
+ * is indistinguishable from one that is broken.
+ */
+export function opPurgeResolved(source: string): OpOutcome<{ removed: string[] }> {
+  const parsed = parse(source);
+  const resolved = parsed.threads.filter((t) => t.status === "resolved");
+  if (resolved.length === 0) {
+    throw new DocOpError("nothing_to_do", "this file has no resolved comments");
+  }
+  let next = source;
+  for (const t of resolved) {
+    // `replaceThread(…, null)` drops the record and strips its markers. One at
+    // a time rather than a bulk rewrite so each removal goes through the same
+    // path a single delete does.
+    next = replaceThread(next, t.id, null);
+  }
+  assertNoNewIssues(source, next);
+  return { next, result: { removed: resolved.map((t) => t.id) } };
 }
 
 /**
