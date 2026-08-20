@@ -364,6 +364,8 @@ function refreshOutline(): void {
 function setOutlineVisible(visible: boolean): void {
   outlineVisible = visible;
   if (outlinePaneEl) outlinePaneEl.hidden = !visible;
+  // The grid template needs the extra column, or every pane shifts one slot.
+  layoutEl?.classList.toggle("mdc-layout--outline", visible);
   if (visible) refreshOutline();
 }
 
@@ -461,6 +463,7 @@ function buildLayout(): void {
   outlinePaneEl.hidden = !outlineVisible;
   outlinePaneEl.appendChild(outlinePanel.el);
   layoutEl.appendChild(outlinePaneEl);
+  layoutEl.classList.toggle("mdc-layout--outline", outlineVisible);
 
   const editorPane = document.createElement("div");
   editorPane.className = "mdc-editor-pane";

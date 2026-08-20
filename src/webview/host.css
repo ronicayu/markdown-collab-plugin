@@ -85,6 +85,9 @@ body { overflow: hidden; }
    Layout
    =========================================================== */
 
+/* Same rule as the inline view's #app: the outline adds a grid column when it
+   is showing, and the template must account for it or every pane slides one
+   slot across. */
 .mdc-layout {
   display: grid;
   grid-template-columns: 1fr var(--mdc-sidebar-width);
@@ -92,6 +95,12 @@ body { overflow: hidden; }
 }
 .mdc-layout--collapsed {
   grid-template-columns: 1fr 0;
+}
+.mdc-layout--outline {
+  grid-template-columns: var(--mdc-outline-width, 15rem) 1fr var(--mdc-sidebar-width);
+}
+.mdc-layout--outline.mdc-layout--collapsed {
+  grid-template-columns: var(--mdc-outline-width, 15rem) 1fr 0;
 }
 .mdc-layout--collapsed .mdc-sidebar {
   display: none;
@@ -815,9 +824,7 @@ button.mdc-banner--jump:hover {
 
 /* Document outline panel — left of the editor, where editors put outlines. */
 .mdc-outline-pane {
-  flex: 0 0 15rem;
-  min-width: 10rem;
-  max-width: 22rem;
+  /* Width comes from the grid template, not from the pane. */
   overflow-y: auto;
   border-right: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
   background: var(--vscode-sideBar-background, transparent);

@@ -128,6 +128,68 @@ test.describe("inline comments view — other documents", () => {
   });
 });
 
+// The bug this file did not catch the first time: `#app` is a grid with a
+// fixed column list, and adding the outline as a third child auto-placed every
+// pane one slot across — outline in the 1fr column, preview squeezed into the
+// 360px comments column, comments wrapped onto a second row. Every structural
+// assertion above still passed, because the rows and clicks were all present
+// and correct. Only the geometry was wrong, so the geometry is asserted here.
+test.describe("layout", () => {
+  const boot = async (page: import("@playwright/test").Page): Promise<void> => {
+    await page.setViewportSize({ width: 1400, height: 700 });
+    await bootInlineView(page, {
+      fileName: "doc.md",
+      state: { prose: DOC, threads: [], suggestions: [] },
+      user: { name: "r" },
+      imageBaseUris: { docDir: "", workspaceFolder: null },
+    });
+  };
+
+  const widths = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => ({
+      outline: Math.round(document.getElementById("outline-pane")!.getBoundingClientRect().width),
+      preview: Math.round(document.getElementById("preview-pane")!.getBoundingClientRect().width),
+      threads: Math.round(document.getElementById("threads-pane")!.getBoundingClientRect().width),
+    }));
+
+  test("the preview keeps most of the width when the outline opens", async ({ page }) => {
+    await boot(page);
+    const before = await widths(page);
+    expect(before.threads).toBe(360);
+
+    await page.locator("#outline-toggle").click();
+    const after = await widths(page);
+
+    // The outline takes its own column; the preview gives up that much and
+    // stays the widest pane. The comments pane is untouched.
+    expect(after.threads).toBe(360);
+    expect(after.outline).toBeGreaterThan(100);
+    expect(after.preview).toBeGreaterThan(after.outline);
+    expect(after.preview).toBeGreaterThan(before.preview - after.outline - 40);
+  });
+
+  test("every pane stays on one row", async ({ page }) => {
+    await boot(page);
+    await page.locator("#outline-toggle").click();
+    // Grid auto-placement pushed the comments pane onto a second row, which is
+    // invisible to a width check but obvious as a vertical offset.
+    const tops = await page.evaluate(() =>
+      ["outline-pane", "preview-pane", "threads-pane"].map((id) =>
+        Math.round(document.getElementById(id)!.getBoundingClientRect().top),
+      ),
+    );
+    expect(new Set(tops).size).toBe(1);
+  });
+
+  test("closing the outline gives the width back", async ({ page }) => {
+    await boot(page);
+    const before = await widths(page);
+    await page.locator("#outline-toggle").click();
+    await page.locator("#outline-toggle").click();
+    expect(await widths(page)).toEqual(before);
+  });
+});
+
 test.describe("live editor", () => {
   test("toggles an outline listing the document's headings", async ({ page }) => {
     await bootLiveEditor(page, {
@@ -145,5 +207,30 @@ test.describe("live editor", () => {
     await expect(rows).toHaveCount(4);
     await expect(rows.nth(0).locator(".mc-outline__label")).toHaveText("Guide");
     await expect(rows.nth(3).locator(".mc-outline__label")).toHaveText("Usage");
+  });
+
+  test("the editor keeps its width and every pane stays on one row", async ({ page }) => {
+    await page.setViewportSize({ width: 1400, height: 700 });
+    await bootLiveEditor(page, {
+      text: DOC,
+      user: { name: "r", color: "#fff" },
+      ...liveSidecar(DOC),
+      frontmatter: "",
+      imageBaseUris: { docDir: "", workspaceFolder: null },
+    });
+    await page.locator("[data-action='toggle-outline']").click();
+    const box = await page.evaluate(() => {
+      const rect = (sel: string) => document.querySelector(sel)!.getBoundingClientRect();
+      return {
+        outline: Math.round(rect(".mdc-outline-pane").width),
+        editor: Math.round(rect(".mdc-editor-pane").width),
+        tops: [".mdc-outline-pane", ".mdc-editor-pane", ".mdc-sidebar"].map((s) =>
+          Math.round(rect(s).top),
+        ),
+      };
+    });
+    expect(box.outline).toBeGreaterThan(100);
+    expect(box.editor).toBeGreaterThan(box.outline);
+    expect(new Set(box.tops).size).toBe(1);
   });
 });

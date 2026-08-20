@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.34.83 — 2026-08-20 (pre-release)
+
+### Fixed: opening the outline broke the layout
+
+Both review surfaces lay out with a CSS grid whose columns are listed
+explicitly — preview and comments, editor and comments. The outline was added
+as a third child without extending either list, so the browser auto-placed
+every pane one slot across: the outline took the flexible column, the preview
+was squeezed into the 360px comments column, and the comments pane wrapped onto
+a second row entirely.
+
+Both grids now grow a column while the outline is showing.
+
+**Why the tests missed it.** The outline specs asserted structure — the right
+rows, the right nesting depth, collapse, navigation — and every one of those
+still passed while the layout was unusable, because the rows really were all
+there and really did work. Nothing measured geometry. There are now four specs
+that do: the preview stays the widest pane, the comments pane keeps its width,
+every pane stays on one row, and closing the outline restores the original
+widths exactly. All four fail against the broken CSS.
+
 ## 0.34.82 — 2026-08-20 (pre-release)
 
 Publishes 0.34.81's two features to the marketplaces' **pre-release channel**:

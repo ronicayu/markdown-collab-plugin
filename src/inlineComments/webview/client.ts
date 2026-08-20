@@ -237,6 +237,8 @@ dom.outlinePane.appendChild(outlinePanel.el);
 
 function applyOutlineVisibility(): void {
   dom.outlinePane.hidden = !outlineVisible;
+  // The grid template needs the extra column, or every pane shifts one slot.
+  dom.app.classList.toggle("with-outline", outlineVisible);
   dom.outlineToggle.setAttribute("aria-pressed", String(outlineVisible));
   dom.outlineToggle.classList.toggle("active", outlineVisible);
 }

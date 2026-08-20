@@ -22,6 +22,12 @@ html, body {
   line-height: 1.55;
 }
 
+/* A grid whose column count depends on whether the outline is showing. The
+   outline pane is `hidden` (display:none) when off, so it leaves the grid
+   entirely and the two-column template below is correct; when it is on, the
+   template has to grow a column or every pane shifts one slot right — which is
+   exactly what happened when the outline was first added to a two-column
+   template. */
 #app {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
@@ -31,6 +37,12 @@ html, body {
 }
 #app.threads-collapsed {
   grid-template-columns: minmax(0, 1fr) 0;
+}
+#app.with-outline {
+  grid-template-columns: var(--outline-width, 15rem) minmax(0, 1fr) 360px;
+}
+#app.with-outline.threads-collapsed {
+  grid-template-columns: var(--outline-width, 15rem) minmax(0, 1fr) 0;
 }
 #app.threads-collapsed #threads-pane {
   display: none;
@@ -564,9 +576,7 @@ button.btn-link.danger { color: #e08080; }
 
 /* --- Document outline panel ---------------------------------------------- */
 #outline-pane {
-  flex: 0 0 15rem;
-  min-width: 10rem;
-  max-width: 22rem;
+  /* Width comes from the grid template, not from the pane. */
   overflow-y: auto;
   border-right: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
   background: var(--vscode-sideBar-background, transparent);
