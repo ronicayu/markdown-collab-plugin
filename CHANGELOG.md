@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.34.82 — 2026-08-20 (pre-release)
+
+Publishes 0.34.81's two features to the marketplaces' **pre-release channel**:
+`Markdown Collab: Remove All Resolved Comments`, and the collapsible
+table-of-contents panel in the inline comments view and the live editor. See
+the 0.34.81 entry below for what they do and the judgement calls behind them.
+
+Stable users stay on 0.34.80 until this is promoted. To get it, enable
+pre-releases for the extension in the VS Code Extensions view.
+
 ## 0.34.81 — 2026-08-20 (trial)
 
 ### Added: remove all resolved comments
