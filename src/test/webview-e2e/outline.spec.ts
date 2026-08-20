@@ -190,6 +190,54 @@ test.describe("layout", () => {
   });
 });
 
+// Two sections with the same name is ordinary in a structured document
+// ("What changed", "Security assessment", "Open questions"). Navigation used to
+// match by re-slugifying the rendered heading text, so the outline's
+// disambiguated `what-changed-1` matched nothing and the entry was inert —
+// clicking it did not move the view at all.
+test.describe("repeated heading names", () => {
+  const F = "Filler.\n\n".repeat(15);
+  const DUPES = `# Doc\n\n## Section A\n\n${F}\n### What changed\n\nAAA marker\n\n${F}\n## Section B\n\n${F}\n### What changed\n\nBBB marker\n\n${F}\n`;
+
+  test("each entry navigates to its own section, not to the first match", async ({ page }) => {
+    await page.setViewportSize({ width: 1400, height: 700 });
+    await bootInlineView(page, {
+      fileName: "doc.md",
+      state: { prose: DUPES, threads: [], suggestions: [] },
+      user: { name: "r" },
+      imageBaseUris: { docDir: "", workspaceFolder: null },
+    });
+    await page.locator("#outline-toggle").click();
+
+    const rows = page.locator(".mc-outline__row", { hasText: "What changed" });
+    await expect(rows).toHaveCount(2);
+
+    /** The marker paragraph visible in the pane after clicking row `i`. */
+    const clickAndRead = async (i: number): Promise<string[]> => {
+      await page.evaluate(() => {
+        document.getElementById("preview-pane")!.scrollTop = 0;
+      });
+      await rows.nth(i).click();
+      await page.waitForTimeout(600);
+      return page.evaluate(() => {
+        const pane = document.getElementById("preview-pane")!;
+        const paneTop = pane.getBoundingClientRect().top;
+        return Array.from(pane.querySelectorAll("p"))
+          .filter((p) => /AAA|BBB/.test(p.textContent ?? ""))
+          .filter((p) => {
+            const t = p.getBoundingClientRect().top - paneTop;
+            return t > -20 && t < pane.clientHeight;
+          })
+          .map((p) => (p.textContent ?? "").trim());
+      });
+    };
+
+    expect(await clickAndRead(0)).toEqual(["AAA marker"]);
+    // This is the one that used to scroll nowhere.
+    expect(await clickAndRead(1)).toEqual(["BBB marker"]);
+  });
+});
+
 test.describe("live editor", () => {
   test("toggles an outline listing the document's headings", async ({ page }) => {
     await bootLiveEditor(page, {

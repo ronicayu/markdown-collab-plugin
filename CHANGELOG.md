@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.34.84 — 2026-08-20 (pre-release)
+
+### Fixed: outline entries that went nowhere when clicked
+
+Clicking a heading in the outline often did nothing. The cause was navigating
+by name: the panel handed the surface a slug, and the surface looked for a
+rendered heading whose text slugified to match. Two sections with the same
+name — "What changed", "Security assessment", "Open questions", the ordinary
+repeats of a structured document — collide on that slug, so the outline
+disambiguates the second to `what-changed-1`, GitHub-style. No rendered heading
+ever spells that, so the second entry matched nothing and the view stayed
+exactly where it was.
+
+Headings are now addressed by **position**: the Nth heading in the source is
+the Nth heading the renderer emits. That is true regardless of how many
+sections share a name, and regardless of any disagreement between the source
+and the renderer about how to spell one. The same change fixes the
+active-section highlight, which had the same flaw and would light up both
+entries at once.
+
+Slugs are still computed and still used for `#fragment` links, which address
+by name because that is what a fragment is.
+
 ## 0.34.83 — 2026-08-20 (pre-release)
 
 ### Fixed: opening the outline broke the layout

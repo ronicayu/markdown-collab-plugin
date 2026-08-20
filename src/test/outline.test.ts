@@ -128,3 +128,37 @@ describe("the outline and link navigation agree on slugs", () => {
     expect(h.slug).toBe("cafe-configuration");
   });
 });
+
+describe("headings are addressable by position", () => {
+  // Navigation goes by index, not by name: the outline and the renderer agree
+  // on how many headings there are and in what order, but two sections with
+  // the same name share a slug, and matching by slug left the second one inert.
+  it("numbers every heading in document order", () => {
+    const hs = headings("# A\n\n## B\n\n### C\n");
+    expect(hs.map((h) => h.index)).toEqual([0, 1, 2]);
+  });
+
+  it("gives repeated headings distinct indexes even though slugs collide", () => {
+    const hs = headings("## Notes\n\n## Notes\n");
+    expect(hs.map((h) => h.index)).toEqual([0, 1]);
+    // The slugs differ only by GitHub's suffix, which no renderer emits.
+    expect(hs.map((h) => h.slug)).toEqual(["notes", "notes-1"]);
+  });
+
+  it("keeps indexes stable through nesting", () => {
+    const tree = buildOutline("# A\n\n## B\n\n### C\n\n## D\n");
+    expect(tree[0].index).toBe(0);
+    expect(tree[0].children.map((c) => c.index)).toEqual([1, 3]);
+    expect(tree[0].children[0].children.map((c) => c.index)).toEqual([2]);
+  });
+
+  it("does not count a heading inside a code fence, so indexes match the DOM", () => {
+    // The renderer emits no heading for it either; if one side counted it the
+    // index would be off by one for everything below.
+    const hs = headings("# A\n\n```\n# fake\n```\n\n## B\n");
+    expect(hs.map((h) => [h.text, h.index])).toEqual([
+      ["A", 0],
+      ["B", 1],
+    ]);
+  });
+});

@@ -26,9 +26,9 @@ import {
 import { buildComposer, buildCommentBody, buildCommentCard, buildSuggestionCard, type CardAction } from "../../webviewShared/commentUi";
 import { resolveImageSrc, type ImageBaseUris } from "../../webviewShared/imageSrc";
 import { LINE_ATTR, LINE_ENV_KEY, displayLine } from "../../webviewShared/lineNumbers";
-// `activeSlug` is line-based; this surface reads scroll position from the DOM
-// instead, which is what the reader actually sees.
-import { buildOutline, slugify as slugifyOutline } from "../../webviewShared/outline";
+// Scroll position comes from the DOM, which is what the reader actually sees;
+// headings are addressed by index, never by name.
+import { buildOutline } from "../../webviewShared/outline";
 import { buildOutlinePanel, type OutlinePanelHandle } from "../../webviewShared/outlinePanel";
 
 declare function acquireVsCodeApi(): {
@@ -231,7 +231,7 @@ const outlinePanel: OutlinePanelHandle = buildOutlinePanel({
       collapsedOutline: Array.from(collapsedOutline),
     });
   },
-  onNavigate: (node) => scrollPreviewToHeading(node.slug),
+  onNavigate: (node) => scrollPreviewToHeadingIndex(node.index),
 });
 dom.outlinePane.appendChild(outlinePanel.el);
 
@@ -253,32 +253,31 @@ dom.outlineToggle.addEventListener("click", () => {
   applyOutlineVisibility();
 });
 
-/** Scroll the preview to the heading with this slug. */
-function scrollPreviewToHeading(slug: string): void {
-  for (const h of Array.from(
-    dom.preview.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6"),
-  )) {
-    if (slugifyOutline(h.textContent || "") === slug) {
-      h.scrollIntoView({ behavior: "smooth", block: "start" });
-      return;
-    }
-  }
+/**
+ * Scroll the preview to the Nth heading, counting in document order.
+ *
+ * Positional rather than by name: the outline and the renderer agree on how
+ * many headings there are and in what order, but not always on how to spell
+ * one. Two sections called "What changed" used to make the second entry inert.
+ */
+function scrollPreviewToHeadingIndex(index: number): void {
+  const all = dom.preview.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6");
+  const target = all[index];
+  if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 /** Highlight the outline entry for whatever heading is at the top of the view. */
 function syncOutlineActive(): void {
   if (!outlineVisible || !currentState) return;
   const previewTop = dom.previewPane.getBoundingClientRect().top;
-  let activeHeading: string | null = null;
-  for (const h of Array.from(
-    dom.preview.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6"),
-  )) {
+  let activeIndex: number | null = null;
+  const all = dom.preview.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6");
+  for (let i = 0; i < all.length; i++) {
     // The last heading whose top has passed the fold is the section being read.
-    if (h.getBoundingClientRect().top - previewTop <= 8) {
-      activeHeading = slugifyOutline(h.textContent || "");
-    } else break;
+    if (all[i].getBoundingClientRect().top - previewTop <= 8) activeIndex = i;
+    else break;
   }
-  outlinePanel.setActive(activeHeading);
+  outlinePanel.setActive(activeIndex);
 }
 
 // Thread IDs the user has collapsed (folded to just the quote). Persisted so

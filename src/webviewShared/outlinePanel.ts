@@ -23,8 +23,8 @@ export interface OutlinePanelHandle {
   el: HTMLElement;
   /** Re-render for a new outline. */
   update(nodes: OutlineNode[]): void;
-  /** Highlight the section containing the reader, by slug. */
-  setActive(slug: string | null): void;
+  /** Highlight the section containing the reader, by heading index. */
+  setActive(index: number | null): void;
 }
 
 /** Build the panel. Call `update` to fill it. */
@@ -49,15 +49,18 @@ export function buildOutlinePanel(opts: OutlinePanelOptions): OutlinePanelHandle
   el.append(header, list);
 
   let current: OutlineNode[] = [];
-  let activeSlug: string | null = null;
+  // Index, not slug: two sections with the same name share a slug, and the
+  // highlight would land on both.
+  let activeIndex: number | null = null;
 
   const rowFor = (node: OutlineNode, depth: number): HTMLElement => {
     const row = document.createElement("div");
     row.className = "mc-outline__row";
+    row.dataset.index = String(node.index);
     row.dataset.slug = node.slug;
     row.setAttribute("role", "treeitem");
     row.style.setProperty("--mc-outline-depth", String(depth));
-    if (node.slug === activeSlug) row.classList.add("active");
+    if (node.index === activeIndex) row.classList.add("active");
 
     const hasChildren = node.children.length > 0;
     const twisty = document.createElement("button");
@@ -127,11 +130,12 @@ export function buildOutlinePanel(opts: OutlinePanelOptions): OutlinePanelHandle
       current = nodes;
       render();
     },
-    setActive(slug) {
-      if (slug === activeSlug) return;
-      activeSlug = slug;
+    setActive(index) {
+      if (index === activeIndex) return;
+      activeIndex = index;
+      const want = index === null ? null : String(index);
       for (const row of Array.from(list.querySelectorAll<HTMLElement>(".mc-outline__row"))) {
-        row.classList.toggle("active", row.dataset.slug === slug);
+        row.classList.toggle("active", row.dataset.index === want);
       }
     },
   };

@@ -353,8 +353,24 @@ const collapsedOutline = new Set<string>();
 
 const outlinePanel: OutlinePanelHandle = buildOutlinePanel({
   collapsed: collapsedOutline,
-  onNavigate: (node) => scrollEditorToFragment(node.slug),
+  onNavigate: (node) => scrollEditorToHeadingIndex(node.index),
 });
+
+/**
+ * Scroll the editor to the Nth heading, counting in document order.
+ *
+ * Positional, not by name. `scrollEditorToFragment` matches a slug against the
+ * rendered heading text, which cannot distinguish two sections with the same
+ * name — the outline disambiguates the second to `what-changed-1`, no rendered
+ * heading spells that, and the entry did nothing when clicked.
+ */
+function scrollEditorToHeadingIndex(index: number): void {
+  editor?.action((ctx) => {
+    const root = ctx.get(editorViewCtx).dom as HTMLElement;
+    const target = root.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6")[index];
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
 
 /** Rebuild the outline from the markdown the editor currently holds. */
 function refreshOutline(): void {

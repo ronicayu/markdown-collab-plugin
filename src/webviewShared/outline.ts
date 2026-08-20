@@ -18,7 +18,19 @@ export interface OutlineNode {
   text: string;
   /** 0-based line in the text the outline was built from. */
   line: number;
-  /** GitHub-style slug, for matching a `#fragment` link. */
+  /**
+   * 0-based position among ALL headings in document order — the Nth heading in
+   * the source is the Nth heading a renderer emits.
+   *
+   * This is what navigation uses, not `slug`. Matching by slug meant
+   * re-slugifying the rendered heading text and comparing, which fails the
+   * moment two headings share a name: the outline disambiguates the second one
+   * to `what-changed-1`, no rendered heading ever produces that, and clicking
+   * it scrolled nowhere at all. It would also break on any divergence between
+   * how the source and the renderer spell a heading.
+   */
+  index: number;
+  /** GitHub-style slug. Kept for `#fragment` links, which address by name. */
   slug: string;
   children: OutlineNode[];
 }
@@ -74,7 +86,7 @@ export function headings(markdown: string): Array<Omit<OutlineNode, "children">>
     // slugs would scroll both entries to the first heading.
     const n = seen.get(base) ?? 0;
     seen.set(base, n + 1);
-    out.push({ level, text, line, slug: n === 0 ? base : `${base}-${n}` });
+    out.push({ level, text, line, index: out.length, slug: n === 0 ? base : `${base}-${n}` });
   };
 
   for (let i = 0; i < lines.length; i++) {
