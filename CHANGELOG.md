@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.34.80 — 2026-08-20
+
+**First stable release since 0.34.39.** Everything below has been shipping as
+`[skip-publish]` builds; this promotes the whole batch. The headline changes,
+newest first — the per-version entries follow.
+
+**The extension hosts an MCP server.** Claude's edits arrive as tool calls
+instead of raw disk writes, which makes them undoable with Cmd+Z, ordered
+against your unsaved buffer instead of racing it, and validated before they
+land rather than repaired afterwards. MCP is offered, never chosen for you:
+`terminal` remains the default send mode, because MCP can be disabled entirely
+on Claude's side.
+
+**The extension is visible in the plain text editor.** Markers are dimmed,
+anchored text is tinted, the stored threads block folds away, hovering a
+passage shows its thread, and a single CodeLens gives the counts and a way into
+the review view. Reviewed files used to look corrupted in the source view.
+
+**Review is incremental and convention-aware.** "Review Changes Since Last
+Pass" re-reads only what moved, per-section, with the checkpoint stored in the
+file itself. Standing conventions in `.markdown-collab/conventions.md` ride
+along with every request.
+
+**Comment bodies render as markdown**, and both rendered surfaces can show
+source line numbers (`markdownCollab.showLineNumbers`, off by default).
+
+**A playground and a walkthrough.** `Markdown Collab: Open Tutorial Playground`
+writes a scratch document that arrives mid-review — threads, a reply, two
+pending suggestions — so the accept/reject loop is clickable in the first
+minute with no skill install and no Claude session.
+
+**Diagnostics.** `Markdown Collab: Report a Problem` collects the environment a
+bug report needs, and the output channel now has levels, timestamps, and a
+per-subsystem tag. Nothing credential-shaped is ever written to it.
+
+Fixes worth calling out: GitLab review drafts post correctly (they were sent
+with the local HEAD as `position[head_sha]`, which GitLab refused); a `.md`
+opened outside any workspace folder is fully usable; `![](../diagrams/x.png)`
+loads; accepting a suggestion in the live editor updates the text immediately.
+
 ## 0.34.79 — 2026-08-19 (trial)
 
 ### Changed: comment bodies render as markdown
