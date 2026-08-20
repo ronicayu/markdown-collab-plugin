@@ -185,6 +185,7 @@ const dom = {
   sendToClaude: document.getElementById("send-to-claude") as HTMLButtonElement,
   copyPrompt: document.getElementById("copy-prompt") as HTMLButtonElement,
   suggestModeToggle: document.getElementById("suggest-mode-toggle") as HTMLButtonElement,
+  removeResolved: document.getElementById("remove-resolved") as HTMLButtonElement,
   skillWarning: document.getElementById("skill-warning") as HTMLElement,
   skillWarningText: document.getElementById("skill-warning-text") as HTMLElement,
   skillInstall: document.getElementById("skill-install") as HTMLButtonElement,
@@ -480,6 +481,14 @@ dom.copyPrompt.addEventListener("click", () => {
 });
 dom.suggestModeToggle.addEventListener("click", () => {
   vscode.postMessage({ type: "toggle-suggest-mode" });
+});
+
+// The host owns the confirm and the write: this is a bulk delete of review
+// history, and the modal it shows is the same one the command uses. A webview
+// cannot show a modal of its own — VS Code blocks synchronous dialogs — and a
+// two-click arm is too quiet for something that removes many threads at once.
+dom.removeResolved.addEventListener("click", () => {
+  vscode.postMessage({ type: "remove-resolved" });
 });
 
 function updateSuggestModeToggle(on: boolean): void {
@@ -1026,6 +1035,12 @@ function renderThreads(state: SerializedState): void {
 
   const filtered = filterThreads(state.threads, filter);
   dom.threadCount.textContent = threadCountLabel(state.threads);
+  // Offered only when it would do something. A permanent button for an action
+  // that usually has no effect is noise, and its absence says "nothing to
+  // clean up" more clearly than a disabled control would.
+  const resolvedCount = state.threads.filter((t) => t.status === "resolved").length;
+  dom.removeResolved.hidden = resolvedCount === 0;
+  dom.removeResolved.textContent = `Remove ${resolvedCount} resolved`;
   renderClaudeSummary(state);
   if (filtered.length === 0) {
     if (state.suggestions.length === 0) {

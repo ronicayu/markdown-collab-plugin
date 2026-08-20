@@ -162,7 +162,12 @@ interface OpenLinkMessage {
 
 interface InvokeCommandMessage {
   type: "invoke-command";
-  command: "send-to-claude" | "copy-prompt" | "send-thread-claude" | "copy-thread-claude";
+  command:
+    | "send-to-claude"
+    | "copy-prompt"
+    | "send-thread-claude"
+    | "copy-thread-claude"
+    | "remove-resolved";
   /** Thread/comment id for the per-thread `*-thread-claude` commands. */
   commentId?: string;
 }
@@ -845,6 +850,13 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
           `CollabEditor: sendAllToClaude failed: ${(e as Error).message}`,
         );
       }
+    } else if (msg.command === "remove-resolved") {
+      // The command owns the confirm and the write, so the modal wording and
+      // the undoable edit are defined once for every surface that offers this.
+      await vscode.commands.executeCommand(
+        "markdownCollab.removeResolvedComments",
+        document.uri,
+      );
     } else if (msg.command === "copy-prompt") {
       try {
         // The existing copyClaudePrompt command operates on the active

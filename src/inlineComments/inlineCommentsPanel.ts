@@ -190,6 +190,10 @@ interface AcceptAllSuggestionsRequest {
   type: "accept-all-suggestions";
 }
 
+interface RemoveResolvedRequest {
+  type: "remove-resolved";
+}
+
 type ClientMessage =
   | ReadyMessage
   | AddCommentRequest
@@ -208,6 +212,7 @@ type ClientMessage =
   | AcceptSuggestionRequest
   | RejectSuggestionRequest
   | AcceptAllSuggestionsRequest
+  | RemoveResolvedRequest
   | ToggleSuggestModeRequest;
 
 /** Dependencies the panel needs from the extension host (kept narrow so tests can stub them). */
@@ -432,6 +437,14 @@ ${inlineCommentsAppBody()}
         // re-push so the toggle in the panel reflects the new state.
         await vscode.commands.executeCommand("markdownCollab.toggleSuggestMode");
         return this.pushState();
+      case "remove-resolved":
+        // Straight to the command, so the modal confirm, the shared verb, and
+        // the undoable write are defined once. The document change pushes new
+        // state on its own.
+        return vscode.commands.executeCommand(
+          "markdownCollab.removeResolvedComments",
+          this.doc.uri,
+        );
     }
   }
 

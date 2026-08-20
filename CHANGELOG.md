@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.34.85 — 2026-08-20 (pre-release)
+
+### Changed: "Remove resolved" is in the comment panels
+
+It shipped as a command only, which meant using it required knowing its name —
+while the resolved comments it acts on are sitting in the panel in front of
+you. Both panels now carry a **Remove N resolved** button, in the inline
+comments view's filter row and the live editor's sidebar toolbar.
+
+The button appears only when there is something to remove, and names the count.
+A permanently visible control for an action that usually does nothing is noise,
+and its absence says "nothing to clean up here" more directly than a greyed-out
+button would.
+
+Clicking it runs the same command: the modal confirm, the shared verb, and the
+undoable write stay defined once, so every route into this behaves identically.
+The webview only asks — it cannot show a modal of its own, and a quiet two-click
+arm is the wrong weight for deleting a dozen threads at once.
+
 ## 0.34.84 — 2026-08-20 (pre-release)
 
 ### Fixed: outline entries that went nowhere when clicked

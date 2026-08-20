@@ -52,6 +52,7 @@ export function inlineCommentsAppBody(): string {
         <button id="send-to-claude" title="Send the prompt to a running Claude terminal (or your configured send mode).">Send to Claude</button>
         <button id="copy-prompt" class="btn-ghost" title="Copy the prompt to your clipboard.">Copy</button>
         <button id="suggest-mode-toggle" class="btn-ghost" role="switch" aria-checked="false" title="When on, Send to Claude asks Claude to propose edits as suggestions you accept or reject.">Suggest: off</button>
+        <button id="remove-resolved" class="btn-ghost danger" hidden title="Delete every resolved comment from this file. Open comments and pending suggestions are kept.">Remove resolved</button>
       </div>
       <div id="skill-warning" class="skill-warning" hidden>
         <span id="skill-warning-text"></span>
