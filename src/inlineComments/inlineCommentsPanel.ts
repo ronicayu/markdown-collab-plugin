@@ -360,7 +360,7 @@ export class InlineCommentsPanel {
 
   constructor(
     private readonly context: vscode.ExtensionContext,
-    private readonly doc: vscode.TextDocument,
+    private doc: vscode.TextDocument,
     private readonly panel: vscode.WebviewPanel,
     private readonly deps: InlinePanelDeps,
     private readonly onDispose: () => void,
@@ -462,7 +462,26 @@ ${inlineCommentsAppBody()}
 </html>`;
   }
 
+  /**
+   * Re-acquire the document if VS Code closed our instance behind our back.
+   *
+   * The uncommitted-diff flow opens files with `openTextDocument` and no
+   * editor tab, and VS Code garbage-collects editor-less documents after a
+   * few minutes. The panel then holds a closed snapshot: `getText()` is
+   * frozen at close time, change events stop arriving, and `save()` fights
+   * the (newer) file on disk — which surfaced as "comment applied but save
+   * failed: content of the file is newer" the first time someone commented
+   * after reading a diff for a while. Reopening by URI returns the live
+   * document (reloaded from disk when needed); all listeners compare by URI,
+   * so swapping the reference is safe.
+   */
+  private async ensureLiveDoc(): Promise<void> {
+    if (!this.doc.isClosed) return;
+    this.doc = await vscode.workspace.openTextDocument(this.doc.uri);
+  }
+
   private async handleMessage(msg: ClientMessage): Promise<void> {
+    await this.ensureLiveDoc();
     switch (msg.type) {
       case "ready":
         await this.pushInit();
@@ -866,6 +885,9 @@ ${inlineCommentsAppBody()}
   }
 
   private async pushState(): Promise<void> {
+    // Callers include editor-less triggers (diff refresh, pending-set
+    // changes) where a GC'd document would otherwise render frozen content.
+    await this.ensureLiveDoc();
     const state = serialize(parse(this.doc.getText()), { lineNumbers: readLineNumbers() });
     const msg: UpdateMessage = {
       type: "update",
@@ -879,6 +901,7 @@ ${inlineCommentsAppBody()}
   }
 
   private async pushReviewPending(): Promise<void> {
+    await this.ensureLiveDoc();
     const state = serialize(parse(this.doc.getText()));
     const msg: ReviewPendingMessage = {
       type: "review-pending",

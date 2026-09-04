@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.34.91 — 2026-09-04 (GitHub only)
+
+### Fixed: "comment applied but save failed" in the diff view
+
+Files opened from the Uncommitted Changes tree open in the review panel with
+no editor tab, and VS Code quietly closes editor-less documents after a few
+minutes. The panel then held a frozen snapshot: adding a comment applied the
+edit but the save fought the (newer) file on disk, leaving the comment
+stranded as an unsaved change. The panel now re-acquires the live document
+whenever its instance has been closed, so commenting after a long read works
+like commenting right away.
+
 ## 0.34.90 — 2026-09-04 (GitHub only)
 
 ### Changed: the finalize button is labeled "Remove all"
