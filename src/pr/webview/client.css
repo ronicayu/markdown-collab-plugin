@@ -411,15 +411,33 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
 }
 .composer-actions button:first-child:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* Prev/next-change navigation (shared look with the inline diff view). */
+/* Prev/next-change navigation (shared look with the inline diff view). A
+   direct child of #preview-pane (not the header) so it can stick to the
+   viewport instead of scrolling away with the content. `height: 0` keeps the
+   sticky rail out of the document flow entirely — without it, the rail's own
+   box would carve out real space and push #preview down every time the nav
+   becomes visible. */
 #diff-nav {
+  position: sticky;
+  top: 8px;
+  z-index: 9;
+  display: flex;
+  justify-content: flex-end;
+  height: 0;
+  overflow: visible;
+}
+#diff-nav[hidden] { display: none; }
+.diff-nav-pill {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  margin-left: 6px;
+  padding: 2px 8px;
+  background: var(--card-bg, var(--vscode-editorWidget-background, #1e1e1e));
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
   white-space: nowrap;
 }
-#diff-nav[hidden] { display: none; }
 #diff-nav .btn-link { padding: 0 4px; }
 #diff-nav-count {
   font-size: 0.78em;

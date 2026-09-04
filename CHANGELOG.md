@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.34.93 — 2026-09-04 (GitHub only)
+
+### Fixed: change-navigation arrows scrolled out of view
+
+The ↑/↓ prev/next-change arrows sat in the preview header, so they vanished
+as soon as you scrolled. They're now a floating pill pinned to the top-right
+of the preview pane in both the diff view and the PR/MR view — always
+visible while you scroll, GitHub-style. The pill takes no layout space (a
+zero-height sticky rail), and in the diff view it drops below the find bar
+when that's open.
+
 ## 0.34.92 — 2026-09-04 (GitHub only)
 
 ### Added: prev/next-change arrows in the diff and PR views

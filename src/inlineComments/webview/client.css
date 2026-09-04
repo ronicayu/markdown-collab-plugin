@@ -692,16 +692,35 @@ button.btn-link.danger { color: #e08080; }
   opacity: 0.85;
 }
 
-/* Prev/next-change navigation, GitHub-style. Lives in the header beside the
-   diff badge; hidden entirely outside diff mode. */
+/* Prev/next-change navigation, GitHub-style. A direct child of #preview-pane
+   (not the header) so it can stick to the viewport instead of scrolling away
+   with the content. `height: 0` keeps the sticky rail out of the document
+   flow entirely — without it, the rail's own box would carve out real space
+   and push #preview down every time the nav becomes visible. */
 #diff-nav {
+  position: sticky;
+  top: 8px;
+  z-index: 9;
+  display: flex;
+  justify-content: flex-end;
+  height: 0;
+  overflow: visible;
+}
+#diff-nav[hidden] { display: none; }
+/* The find bar is a sticky sibling above this one at z-index 10; when it's
+   open, drop the pill below it instead of letting it sit underneath. */
+#find-bar:not([hidden]) ~ #diff-nav { top: 48px; }
+.diff-nav-pill {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  margin-left: 6px;
+  padding: 2px 8px;
+  background: var(--card-bg, var(--vscode-editorWidget-background, #1e1e1e));
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
   white-space: nowrap;
 }
-#diff-nav[hidden] { display: none; }
 #diff-nav .btn-link { padding: 0 4px; }
 #diff-nav-count {
   font-size: 0.78em;

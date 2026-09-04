@@ -121,7 +121,9 @@ test.describe("change navigation", () => {
       removed: [{ afterLine: 5, text: "Gone." }],
       isNew: false,
     });
-    await expect(page.locator("#diff-nav")).toBeVisible();
+    // #diff-nav itself is a zero-height sticky rail (by design, so it never
+    // takes up layout space); the pill inside it is what actually renders.
+    await expect(page.locator("#diff-nav .diff-nav-pill")).toBeVisible();
     await expect(page.locator("#diff-nav-count")).toHaveText("2 changes");
   });
 
@@ -169,5 +171,31 @@ test.describe("change navigation", () => {
     await page.keyboard.press(process.platform === "darwin" ? "Meta+f" : "Control+f");
     await page.locator("#find-input").pressSequentially("n");
     await expect(page.locator("#diff-nav-count")).toHaveText("2 / 2");
+  });
+
+  test("nav stays visible after scrolling", async ({ page }) => {
+    // A document tall enough to actually scroll #preview-pane — the fixed
+    // three-paragraph DOC above doesn't overflow the viewport.
+    const longDoc =
+      "# Title\n\n" + Array.from({ length: 40 }, (_, i) => `Paragraph ${i}.`).join("\n\n") + "\n";
+    await bootInlineView(page, {
+      fileName: "doc.md",
+      state: serialize(parse(longDoc)),
+      diff: { addedRanges: [{ start: 3, end: 3 }], removed: [], isNew: false },
+      user: { name: "r" },
+      imageBaseUris: { docDir: "", workspaceFolder: null },
+    });
+    await page.evaluate(() => {
+      const pane = document.getElementById("preview-pane")!;
+      pane.scrollTop = pane.scrollHeight;
+    });
+    // #diff-nav is the zero-height sticky rail; the pill is what's actually
+    // painted, so visibility is asserted on it, while position comes from the
+    // rail (sticky top offset) it's positioned inside.
+    const nav = page.locator("#diff-nav");
+    await expect(page.locator("#diff-nav .diff-nav-pill")).toBeVisible();
+    const box = await nav.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.y).toBeLessThan(100);
   });
 });
