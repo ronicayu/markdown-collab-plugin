@@ -410,3 +410,26 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
   border-radius: 3px;
 }
 .composer-actions button:first-child:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Prev/next-change navigation (shared look with the inline diff view). */
+#diff-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+  white-space: nowrap;
+}
+#diff-nav[hidden] { display: none; }
+#diff-nav .btn-link { padding: 0 4px; }
+#diff-nav-count {
+  font-size: 0.78em;
+  opacity: 0.8;
+  min-width: 4ch;
+  text-align: center;
+}
+
+/* The change the arrows landed on — outline so it reads over the stripe. */
+#preview .pr-diff-current {
+  outline: 2px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 2px;
+}

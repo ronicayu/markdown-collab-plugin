@@ -323,6 +323,11 @@ export class PrReviewPanel {
   <div id="preview-pane">
     <header id="preview-header">
       <h2 id="file-name"></h2>
+      <span id="diff-nav" hidden>
+        <button id="diff-prev" class="btn-link" title="Previous change (p)" aria-label="Previous change">↑</button>
+        <span id="diff-nav-count"></span>
+        <button id="diff-next" class="btn-link" title="Next change (n)" aria-label="Next change">↓</button>
+      </span>
       <p class="hint">Select prose to draft a review comment. Lines with a side stripe are part of this PR's diff. Press ${process.platform === "darwin" ? "⌘F" : "Ctrl+F"} to search.</p>
     </header>
     <article id="preview"></article>

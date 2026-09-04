@@ -18,6 +18,7 @@ import { createMarkdownRenderer, ensurePlantuml } from "../../webviewShared/mark
 import { slugifyHeading } from "../../inlineComments/linkParse";
 import { buildComposer, buildCommentBody, buildCommentCard, type ComposerHandle } from "../../webviewShared/commentUi";
 import { resolveImageSrc, type ImageBaseUris } from "../../webviewShared/imageSrc";
+import { createDiffNav, isNavKeyContext } from "../../webviewShared/diffNav";
 
 interface VsCodeApi {
   postMessage(msg: ClientToHost): void;
@@ -92,6 +93,10 @@ function ensurePlantumlInstalled(opts: { serverUrl: string; format: "svg" | "png
 const dom = {
   fileName: document.getElementById("file-name") as HTMLElement,
   preview: document.getElementById("preview") as HTMLElement,
+  diffNav: document.getElementById("diff-nav") as HTMLElement,
+  diffPrev: document.getElementById("diff-prev") as HTMLButtonElement,
+  diffNext: document.getElementById("diff-next") as HTMLButtonElement,
+  diffNavCount: document.getElementById("diff-nav-count") as HTMLElement,
   floating: document.getElementById("floating-add") as HTMLButtonElement,
   draftCount: document.getElementById("draft-count") as HTMLElement,
   draftsList: document.getElementById("drafts-list") as HTMLElement,
@@ -269,7 +274,10 @@ function rewriteImageSrcs(): void {
  * URL changed even when text didn't, etc — anything markdown-it tagged.
  */
 function paintDiffStripes(addedRanges: LineRange[]): void {
-  if (addedRanges.length === 0) return;
+  if (addedRanges.length === 0) {
+    diffNav.setStops([]);
+    return;
+  }
   const seenBlocks = new WeakSet<Element>();
   for (const el of dom.preview.querySelectorAll<HTMLElement>("[data-mc-src]")) {
     const m = /^(\d+)\.(\d+)$/.exec(el.dataset.mcSrc || "");
@@ -285,7 +293,25 @@ function paintDiffStripes(addedRanges: LineRange[]): void {
     block.classList.add("pr-changed");
     block.dataset.prLine = String(startLine);
   }
+  diffNav.setStops(Array.from(dom.preview.querySelectorAll<HTMLElement>(".pr-changed")));
 }
+
+const diffNav = createDiffNav({
+  container: dom.diffNav,
+  prev: dom.diffPrev,
+  next: dom.diffNext,
+  count: dom.diffNavCount,
+  currentClass: "pr-diff-current",
+});
+
+// n/p step through the PR's changed blocks, GitHub-style — never while the
+// user is typing in the composer or review-summary box.
+document.addEventListener("keydown", (e) => {
+  if (dom.diffNav.hidden || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (!isNavKeyContext(e.target)) return;
+  if (e.key === "n") diffNav.step(1);
+  else if (e.key === "p") diffNav.step(-1);
+});
 
 const BLOCK_TAGS = new Set(["P", "PRE", "BLOCKQUOTE", "UL", "OL", "LI", "TABLE", "TR", "H1", "H2", "H3", "H4", "H5", "H6", "HR", "DIV", "FIGURE", "IMG"]);
 

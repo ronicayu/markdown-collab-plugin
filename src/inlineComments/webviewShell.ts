@@ -26,6 +26,11 @@ export function inlineCommentsAppBody(): string {
     <header id="preview-header">
       <h2 id="file-name"></h2>
       <span id="diff-mode-badge" hidden></span>
+      <span id="diff-nav" hidden>
+        <button id="diff-prev" class="btn-link" title="Previous change (p)" aria-label="Previous change">↑</button>
+        <span id="diff-nav-count"></span>
+        <button id="diff-next" class="btn-link" title="Next change (n)" aria-label="Next change">↓</button>
+      </span>
       <p class="hint">Select text in the preview to add a comment. <kbd>⌘F</kbd> to find.</p>
       <button id="outline-toggle" class="btn-link" title="Show or hide the document outline" aria-pressed="false">☰ Outline</button>
     </header>

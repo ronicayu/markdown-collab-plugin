@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.34.92 — 2026-09-04 (GitHub only)
+
+### Added: prev/next-change arrows in the diff and PR views
+
+Both review surfaces — the uncommitted-changes view and the PR/MR view — now
+carry ↑/↓ arrows in the header (with an "n / N" counter) that jump between
+changes, GitHub/GitLab-style. In the uncommitted view the stops include the
+removed-text widgets, so stepping walks deletions too. The current change
+gets a focus outline. `n`/`p` work as keyboard shortcuts anywhere you aren't
+typing.
+
 ## 0.34.91 — 2026-09-04 (GitHub only)
 
 ### Fixed: "comment applied but save failed" in the diff view

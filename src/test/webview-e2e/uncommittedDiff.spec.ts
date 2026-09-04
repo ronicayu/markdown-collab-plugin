@@ -113,3 +113,61 @@ test("a new file shows the badge and no removed widgets", async ({ page }) => {
   await expect(page.locator("#diff-mode-badge")).toHaveText("new file — uncommitted");
   await expect(page.locator(".mc-diff-removed")).toHaveCount(0);
 });
+
+test.describe("change navigation", () => {
+  test("hidden without a diff, counts stripes and removals with one", async ({ page }) => {
+    await boot(page, {
+      addedRanges: [{ start: 3, end: 3 }],
+      removed: [{ afterLine: 5, text: "Gone." }],
+      isNew: false,
+    });
+    await expect(page.locator("#diff-nav")).toBeVisible();
+    await expect(page.locator("#diff-nav-count")).toHaveText("2 changes");
+  });
+
+  test("next steps through every change in order and wraps", async ({ page }) => {
+    await boot(page, {
+      addedRanges: [{ start: 3, end: 3 }, { start: 7, end: 7 }],
+      removed: [],
+      isNew: false,
+    });
+    const next = page.locator("#diff-next");
+    await next.click();
+    await expect(page.locator("#diff-nav-count")).toHaveText("1 / 2");
+    await expect(page.locator(".mc-diff-current")).toContainText("Alpha paragraph.");
+    await next.click();
+    await expect(page.locator("#diff-nav-count")).toHaveText("2 / 2");
+    await expect(page.locator(".mc-diff-current")).toContainText("Gamma paragraph.");
+    // Only one current at a time, and stepping past the end wraps to the first.
+    await expect(page.locator(".mc-diff-current")).toHaveCount(1);
+    await next.click();
+    await expect(page.locator(".mc-diff-current")).toContainText("Alpha paragraph.");
+  });
+
+  test("prev from idle lands on the last change", async ({ page }) => {
+    await boot(page, {
+      addedRanges: [{ start: 3, end: 3 }, { start: 7, end: 7 }],
+      removed: [],
+      isNew: false,
+    });
+    await page.locator("#diff-prev").click();
+    await expect(page.locator("#diff-nav-count")).toHaveText("2 / 2");
+    await expect(page.locator(".mc-diff-current")).toContainText("Gamma paragraph.");
+  });
+
+  test("n and p keys navigate, but not while typing", async ({ page }) => {
+    await boot(page, {
+      addedRanges: [{ start: 3, end: 3 }, { start: 7, end: 7 }],
+      removed: [],
+      isNew: false,
+    });
+    await page.keyboard.press("n");
+    await expect(page.locator("#diff-nav-count")).toHaveText("1 / 2");
+    await page.keyboard.press("p");
+    await expect(page.locator("#diff-nav-count")).toHaveText("2 / 2");
+    // Typing "n" into the find bar must not navigate.
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+f" : "Control+f");
+    await page.locator("#find-input").pressSequentially("n");
+    await expect(page.locator("#diff-nav-count")).toHaveText("2 / 2");
+  });
+});

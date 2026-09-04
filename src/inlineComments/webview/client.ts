@@ -10,6 +10,7 @@ import { createMarkdownRenderer, ensurePlantuml } from "../../webviewShared/mark
 import { isClaudeUnread } from "../claudeUnread";
 import { slugifyHeading } from "../linkParse";
 import { findCountLabel, findMatchesIn, stepIndex } from "../../webviewShared/findState";
+import { createDiffNav, isNavKeyContext } from "../../webviewShared/diffNav";
 import { planHighlightSlices } from "../../webviewShared/highlightSlices";
 import {
   THREAD_RENDER_CHUNK,
@@ -209,6 +210,10 @@ const dom = {
   suggestModeToggle: document.getElementById("suggest-mode-toggle") as HTMLButtonElement,
   removeResolved: document.getElementById("remove-resolved") as HTMLButtonElement,
   finalizeDoc: document.getElementById("finalize-doc") as HTMLButtonElement,
+  diffNav: document.getElementById("diff-nav") as HTMLElement,
+  diffPrev: document.getElementById("diff-prev") as HTMLButtonElement,
+  diffNext: document.getElementById("diff-next") as HTMLButtonElement,
+  diffNavCount: document.getElementById("diff-nav-count") as HTMLElement,
   skillWarning: document.getElementById("skill-warning") as HTMLElement,
   skillWarningText: document.getElementById("skill-warning-text") as HTMLElement,
   skillInstall: document.getElementById("skill-install") as HTMLButtonElement,
@@ -783,7 +788,10 @@ function nearestDiffBlock(start: Element): HTMLElement | null {
 function paintDiffStripes(prose: string, diff: DiffState | null): void {
   document.body.classList.toggle("diff-mode", diff !== null);
   renderDiffBadge(diff);
-  if (!diff) return;
+  if (!diff) {
+    diffNav.setStops([]);
+    return;
+  }
   // 1-based line for each prose offset, via a sorted line-start table.
   const lineStarts: number[] = [0];
   for (let i = 0; i < prose.length; i++) {
@@ -818,7 +826,29 @@ function paintDiffStripes(prose: string, diff: DiffState | null): void {
     block.classList.add("mc-diff-changed");
   }
   paintDiffDeletions(prose, diff, lineStarts);
+  // Navigation stops: every stripe and every removed-text widget, in document
+  // order (querySelectorAll's order). Collected after both painters ran.
+  diffNav.setStops(
+    Array.from(dom.preview.querySelectorAll<HTMLElement>(".mc-diff-changed, .mc-diff-removed")),
+  );
 }
+
+const diffNav = createDiffNav({
+  container: dom.diffNav,
+  prev: dom.diffPrev,
+  next: dom.diffNext,
+  count: dom.diffNavCount,
+  currentClass: "mc-diff-current",
+});
+
+// n/p step through changes, GitHub-style — but never while typing in the
+// find bar, a composer, or a reply box.
+document.addEventListener("keydown", (e) => {
+  if (dom.diffNav.hidden || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (!isNavKeyContext(e.target)) return;
+  if (e.key === "n") diffNav.step(1);
+  else if (e.key === "p") diffNav.step(-1);
+});
 
 /** The block that sits directly under #preview — never inside a list or table. */
 function topLevelBlock(el: Element): HTMLElement | null {

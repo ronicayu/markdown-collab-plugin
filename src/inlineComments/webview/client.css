@@ -691,3 +691,28 @@ button.btn-link.danger { color: #e08080; }
   text-decoration-color: color-mix(in srgb, var(--diff-del-stripe) 55%, transparent);
   opacity: 0.85;
 }
+
+/* Prev/next-change navigation, GitHub-style. Lives in the header beside the
+   diff badge; hidden entirely outside diff mode. */
+#diff-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+  white-space: nowrap;
+}
+#diff-nav[hidden] { display: none; }
+#diff-nav .btn-link { padding: 0 4px; }
+#diff-nav-count {
+  font-size: 0.78em;
+  opacity: 0.8;
+  min-width: 4ch;
+  text-align: center;
+}
+
+/* The change the arrows landed on. Outline, not background — it must read
+   over both the green added tint and the red removed tint. */
+#preview .mc-diff-current {
+  outline: 2px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 2px;
+}
