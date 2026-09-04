@@ -9,6 +9,9 @@ import {
   headFileContent,
   listUncommittedMarkdownFiles,
   repoRootFor,
+  stageFile,
+  stageStates,
+  unstageFile,
 } from "../uncommitted/gitUncommitted";
 
 const ok = (stdout: string): RunCliResult => ({ stdout, stderr: "", code: 0 });
@@ -105,5 +108,54 @@ describe("repoRootFor", () => {
       throw new Error("spawn git ENOENT");
     };
     expect(await repoRootFor("/tmp", runner)).toBeNull();
+  });
+});
+
+describe("stageStates", () => {
+  it("classifies staged, unstaged, and partially staged paths", async () => {
+    const runner = runnerFor({
+      "git diff --name-only --cached -M": ok("staged.md\nboth.md"),
+      "git diff --name-only -M": ok("unstaged.md\nboth.md"),
+    });
+    const got = await stageStates("/repo", runner);
+    expect(got.get("staged.md")).toBe("staged");
+    expect(got.get("unstaged.md")).toBe("unstaged");
+    expect(got.get("both.md")).toBe("partial");
+  });
+
+  it("degrades to empty on failed queries rather than throwing", async () => {
+    const runner = runnerFor({
+      "git diff --name-only --cached -M": fail("boom"),
+      "git diff --name-only -M": fail("boom"),
+    });
+    expect((await stageStates("/repo", runner)).size).toBe(0);
+  });
+});
+
+describe("stageFile / unstageFile", () => {
+  it("stages via git add and resolves on success", async () => {
+    const calls: string[] = [];
+    const runner: CliRunner = async (bin, args) => {
+      calls.push(`${bin} ${args.join(" ")}`);
+      return ok("");
+    };
+    await stageFile("/repo", "docs/spec.md", runner);
+    expect(calls).toEqual(["git add -- docs/spec.md"]);
+  });
+
+  it("unstages via git restore --staged", async () => {
+    const calls: string[] = [];
+    const runner: CliRunner = async (bin, args) => {
+      calls.push(`${bin} ${args.join(" ")}`);
+      return ok("");
+    };
+    await unstageFile("/repo", "docs/spec.md", runner);
+    expect(calls).toEqual(["git restore --staged -- docs/spec.md"]);
+  });
+
+  it("surfaces git's stderr when a stage is refused", async () => {
+    const runner: CliRunner = async () => fail("fatal: pathspec did not match");
+    await expect(stageFile("/repo", "gone.md", runner)).rejects.toThrow(/pathspec/);
+    await expect(unstageFile("/repo", "gone.md", runner)).rejects.toThrow(/pathspec/);
   });
 });

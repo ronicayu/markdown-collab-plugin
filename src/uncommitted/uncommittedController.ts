@@ -13,7 +13,14 @@ import * as vscode from "vscode";
 import type { ChangedFile } from "../pr/diff";
 import { InlineCommentsPanel } from "../inlineComments/inlineCommentsPanel";
 import type { Logger } from "../logging";
-import { listUncommittedMarkdownFiles, repoRootFor } from "./gitUncommitted";
+import {
+  listUncommittedMarkdownFiles,
+  repoRootFor,
+  stageFile,
+  stageStates,
+  unstageFile,
+  type StageState,
+} from "./gitUncommitted";
 
 interface DirNode {
   kind: "dir";
@@ -26,6 +33,8 @@ interface FileNode {
   kind: "file";
   name: string;
   file: ChangedFile;
+  /** Missing when the stage query failed; the file still lists and opens. */
+  stage?: StageState;
 }
 
 type TreeNode = DirNode | FileNode;
@@ -60,6 +69,14 @@ export class UncommittedChangesController implements vscode.Disposable {
       vscode.commands.registerCommand(
         "markdownCollab.openUncommittedFile",
         (file: ChangedFile) => this.open(file),
+      ),
+      vscode.commands.registerCommand(
+        "markdownCollab.stageUncommittedFile",
+        (node: TreeNode) => this.setStaged(node, true),
+      ),
+      vscode.commands.registerCommand(
+        "markdownCollab.unstageUncommittedFile",
+        (node: TreeNode) => this.setStaged(node, false),
       ),
       // Saves change what's uncommitted; so do file creates/deletes/renames.
       // Git-only transitions (commit, stash) have no workspace file event —
@@ -113,7 +130,10 @@ export class UncommittedChangesController implements vscode.Disposable {
     }
     try {
       const files = await listUncommittedMarkdownFiles(this.repoRoot);
-      this.setTreeState({ kind: "files", repoRoot: this.repoRoot, files });
+      // Best-effort: a failed stage query degrades to a list with no staged
+      // badges, not to an empty view.
+      const stages = await stageStates(this.repoRoot).catch(() => new Map<string, StageState>());
+      this.setTreeState({ kind: "files", repoRoot: this.repoRoot, files, stages });
       InlineCommentsPanel.refreshDiffPanels();
     } catch (e) {
       this.log.warn(`uncommitted refresh failed: ${(e as Error).message}`);
@@ -133,6 +153,21 @@ export class UncommittedChangesController implements vscode.Disposable {
     await this.openFile(vscode.Uri.file(abs), { showDiff: true });
   }
 
+  /** Stage/unstage one file from its tree row, then re-query so the badge follows. */
+  private async setStaged(node: TreeNode | undefined, staged: boolean): Promise<void> {
+    if (!node || node.kind !== "file" || !this.repoRoot) return;
+    try {
+      if (staged) await stageFile(this.repoRoot, node.file.path);
+      else await unstageFile(this.repoRoot, node.file.path);
+    } catch (e) {
+      this.log.warn(`${staged ? "stage" : "unstage"} failed: ${(e as Error).message}`);
+      void vscode.window.showErrorMessage(
+        `Could not ${staged ? "stage" : "unstage"} ${node.file.path}: ${(e as Error).message}`,
+      );
+    }
+    await this.refresh();
+  }
+
   dispose(): void {
     for (const d of this.disposables) {
       try {
@@ -149,7 +184,7 @@ type TreeState =
   | { kind: "no-workspace" }
   | { kind: "no-repo" }
   | { kind: "error"; message: string }
-  | { kind: "files"; repoRoot: string; files: ChangedFile[] };
+  | { kind: "files"; repoRoot: string; files: ChangedFile[]; stages?: Map<string, StageState> };
 
 class UncommittedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
   private readonly emitter = new vscode.EventEmitter<TreeNode | undefined | void>();
@@ -160,7 +195,7 @@ class UncommittedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
   setState(state: TreeState): void {
     this.state = state;
-    this.rootChildren = state.kind === "files" ? buildTree(state.files) : [];
+    this.rootChildren = state.kind === "files" ? buildTree(state.files, state.stages) : [];
     this.emitter.fire();
   }
 
@@ -195,11 +230,14 @@ class UncommittedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     const status =
       node.file.status === "A" ? "new" :
       node.file.status === "R" ? "renamed" : "modified";
-    item.description = status;
-    item.tooltip = `${node.file.path} (${status}, uncommitted)`;
+    const stage = node.stage ?? "unstaged";
+    item.description = stage === "unstaged" ? status : `${status} · ${stage}`;
+    item.tooltip = `${node.file.path} (${status}, ${stage})`;
     item.resourceUri = vscode.Uri.file(node.file.path);
     item.iconPath = vscode.ThemeIcon.File;
-    item.contextValue = "uncommittedFile";
+    // The stage state rides on contextValue so the inline +/− buttons follow
+    // it: partial offers both, like the built-in SCM view.
+    item.contextValue = `uncommittedFile-${stage}`;
     item.command = {
       command: "markdownCollab.openUncommittedFile",
       title: "Review uncommitted changes",
@@ -214,7 +252,7 @@ function isMarkdown(p: string): boolean {
   return lower.endsWith(".md") || lower.endsWith(".markdown");
 }
 
-function buildTree(files: ChangedFile[]): TreeNode[] {
+function buildTree(files: ChangedFile[], stages?: Map<string, StageState>): TreeNode[] {
   interface MutableDir { name: string; fullPath: string; dirs: Map<string, MutableDir>; files: FileNode[]; }
   const root: MutableDir = { name: "", fullPath: "", dirs: new Map(), files: [] };
 
@@ -232,7 +270,7 @@ function buildTree(files: ChangedFile[]): TreeNode[] {
       }
       cursor = child;
     }
-    cursor.files.push({ kind: "file", name: fileName, file: f });
+    cursor.files.push({ kind: "file", name: fileName, file: f, stage: stages?.get(f.path) });
   }
 
   const toNodes = (m: MutableDir): TreeNode[] => {

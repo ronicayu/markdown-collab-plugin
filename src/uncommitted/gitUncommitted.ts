@@ -66,6 +66,62 @@ export async function listUncommittedMarkdownFiles(
 }
 
 /**
+ * Where each changed file's content currently sits relative to the index:
+ * `staged` (all of it is in the index), `unstaged` (none of it is), or
+ * `partial` (some hunks staged, some not). Untracked files are `unstaged`.
+ */
+export type StageState = "staged" | "unstaged" | "partial";
+
+/**
+ * Stage state per repo-relative path, for every path that differs from HEAD
+ * or the index. Two queries: index-vs-HEAD says what is staged, worktree-vs-
+ * index says what isn't; a path in both is partially staged.
+ */
+export async function stageStates(
+  repoRoot: string,
+  runner: CliRunner = getCliRunner(),
+): Promise<Map<string, StageState>> {
+  const [cached, unstaged] = await Promise.all([
+    runner("git", ["diff", "--name-only", "--cached", "-M"], { cwd: repoRoot }),
+    runner("git", ["diff", "--name-only", "-M"], { cwd: repoRoot }),
+  ]);
+  const paths = (res: { code: number; stdout: string }): Set<string> =>
+    res.code === 0
+      ? new Set(res.stdout.split("\n").map((l) => l.trim()).filter(Boolean))
+      : new Set();
+  const stagedSet = paths(cached);
+  const unstagedSet = paths(unstaged);
+  const out = new Map<string, StageState>();
+  for (const p of stagedSet) out.set(p, unstagedSet.has(p) ? "partial" : "staged");
+  for (const p of unstagedSet) if (!out.has(p)) out.set(p, "unstaged");
+  return out;
+}
+
+/** `git add` one file. Throws with git's stderr when the add is refused. */
+export async function stageFile(
+  repoRoot: string,
+  relPath: string,
+  runner: CliRunner = getCliRunner(),
+): Promise<void> {
+  const res = await runner("git", ["add", "--", relPath], { cwd: repoRoot });
+  if (res.code !== 0) {
+    throw new Error(`git add failed: ${res.stderr.trim() || res.stdout.trim()}`);
+  }
+}
+
+/** Take one file back out of the index; the working tree is untouched. */
+export async function unstageFile(
+  repoRoot: string,
+  relPath: string,
+  runner: CliRunner = getCliRunner(),
+): Promise<void> {
+  const res = await runner("git", ["restore", "--staged", "--", relPath], { cwd: repoRoot });
+  if (res.code !== 0) {
+    throw new Error(`git restore --staged failed: ${res.stderr.trim() || res.stdout.trim()}`);
+  }
+}
+
+/**
  * Content of `relPath` at HEAD, or null when the file doesn't exist there
  * (untracked / newly added). `relPath` is repo-relative with `/` separators.
  */

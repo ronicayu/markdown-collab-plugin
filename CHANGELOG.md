@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.34.89 — 2026-09-04 (GitHub only)
+
+### Added: the "before" side of the uncommitted diff
+
+The uncommitted-changes view showed only the "after" — green stripes on
+blocks that changed, nothing at all where text was deleted or what a modified
+paragraph used to say. Deleted HEAD prose now appears where it used to sit:
+a red-striped, struck-through block labeled "removed — this was in HEAD",
+anchored above the replacement text for modifications and between the
+surviving blocks for pure deletions. Same prose-vs-prose diff as the stripes,
+so comment-marker churn never fabricates a removal.
+
+### Added: stage and unstage files from the review tree
+
+Each file row in "Uncommitted Changes (markdown files)" now carries inline
++/− buttons to `git add` / `git restore --staged` that file, and its label
+shows the stage state (`modified · staged`, `· partial` when only some hunks
+are staged — a partial row offers both buttons, like the built-in SCM view).
+Review a file, decide it's ready, stage it without leaving the tree.
+
 ## 0.34.88 — 2026-09-04 (GitHub only)
 
 ### Added: finalize document — one button to end the review (#1)

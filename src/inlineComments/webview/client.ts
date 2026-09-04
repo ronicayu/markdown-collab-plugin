@@ -95,9 +95,17 @@ interface DiffLineRange {
   end: number;
 }
 
+interface DiffRemovedRun {
+  /** 1-based prose line the removed text sits after; 0 = top of document. */
+  afterLine: number;
+  /** The removed old-side prose, newline-joined. */
+  text: string;
+}
+
 /** Uncommitted-vs-HEAD overlay; null / absent = plain inline-comments view. */
 interface DiffState {
   addedRanges: DiffLineRange[];
+  removed: DiffRemovedRun[];
   isNew: boolean;
 }
 
@@ -775,7 +783,7 @@ function nearestDiffBlock(start: Element): HTMLElement | null {
 function paintDiffStripes(prose: string, diff: DiffState | null): void {
   document.body.classList.toggle("diff-mode", diff !== null);
   renderDiffBadge(diff);
-  if (!diff || diff.addedRanges.length === 0) return;
+  if (!diff) return;
   // 1-based line for each prose offset, via a sorted line-start table.
   const lineStarts: number[] = [0];
   for (let i = 0; i < prose.length; i++) {
@@ -809,6 +817,94 @@ function paintDiffStripes(prose: string, diff: DiffState | null): void {
     seen.add(block);
     block.classList.add("mc-diff-changed");
   }
+  paintDiffDeletions(prose, diff, lineStarts);
+}
+
+/** The block that sits directly under #preview — never inside a list or table. */
+function topLevelBlock(el: Element): HTMLElement | null {
+  let cur: Element | null = el;
+  while (cur && cur.parentElement !== dom.preview) cur = cur.parentElement;
+  return cur as HTMLElement | null;
+}
+
+/**
+ * The "before" side of the diff: for each removed run, insert a widget showing
+ * the deleted HEAD text where it used to sit. Without these, a deletion (or
+ * the old half of a modification) is invisible — the reviewer sees only the
+ * "after". Anchoring: the widget goes after the top-level block containing
+ * (or last preceding) the prose line the run is anchored to; a run anchored
+ * to line 0 goes above everything.
+ */
+function paintDiffDeletions(prose: string, diff: DiffState, lineStarts: number[]): void {
+  // A removed run that was only blank lines has nothing visible to show.
+  const runs = (diff.removed ?? []).filter((r) => r.text.trim() !== "");
+  if (runs.length === 0) return;
+  const spans = Array.from(dom.preview.querySelectorAll<HTMLElement>("[data-mc-src]"))
+    .map((el) => {
+      const raw = el.dataset.mcSrc || "";
+      const dot = raw.indexOf(".");
+      const start = dot === -1 ? NaN : Number(raw.slice(0, dot));
+      return Number.isFinite(start) ? { start, el } : null;
+    })
+    .filter((s): s is { start: number; el: HTMLElement } => s !== null)
+    .sort((a, b) => a.start - b.start);
+  // Several runs can anchor to the same block; remember the last widget so
+  // they stack in document order instead of reversing.
+  const lastAt = new Map<Element, Element>();
+  const insertAtTop = (widget: HTMLElement): void => {
+    const prev = lastAt.get(dom.preview);
+    if (prev) prev.insertAdjacentElement("afterend", widget);
+    else dom.preview.insertBefore(widget, dom.preview.firstChild);
+    lastAt.set(dom.preview, widget);
+  };
+  for (const run of runs) {
+    const widget = buildRemovedWidget(run);
+    if (run.afterLine === 0 || spans.length === 0) {
+      insertAtTop(widget);
+      continue;
+    }
+    // End offset of the anchor line: the widget belongs after the block
+    // holding that offset, or after the last block before it.
+    const anchorOffset =
+      run.afterLine < lineStarts.length ? lineStarts[run.afterLine] - 1 : prose.length;
+    let lo = 0;
+    let hi = spans.length - 1;
+    let idx = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (spans[mid].start <= anchorOffset) {
+        idx = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    if (idx === -1) {
+      insertAtTop(widget);
+      continue;
+    }
+    const block = topLevelBlock(spans[idx].el);
+    if (!block) {
+      insertAtTop(widget);
+      continue;
+    }
+    (lastAt.get(block) ?? block).insertAdjacentElement("afterend", widget);
+    lastAt.set(block, widget);
+  }
+}
+
+function buildRemovedWidget(run: DiffRemovedRun): HTMLElement {
+  const div = document.createElement("div");
+  div.className = "mc-diff-removed";
+  const label = document.createElement("div");
+  label.className = "mc-diff-removed-label";
+  const n = run.text.split("\n").length;
+  label.textContent = `removed — this was in HEAD (${n} line${n === 1 ? "" : "s"})`;
+  const pre = document.createElement("pre");
+  pre.className = "mc-diff-removed-text";
+  pre.textContent = run.text;
+  div.append(label, pre);
+  return div;
 }
 
 /** Small header pill so it's obvious the panel is in uncommitted-diff mode. */
@@ -819,7 +915,7 @@ function renderDiffBadge(diff: DiffState | null): void {
   if (!diff) return;
   badge.textContent = diff.isNew
     ? "new file — uncommitted"
-    : diff.addedRanges.length === 0
+    : diff.addedRanges.length === 0 && (diff.removed ?? []).length === 0
       ? "no uncommitted prose changes"
       : "uncommitted changes";
 }

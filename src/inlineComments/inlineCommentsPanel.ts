@@ -27,7 +27,7 @@ import { pendingLabel } from "./claudePending";
 import { detectUrlScheme, parseLinkHref, slugifyHeading } from "./linkParse";
 import type { LineRange } from "../pr/diff";
 import { headFileContent, repoRootFor } from "../uncommitted/gitUncommitted";
-import { addedLineRangesBetween } from "../uncommitted/proseDiff";
+import { diffProse, type RemovedRun } from "../uncommitted/proseDiff";
 import { findFrontmatter, parse, type ParsedDocument } from "./format";
 import { minimalEdit } from "./minimalEdit";
 import { applyClientMutation, type MutationMessage } from "./mutations";
@@ -50,6 +50,12 @@ export { serialize, type SerializedState } from "./serializeState";
  */
 export interface DiffState {
   addedRanges: LineRange[];
+  /**
+   * The "before" side: old prose that was deleted or replaced, each run
+   * anchored to the prose line it sits after (0 = top) so the view can show
+   * it where it used to be.
+   */
+  removed: RemovedRun[];
   /** True when the file has no HEAD version (untracked / newly added). */
   isNew: boolean;
 }
@@ -816,9 +822,11 @@ ${inlineCommentsAppBody()}
       const headSrc = await headFileContent(root, rel);
       this.headProse = headSrc === null ? null : mapProseToSource(parse(headSrc)).prose;
     }
+    const diff = diffProse(this.headProse, state.prose);
     return {
       isNew: this.headProse === null,
-      addedRanges: addedLineRangesBetween(this.headProse, state.prose),
+      addedRanges: diff.addedRanges,
+      removed: diff.removed,
     };
   }
 

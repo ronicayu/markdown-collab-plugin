@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with Claude Code — inline comments anchored in the file, a live AI co-editor, suggestions you accept or reject, and GitHub/GitLab PR review.",
-  "version": "0.34.88",
+  "version": "0.34.89",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -151,6 +151,18 @@
       {
         "command": "markdownCollab.openUncommittedFile",
         "title": "Review uncommitted changes"
+      },
+      {
+        "command": "markdownCollab.stageUncommittedFile",
+        "title": "Stage File",
+        "category": "Markdown Collab",
+        "icon": "$(add)"
+      },
+      {
+        "command": "markdownCollab.unstageUncommittedFile",
+        "title": "Unstage File",
+        "category": "Markdown Collab",
+        "icon": "$(remove)"
       },
       {
         "command": "markdownCollab.prReviewAddComment",
@@ -331,6 +343,14 @@
         {
           "command": "markdownCollab.revealThread",
           "when": "false"
+        },
+        {
+          "command": "markdownCollab.stageUncommittedFile",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.unstageUncommittedFile",
+          "when": "false"
         }
       ],
       "comments/commentThread/context": [
@@ -447,6 +467,18 @@
           "command": "markdownCollab.askClaudeToReview",
           "when": "resourceLangId == markdown",
           "group": "navigation@31"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "markdownCollab.stageUncommittedFile",
+          "when": "view == markdownCollab.uncommittedFiles && viewItem =~ /uncommittedFile-(unstaged|partial)/",
+          "group": "inline@1"
+        },
+        {
+          "command": "markdownCollab.unstageUncommittedFile",
+          "when": "view == markdownCollab.uncommittedFiles && viewItem =~ /uncommittedFile-(staged|partial)/",
+          "group": "inline@2"
         }
       ]
     },

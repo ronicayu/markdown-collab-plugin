@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { addedLineRangesBetween } from "../uncommitted/proseDiff";
+import { addedLineRangesBetween, diffProse } from "../uncommitted/proseDiff";
 
 /** Also sanity-check against a brute-force check: every reported line differs somewhere. */
 const lines = (s: string) => (s === "" ? [] : s.replace(/\n$/, "").split("\n"));
@@ -110,5 +110,91 @@ describe("addedLineRangesBetween", () => {
     newLines.forEach((text, i) => {
       if (text.startsWith("edited ")) expect(marked.has(i + 1)).toBe(true);
     });
+  });
+});
+
+// The removed side: the "before" the reviewer couldn't otherwise see. Each run
+// is anchored to the new-side line it sits after, so the view can show the old
+// text where it used to be.
+describe("diffProse removed runs", () => {
+  it("reports nothing removed for identical texts or an untracked file", () => {
+    const t = "a\nb\n";
+    expect(diffProse(t, t).removed).toEqual([]);
+    expect(diffProse(null, t).removed).toEqual([]);
+  });
+
+  it("anchors a pure deletion to the surviving line above it", () => {
+    expect(diffProse("a\nGONE\nc\n", "a\nc\n").removed).toEqual([
+      { afterLine: 1, text: "GONE" },
+    ]);
+  });
+
+  it("anchors a deletion at the top to line 0", () => {
+    expect(diffProse("GONE\na\nb\n", "a\nb\n").removed).toEqual([
+      { afterLine: 0, text: "GONE" },
+    ]);
+  });
+
+  it("anchors a trailing deletion to the last new line", () => {
+    expect(diffProse("a\nb\nGONE\n", "a\nb\n").removed).toEqual([
+      { afterLine: 2, text: "GONE" },
+    ]);
+  });
+
+  it("a modified line reports both sides: old text removed just above the new", () => {
+    const d = diffProse("a\nOLD\nc\n", "a\nNEW\nc\n");
+    expect(d.addedRanges).toEqual([{ start: 2, end: 2 }]);
+    // afterLine 1: the old text sits after surviving line 1, above its replacement.
+    expect(d.removed).toEqual([{ afterLine: 1, text: "OLD" }]);
+  });
+
+  it("joins consecutive removed lines into one run", () => {
+    expect(diffProse("a\nGONE1\nGONE2\nb\n", "a\nb\n").removed).toEqual([
+      { afterLine: 1, text: "GONE1\nGONE2" },
+    ]);
+  });
+
+  it("reports several separated runs in document order", () => {
+    const d = diffProse("a\nX\nb\nc\nY\nd\n", "a\nb\nc\nd\n");
+    expect(d.removed).toEqual([
+      { afterLine: 1, text: "X" },
+      { afterLine: 3, text: "Y" },
+    ]);
+  });
+
+  it("a fully replaced document is one removal at the top plus all lines added", () => {
+    const d = diffProse("old1\nold2\n", "new1\nnew2\n");
+    expect(d.addedRanges).toEqual([{ start: 1, end: 2 }]);
+    expect(d.removed).toEqual([{ afterLine: 0, text: "old1\nold2" }]);
+  });
+
+  it("an emptied document reports the whole old text removed", () => {
+    expect(diffProse("a\nb\n", "").removed).toEqual([{ afterLine: 0, text: "a\nb" }]);
+  });
+
+  it("round-trip: removed + kept old lines reconstruct the old text", () => {
+    // Property: splicing each removed run back after its anchor line in the
+    // new text, with added ranges dropped, yields the old text again.
+    const oldText = "one\ntwo\nthree\nfour\nfive\n";
+    const newText = "one\nTWO!\nthree\nsix\nfive\nseven\n";
+    const d = diffProse(oldText, newText);
+    const added = new Set<number>();
+    for (const r of d.addedRanges) for (let l = r.start; l <= r.end; l++) added.add(l);
+    const kept = newText
+      .replace(/\n$/, "")
+      .split("\n")
+      .map((text, i) => ({ line: i + 1, text }))
+      .filter((e) => !added.has(e.line));
+    const rebuilt: string[] = [];
+    let ri = 0;
+    for (const r of d.removed.filter((x) => x.afterLine === 0)) rebuilt.push(r.text);
+    for (const e of kept) {
+      rebuilt.push(e.text);
+      for (; ri < d.removed.length; ri++) {
+        if (d.removed[ri].afterLine === e.line) rebuilt.push(d.removed[ri].text);
+      }
+      ri = 0;
+    }
+    expect(rebuilt.join("\n") + "\n").toBe(oldText);
   });
 });
