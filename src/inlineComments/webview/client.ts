@@ -198,7 +198,6 @@ function isDrawioSrc(src: string): boolean {
 // ../../webviewShared/imageSrc (shared with the live editor).
 
 const dom = {
-  fileName: document.getElementById("file-name") as HTMLElement,
   preview: document.getElementById("preview") as HTMLElement,
   floating: document.getElementById("floating-add") as HTMLButtonElement,
   threadCount: document.getElementById("thread-count") as HTMLElement,
@@ -1884,7 +1883,6 @@ window.addEventListener("message", (ev) => {
     return;
   }
   if (msg.type === "init") {
-    dom.fileName.textContent = msg.fileName;
     user = msg.user;
     imageBaseUris = msg.imageBaseUris;
     ensurePlantumlInstalled(msg.plantuml);

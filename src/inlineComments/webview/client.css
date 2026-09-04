@@ -78,14 +78,36 @@ html, body {
   border-right: 1px solid var(--border);
 }
 
-#find-bar {
+#preview-toolbar {
   position: sticky;
   top: -24px;
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  min-height: 24px;
+  margin: -24px -32px 12px;
+  background: var(--card-bg, var(--vscode-editorWidget-background, #1e1e1e));
+  border-bottom: 1px solid var(--border);
+}
+
+#find-bar {
+  position: sticky;
+  /* A sticky child's "top" is resolved against the pane's *content* edge
+     (i.e. offset by the pane's own 24px top padding), not its scrollport —
+     so once scrolled, find-bar sticks at (24px + top) from the viewport,
+     while the toolbar (whose own negative margin cancels that padding)
+     sticks flush at 0. 12px clears the toolbar's tallest rendered height
+     (~33px, badge + diff-nav both showing) with a few px to spare, and at
+     rest — before any scrolling — the toolbar's own margin-bottom already
+     keeps find-bar clear, so this only bites once both are stuck. */
+  top: 12px;
   z-index: 10;
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: -24px -32px 12px;
+  margin: 0 -32px 12px;
   padding: 8px 12px;
   background: var(--card-bg, var(--vscode-editorWidget-background, #1e1e1e));
   border-bottom: 1px solid var(--border);
@@ -124,28 +146,6 @@ html, body {
 #preview mark.mc-search--current {
   background: var(--vscode-editor-findMatchBackground, rgba(255, 144, 0, 0.66));
   outline: 1px solid var(--vscode-editor-findMatchBorder, transparent);
-}
-
-#preview-header h2 {
-  margin: 0 0 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-#preview-header .hint {
-  margin: 0 0 24px;
-  color: var(--muted);
-  font-size: 12px;
-}
-#preview-header kbd {
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 1px 5px;
-  font-size: 11px;
-  font-family: var(--vscode-editor-font-family, monospace);
 }
 
 #preview {
@@ -596,7 +596,6 @@ button.btn-link.danger { color: #e08080; }
 }
 
 #diff-mode-badge {
-  margin-left: 8px;
   padding: 1px 8px;
   border-radius: 9px;
   font-size: 0.78em;
@@ -692,35 +691,17 @@ button.btn-link.danger { color: #e08080; }
   opacity: 0.85;
 }
 
-/* Prev/next-change navigation, GitHub-style. A direct child of #preview-pane
-   (not the header) so it can stick to the viewport instead of scrolling away
-   with the content. `height: 0` keeps the sticky rail out of the document
-   flow entirely — without it, the rail's own box would carve out real space
-   and push #preview down every time the nav becomes visible. */
+/* Prev/next-change navigation, GitHub-style. Lives inside #preview-toolbar
+   now, so it rides along with the toolbar's own sticky positioning instead
+   of needing one of its own. */
 #diff-nav {
-  position: sticky;
-  top: 8px;
-  z-index: 9;
-  display: flex;
-  justify-content: flex-end;
-  height: 0;
-  overflow: visible;
-}
-#diff-nav[hidden] { display: none; }
-/* The find bar is a sticky sibling above this one at z-index 10; when it's
-   open, drop the pill below it instead of letting it sit underneath. */
-#find-bar:not([hidden]) ~ #diff-nav { top: 48px; }
-.diff-nav-pill {
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  padding: 2px 8px;
-  background: var(--card-bg, var(--vscode-editorWidget-background, #1e1e1e));
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
   white-space: nowrap;
 }
+#diff-nav[hidden] { display: none; }
 #diff-nav .btn-link { padding: 0 4px; }
 #diff-nav-count {
   font-size: 0.78em;

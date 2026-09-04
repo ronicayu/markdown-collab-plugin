@@ -91,7 +91,6 @@ function ensurePlantumlInstalled(opts: { serverUrl: string; format: "svg" | "png
 }
 
 const dom = {
-  fileName: document.getElementById("file-name") as HTMLElement,
   preview: document.getElementById("preview") as HTMLElement,
   diffNav: document.getElementById("diff-nav") as HTMLElement,
   diffPrev: document.getElementById("diff-prev") as HTMLButtonElement,
@@ -139,7 +138,6 @@ window.addEventListener("message", (ev) => {
     totalDraftCount = msg.totalDraftCount;
     existingComments = null;
     lineStarts = computeLineStarts(msg.source);
-    dom.fileName.textContent = msg.fileName;
     ensurePlantumlInstalled(msg.plantuml);
     renderPreview(msg.source, msg.addedRanges);
     renderDrafts();

@@ -32,8 +32,23 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
   padding: 24px 32px 64px 60px;
   border-right: 1px solid var(--border);
 }
-#preview-header h2 { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
-#preview-header .hint { margin: 0 0 24px; color: var(--muted); font-size: 12px; }
+
+/* Sticky full-bleed bar pinned to the pane's top edge. Negative margins
+   cancel the pane's own padding (including its asymmetric 60px left gutter
+   for source line numbers) so the bar spans edge to edge. */
+#preview-toolbar {
+  position: sticky;
+  top: -24px;
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  min-height: 24px;
+  margin: -24px -32px 12px -60px;
+  background: var(--card-bg, var(--vscode-editorWidget-background, #1e1e1e));
+  border-bottom: 1px solid var(--border);
+}
 
 #preview { font-size: 14px; }
 #preview h1, #preview h2, #preview h3 { line-height: 1.25; }
@@ -411,33 +426,17 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
 }
 .composer-actions button:first-child:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* Prev/next-change navigation (shared look with the inline diff view). A
-   direct child of #preview-pane (not the header) so it can stick to the
-   viewport instead of scrolling away with the content. `height: 0` keeps the
-   sticky rail out of the document flow entirely — without it, the rail's own
-   box would carve out real space and push #preview down every time the nav
-   becomes visible. */
+/* Prev/next-change navigation (shared look with the inline diff view). Lives
+   inside #preview-toolbar now, so it rides along with the toolbar's own
+   sticky positioning instead of needing one of its own. */
 #diff-nav {
-  position: sticky;
-  top: 8px;
-  z-index: 9;
-  display: flex;
-  justify-content: flex-end;
-  height: 0;
-  overflow: visible;
-}
-#diff-nav[hidden] { display: none; }
-.diff-nav-pill {
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  padding: 2px 8px;
-  background: var(--card-bg, var(--vscode-editorWidget-background, #1e1e1e));
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
   white-space: nowrap;
 }
+#diff-nav[hidden] { display: none; }
 #diff-nav .btn-link { padding: 0 4px; }
 #diff-nav-count {
   font-size: 0.78em;

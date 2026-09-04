@@ -127,11 +127,10 @@ export class PrReviewPanel {
     const fullPath = path.join(host.ctx.repoRoot, relPath);
     const fileUri = vscode.Uri.file(fullPath);
     const folder = vscode.workspace.getWorkspaceFolder(fileUri);
-    const column = vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.One;
     const panel = vscode.window.createWebviewPanel(
       VIEW_TYPE,
       `PR review — ${relPath}`,
-      { viewColumn: column === vscode.ViewColumn.One ? vscode.ViewColumn.Beside : column, preserveFocus: false },
+      { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
       {
         enableScripts: true,
         enableFindWidget: true,
@@ -321,17 +320,13 @@ export class PrReviewPanel {
 <body>
 <div id="app">
   <div id="preview-pane">
-    <header id="preview-header">
-      <h2 id="file-name"></h2>
-      <p class="hint">Select prose to draft a review comment. Lines with a side stripe are part of this PR's diff. Press ${process.platform === "darwin" ? "⌘F" : "Ctrl+F"} to search.</p>
-    </header>
-    <span id="diff-nav" hidden>
-      <span class="diff-nav-pill">
+    <header id="preview-toolbar">
+      <span id="diff-nav" hidden>
         <button id="diff-prev" class="btn-link" title="Previous change (p)" aria-label="Previous change">↑</button>
         <span id="diff-nav-count"></span>
         <button id="diff-next" class="btn-link" title="Next change (n)" aria-label="Next change">↓</button>
       </span>
-    </span>
+    </header>
     <article id="preview"></article>
     <button id="floating-add" hidden>+ Comment on selection</button>
   </div>

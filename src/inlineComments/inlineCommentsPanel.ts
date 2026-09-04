@@ -313,11 +313,10 @@ export class InlineCommentsPanel {
       }
       return;
     }
-    const column = vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.One;
     const panel = vscode.window.createWebviewPanel(
       VIEW_TYPE,
       `Inline Comments — ${vscode.workspace.asRelativePath(doc.uri)}`,
-      { viewColumn: column === vscode.ViewColumn.One ? vscode.ViewColumn.Beside : column, preserveFocus: false },
+      { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
       {
         enableScripts: true,
         retainContextWhenHidden: true,

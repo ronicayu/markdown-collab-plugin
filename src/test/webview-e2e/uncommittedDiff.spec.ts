@@ -121,9 +121,9 @@ test.describe("change navigation", () => {
       removed: [{ afterLine: 5, text: "Gone." }],
       isNew: false,
     });
-    // #diff-nav itself is a zero-height sticky rail (by design, so it never
-    // takes up layout space); the pill inside it is what actually renders.
-    await expect(page.locator("#diff-nav .diff-nav-pill")).toBeVisible();
+    // #diff-nav now lives inside #preview-toolbar, a normal (non-zero-height)
+    // flex item, so it's the element itself that renders.
+    await expect(page.locator("#diff-nav")).toBeVisible();
     await expect(page.locator("#diff-nav-count")).toHaveText("2 changes");
   });
 
@@ -189,13 +189,29 @@ test.describe("change navigation", () => {
       const pane = document.getElementById("preview-pane")!;
       pane.scrollTop = pane.scrollHeight;
     });
-    // #diff-nav is the zero-height sticky rail; the pill is what's actually
-    // painted, so visibility is asserted on it, while position comes from the
-    // rail (sticky top offset) it's positioned inside.
+    // #diff-nav sits inside #preview-toolbar, which is sticky-pinned to the
+    // pane's top edge, so it should stay in the top band regardless of scroll.
     const nav = page.locator("#diff-nav");
-    await expect(page.locator("#diff-nav .diff-nav-pill")).toBeVisible();
+    await expect(nav).toBeVisible();
     const box = await nav.boundingBox();
     expect(box).not.toBeNull();
     expect(box!.y).toBeLessThan(100);
+  });
+
+  test("find bar sits below the toolbar, not under it", async ({ page }) => {
+    await boot(page, {
+      addedRanges: [{ start: 3, end: 3 }],
+      removed: [],
+      isNew: false,
+    });
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+f" : "Control+f");
+    await expect(page.locator("#find-bar")).toBeVisible();
+    const toolbarBox = await page.locator("#preview-toolbar").boundingBox();
+    const findBarBox = await page.locator("#find-bar").boundingBox();
+    expect(toolbarBox).not.toBeNull();
+    expect(findBarBox).not.toBeNull();
+    // No overlap: the find bar's top must be at or below the toolbar's
+    // bottom edge (the -1 tolerates sub-pixel rounding between the two).
+    expect(findBarBox!.y).toBeGreaterThanOrEqual(toolbarBox!.y + toolbarBox!.height - 1);
   });
 });

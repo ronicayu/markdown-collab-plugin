@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.34.94 — 2026-09-04 (GitHub only)
+
+### Changed: fixed toolbar replaces the preview header
+
+The review views (inline comments / diff, and PR/MR) now have a slim toolbar
+pinned to the top of the preview pane instead of a header that scrolls away.
+It holds the outline toggle, the diff badge, and the prev/next-change
+arrows — all visible at all times. The file name and the ⌘F hint are gone
+(the VS Code tab already shows the file). The find bar opens just below the
+toolbar. This supersedes 0.34.93's floating arrows pill.
+
+### Changed: review views open in the current editor group
+
+Opening the inline comments view, the diff view, or the PR review view no
+longer splits the window — the panel opens as a tab in the active editor
+group.
+
 ## 0.34.93 — 2026-09-04 (GitHub only)
 
 ### Fixed: change-navigation arrows scrolled out of view

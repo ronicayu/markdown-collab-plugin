@@ -16,6 +16,15 @@ export function inlineCommentsAppBody(): string {
   return `<div id="app">
   <aside id="outline-pane" hidden></aside>
   <div id="preview-pane">
+    <header id="preview-toolbar">
+      <button id="outline-toggle" class="btn-link" title="Show or hide the document outline" aria-pressed="false">☰ Outline</button>
+      <span id="diff-mode-badge" hidden></span>
+      <span id="diff-nav" hidden>
+        <button id="diff-prev" class="btn-link" title="Previous change (p)" aria-label="Previous change">↑</button>
+        <span id="diff-nav-count"></span>
+        <button id="diff-next" class="btn-link" title="Next change (n)" aria-label="Next change">↓</button>
+      </span>
+    </header>
     <div id="find-bar" hidden role="search">
       <input id="find-input" type="search" placeholder="Find in preview…" aria-label="Find in preview" />
       <span id="find-count" class="find-count">0 / 0</span>
@@ -23,19 +32,6 @@ export function inlineCommentsAppBody(): string {
       <button id="find-next" class="btn-link" title="Next match (Enter)" aria-label="Next match">↓</button>
       <button id="find-close" class="btn-link" title="Close (Esc)" aria-label="Close find">×</button>
     </div>
-    <header id="preview-header">
-      <h2 id="file-name"></h2>
-      <span id="diff-mode-badge" hidden></span>
-      <p class="hint">Select text in the preview to add a comment. <kbd>⌘F</kbd> to find.</p>
-      <button id="outline-toggle" class="btn-link" title="Show or hide the document outline" aria-pressed="false">☰ Outline</button>
-    </header>
-    <span id="diff-nav" hidden>
-      <span class="diff-nav-pill">
-        <button id="diff-prev" class="btn-link" title="Previous change (p)" aria-label="Previous change">↑</button>
-        <span id="diff-nav-count"></span>
-        <button id="diff-next" class="btn-link" title="Next change (n)" aria-label="Next change">↓</button>
-      </span>
-    </span>
     <article id="preview"></article>
     <button id="floating-add" hidden>+ Comment on selection</button>
     <button id="expand-threads" class="collapsed-toggle" title="Show comments" hidden>‹ Comments</button>
