@@ -33,7 +33,7 @@ import {
   type ReviewFile,
 } from "./multiFileReview";
 import { parse as parseInline } from "./inlineComments/format";
-import { DocOpError, opOpenAt, opPurgeResolved } from "./inlineComments/docOps";
+import { DocOpError, opFinalize, opOpenAt, opPurgeResolved } from "./inlineComments/docOps";
 import { claudePending } from "./claudePendingService";
 import { activateClaudeStatusBar } from "./claudeStatusBar";
 import { CONVENTIONS_REL, CONVENTIONS_TEMPLATE, withConventions } from "./reviewConventions";
@@ -143,6 +143,12 @@ export function activate(context: vscode.ExtensionContext): void {
       "markdownCollab.removeResolvedComments",
       async (arg?: vscode.Uri) => {
         await invokeRemoveResolvedComments(arg, reviewLog);
+      },
+    ),
+    vscode.commands.registerCommand(
+      "markdownCollab.finalizeDocument",
+      async (arg?: vscode.Uri) => {
+        await invokeFinalizeDocument(arg, reviewLog);
       },
     ),
     vscode.commands.registerCommand("markdownCollab.commentOnSelection", async () => {
@@ -720,6 +726,89 @@ async function invokeRemoveResolvedComments(arg: vscode.Uri | undefined, log: Lo
   log.info("removed resolved comments", { file: doc.uri.fsPath, count: removed.length });
   void vscode.window.showInformationMessage(
     `Removed ${removed.length} resolved comment${removed.length === 1 ? "" : "s"}. Undo with Cmd+Z.`,
+  );
+}
+
+/**
+ * Finalize a document: strip every comment, marker, suggestion, and the
+ * threads region, leaving clean markdown ready to commit (issue #1).
+ *
+ * The confirm is a modal that names exactly what goes, because unlike
+ * remove-resolved this deletes open conversations too — the entire review
+ * history leaves the file in one keystroke. A pending suggestion is discarded
+ * with its original text kept (a rejection, not a silent apply), and the
+ * modal says so when there are any. One undo step.
+ */
+async function invokeFinalizeDocument(arg: vscode.Uri | undefined, log: Logger): Promise<void> {
+  const uri = arg instanceof vscode.Uri ? arg : vscode.window.activeTextEditor?.document.uri;
+  if (!uri) {
+    void vscode.window.showWarningMessage("Open a Markdown file first, then run this command.");
+    return;
+  }
+  let doc: vscode.TextDocument;
+  try {
+    doc = await vscode.workspace.openTextDocument(uri);
+  } catch (e) {
+    log.error(`could not open ${uri.fsPath}`, e);
+    void vscode.window.showErrorMessage(`Could not open ${path.basename(uri.fsPath)}.`);
+    return;
+  }
+
+  const source = doc.getText();
+  let next: string;
+  let counts: { removedOpen: number; removedResolved: number; discardedSuggestions: number };
+  try {
+    const outcome = opFinalize(source);
+    next = outcome.next;
+    counts = outcome.result;
+  } catch (e) {
+    const err = e as DocOpError;
+    if (err.code === "nothing_to_do") {
+      void vscode.window.showInformationMessage("No review data in this file — it's already clean markdown.");
+    } else {
+      log.warn("finalize refused", { code: err.code, message: err.message });
+      void vscode.window.showWarningMessage(`Could not finalize the document: ${err.message}`);
+    }
+    return;
+  }
+
+  const removedTotal = counts.removedOpen + counts.removedResolved;
+  const pieces: string[] = [];
+  if (removedTotal > 0) {
+    const breakdown =
+      counts.removedOpen > 0 && counts.removedResolved > 0
+        ? ` (${counts.removedOpen} open, ${counts.removedResolved} resolved)`
+        : counts.removedOpen > 0
+          ? " (all open)"
+          : " (all resolved)";
+    pieces.push(`${removedTotal} comment thread${removedTotal === 1 ? "" : "s"}${breakdown} will be deleted`);
+  }
+  if (counts.discardedSuggestions > 0) {
+    pieces.push(
+      `${counts.discardedSuggestions} pending suggestion${counts.discardedSuggestions === 1 ? "" : "s"} will be discarded — the original text is kept, the proposed edit is not applied`,
+    );
+  }
+  if (pieces.length === 0) pieces.push("Leftover review markers will be removed");
+  const choice = await vscode.window.showWarningMessage(
+    `Finalize ${path.basename(uri.fsPath)} — remove all review data?`,
+    {
+      modal: true,
+      detail: `${pieces.join(". ")}. The review history is gone from the file, leaving clean markdown ready to commit. This is a single undo step.`,
+    },
+    "Finalize",
+  );
+  if (choice !== "Finalize") return;
+
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(doc.uri, new vscode.Range(doc.positionAt(0), doc.positionAt(source.length)), next);
+  if (!(await vscode.workspace.applyEdit(edit))) {
+    log.error("finalize: applyEdit was rejected");
+    void vscode.window.showErrorMessage("Could not write the change into the document.");
+    return;
+  }
+  log.info("finalized document", { file: doc.uri.fsPath, ...counts });
+  void vscode.window.showInformationMessage(
+    `Finalized ${path.basename(uri.fsPath)} — all review data removed. Undo with Cmd+Z.`,
   );
 }
 

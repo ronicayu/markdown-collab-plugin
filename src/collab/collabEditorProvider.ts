@@ -167,7 +167,8 @@ interface InvokeCommandMessage {
     | "copy-prompt"
     | "send-thread-claude"
     | "copy-thread-claude"
-    | "remove-resolved";
+    | "remove-resolved"
+    | "finalize";
   /** Thread/comment id for the per-thread `*-thread-claude` commands. */
   commentId?: string;
 }
@@ -855,6 +856,11 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       // the undoable edit are defined once for every surface that offers this.
       await vscode.commands.executeCommand(
         "markdownCollab.removeResolvedComments",
+        document.uri,
+      );
+    } else if (msg.command === "finalize") {
+      await vscode.commands.executeCommand(
+        "markdownCollab.finalizeDocument",
         document.uri,
       );
     } else if (msg.command === "copy-prompt") {

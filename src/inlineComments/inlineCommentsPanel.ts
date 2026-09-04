@@ -214,6 +214,10 @@ interface RemoveResolvedRequest {
   type: "remove-resolved";
 }
 
+interface FinalizeRequest {
+  type: "finalize";
+}
+
 type ClientMessage =
   | ReadyMessage
   | AddCommentRequest
@@ -233,6 +237,7 @@ type ClientMessage =
   | RejectSuggestionRequest
   | AcceptAllSuggestionsRequest
   | RemoveResolvedRequest
+  | FinalizeRequest
   | ToggleSuggestModeRequest;
 
 /** Dependencies the panel needs from the extension host (kept narrow so tests can stub them). */
@@ -499,6 +504,11 @@ ${inlineCommentsAppBody()}
         // state on its own.
         return vscode.commands.executeCommand(
           "markdownCollab.removeResolvedComments",
+          this.doc.uri,
+        );
+      case "finalize":
+        return vscode.commands.executeCommand(
+          "markdownCollab.finalizeDocument",
           this.doc.uri,
         );
     }

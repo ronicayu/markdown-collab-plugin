@@ -21,6 +21,7 @@ import {
   addThread,
   appendReply,
   parse,
+  finalizeSource,
   rejectSuggestion,
   replaceThread,
   withThreads,
@@ -388,6 +389,42 @@ export function opPurgeResolved(source: string): OpOutcome<{ removed: string[] }
   }
   assertNoNewIssues(source, next);
   return { next, result: { removed: resolved.map((t) => t.id) } };
+}
+
+/**
+ * Finalize the document: strip every trace of review data and hand back the
+ * clean markdown a finished review commits (issue #1).
+ *
+ * Everything goes — open threads, resolved threads, all anchor markers, the
+ * review checkpoint, and the threads region itself. A pending suggestion is
+ * treated as rejected: its markers and record are removed and the ORIGINAL
+ * text stays, because silently applying an edit nobody accepted would be
+ * worse than dropping a proposal the caller was warned about. Frontmatter is
+ * untouched — it belongs to the document, not to the review.
+ *
+ * This is `opPurgeResolved`'s terminal sibling: purge clears the sediment
+ * mid-review, finalize ends the review. Both are all-or-nothing and both
+ * refuse with `nothing_to_do` rather than silently rewriting a clean file.
+ */
+export function opFinalize(source: string): OpOutcome<{
+  removedOpen: number;
+  removedResolved: number;
+  discardedSuggestions: number;
+}> {
+  const parsed = parse(source);
+  const next = finalizeSource(source);
+  if (next === source) {
+    throw new DocOpError("nothing_to_do", "this file has no review data to remove");
+  }
+  assertNoNewIssues(source, next);
+  return {
+    next,
+    result: {
+      removedOpen: parsed.threads.filter((t) => t.status === "open").length,
+      removedResolved: parsed.threads.filter((t) => t.status === "resolved").length,
+      discardedSuggestions: parsed.suggestions.length,
+    },
+  };
 }
 
 /**

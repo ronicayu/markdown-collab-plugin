@@ -824,6 +824,17 @@ export function stripAllInlineMarkup(source: string): string {
   return stripped.replace(OPEN_RE, "").replace(CLOSE_RE, "");
 }
 
+/**
+ * Strip all review data for good: markers, threads, suggestions, checkpoint,
+ * region. Unlike `stripAllInlineMarkup` (a display transform that tolerates a
+ * leftover blank line), this goes through `withThreads`' removal path so the
+ * newline run the region leaves behind is collapsed — finalizing a file must
+ * not grow it a blank line.
+ */
+export function finalizeSource(source: string): string {
+  return withThreads(source, [], [], null).replace(OPEN_RE, "").replace(CLOSE_RE, "");
+}
+
 /** Add a reply to an existing thread. Returns the new thread or null if not found. */
 export function appendReply(
   thread: InlineThread,

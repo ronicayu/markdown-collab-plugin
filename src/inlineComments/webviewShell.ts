@@ -54,6 +54,7 @@ export function inlineCommentsAppBody(): string {
         <button id="copy-prompt" class="btn-ghost" title="Copy the prompt to your clipboard.">Copy</button>
         <button id="suggest-mode-toggle" class="btn-ghost" role="switch" aria-checked="false" title="When on, Send to Claude asks Claude to propose edits as suggestions you accept or reject.">Suggest: off</button>
         <button id="remove-resolved" class="btn-ghost danger" hidden title="Delete every resolved comment from this file. Open comments and pending suggestions are kept.">Remove resolved</button>
+        <button id="finalize-doc" class="btn-ghost danger" hidden title="Remove ALL review data — every comment, marker, and pending suggestion — leaving clean markdown ready to commit.">Finalize</button>
       </div>
       <div id="skill-warning" class="skill-warning" hidden>
         <span id="skill-warning-text"></span>

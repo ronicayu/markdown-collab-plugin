@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with Claude Code — inline comments anchored in the file, a live AI co-editor, suggestions you accept or reject, and GitHub/GitLab PR review.",
-  "version": "0.34.87",
+  "version": "0.34.88",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -232,6 +232,11 @@
         "command": "markdownCollab.removeResolvedComments",
         "title": "Markdown Collab: Remove All Resolved Comments",
         "category": "Markdown Collab"
+      },
+      {
+        "command": "markdownCollab.finalizeDocument",
+        "title": "Markdown Collab: Finalize Document (Remove All Review Data)",
+        "category": "Markdown Collab"
       }
     ],
     "configuration": {
@@ -403,6 +408,11 @@
           "command": "markdownCollab.removeResolvedComments",
           "when": "resourceExtname == .md",
           "group": "navigation@33"
+        },
+        {
+          "command": "markdownCollab.finalizeDocument",
+          "when": "resourceExtname == .md",
+          "group": "navigation@34"
         }
       ],
       "editor/title/context": [

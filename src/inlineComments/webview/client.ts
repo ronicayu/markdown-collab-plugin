@@ -200,6 +200,7 @@ const dom = {
   copyPrompt: document.getElementById("copy-prompt") as HTMLButtonElement,
   suggestModeToggle: document.getElementById("suggest-mode-toggle") as HTMLButtonElement,
   removeResolved: document.getElementById("remove-resolved") as HTMLButtonElement,
+  finalizeDoc: document.getElementById("finalize-doc") as HTMLButtonElement,
   skillWarning: document.getElementById("skill-warning") as HTMLElement,
   skillWarningText: document.getElementById("skill-warning-text") as HTMLElement,
   skillInstall: document.getElementById("skill-install") as HTMLButtonElement,
@@ -503,6 +504,12 @@ dom.suggestModeToggle.addEventListener("click", () => {
 // two-click arm is too quiet for something that removes many threads at once.
 dom.removeResolved.addEventListener("click", () => {
   vscode.postMessage({ type: "remove-resolved" });
+});
+
+// Same host-owned confirm as remove-resolved, and even more deserved: this one
+// deletes open conversations too. The button only asks; the modal decides.
+dom.finalizeDoc.addEventListener("click", () => {
+  vscode.postMessage({ type: "finalize" });
 });
 
 function updateSuggestModeToggle(on: boolean): void {
@@ -1128,6 +1135,9 @@ function renderThreads(state: SerializedState): void {
   const resolvedCount = state.threads.filter((t) => t.status === "resolved").length;
   dom.removeResolved.hidden = resolvedCount === 0;
   dom.removeResolved.textContent = `Remove ${resolvedCount} resolved`;
+  // Finalize appears whenever there is any review data to strip — the review
+  // that just ended is exactly when this file has threads or suggestions.
+  dom.finalizeDoc.hidden = state.threads.length === 0 && state.suggestions.length === 0;
   renderClaudeSummary(state);
   if (filtered.length === 0) {
     if (state.suggestions.length === 0) {

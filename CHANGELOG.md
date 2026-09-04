@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.34.88 — 2026-09-04 (GitHub only)
+
+### Added: finalize document — one button to end the review (#1)
+
+When the review is over and the file is headed for a commit, `Markdown
+Collab: Finalize Document` strips every trace of review data in one undoable
+step: open and resolved threads, all `<!--mc:…-->` anchor markers, the review
+checkpoint, and the threads region itself. Frontmatter is untouched. A
+pending suggestion is discarded as a rejection — its original text stays, the
+proposed edit is not applied — and the confirm modal names exactly what goes.
+
+Offered as a "Finalize" button in the Inline Comments view and the collab
+editor sidebar (only when there is review data to strip), in the command
+palette, and in the Explorer right-click menu for `.md` files.
+
 ## 0.34.87 — 2026-09-04 (pre-release)
 
 ### Added: review uncommitted markdown changes
