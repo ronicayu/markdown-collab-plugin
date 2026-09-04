@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.34.87 — 2026-09-04 (pre-release)
+
+### Added: review uncommitted markdown changes
+
+A new "Uncommitted Changes (markdown files)" tree in the Explorer lists every
+markdown file that differs from HEAD — staged, unstaged, or untracked — and
+opens each one in the inline comments view with green change stripes overlaid
+on the blocks whose prose changed. The PR/MR review experience, but for work
+that hasn't been committed yet: comments land as `<!--mc:…-->` threads in the
+file itself, so the whole inline toolchain (send to Claude, suggest mode,
+resolve) works unchanged. `Markdown Collab: Review Uncommitted Changes` in the
+palette refreshes and focuses the tree.
+
+The stripes come from an in-process diff of *prose against prose* — both the
+HEAD version and the working copy are stripped of mc markers, the threads
+region, and frontmatter before comparing. A raw `git diff` would light up
+every paragraph that merely gained a comment anchor, which in a review
+workflow is most of them.
+
+HEAD moves without a file event when the user commits, so the overlay refetches
+when the panel regains visibility and whenever the tree refreshes; a refresh
+button sits on the view title.
+
 ## 0.34.86 — 2026-08-20 (pre-release)
 
 ### Fixed: the "Remove resolved" button went stale after removing

@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with Claude Code — inline comments anchored in the file, a live AI co-editor, suggestions you accept or reject, and GitHub/GitLab PR review.",
-  "version": "0.34.86",
+  "version": "0.34.87",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -136,6 +136,21 @@
         "command": "markdownCollab.startPrReview",
         "title": "Markdown Collab: Review PR / MR",
         "category": "Markdown Collab"
+      },
+      {
+        "command": "markdownCollab.reviewUncommittedChanges",
+        "title": "Markdown Collab: Review Uncommitted Changes",
+        "category": "Markdown Collab"
+      },
+      {
+        "command": "markdownCollab.uncommittedRefresh",
+        "title": "Refresh Uncommitted Files",
+        "category": "Markdown Collab",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "markdownCollab.openUncommittedFile",
+        "title": "Review uncommitted changes"
       },
       {
         "command": "markdownCollab.prReviewAddComment",
@@ -305,6 +320,10 @@
           "when": "false"
         },
         {
+          "command": "markdownCollab.openUncommittedFile",
+          "when": "false"
+        },
+        {
           "command": "markdownCollab.revealThread",
           "when": "false"
         }
@@ -346,6 +365,11 @@
         {
           "command": "markdownCollab.prReviewRefresh",
           "when": "view == markdownCollab.prReviewFiles",
+          "group": "navigation"
+        },
+        {
+          "command": "markdownCollab.uncommittedRefresh",
+          "when": "view == markdownCollab.uncommittedFiles",
           "group": "navigation"
         },
         {
@@ -426,6 +450,10 @@
         {
           "id": "markdownCollab.prReviewFiles",
           "name": "PR Review (markdown files)"
+        },
+        {
+          "id": "markdownCollab.uncommittedFiles",
+          "name": "Uncommitted Changes (markdown files)"
         }
       ]
     },

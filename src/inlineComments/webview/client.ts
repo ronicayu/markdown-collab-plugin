@@ -89,10 +89,23 @@ interface SerializedState {
   lineMap?: number[];
 }
 
+interface DiffLineRange {
+  /** 1-based, inclusive, in prose-line space. */
+  start: number;
+  end: number;
+}
+
+/** Uncommitted-vs-HEAD overlay; null / absent = plain inline-comments view. */
+interface DiffState {
+  addedRanges: DiffLineRange[];
+  isNew: boolean;
+}
+
 interface InitMsg {
   type: "init";
   fileName: string;
   state: SerializedState;
+  diff?: DiffState | null;
   user: { name: string };
   imageBaseUris: {
     docDir: string;
@@ -116,6 +129,7 @@ interface SkillStatusMsg {
 interface UpdateMsg {
   type: "update";
   state: SerializedState;
+  diff?: DiffState | null;
   suggestMode?: boolean;
   pendingThreadIds?: string[];
   pendingLabel?: string;
@@ -628,6 +642,8 @@ function cssEscape(s: string): string {
 }
 
 let currentState: SerializedState | null = null;
+/** Uncommitted-diff overlay pushed by the host; null when diff mode is off. */
+let currentDiff: DiffState | null = null;
 let user: { name: string } = { name: "anonymous" };
 let filter: ThreadFilter = "open";
 // Threads dispatched to Claude and not yet answered — the host owns this, so
@@ -713,6 +729,7 @@ function renderPreview(state: SerializedState): void {
   dom.preview.innerHTML = md.render(state.prose, showLines ? { [LINE_ENV_KEY]: true } : {});
   dom.preview.classList.toggle("with-line-numbers", showLines);
   if (showLines) paintLineNumbers(state.lineMap!);
+  paintDiffStripes(state.prose, currentDiff);
   applyAnchorHighlights(state);
   outlinePanel.update(buildOutline(state.prose));
   syncOutlineActive();
@@ -728,6 +745,76 @@ function renderPreview(state: SerializedState): void {
   } else {
     updateFindCount();
   }
+}
+
+const DIFF_BLOCK_TAGS = new Set(["P", "PRE", "BLOCKQUOTE", "UL", "OL", "LI", "TABLE", "TR", "H1", "H2", "H3", "H4", "H5", "H6", "HR", "DIV", "FIGURE", "IMG"]);
+
+function nearestDiffBlock(start: Element): HTMLElement | null {
+  let cur: Element | null = start;
+  while (cur && cur !== dom.preview) {
+    if (DIFF_BLOCK_TAGS.has(cur.tagName)) return cur as HTMLElement;
+    cur = cur.parentElement;
+  }
+  return null;
+}
+
+/**
+ * Overlay uncommitted-change stripes. Walks every `[data-mc-src]` span the
+ * offset plugin emitted, converts its prose-offset range to prose lines, and
+ * marks the nearest block-ish ancestor when any of those lines is inside an
+ * added/changed range from the host's prose diff. Same approach as the PR
+ * review view, but in prose-line space instead of source-line space.
+ */
+function paintDiffStripes(prose: string, diff: DiffState | null): void {
+  document.body.classList.toggle("diff-mode", diff !== null);
+  renderDiffBadge(diff);
+  if (!diff || diff.addedRanges.length === 0) return;
+  // 1-based line for each prose offset, via a sorted line-start table.
+  const lineStarts: number[] = [0];
+  for (let i = 0; i < prose.length; i++) {
+    if (prose[i] === "\n") lineStarts.push(i + 1);
+  }
+  const lineFor = (offset: number): number => {
+    let lo = 0;
+    let hi = lineStarts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (lineStarts[mid] <= offset) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo + 1;
+  };
+  const overlaps = (a: number, b: number): boolean =>
+    diff.addedRanges.some((r) => a <= r.end && b >= r.start);
+  const seen = new WeakSet<Element>();
+  for (const el of Array.from(dom.preview.querySelectorAll<HTMLElement>("[data-mc-src]"))) {
+    const raw = el.dataset.mcSrc || "";
+    const dot = raw.indexOf(".");
+    if (dot === -1) continue;
+    const start = Number(raw.slice(0, dot));
+    const end = Number(raw.slice(dot + 1));
+    if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+    const startLine = lineFor(start);
+    const endLine = lineFor(Math.max(start, end - 1));
+    if (!overlaps(startLine, endLine)) continue;
+    const block = nearestDiffBlock(el);
+    if (!block || seen.has(block)) continue;
+    seen.add(block);
+    block.classList.add("mc-diff-changed");
+  }
+}
+
+/** Small header pill so it's obvious the panel is in uncommitted-diff mode. */
+function renderDiffBadge(diff: DiffState | null): void {
+  const badge = document.getElementById("diff-mode-badge");
+  if (!badge) return;
+  badge.hidden = diff === null;
+  if (!diff) return;
+  badge.textContent = diff.isNew
+    ? "new file — uncommitted"
+    : diff.addedRanges.length === 0
+      ? "no uncommitted prose changes"
+      : "uncommitted changes";
 }
 
 /**
@@ -1669,11 +1756,13 @@ window.addEventListener("message", (ev) => {
     updateSuggestModeToggle(msg.suggestMode ?? false);
     pendingThreadIds = new Set(msg.pendingThreadIds ?? []);
     if (msg.pendingLabel) pendingLabelText = msg.pendingLabel;
+    currentDiff = msg.diff ?? null;
     render(msg.state);
   } else if (msg.type === "update") {
     updateSuggestModeToggle(msg.suggestMode ?? false);
     pendingThreadIds = new Set(msg.pendingThreadIds ?? []);
     if (msg.pendingLabel) pendingLabelText = msg.pendingLabel;
+    currentDiff = msg.diff ?? null;
     render(msg.state);
   } else if (msg.type === "review-pending") {
     pendingReviewSnapshot = new Set(msg.existingIds);

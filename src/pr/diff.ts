@@ -31,7 +31,7 @@ export interface LineRange {
 
 const MARKDOWN_EXTENSIONS = [".md", ".markdown"];
 
-function looksLikeMarkdown(p: string): boolean {
+export function looksLikeMarkdown(p: string): boolean {
   const lower = p.toLowerCase();
   return MARKDOWN_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }

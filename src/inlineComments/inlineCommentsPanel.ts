@@ -25,6 +25,9 @@ import { runDrawioRead } from "../collab/drawioService";
 import { claudePending, onPendingChanged } from "../claudePendingService";
 import { pendingLabel } from "./claudePending";
 import { detectUrlScheme, parseLinkHref, slugifyHeading } from "./linkParse";
+import type { LineRange } from "../pr/diff";
+import { headFileContent, repoRootFor } from "../uncommitted/gitUncommitted";
+import { addedLineRangesBetween } from "../uncommitted/proseDiff";
 import { findFrontmatter, parse, type ParsedDocument } from "./format";
 import { minimalEdit } from "./minimalEdit";
 import { applyClientMutation, type MutationMessage } from "./mutations";
@@ -39,10 +42,24 @@ import type { ReviewPayload } from "../sendToClaude";
 // webview e2e harness can build real init payloads outside the Extension Host.
 export { serialize, type SerializedState } from "./serializeState";
 
+/**
+ * Uncommitted-diff overlay state pushed alongside every init/update when the
+ * panel was opened in diff mode. Ranges are 1-based prose lines whose content
+ * is added or changed relative to HEAD — computed by diffing prose against
+ * prose so mc marker churn never stripes an untouched paragraph.
+ */
+export interface DiffState {
+  addedRanges: LineRange[];
+  /** True when the file has no HEAD version (untracked / newly added). */
+  isNew: boolean;
+}
+
 interface InitMessage {
   type: "init";
   fileName: string;
   state: SerializedState;
+  /** Null when the panel is not in uncommitted-diff mode. */
+  diff: DiffState | null;
   user: { name: string };
   /**
    * Webview-loadable URIs the client uses to rewrite relative image
@@ -69,6 +86,7 @@ interface InitMessage {
 interface UpdateMessage {
   type: "update";
   state: SerializedState;
+  diff: DiffState | null;
   suggestMode: boolean;
   pendingThreadIds: string[];
   pendingLabel: string;
@@ -96,6 +114,8 @@ export interface RevealOpts {
   line?: number;
   /** Heading slug (without leading `#`) to scroll to after opening. */
   heading?: string;
+  /** Overlay uncommitted-vs-HEAD diff stripes on the rendered preview. */
+  showDiff?: boolean;
 }
 
 interface AddCommentRequest {
@@ -272,6 +292,11 @@ export class InlineCommentsPanel {
     const existing = panels.get(key);
     if (existing) {
       existing.panel.reveal();
+      if (opts?.showDiff && !existing.diffMode) {
+        existing.diffMode = true;
+        existing.headProse = undefined;
+        void existing.pushState();
+      }
       if (opts && (opts.line || opts.heading)) {
         void existing.scrollTo(opts);
       }
@@ -300,6 +325,28 @@ export class InlineCommentsPanel {
   /** Set by reveal() when an open request includes a scroll target. Consumed once on the next `ready` after init. */
   private pendingScroll: RevealOpts | null = null;
 
+  /** Whether to overlay uncommitted-vs-HEAD diff stripes. */
+  private diffMode = false;
+  /**
+   * Prose of the HEAD version of this file. `undefined` = not fetched yet,
+   * `null` = no HEAD version (untracked file). Reset to `undefined` to force
+   * a refetch (after a commit, on refresh).
+   */
+  private headProse: string | null | undefined = undefined;
+
+  /**
+   * Refetch HEAD content and re-push state on every diff-mode panel. Wired
+   * to the uncommitted-changes refresh command so stripes clear after a
+   * commit without reopening panels.
+   */
+  static refreshDiffPanels(): void {
+    for (const p of panels.values()) {
+      if (!p.diffMode) continue;
+      p.headProse = undefined;
+      void p.pushState();
+    }
+  }
+
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly doc: vscode.TextDocument,
@@ -311,6 +358,7 @@ export class InlineCommentsPanel {
     if (initialScroll && (initialScroll.line || initialScroll.heading)) {
       this.pendingScroll = initialScroll;
     }
+    this.diffMode = initialScroll?.showDiff ?? false;
     panel.webview.html = this.renderHtml();
     this.disposables.push(
       panel.webview.onDidReceiveMessage((m) => void this.handleMessage(m as ClientMessage)),
@@ -323,6 +371,14 @@ export class InlineCommentsPanel {
       // unanswered — neither has a file write to hang off, so re-render here.
       onPendingChanged((docKey) => {
         if (docKey === this.doc.uri.toString()) void this.pushState();
+      }),
+      // HEAD moves on commit, which produces no document event. Refetch when
+      // the panel regains visibility — the cheapest signal that the user was
+      // just doing something else (like committing in a terminal).
+      panel.onDidChangeViewState((e) => {
+        if (!e.webviewPanel.visible || !this.diffMode) return;
+        this.headProse = undefined;
+        void this.pushState();
       }),
       // Keep the suggest-mode toggle in sync when the setting is changed
       // elsewhere (command palette, Settings UI).
@@ -733,6 +789,29 @@ ${inlineCommentsAppBody()}
     await this.pushState();
   }
 
+  /**
+   * Diff overlay for the current state, or null when diff mode is off or the
+   * file isn't inside a git work tree (mode silently degrades to the plain
+   * inline-comments view — exactly what the panel would show anyway).
+   */
+  private async computeDiff(state: SerializedState): Promise<DiffState | null> {
+    if (!this.diffMode) return null;
+    if (this.headProse === undefined) {
+      const root = await repoRootFor(path.dirname(this.doc.uri.fsPath));
+      if (!root) {
+        this.diffMode = false;
+        return null;
+      }
+      const rel = path.relative(root, this.doc.uri.fsPath).split(path.sep).join("/");
+      const headSrc = await headFileContent(root, rel);
+      this.headProse = headSrc === null ? null : mapProseToSource(parse(headSrc)).prose;
+    }
+    return {
+      isNew: this.headProse === null,
+      addedRanges: addedLineRangesBetween(this.headProse, state.prose),
+    };
+  }
+
   private async pushInit(): Promise<void> {
     const state = serialize(parse(this.doc.getText()), { lineNumbers: readLineNumbers() });
     const docDirUri = vscode.Uri.file(path.dirname(this.doc.uri.fsPath));
@@ -741,6 +820,7 @@ ${inlineCommentsAppBody()}
       type: "init",
       fileName: vscode.workspace.asRelativePath(this.doc.uri),
       state,
+      diff: await this.computeDiff(state),
       user: { name: this.resolveAuthor() },
       imageBaseUris: {
         docDir: this.panel.webview.asWebviewUri(docDirUri).toString(),
@@ -772,6 +852,7 @@ ${inlineCommentsAppBody()}
     const msg: UpdateMessage = {
       type: "update",
       state,
+      diff: await this.computeDiff(state),
       suggestMode: readSuggestMode(),
       pendingThreadIds: this.pendingThreadIds(),
       pendingLabel: this.pendingLabelText(),

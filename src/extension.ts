@@ -12,6 +12,7 @@ import { ensureAgentsSnippet } from "./agents";
 import { CollabEditorProvider } from "./collab/collabEditorProvider";
 import { InlineCommentsPanel } from "./inlineComments/inlineCommentsPanel";
 import { PrReviewController } from "./pr/prReviewController";
+import { UncommittedChangesController } from "./uncommitted/uncommittedController";
 import { ReviewView, type ReviewNode } from "./reviewView";
 import {
   buildReviewRequestPayload,
@@ -354,7 +355,10 @@ export function activate(context: vscode.ExtensionContext): void {
   // One way into the review view, used by the command, the explorer menus, and
   // the source-editor affordances (hover link, unread walk). `opts` carries an
   // optional scroll target so a caller can land on a specific thread.
-  const openInlineView = async (uri: vscode.Uri, opts?: { line?: number }): Promise<void> => {
+  const openInlineView = async (
+    uri: vscode.Uri,
+    opts?: { line?: number; showDiff?: boolean },
+  ): Promise<void> => {
     const doc = await vscode.workspace.openTextDocument(uri);
     InlineCommentsPanel.reveal(
       context,
@@ -375,6 +379,20 @@ export function activate(context: vscode.ExtensionContext): void {
       opts,
     );
   };
+
+  // Uncommitted-changes review: the tree of locally changed markdown files,
+  // each opening in the inline view with diff stripes. Wrapped like the PR
+  // controller — a git failure here must not take down activation.
+  try {
+    context.subscriptions.push(
+      new UncommittedChangesController(
+        (uri, opts) => openInlineView(uri, opts),
+        rootLog.scope("uncommitted"),
+      ),
+    );
+  } catch (e) {
+    log.error("uncommitted-changes init failed", e as Error);
+  }
 
   /**
    * Open the review view scrolled to one thread. The source line of the

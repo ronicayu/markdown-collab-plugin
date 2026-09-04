@@ -585,3 +585,53 @@ button.btn-link.danger { color: #e08080; }
 #outline-toggle.active {
   color: var(--vscode-textLink-activeForeground, inherit);
 }
+
+/* ---- Uncommitted-diff overlay (diff mode) ---------------------------- */
+/* Git "added" green — the diff-editor variables are translucent and vanish
+   on busy themes; the gitDecoration one is designed to be visible. */
+:root {
+  --diff-add-stripe: var(--vscode-gitDecoration-addedResourceForeground, #4caf50);
+  --diff-add-bg: color-mix(in srgb, var(--diff-add-stripe) 14%, transparent);
+  --diff-add-bg-strong: color-mix(in srgb, var(--diff-add-stripe) 24%, transparent);
+}
+
+#diff-mode-badge {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 9px;
+  font-size: 0.78em;
+  white-space: nowrap;
+  color: var(--diff-add-stripe);
+  border: 1px solid color-mix(in srgb, var(--diff-add-stripe) 55%, transparent);
+  background: var(--diff-add-bg);
+}
+
+/* Stripe + tint on any rendered block whose prose changed since HEAD. */
+#preview .mc-diff-changed {
+  position: relative;
+  padding: 4px 8px 4px 14px;
+  margin: 2px -8px 2px -14px;
+  background: var(--diff-add-bg);
+  border-radius: 3px;
+}
+#preview .mc-diff-changed::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  background: var(--diff-add-stripe);
+  border-radius: 2px 0 0 2px;
+}
+#preview .mc-diff-changed:hover { background: var(--diff-add-bg-strong); }
+
+/* Nested blocks (list items inside a striped list, rows inside a table):
+   the outermost block carries the stripe; inner ones stay flat. */
+#preview .mc-diff-changed .mc-diff-changed {
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border-radius: 0;
+}
+#preview .mc-diff-changed .mc-diff-changed::before { content: none; }

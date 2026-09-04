@@ -25,6 +25,7 @@ export type LogScope =
   | "live-editor"
   | "review"
   | "pr"
+  | "uncommitted"
   | "skill"
   | "format"
   | "diagnostics";
