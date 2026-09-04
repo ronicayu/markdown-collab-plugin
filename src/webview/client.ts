@@ -576,7 +576,7 @@ function renderSidebar(): void {
           <button type="button" class="mdc-icon-btn mdc-icon-btn--danger" data-action="finalize" ${
             total === 0 ? "hidden" : ""
           } title="Remove ALL review data — every comment, marker, and pending suggestion — leaving clean markdown ready to commit.">
-            <span>Finalize</span>
+            <span>Remove all</span>
           </button>
           <button type="button" class="mdc-icon-btn mdc-icon-btn--primary" data-action="add-comment" title="Add a comment on the current selection (Cmd/Ctrl+Shift+M)">
             <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 1.5v5h5v1H8v5H7v-5H2v-1h5v-5h1z"/></svg>

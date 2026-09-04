@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.34.90 — 2026-09-04 (GitHub only)
+
+### Changed: the finalize button is labeled "Remove all"
+
+Same action, clearer name: the button in the comment panels, the modal's
+confirm, and the palette entry (`Markdown Collab: Remove All Review Data`)
+now all say "Remove all" instead of "Finalize", sitting naturally next to
+"Remove resolved".
+
 ## 0.34.89 — 2026-09-04 (GitHub only)
 
 ### Added: the "before" side of the uncommitted diff

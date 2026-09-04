@@ -790,14 +790,14 @@ async function invokeFinalizeDocument(arg: vscode.Uri | undefined, log: Logger):
   }
   if (pieces.length === 0) pieces.push("Leftover review markers will be removed");
   const choice = await vscode.window.showWarningMessage(
-    `Finalize ${path.basename(uri.fsPath)} — remove all review data?`,
+    `Remove all review data from ${path.basename(uri.fsPath)}?`,
     {
       modal: true,
       detail: `${pieces.join(". ")}. The review history is gone from the file, leaving clean markdown ready to commit. This is a single undo step.`,
     },
-    "Finalize",
+    "Remove all",
   );
-  if (choice !== "Finalize") return;
+  if (choice !== "Remove all") return;
 
   const edit = new vscode.WorkspaceEdit();
   edit.replace(doc.uri, new vscode.Range(doc.positionAt(0), doc.positionAt(source.length)), next);
@@ -808,7 +808,7 @@ async function invokeFinalizeDocument(arg: vscode.Uri | undefined, log: Logger):
   }
   log.info("finalized document", { file: doc.uri.fsPath, ...counts });
   void vscode.window.showInformationMessage(
-    `Finalized ${path.basename(uri.fsPath)} — all review data removed. Undo with Cmd+Z.`,
+    `Removed all review data from ${path.basename(uri.fsPath)}. Undo with Cmd+Z.`,
   );
 }
 
