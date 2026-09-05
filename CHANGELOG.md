@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.34.95 — 2026-09-05 (GitHub only)
+
+### Fixed: comment highlights landed further into the text with every hard break
+
+In the live editor, a comment's highlight started one character late for every
+hard break (a line ending in two spaces) above it — six of them and the
+highlight began mid-word, six characters into the anchored sentence, ending
+six characters early. Anchors were located in ProseMirror's `textContent`,
+which emits a newline for each hard break, then mapped to positions through a
+walk that counts text nodes only, which does not. Both sides now read the same
+text. The same drift shifted the quote stored for a *new* comment created below
+hard breaks, so that is fixed too.
+
 ## 0.34.94 — 2026-09-04 (GitHub only)
 
 ### Changed: fixed toolbar replaces the preview header

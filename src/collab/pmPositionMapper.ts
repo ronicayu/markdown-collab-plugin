@@ -17,12 +17,40 @@
 export interface DocNodeLike {
   isText: boolean;
   nodeSize: number;
+  /** Present on text nodes; what `renderedTextOf` concatenates. */
+  text?: string;
 }
 
 export interface DocLike {
   descendants: (
     cb: (node: DocNodeLike, pos: number) => boolean | void,
   ) => void;
+}
+
+/**
+ * The rendered text these offsets are measured against: every text node's
+ * content, concatenated in document order, nothing in between.
+ *
+ * This is NOT `doc.textContent`, and the difference is the whole point.
+ * PM's `textContent` also emits a leaf node's `leafText`, and Milkdown's
+ * hardbreak declares `leafText: () => "\n"` — so `textContent` carries one
+ * character per hard break that the text-node walk below never counts.
+ * Locating an anchor in `textContent` and then mapping that offset through
+ * `renderedRangeToPmRange` therefore drifted one character further into the
+ * text for every hard break above it: a doc with six of them highlighted a
+ * span starting six characters late, mid-word.
+ *
+ * Dropping the hard break from the text also matches how anchors are built:
+ * `stripInlineMarkup` skips newlines entirely, so an anchor spanning a hard
+ * break has no newline in it to match against one here.
+ */
+export function renderedTextOf(doc: DocLike): string {
+  let out = "";
+  doc.descendants((node) => {
+    if (node.isText) out += node.text ?? "";
+    return true;
+  });
+  return out;
 }
 
 export function renderedRangeToPmRange(

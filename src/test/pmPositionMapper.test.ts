@@ -11,6 +11,7 @@
 import { describe, expect, it } from "vitest";
 import {
   renderedRangeToPmRange,
+  renderedTextOf,
   type DocLike,
   type DocNodeLike,
 } from "../collab/pmPositionMapper";
@@ -235,5 +236,31 @@ describe("renderedRangeToPmRange", () => {
     // nodeRenderedEnd=8. renderedEnd=6 in (4, 8] → to = 6 + (6-4) = 8.
     expect(r!.from).toBe(3);
     expect(r!.to).toBe(8);
+  });
+});
+
+describe("renderedTextOf", () => {
+  // The bug this guards: Milkdown's hardbreak node declares
+  // `leafText: () => "\n"`, so PM's `doc.textContent` counts a character
+  // for every hard break while the mapper's text-node walk does not.
+  // Resolving an anchor against `textContent` and mapping the result here
+  // therefore drifted one character per hard break above the anchor — the
+  // highlight started mid-word, further in for every break.
+  const paraWithBreak = fakeDoc([
+    { isText: true, nodeSize: 5, pos: 1, text: "Hello" } as FakeNode,
+    { isText: false, nodeSize: 1, pos: 6 } as FakeNode, // hardbreak
+    { isText: true, nodeSize: 5, pos: 7, text: "world" } as FakeNode,
+  ]);
+
+  it("concatenates text nodes only, skipping leaf nodes that carry leafText", () => {
+    expect(renderedTextOf(paraWithBreak)).toBe("Helloworld");
+  });
+
+  it("agrees with the offsets renderedRangeToPmRange maps", () => {
+    const text = renderedTextOf(paraWithBreak);
+    const at = text.indexOf("world");
+    const r = renderedRangeToPmRange(paraWithBreak, at, at + "world".length);
+    // "world" is the second text node: pos 7 through 12.
+    expect(r).toEqual({ from: 7, to: 12 });
   });
 });

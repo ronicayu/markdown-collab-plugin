@@ -41,7 +41,7 @@ import type { Node as PmDocNode } from "prosemirror-model";
 import { buildCommentBody, buildCommentCard, buildComposer, buildSuggestionCard, type ComposerHandle } from "../webviewShared/commentUi";
 import { sidebarCountLabel, threadSignature } from "../webviewShared/threadListState";
 import { locateAnchorInLiveText, locateNthOccurrence } from "../collab/liveAnchorLocator";
-import { renderedRangeToPmRange } from "../collab/pmPositionMapper";
+import { renderedRangeToPmRange, renderedTextOf } from "../collab/pmPositionMapper";
 import { slugifyHeading } from "../inlineComments/linkParse";
 import { resolveImageSrc, type ImageBaseUris } from "../webviewShared/imageSrc";
 import { parseHtmlImage } from "../webviewShared/htmlImage";
@@ -320,7 +320,7 @@ function flashClaudeEdit(changedText: string): boolean {
   let placed = false;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
-    const hay = view.state.doc.textContent;
+    const hay = renderedTextOf(view.state.doc);
     const at = hay.indexOf(needle);
     if (at === -1) return;
     const pm = renderedRangeToPmRange(view.state.doc, at, at + needle.length);
@@ -1149,9 +1149,11 @@ function makeAnchorHighlightPlugin(): Plugin {
 }
 
 interface DocLike {
-  textContent: string;
   descendants: (
-    cb: (node: { isText: boolean; nodeSize: number; type: { name: string } }, pos: number) => boolean | void,
+    cb: (
+      node: { isText: boolean; nodeSize: number; text?: string; type: { name: string } },
+      pos: number,
+    ) => boolean | void,
   ) => void;
 }
 
@@ -1168,8 +1170,9 @@ function buildAnchorDecorations(
   // the persistent alignment-bug class. anchor.text may contain
   // markup chars (it was authored against the markdown source); we
   // strip those off the small anchor strings, not off the full
-  // document, before searching.
-  const haystack = doc.textContent;
+  // document, before searching. The haystack is the mapper's own
+  // text-node walk, not `doc.textContent` — see `renderedTextOf`.
+  const haystack = renderedTextOf(doc);
   const decoratedIds: string[] = [];
   for (const c of comments) {
     // Anchored threads: the marker already tells us which occurrence of the
@@ -1225,14 +1228,13 @@ interface AnchorReport {
 // the host can place the marker there without re-deriving it from the old quote.
 function collectAnchors(
   doc: {
-    textContent: string;
-    textBetween: (from: number, to: number) => string;
-    descendants: (cb: (n: { isText: boolean; nodeSize: number }, p: number) => boolean | void) => void;
+    textBetween: (from: number, to: number, blockSeparator?: string, leafText?: string) => string;
+    descendants: (cb: (n: { isText: boolean; nodeSize: number; text?: string }, p: number) => boolean | void) => void;
   },
   set: DecorationSet | undefined,
 ): AnchorReport[] {
   if (!set) return [];
-  const haystack = doc.textContent;
+  const haystack = renderedTextOf(doc);
   const out: AnchorReport[] = [];
   const seen = new Set<string>();
   for (const deco of set.find()) {
@@ -1240,7 +1242,9 @@ function collectAnchors(
     if (!id || seen.has(id)) continue;
     const from = (deco as unknown as { from: number }).from;
     const to = (deco as unknown as { to: number }).to;
-    const text = doc.textBetween(from, to);
+    // Empty `leafText` for the same reason the haystack skips leaves: a
+    // hardbreak's "\n" is not part of the text anchors are matched against.
+    const text = doc.textBetween(from, to, "", "");
     if (text.trim().length === 0) continue; // span collapsed (text deleted) → leave unanchored
     const renderedStart = renderedOffsetForPm(doc, from);
     let ordinal = 0;
@@ -1315,7 +1319,7 @@ function jumpToAnchor(comment: CommentSummary): void {
   if (!editor) return;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
-    const haystack = view.state.doc.textContent;
+    const haystack = renderedTextOf(view.state.doc);
     const rendered =
       comment.anchorOrdinal >= 0
         ? locateNthOccurrence(haystack, comment.anchor.text, comment.anchorOrdinal)
@@ -1912,7 +1916,10 @@ function openComposerForCurrentSelection(): void {
     // fullMd (plain paragraph spans). A table cell serializes to a mini-table
     // that isn't in fullMd verbatim — we just skip the offsets there and let
     // the host place by text or save loosely-anchored, instead of refusing.
-    const renderedText = view.state.doc.textContent;
+    // Same text-node-only string the offsets below are measured in — see
+    // `renderedTextOf`. With `doc.textContent`, a hard break above the
+    // selection shifted the quote we store by one character per break.
+    const renderedText = renderedTextOf(view.state.doc);
     const renderedSelStart = renderedOffsetForPm(view.state.doc, selFrom);
     const renderedSelEnd = renderedOffsetForPm(view.state.doc, selTo);
     let sliceMd = "";
