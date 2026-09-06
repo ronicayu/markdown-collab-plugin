@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.34.96 — 2026-09-06 (GitHub only)
+
+### Fixed: "Remove resolved" and "Finalize document" left the file unsaved
+
+Both commands wrote the change into the document but never saved it, so the
+file sat dirty until you hit Cmd+S yourself — every other review action
+(add/reply/resolve/delete a comment) saves immediately on the same edit path.
+Both now save right after applying, and warn instead of failing silently if
+the save doesn't go through.
+
 ## 0.34.95 — 2026-09-05 (GitHub only)
 
 ### Fixed: comment highlights landed further into the text with every hard break

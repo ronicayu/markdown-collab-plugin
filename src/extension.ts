@@ -723,10 +723,27 @@ async function invokeRemoveResolvedComments(arg: vscode.Uri | undefined, log: Lo
     void vscode.window.showErrorMessage("Could not write the change into the document.");
     return;
   }
+  // A review action, like every mutation the panel applies — the user expects
+  // it to persist immediately, not sit in an unsaved buffer they have to
+  // remember to Cmd+S.
+  await saveOrWarn(doc, log, "Removed resolved comments");
   log.info("removed resolved comments", { file: doc.uri.fsPath, count: removed.length });
   void vscode.window.showInformationMessage(
     `Removed ${removed.length} resolved comment${removed.length === 1 ? "" : "s"}. Undo with Cmd+Z.`,
   );
+}
+
+/** Save `doc` after a successful applyEdit, warning (not throwing) on failure. */
+async function saveOrWarn(doc: vscode.TextDocument, log: Logger, action: string): Promise<void> {
+  try {
+    const saved = await doc.save();
+    if (!saved) {
+      void vscode.window.showWarningMessage(`${action}, but the file could not be saved.`);
+    }
+  } catch (e) {
+    log.warn(`${action}: save failed`, e);
+    void vscode.window.showWarningMessage(`${action}, but save failed: ${(e as Error).message}`);
+  }
 }
 
 /**
@@ -806,6 +823,7 @@ async function invokeFinalizeDocument(arg: vscode.Uri | undefined, log: Logger):
     void vscode.window.showErrorMessage("Could not write the change into the document.");
     return;
   }
+  await saveOrWarn(doc, log, "Finalized the document");
   log.info("finalized document", { file: doc.uri.fsPath, ...counts });
   void vscode.window.showInformationMessage(
     `Removed all review data from ${path.basename(uri.fsPath)}. Undo with Cmd+Z.`,
