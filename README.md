@@ -167,15 +167,26 @@ Run **Markdown Collab: Review PR / MR** to review the Markdown files changed in 
 
 ## Sending to Claude
 
-The **Send to Claude** button gets your comments to Claude one of three ways. Pick one once via `markdownCollab.sendMode` and you won't be asked again.
+The **Send to Claude** button gets your comments to Claude one of three ways — or asks which, the first time. Pick one once via `markdownCollab.sendMode` and you won't be asked again.
 
 | Mode | What it does | When to use it |
 |---|---|---|
 | `ask` (default) | Asks once per workspace, then remembers your answer. | You're not sure yet — let the first click decide. |
-| `terminal` | Types the prompt into your running Claude session. | Works everywhere. The recommended choice. |
+| `headless` | **Run Claude for me**: the extension runs Claude Code in the background and shows progress in the status bar. | Claude Code is installed and signed in, and you'd rather not keep a Claude terminal open. |
+| `terminal` | Types the prompt into your running Claude session. | Works everywhere. The recommended choice when headless isn't available. |
 | `clipboard` | Copies the prompt so you can paste it into Claude yourself. | You'd rather hand it off by hand, every time. |
 
 Whichever mode you pick, Claude uses this extension's review tools automatically whenever they're registered for the workspace: its edits then land as ordinary editor edits you can undo with <kbd>Cmd</kbd>+<kbd>Z</kbd>, and a change that would break marker integrity is refused before it lands rather than repaired after. **Markdown Collab: Reset Send Mode** clears a remembered answer so the next click asks again.
+
+### Run Claude for me (headless)
+
+With `headless`, clicking **Send to Claude** or **Ask Claude to Review** starts Claude Code for you — no terminal to find, no prompt to paste. The status bar shows `Claude is reviewing <file> · 1m 20s` while it works (or the phase Claude reports), and when it's done a notification carries the first line of Claude's report, with **Show report** for the whole thing (turns and an estimated cost at the bottom) and **Open review view** to triage what it left.
+
+- **What it needs:** Claude Code installed and signed in (run `claude` once in a terminal if you never have), a trusted workspace, and the review tool server running (it starts with the extension). If `claude` isn't on the PATH VS Code sees, set `markdownCollab.claudePath`; `markdownCollab.headlessModel` picks the model.
+- **Offered, never chosen for you.** The first-send picker lists it first — *Run Claude for me — recommended* — only when all of the above holds. A running Claude terminal is still used automatically, as before; nothing picks headless except you.
+- **What Claude can do in this mode:** read files (`Read`, `Glob`, `Grep`) and use this extension's review tools — nothing else. There is no shell and no direct file editing, so every change lands through the editor: undoable with <kbd>Cmd</kbd>+<kbd>Z</kbd>, and checked before it lands. Only the extension's own tool server is loaded; the project's other MCP servers don't start, and your Claude Code hooks don't run (your organization's managed hooks still do).
+- **Cancel** by clicking the status bar item and choosing **Cancel run**. A run also stops itself after 30 minutes.
+- **When it can't run,** the send goes to your Claude terminal instead and the toast says why. If Claude Code can't load the review tools here (MCP disabled by policy), headless stops being offered in this workspace until **Markdown Collab: Reset Send Mode**. If Claude Code isn't signed in, you're offered a terminal to sign in from.
 
 ### Registering the review tools
 
@@ -213,7 +224,7 @@ The single keys do nothing while you're typing in a box. There's no key for acce
 | `Markdown Collab: Send Unresolved Comments to Claude` | Same as the **Send to Claude** button — usable from palette. |
 | `Markdown Collab: Start Claude Review Terminal` | Spawn a fresh integrated terminal and launch `claude`. |
 | `Markdown Collab: Copy Claude Prompt` | Copy a short "address the comments on this file" prompt to clipboard. |
-| `Markdown Collab: Reset Send Mode` | Clear the remembered `ask` choice for the current workspace. |
+| `Markdown Collab: Reset Send Mode` | Clear the remembered `ask` choice for the current workspace, and offer **Run Claude for me** again if it failed here before. |
 | `Markdown Collab: Remove All Resolved Comments` | Delete every resolved thread from the file at once, markers and all. Open threads and pending suggestions are left alone. Modal confirm; one undo step. Also a **Remove N resolved** button in both comment panels, shown only when there is something to remove. |
 | `Markdown Collab: Show Logs` | Open the **Markdown Collab** output channel. Set its level to **Trace** (gear icon in the Output panel) to see per-send and per-tool-call detail. |
 | `Markdown Collab: Report a Problem (collect diagnostics)` | Build an environment report — versions, send mode, skill and tool-server status, per-document review state — into a scratch document, ready to paste into an issue. Contains no tokens. |
@@ -223,7 +234,9 @@ The single keys do nothing while you're typing in a box. There's no key for acce
 | Setting | Default | Purpose |
 |---|---|---|
 | `markdownCollab.showLineNumbers` | `false` | Show the source line number beside each block in the inline comments view and the live editor. Numbers are lines in the `.md` file itself — frontmatter and the stored threads block are accounted for, so they match what you'd type into "Go to Line". |
-| `markdownCollab.sendMode` | `ask` | One of `ask`, `terminal`, `clipboard`. See [Sending to Claude](#sending-to-claude). |
+| `markdownCollab.sendMode` | `ask` | One of `ask`, `headless`, `terminal`, `clipboard`. See [Sending to Claude](#sending-to-claude). |
+| `markdownCollab.claudePath` | `""` | Path to the `claude` executable, if it isn't on your PATH. Used by [Run Claude for me](#run-claude-for-me-headless); empty means search PATH and the usual install locations. Machine setting. |
+| `markdownCollab.headlessModel` | `""` | Model for [Run Claude for me](#run-claude-for-me-headless) runs — an alias like `sonnet` or `opus`, or a full model name. Empty uses Claude Code's default. |
 
 ## Storage layout
 
@@ -260,7 +273,7 @@ project prose your team should share — hence the negation above.
 
 **Start here for anything.** Run **Markdown Collab: Report a Problem (collect diagnostics)** — it answers the first six questions of any diagnosis in one paste (versions, send mode, whether the skill is installed and current, whether the tool server is up, whether a Claude terminal is visible, and what review state each open document holds). Then open **Markdown Collab: Show Logs**, set the level to **Trace**, and reproduce: every send, terminal resolution, MCP tool call, tool refusal, and `gh`/`glab` invocation is logged with its outcome. Both are safe to share — the session token and anything else credential-shaped is redacted before it is written.
 
-**Click did nothing, no toast.** Your `markdownCollab.sendMode` is set to a value this version doesn't recognize. A retired mode (`mcp`, `channel`, `mcp-channel`, or the ancient `ipc`) falls back to `terminal` with a one-time notice; anything else falls back to `ask` and warns — change the setting to `terminal`, `clipboard`, or `ask`.
+**Click did nothing, no toast.** Your `markdownCollab.sendMode` is set to a value this version doesn't recognize. A retired mode (`mcp`, `channel`, `mcp-channel`, or the ancient `ipc`) falls back to `terminal` with a one-time notice; anything else falls back to `ask` and warns — change the setting to `headless`, `terminal`, `clipboard`, or `ask`.
 
 **A thread shows up as unanchored.** The anchored passage was deleted or rewritten beyond recognition, so its markers are gone. Re-anchor it by selecting fresh text in the Inline Comments view and leaving the note again.
 

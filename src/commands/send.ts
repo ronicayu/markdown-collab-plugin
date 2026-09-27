@@ -25,6 +25,14 @@ import {
 import { buildSendModeItems } from "../transports/sendModePicker";
 import { sendViaTerminal, startClaudeTerminal } from "../transports/terminal";
 import type { TerminalTracker } from "../transports/terminalTracker";
+import {
+  cancelHeadlessRuns,
+  headlessAvailability,
+  headlessStatusSnapshot,
+  resetHeadlessFailures,
+  runHeadless,
+} from "../transports/headlessHost";
+import { unavailableReasonText } from "../transports/headless";
 import type { CommandDeps } from "./deps";
 
 /** The workspace's standing review conventions, or null when there are none. */
@@ -59,7 +67,7 @@ async function invokeCopyClaudePrompt(): Promise<void> {
 const REMEMBERED_SEND_MODE_KEY = "markdownCollab.rememberedSendMode";
 
 function isConcreteSendMode(v: unknown): v is Exclude<SendMode, "ask"> {
-  return v === "terminal" || v === "clipboard";
+  return v === "headless" || v === "terminal" || v === "clipboard";
 }
 
 /**
@@ -177,6 +185,7 @@ export async function dispatchReviewPayload(
   folder: vscode.WorkspaceFolder,
   intent: DispatchIntent = { kind: "address" },
 ): Promise<void> {
+  const headlessLog = log.scope("headless");
   // Every send starts here, so this is the line that tells a stuck dispatch
   // apart from one that never began.
   log.info("dispatch requested", {
@@ -190,7 +199,13 @@ export async function dispatchReviewPayload(
   // (10x-plan-2 P1.2). Done here rather than in each payload builder so no send
   // path can be the one that forgets them.
   const conventions = await readConventions(folder);
-  payload = { ...payload, prompt: withConventions(payload.prompt, conventions) };
+  payload = {
+    ...payload,
+    prompt: withConventions(payload.prompt, conventions),
+    ...(payload.inlineSkillPrompt !== undefined
+      ? { inlineSkillPrompt: withConventions(payload.inlineSkillPrompt, conventions) }
+      : {}),
+  };
   log.trace("payload built", {
     promptChars: payload.prompt.length,
     conventions: conventions ? `${conventions.length} chars` : "none",
@@ -206,10 +221,10 @@ export async function dispatchReviewPayload(
   } else if (normalizedMode.kind === "unknown") {
     log.warn(
       `markdownCollab.sendMode "${String(rawMode)}" is not recognized; falling back to "ask". ` +
-        `Valid values: ask, terminal, clipboard.`,
+        `Valid values: ask, headless, terminal, clipboard.`,
     );
     void vscode.window.showWarningMessage(
-      `markdownCollab.sendMode "${String(rawMode)}" is no longer supported — falling back to ask. Update your settings to one of: terminal, clipboard.`,
+      `markdownCollab.sendMode "${String(rawMode)}" is no longer supported — falling back to ask. Update your settings to one of: headless, terminal, clipboard.`,
     );
   }
   let justRemembered = false;
@@ -235,8 +250,12 @@ export async function dispatchReviewPayload(
         mode = detected.mode;
         log.info("send mode auto-detected", { mode: detected.mode, reason: detected.reason });
       } else {
+        // Headless is offered only when it would actually run — never
+        // auto-selected: nothing but the human's pick chooses it.
+        const headless = await headlessAvailability(workspaceState, headlessLog);
         const picked = await pickSendMode(payload.unresolvedCount, intent, {
           terminalDetected: tracker.anyClaudeTerminal(),
+          headlessAvailable: headless.ok,
         });
         if (!picked) {
           log.info("send cancelled at the mode picker");
@@ -261,11 +280,104 @@ export async function dispatchReviewPayload(
   // Appended unconditionally: it's harmless when the tools aren't in Claude's
   // tool list (the skill's own CLI fallback covers that case), and folding
   // `mcp` into `terminal` only works because this line no longer needs a mode
-  // of its own to gate it (10x-plan-4 P0.3).
+  // of its own to gate it (10x-plan-4 P0.3). Not for headless: there the tools
+  // are the only way to act, and the system prompt already says so.
   const delivered: ReviewPayload = {
     ...payload,
     prompt: `${payload.prompt}\n\n${mcpToolsDirective()}`,
   };
+
+  /**
+   * The terminal delivery. A closure rather than a sibling function because a
+   * headless run can hand the same payload back here after it has started —
+   * MCP turned out to be unavailable, or the human signed in and asked for it.
+   */
+  const deliverToTerminal = async (suffix: string): Promise<void> => {
+    const sendResult = await sendViaTerminal(delivered, tracker, {
+      log,
+      offerStartTerminal: async () => {
+        const choice = await vscode.window.showInformationMessage(
+          "No Claude terminal detected.",
+          { modal: false },
+          "Start Claude in new terminal",
+          "Switch to clipboard",
+          "Cancel",
+        );
+        log.info("no Claude terminal detected", { choice: choice ?? "dismissed" });
+        if (choice === "Start Claude in new terminal") {
+          const terminal = startClaudeTerminal(tracker, log);
+          // Give the REPL a beat to initialize before we paste into it.
+          await new Promise((r) => setTimeout(r, 1500));
+          return terminal;
+        }
+        if (choice === "Switch to clipboard") {
+          await vscode.env.clipboard.writeText(delivered.prompt);
+          void vscode.window.showInformationMessage(
+            "Prompt copied — paste into Claude Code.",
+          );
+        }
+        return null;
+      },
+    });
+    if (!sendResult.ok && sendResult.reason === "no-target") {
+      // The clipboard fallback toast above already fired; nothing more to do.
+      log.warn("send abandoned: no terminal to deliver to");
+      return;
+    }
+    if (!sendResult.ok) {
+      log.info("send cancelled", { reason: sendResult.reason });
+      return;
+    }
+    log.info("delivered to terminal", {
+      terminal: sendResult.terminalName,
+      chars: delivered.prompt.length,
+    });
+    await markPayloadPending(payload, folder);
+    const msg =
+      intent.kind === "review-request"
+        ? `Claude is reviewing — threads will appear when it's done. (Sent to "${sendResult.terminalName}".)`
+        : `Sent to "${sendResult.terminalName}".`;
+    void vscode.window.showInformationMessage(`${msg}${suffix}`);
+  };
+
+  if (mode === "headless") {
+    // Checked at send time, not only when the picker offered it: a remembered
+    // or configured `headless` outlives the conditions that made it work.
+    const headless = await headlessAvailability(workspaceState, headlessLog);
+    if (headless.ok) {
+      await markPayloadPending(payload, folder);
+      const outcome = await runHeadless({
+        payload,
+        prompt: payload.inlineSkillPrompt ?? payload.prompt,
+        folder,
+        log: headlessLog,
+        workspaceState,
+        ready: headless,
+        fallbackToTerminal: () => deliverToTerminal(""),
+        startTerminal: () => {
+          startClaudeTerminal(tracker, log);
+        },
+      });
+      // Progress is the status bar's job; a toast here would be a progress
+      // toast. The one exception is the first send after picking the mode,
+      // which is also the moment to say where the choice can be undone.
+      if (outcome === "started" && (justRemembered || detected)) {
+        void vscode.window.showInformationMessage(
+          `Claude is working in the background — watch the status bar.${rememberedSuffix}`,
+        );
+      }
+      return;
+    }
+    log.info("headless unavailable; sending to the terminal instead", {
+      reason: headless.reason,
+      detail: headless.detail,
+    });
+    void vscode.window.showWarningMessage(
+      `Markdown Collab: couldn't run Claude for you — ${unavailableReasonText(headless.reason)}. ` +
+        "Sending to your Claude terminal instead.",
+    );
+    mode = "terminal";
+  }
 
   if (mode === "clipboard") {
     await vscode.env.clipboard.writeText(delivered.prompt);
@@ -280,59 +392,14 @@ export async function dispatchReviewPayload(
     return;
   }
 
-  // mode === "terminal": the only delivery left besides clipboard/ask.
-  const sendResult = await sendViaTerminal(delivered, tracker, {
-    log,
-    offerStartTerminal: async () => {
-      const choice = await vscode.window.showInformationMessage(
-        "No Claude terminal detected.",
-        { modal: false },
-        "Start Claude in new terminal",
-        "Switch to clipboard",
-        "Cancel",
-      );
-      log.info("no Claude terminal detected", { choice: choice ?? "dismissed" });
-      if (choice === "Start Claude in new terminal") {
-        const terminal = startClaudeTerminal(tracker, log);
-        // Give the REPL a beat to initialize before we paste into it.
-        await new Promise((r) => setTimeout(r, 1500));
-        return terminal;
-      }
-      if (choice === "Switch to clipboard") {
-        await vscode.env.clipboard.writeText(delivered.prompt);
-        void vscode.window.showInformationMessage(
-          "Prompt copied — paste into Claude Code.",
-        );
-      }
-      return null;
-    },
-  });
-  if (!sendResult.ok && sendResult.reason === "no-target") {
-    // The clipboard fallback toast above already fired; nothing more to do.
-    log.warn("send abandoned: no terminal to deliver to");
-    return;
-  }
-  if (!sendResult.ok) {
-    log.info("send cancelled", { reason: sendResult.reason });
-    return;
-  }
-  log.info("delivered to terminal", {
-    terminal: sendResult.terminalName,
-    mode,
-    chars: delivered.prompt.length,
-  });
-  await markPayloadPending(payload, folder);
-  const msg =
-    intent.kind === "review-request"
-      ? `Claude is reviewing — threads will appear when it's done. (Sent to "${sendResult.terminalName}".)`
-      : `Sent to "${sendResult.terminalName}".`;
-  void vscode.window.showInformationMessage(`${msg}${rememberedSuffix}`);
+  // mode === "terminal": the only delivery left.
+  await deliverToTerminal(rememberedSuffix);
 }
 
 async function pickSendMode(
   unresolvedCount: number,
   intent: DispatchIntent = { kind: "address" },
-  opts: { terminalDetected: boolean },
+  opts: { terminalDetected: boolean; headlessAvailable: boolean },
 ): Promise<SendMode | null> {
   const items: Array<vscode.QuickPickItem & { mode: SendMode }> = buildSendModeItems(opts);
   const placeHolder =
@@ -466,9 +533,23 @@ export function registerSendCommands(deps: CommandDeps): void {
     ),
     vscode.commands.registerCommand("markdownCollab.resetSendMode", async () => {
       await context.workspaceState.update(REMEMBERED_SEND_MODE_KEY, undefined);
+      // "Run Claude for me" failing here once shouldn't hide it forever: a
+      // reset is the human saying the environment changed.
+      await resetHeadlessFailures(context.workspaceState);
       void vscode.window.showInformationMessage(
         "Markdown Collab: Send mode reset. Next click will prompt again.",
       );
     }),
+    // Internal (not in the palette): the status bar's "Cancel run", and a
+    // plain-data view of headless state for diagnostics and the integration
+    // suite, which runs in the same host but can't reach module state inside
+    // the bundle any other way.
+    vscode.commands.registerCommand("markdownCollab.cancelHeadlessRun", () => cancelHeadlessRuns()),
+    // A window closing mid-run must not leave a Claude working, and billing,
+    // against a tool server that no longer exists.
+    { dispose: () => void cancelHeadlessRuns() },
+    vscode.commands.registerCommand("markdownCollab.headlessStatus", () =>
+      headlessStatusSnapshot(context.workspaceState, sendLog.scope("headless")),
+    ),
   );
 }

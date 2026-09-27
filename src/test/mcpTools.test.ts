@@ -45,6 +45,7 @@ describe("mcp tool catalog", () => {
     expect(TOOLS.map((t) => t.name).sort()).toEqual([
       "mc_accept",
       "mc_check",
+      "mc_edit",
       "mc_list",
       "mc_open",
       "mc_reject",

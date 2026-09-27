@@ -27,7 +27,7 @@ function fakeMemento(): vscode.Memento {
 
 describe("normalizeSendModeValue", () => {
   it("passes ask and the concrete modes through unchanged", () => {
-    for (const mode of ["ask", "terminal", "clipboard"] as const) {
+    for (const mode of ["ask", "headless", "terminal", "clipboard"] as const) {
       expect(normalizeSendModeValue(mode)).toEqual({ kind: "ok", mode });
     }
   });

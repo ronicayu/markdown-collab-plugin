@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with Claude Code — inline comments anchored in the file, a live AI co-editor, suggestions you accept or reject, and GitHub/GitLab PR review.",
-  "version": "0.35.1",
+  "version": "0.35.2",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -66,6 +66,11 @@
     "onCommand:markdownCollab.removeResolvedComments"
   ],
   "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    }
+  },
   "contributes": {
     "commands": [
       {
@@ -259,16 +264,18 @@
           "type": "string",
           "enum": [
             "ask",
+            "headless",
             "terminal",
             "clipboard"
           ],
           "enumDescriptions": [
             "Ask which way to send, the first time per workspace, then remember the answer. Run 'Markdown Collab: Reset Send Mode' to be asked again.",
+            "Runs Claude for you in the background and shows progress in the status bar. Needs Claude Code installed and signed in.",
             "Type the prompt into your running Claude session. Works everywhere — the recommended choice if you're not sure.",
             "Copy the prompt to your clipboard so you can paste it into Claude yourself."
           ],
           "default": "ask",
-          "markdownDescription": "How the **Send to Claude** button gets your comments to Claude.\n\n- `ask` — asks the first time per workspace, then remembers your answer. Run **Markdown Collab: Reset Send Mode** to be asked again.\n- `terminal` — types the prompt into your running Claude session. Works everywhere; the recommended choice when you're not sure.\n- `clipboard` — copies the prompt so you can paste it into Claude yourself.\n\nClaude uses this extension's review tools automatically whenever they're registered — see \"Registering the review tools\" in the README."
+          "markdownDescription": "How the **Send to Claude** button gets your comments to Claude.\n\n- `ask` — asks the first time per workspace, then remembers your answer. Run **Markdown Collab: Reset Send Mode** to be asked again.\n- `headless` — **Run Claude for me**: the extension runs Claude Code in the background and shows progress in the status bar. In this mode Claude can only read files and use the review tools. Needs Claude Code installed and signed in.\n- `terminal` — types the prompt into your running Claude session. Works everywhere; the recommended choice when you're not sure.\n- `clipboard` — copies the prompt so you can paste it into Claude yourself.\n\nClaude uses this extension's review tools automatically whenever they're registered — see \"Registering the review tools\" in the README."
         },
         "markdownCollab.collab.userName": {
           "type": "string",
@@ -298,6 +305,17 @@
           "type": "boolean",
           "default": false,
           "description": "Show the source line number beside each block in the inline comments view and the live editor. Numbers are lines in the .md file itself, so frontmatter and the stored threads block are accounted for."
+        },
+        "markdownCollab.claudePath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Path to the `claude` executable, if it isn't on your PATH. Used by the **Run Claude for me** send mode. Leave empty to find it automatically (PATH, then the usual install locations)."
+        },
+        "markdownCollab.headlessModel": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Model for **Run Claude for me** runs — an alias like `sonnet` or `opus`, or a full model name. Leave empty to use Claude Code's default."
         }
       }
     },

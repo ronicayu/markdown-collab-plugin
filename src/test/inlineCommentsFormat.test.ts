@@ -288,3 +288,83 @@ describe("addThread — heading anchors", () => {
     expect(source.slice(a.openEnd, a.closeStart)).toBe("Heading 2");
   });
 });
+
+describe("inlineComments/format - threads region inside code", () => {
+  const FENCED_SAMPLE = [
+    "# Format",
+    "",
+    "The storage looks like this:",
+    "",
+    "```markdown",
+    "The <!--mc:a:k7q3p-->quick fox<!--mc:/a:k7q3p--> jumps.",
+    "",
+    "<!--mc:threads:begin-->",
+    '<!--mc:t {"id":"k7q3p","quote":"quick fox","status":"open","comments":[{"id":"c1","author":"r","ts":"2026-05-13T12:00:00Z","body":"x"}]}-->',
+    "<!--mc:threads:end-->",
+    "```",
+    "",
+    "A real sentence to comment on.",
+    "",
+  ].join("\n");
+
+  it("does not treat a fenced sample region as the live one", () => {
+    const r = parse(FENCED_SAMPLE);
+    expect(r.threads).toEqual([]);
+  });
+
+  it("writes the first real thread after the fence, leaving the sample intact", () => {
+    const at = FENCED_SAMPLE.indexOf("A real sentence");
+    const { source } = addThread(FENCED_SAMPLE, at, at + "A real sentence".length, {
+      author: "r",
+      body: "note",
+      ts: TS,
+    });
+    // Everything up to the commented sentence — the fenced sample included —
+    // is byte-for-byte what it was.
+    const beforeSentence = FENCED_SAMPLE.slice(0, FENCED_SAMPLE.indexOf("A real sentence"));
+    expect(source.startsWith(beforeSentence)).toBe(true);
+    const r = parse(source);
+    expect(r.threads.map((t) => t.quote)).toEqual(["A real sentence"]);
+    expect(source.lastIndexOf("<!--mc:threads:begin-->")).toBeGreaterThan(beforeSentence.length);
+  });
+
+  it("uses the real tail region when a fenced sample precedes it", () => {
+    const at = FENCED_SAMPLE.indexOf("A real sentence");
+    const { source } = addThread(FENCED_SAMPLE, at, at + "A real sentence".length, {
+      author: "r",
+      body: "note",
+      ts: TS,
+    });
+    const r = parse(source);
+    expect(r.threads).toHaveLength(1);
+    expect(r.threads[0].comments[0].body).toBe("note");
+  });
+
+  it("still finds a tail region after an unterminated fence", () => {
+    const doc = "Intro.\n\n```js\nconst x = 1;\n\n" + [
+      "<!--mc:threads:begin-->",
+      '<!--mc:t {"id":"aa1","quote":"Intro.","status":"open","comments":[{"id":"c1","author":"r","ts":"2026-05-13T12:00:00Z","body":"x"}]}-->',
+      "<!--mc:threads:end-->",
+      "",
+    ].join("\n");
+    expect(parse(doc).threads.map((t) => t.id)).toEqual(["aa1"]);
+  });
+
+  it("ignores a begin marker mentioned in inline code", () => {
+    expect(parse("Look for `<!--mc:threads:begin-->` and `<!--mc:threads:end-->` in the file.\n").threads).toEqual([]);
+  });
+
+  it("keeps accepting a real region that has prose after it", () => {
+    const doc = [
+      "Hello.",
+      "",
+      "<!--mc:threads:begin-->",
+      '<!--mc:t {"id":"bb2","quote":"Hello.","status":"open","comments":[{"id":"c1","author":"r","ts":"2026-05-13T12:00:00Z","body":"x"}]}-->',
+      "<!--mc:threads:end-->",
+      "",
+      "Someone appended this later.",
+      "",
+    ].join("\n");
+    expect(parse(doc).threads.map((t) => t.id)).toEqual(["bb2"]);
+  });
+});

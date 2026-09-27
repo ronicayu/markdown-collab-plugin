@@ -168,6 +168,8 @@ async function invokeAskClaudeToReviewSelection(
   workspaceState: vscode.Memento,
   globalState: vscode.Memento,
   delta = false,
+  /** A focus decided by the caller; skips the focus prompt. "" = general review. */
+  presetFocus?: string,
 ): Promise<void> {
   if (selection.length === 0) {
     void vscode.window.showWarningMessage(
@@ -195,7 +197,7 @@ async function invokeAskClaudeToReviewSelection(
       );
       return;
     }
-    await invokeAskClaudeToReview(doc, log, tracker, workspaceState, globalState, delta);
+    await invokeAskClaudeToReview(doc, log, tracker, workspaceState, globalState, delta, presetFocus);
     return;
   }
 
@@ -215,6 +217,7 @@ async function invokeAskClaudeToReviewSelection(
     tracker,
     workspaceState,
     globalState,
+    presetFocus,
   );
 }
 
@@ -229,6 +232,7 @@ async function invokeAskClaudeToReviewMulti(
   tracker: TerminalTracker,
   workspaceState: vscode.Memento,
   globalState: vscode.Memento,
+  presetFocus?: string,
 ): Promise<void> {
   const folder = folderForDocument(uris[0]);
   // The payload's paths are relative to one folder, so a selection spanning
@@ -263,7 +267,7 @@ async function invokeAskClaudeToReviewMulti(
     if (pick !== "Continue") return;
   }
 
-  const focus = await promptForFocus(globalState);
+  const focus = presetFocus ?? (await promptForFocus(globalState));
   if (focus === undefined) return; // user cancelled
   const trimmedFocus = focus === "" ? undefined : focus;
   if (trimmedFocus) await pushRecentFocus(globalState, trimmedFocus);
@@ -357,6 +361,7 @@ async function invokeAskClaudeToReview(
   globalState: vscode.Memento,
   /** Review only what changed since the last recorded pass (10x-plan-2 P1.1). */
   delta = false,
+  presetFocus?: string,
 ): Promise<void> {
   const folder = folderForDocument(doc.uri);
 
@@ -373,7 +378,7 @@ async function invokeAskClaudeToReview(
     if (pick !== "Continue") return;
   }
 
-  const focus = await promptForFocus(globalState);
+  const focus = presetFocus ?? (await promptForFocus(globalState));
   if (focus === undefined) return; // user cancelled
   const trimmedFocus = focus === "" ? undefined : focus;
 
@@ -482,6 +487,18 @@ async function pushRecentFocus(
   await globalState.update(RECENT_FOCUS_KEY, next);
 }
 
+/**
+ * A focus passed by a programmatic caller (`{ focus: "" }` = general review),
+ * held to the same rules the input box enforces — one line, bounded — since it
+ * lands in the prompt verbatim. Anything else means "ask the human".
+ */
+function presetFocusFrom(opts: { focus?: unknown } | undefined): string | undefined {
+  const focus = opts?.focus;
+  if (typeof focus !== "string") return undefined;
+  if (focus.length > FOCUS_MAX_LEN || /[\r\n]/.test(focus)) return undefined;
+  return focus.trim();
+}
+
 /** Register the review-mode family of commands: conventions, summary, "Ask
  * Claude to Review" (single/folder/changes), and the unread walk. */
 export function registerReviewCommands(deps: CommandDeps): void {
@@ -505,6 +522,7 @@ export function registerReviewCommands(deps: CommandDeps): void {
   const askClaudeToReview = async (
     arg?: vscode.Uri,
     selected?: vscode.Uri[],
+    opts?: { focus?: unknown },
   ): Promise<void> => {
     await invokeAskClaudeToReviewSelection(
       resolveSelection(arg, selected),
@@ -512,6 +530,8 @@ export function registerReviewCommands(deps: CommandDeps): void {
       terminalTracker,
       context.workspaceState,
       context.globalState,
+      false,
+      presetFocusFrom(opts),
     );
   };
   context.subscriptions.push(

@@ -34,6 +34,7 @@ import {
   DocOpError,
   opAccept,
   opCheck,
+  opEdit,
   opList,
   opOpen,
   opReject,
@@ -54,6 +55,8 @@ const USAGE = `mdc — Markdown Collab inline-comment CLI
   mdc list <file> [--actionable]              threads as JSON
   mdc reply <file> <threadId> --body TEXT     append a reply authored by claude
   mdc rewrite <file> <threadId> --with TEXT   replace the anchored span, markers preserved
+  mdc edit <file> --old TEXT --new TEXT [--occurrence N]
+                                              replace exact prose text outside anchored spans
   mdc open <file> --quote TEXT --body TEXT [--occurrence N]
                                               open a new thread on a passage
   mdc resolve <file> <threadId>               mark a thread resolved
@@ -86,6 +89,7 @@ const EXIT_FOR_CODE: Record<DocOpCode, number> = {
   passage_not_found: EXIT_USAGE,
   passage_ambiguous: EXIT_USAGE,
   not_anchorable: EXIT_USAGE,
+  not_editable: EXIT_USAGE,
   unanchored: EXIT_USAGE,
   // Only reachable through the editor's selection path, but the map is
   // exhaustive over DocOpCode on purpose: a new refusal must be given an exit
@@ -125,6 +129,19 @@ function parseArgs(argv: string[]): Args {
 function str(flags: Args["flags"], name: string): string {
   const v = flags[name];
   if (typeof v !== "string" || v === "") fail(`missing required --${name}`);
+  return v;
+}
+
+/**
+ * Like `str`, but accepts "" — `--new` on `mdc edit` is legitimately empty
+ * (a deletion). `parseArgs` already gives us a string for `--new ""` (the
+ * empty string is not itself "missing"); this only rejects the flag being
+ * absent entirely, where it'd otherwise be `true` (a bare `--new` with no
+ * value) or `undefined`.
+ */
+function strAllowEmpty(flags: Args["flags"], name: string): string {
+  const v = flags[name];
+  if (typeof v !== "string") fail(`missing required --${name}`);
   return v;
 }
 
@@ -188,6 +205,10 @@ function cmdRewrite(file: string, threadId: string, replacement: string): void {
 
 function cmdOpen(file: string, quote: string, body: string, occurrence: number): void {
   apply(file, "open", (s) => opOpen(s, quote, body, occurrence));
+}
+
+function cmdEdit(file: string, old: string, replacement: string, occurrence: number): void {
+  apply(file, "edit", (s) => opEdit(s, old, replacement, occurrence));
 }
 
 function cmdResolve(file: string, threadId: string): void {
@@ -265,6 +286,14 @@ function main(): void {
     case "rewrite":
       if (!rest[0] || !rest[1]) fail("usage: mdc rewrite <file> <threadId> --with TEXT");
       return cmdRewrite(rest[0], rest[1], str(flags, "with"));
+    case "edit":
+      if (!rest[0]) fail("usage: mdc edit <file> --old TEXT --new TEXT [--occurrence N]");
+      return cmdEdit(
+        rest[0],
+        str(flags, "old"),
+        strAllowEmpty(flags, "new"),
+        typeof flags.occurrence === "string" ? Number(flags.occurrence) : 0,
+      );
     case "open":
       if (!rest[0]) fail("usage: mdc open <file> --quote TEXT --body TEXT [--occurrence N]");
       return cmdOpen(

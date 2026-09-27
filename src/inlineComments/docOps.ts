@@ -20,6 +20,7 @@ import {
   addSuggestion,
   addThread,
   appendReply,
+  inspect,
   parse,
   finalizeSource,
   rejectSuggestion,
@@ -52,6 +53,11 @@ export type DocOpCode =
   | "out_of_range"
   /** The operation had nothing to act on; the document is unchanged. */
   | "nothing_to_do"
+  /**
+   * The matched text can't be edited with a plain replacement: it touches
+   * the threads region or a review marker.
+   */
+  | "not_editable"
   /** The result would introduce integrity problems; nothing was changed. */
   | "integrity";
 
@@ -287,6 +293,134 @@ export function opRewrite(
   });
   assertNoNewIssues(source, next);
   return { next, result: { threadId, previous, replacement } };
+}
+
+/**
+ * Replace exact text anywhere in the prose, marker-safe by construction.
+ *
+ * WHY THIS EXISTS: a headless run gives Claude the MCP tools/CLI but no Edit
+ * tool, so ordinary prose outside an anchored span — a sentence, a heading, a
+ * line of frontmatter — would otherwise have no way to change at all. This is
+ * that path: a literal `old` → `replacement` substitution over the raw
+ * document text (markers included in what "exact" means), refused wherever it
+ * would touch a review marker or the threads region rather than risk
+ * corrupting either. To change the text INSIDE a thread's anchor, use
+ * `opRewrite` (`mc_rewrite`) instead — it splices between the markers and
+ * keeps them by construction.
+ */
+export function opEdit(
+  source: string,
+  old: string,
+  replacement: string,
+  occurrence = 0,
+): OpOutcome<{ occurrence: number; occurrences: number; line: number }> {
+  if (old === "") {
+    throw new DocOpError("empty_selection", "old text must not be empty — give the exact text to replace", { old });
+  }
+  if (old === replacement) {
+    throw new DocOpError(
+      "nothing_to_do",
+      "old and new text are identical; the document is unchanged",
+    );
+  }
+
+  const parsed = parse(source);
+  const regionStart = parsed.threadsRegion ? parsed.threadsRegion.start : source.length;
+
+  // Scan like locatePassage does: non-overlapping matches, left to right.
+  const matches: number[] = [];
+  let from = 0;
+  for (;;) {
+    const at = source.indexOf(old, from);
+    if (at === -1) break;
+    matches.push(at);
+    from = at + old.length;
+  }
+  if (matches.length === 0) {
+    throw new DocOpError(
+      "passage_not_found",
+      `text not found: ${JSON.stringify(old.slice(0, 60))}`,
+      { old },
+    );
+  }
+
+  // Candidates are matches that START before the threads region. A match
+  // that starts inside the region is never a candidate and never counts
+  // toward ambiguity: every thread line quotes its anchored passage
+  // verbatim, so counting those would make an ordinary prose edit
+  // "ambiguous" against text the caller never asked to touch.
+  const candidates = matches.filter((at) => at < regionStart);
+  if (candidates.length === 0) {
+    throw new DocOpError(
+      "not_editable",
+      "that text is only inside the review threads region; reply with mc_reply instead of editing thread records",
+      { old },
+    );
+  }
+  if (candidates.length > 1 && occurrence === 0) {
+    throw new DocOpError(
+      "passage_ambiguous",
+      `text appears ${candidates.length} times; pass occurrence 1..${candidates.length} to say which one you mean`,
+      { old, occurrences: candidates.length },
+    );
+  }
+  const index = occurrence === 0 ? 0 : occurrence - 1;
+  if (index < 0 || index >= candidates.length) {
+    throw new DocOpError(
+      "passage_not_found",
+      `occurrence ${occurrence} is out of range (text appears ${candidates.length} time(s))`,
+      { old, occurrences: candidates.length },
+    );
+  }
+
+  const start = candidates[index]!;
+  const end = start + old.length;
+
+  // A candidate starts before the region but can still run into it (the
+  // match straddles the boundary) — refuse rather than splice through it.
+  if (parsed.threadsRegion && start < parsed.threadsRegion.end && parsed.threadsRegion.start < end) {
+    throw new DocOpError(
+      "not_editable",
+      "that text runs into the review threads region; reply with mc_reply instead of editing thread records",
+      { old },
+    );
+  }
+
+  // Refuse anything that touches a review marker — contains one whole, or
+  // splits one in half. Use the parser's own marker positions rather than a
+  // second regex: paired markers from parse().anchors, and any unpaired or
+  // duplicate marker (a hand-corrupted document) from inspect(), which reads
+  // the same scan. Editing strictly BETWEEN a pair (touching neither marker)
+  // is fine — integrity-safe, and staleness tracking will flag the thread.
+  const markerRanges: Array<{ start: number; end: number }> = [];
+  for (const a of parsed.anchors.values()) {
+    markerRanges.push({ start: a.openStart, end: a.openEnd });
+    markerRanges.push({ start: a.closeStart, end: a.closeEnd });
+  }
+  for (const m of inspect(source).unpairedMarkers) {
+    markerRanges.push({ start: m.start, end: m.end });
+  }
+  for (const m of markerRanges) {
+    if (m.start < end && start < m.end) {
+      throw new DocOpError(
+        "not_editable",
+        "that text touches a review marker; markers are managed by the tools — use mc_rewrite to change text inside a thread's anchor",
+        { old },
+      );
+    }
+  }
+
+  const next = source.slice(0, start) + replacement + source.slice(end);
+  assertNoNewIssues(source, next);
+
+  return {
+    next,
+    result: {
+      occurrence: index + 1,
+      occurrences: candidates.length,
+      line: source.slice(0, start).split("\n").length,
+    },
+  };
 }
 
 export function opOpen(

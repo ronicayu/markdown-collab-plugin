@@ -301,16 +301,39 @@ function pairAnchors(markers: RawMarker[]): { anchors: Map<string, AnchorRange>;
 }
 
 function findThreadsRegion(source: string): { start: number; end: number; body: string } | null {
-  const begin = source.lastIndexOf(THREADS_BEGIN);
-  if (begin === -1) return null;
-  const end = source.indexOf(THREADS_END, begin + THREADS_BEGIN.length);
-  if (end === -1) return null;
-  const endAfter = end + THREADS_END.length;
-  return {
-    start: begin,
-    end: endAfter,
-    body: source.slice(begin + THREADS_BEGIN.length, end),
-  };
+  // The region this engine writes is always the file's tail, so the last
+  // begin marker followed by nothing but whitespace after its end marker is
+  // the real one — and that check is all the common case costs.
+  //
+  // Anything else has to prove it isn't code. A document that *describes* the
+  // format (a README, the walkthrough) carries a sample region in a fenced
+  // block; taking the last begin marker at face value made that sample the
+  // live region, so the first comment on such a file was written inside the
+  // fence and the sample's own thread came back unanchored. Markers in code
+  // are already inert for anchors (see `buildCodeMask`); the region now
+  // follows the same rule. The tail check comes first so an unterminated
+  // fence earlier in the file — which masks to end of file — can't hide a
+  // real region that sits after it.
+  let mask: Uint8Array | null = null;
+  let from = source.length;
+  for (;;) {
+    const begin = source.lastIndexOf(THREADS_BEGIN, from);
+    if (begin === -1) return null;
+    const end = source.indexOf(THREADS_END, begin + THREADS_BEGIN.length);
+    if (end !== -1) {
+      const endAfter = end + THREADS_END.length;
+      const region = {
+        start: begin,
+        end: endAfter,
+        body: source.slice(begin + THREADS_BEGIN.length, end),
+      };
+      if (source.slice(endAfter).trim() === "") return region;
+      mask ??= buildCodeMask(source);
+      if (!mask[begin]) return region;
+    }
+    if (begin === 0) return null;
+    from = begin - 1;
+  }
 }
 
 /**

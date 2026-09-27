@@ -15,6 +15,7 @@ import {
   opAccept,
   opCheck,
   opCheckpoint,
+  opEdit,
   opList,
   opOpen,
   opReject,
@@ -140,6 +141,28 @@ export const TOOLS: readonly McpTool[] = [
     },
   },
   {
+    name: "mc_edit",
+    title: "Edit prose",
+    description:
+      "Replace exact text in the document, for prose outside anchored spans — to change text inside a thread's " +
+      "anchor, use mc_rewrite instead. Never touches review markers or the threads region; a match that would is " +
+      "refused with not_editable. Ambiguous text (appears more than once) is refused unless occurrence (1-based) " +
+      "is given.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...FILE_PROP,
+        old: { type: "string", description: "Exact current text to replace, as it appears in the file." },
+        new: { type: "string", description: "Replacement text. May be empty to delete." },
+        occurrence: {
+          type: "number",
+          description: "1-based occurrence of `old` when it appears more than once.",
+        },
+      },
+      required: ["file", "old", "new"],
+    },
+  },
+  {
     name: "mc_resolve",
     title: "Resolve a thread",
     description: "Mark a thread resolved once it has been dealt with.",
@@ -255,6 +278,18 @@ function str(args: Record<string, unknown>, name: string): string {
   return v;
 }
 
+/**
+ * Like `str`, but accepts "" — `mc_edit`'s `new` is legitimately empty (a
+ * deletion), where `str`'s "missing" heuristic would wrongly refuse it.
+ */
+function strAllowEmpty(args: Record<string, unknown>, name: string): string {
+  const v = args[name];
+  if (typeof v !== "string") {
+    throw new ToolRefusal("invalid_arguments", `missing required argument: ${name}`);
+  }
+  return v;
+}
+
 function optionalStr(args: Record<string, unknown>, name: string): string | undefined {
   const v = args[name];
   if (v === undefined || v === null) return undefined;
@@ -284,7 +319,10 @@ function refusalCode(r: ToolResult): string {
   try {
     const first = r.content?.[0];
     if (first && first.type === "text") {
-      return String((JSON.parse(first.text) as { code?: unknown }).code ?? "unknown");
+      // `refusal()` nests the code under `error`; reading the top level logged
+      // every refusal as "unknown".
+      const parsed = JSON.parse(first.text) as { error?: { code?: unknown } };
+      return String(parsed.error?.code ?? "unknown");
     }
   } catch {
     /* the log line is worth less than the refusal it describes */
@@ -347,6 +385,11 @@ export async function callTool(
         );
       case "mc_rewrite":
         return write(opRewrite(source, str(args, "threadId"), str(args, "with")), "rewrite");
+      case "mc_edit":
+        return write(
+          opEdit(source, str(args, "old"), strAllowEmpty(args, "new"), occurrenceOf(args)),
+          "edit",
+        );
       case "mc_resolve":
         return write(opResolve(source, str(args, "threadId"), now), "resolve");
       case "mc_suggest":

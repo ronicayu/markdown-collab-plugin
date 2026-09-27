@@ -5,12 +5,13 @@ import type { Comment } from "./types";
 import { parse as parseInline } from "./inlineComments/format";
 import { deltaScope } from "./inlineComments/deltaReview";
 import { buildDeltaPrompt } from "./inlineComments/deltaPrompt";
+import { workflowOpener, type SkillDelivery } from "./skillDelivery";
 
 // 10x-plan-4 P0.3: `mcp` folded into `terminal`, `channel` / `mcp-channel`
-// were deleted outright — a fourth mode (`headless`) lands in a later
-// initiative, and the picker builder (`transports/sendModePicker.ts`) is
-// shaped so adding it is one more list entry, not a second place to update.
-export type SendMode = "terminal" | "clipboard" | "ask";
+// were deleted outright. P0.1 added `headless` — the extension runs Claude
+// itself — as one more entry in the picker builder
+// (`transports/sendModePicker.ts`), not a second list to keep in sync.
+export type SendMode = "headless" | "terminal" | "clipboard" | "ask";
 
 /**
  * The line appended to every terminal and clipboard delivery.
@@ -29,7 +30,18 @@ export function mcpToolsDirective(): string {
 }
 
 export interface ReviewPayload {
+  /** The prompt for a session with the skill installed (terminal, clipboard). */
   prompt: string;
+  /**
+   * The same prompt for a session whose skill rides along as the system
+   * prompt (a headless run) — identical except for its opener.
+   *
+   * Carried on the payload because the delivery is only known once the send
+   * mode is, and that is decided in `dispatchReviewPayload`, after the builder
+   * has already run; rebuilding there would need the document back. Optional
+   * so a hand-built payload still dispatches (it falls back to `prompt`).
+   */
+  inlineSkillPrompt?: string;
   /**
    * Workspace-relative path of the document under review. For a multi-file
    * review pass this is a human label ("3 files under docs/") and the paths
@@ -69,7 +81,7 @@ export function reviewModeClosing(fileCount: number): string {
 export function buildReviewRequestPayload(
   doc: vscode.TextDocument,
   focus: string | undefined,
-  opts: { delta?: boolean } = {},
+  opts: { delta?: boolean; skillDelivery?: SkillDelivery } = {},
 ):
   | { kind: "ok"; payload: ReviewPayload; fullPass: boolean }
   /** Delta pass on a file that hasn't moved since the last one. */
@@ -85,13 +97,18 @@ export function buildReviewRequestPayload(
     // document costs. The scope comes from the checkpoint the last pass left.
     const scope = deltaScope(parseInline(doc.getText()));
     if (scope.kind === "unchanged") return { kind: "unchanged" };
-    const prompt = buildDeltaPrompt(rel, scope, trimmedFocus);
+    const deltaFor = (delivery: SkillDelivery): string | null => {
+      const body = buildDeltaPrompt(rel, scope, trimmedFocus, delivery);
+      return body === null ? null : `${body}\n\n${reviewModeClosing(1)}`;
+    };
+    const prompt = deltaFor(opts.skillDelivery ?? "installed");
     if (prompt === null) return { kind: "unchanged" };
     return {
       kind: "ok",
       fullPass: scope.kind === "no-checkpoint",
       payload: {
-        prompt: `${prompt}\n\n${reviewModeClosing(1)}`,
+        prompt,
+        inlineSkillPrompt: deltaFor("inline") ?? prompt,
         file: rel,
         unresolvedCount: 0,
         comments: [],
@@ -99,16 +116,18 @@ export function buildReviewRequestPayload(
     };
   }
 
-  const promptLines: string[] = [
-    `Use the vs-markdown-collab skill in Review Mode on \`${rel}\`.`,
-  ];
-  if (trimmedFocus) promptLines.push(`Focus: ${trimmedFocus}`);
-  promptLines.push(reviewModeClosing(1));
+  const promptFor = (delivery: SkillDelivery): string => {
+    const promptLines: string[] = [`${workflowOpener(delivery)} in Review Mode on \`${rel}\`.`];
+    if (trimmedFocus) promptLines.push(`Focus: ${trimmedFocus}`);
+    promptLines.push(reviewModeClosing(1));
+    return promptLines.join("\n");
+  };
   return {
     kind: "ok",
     fullPass: true,
     payload: {
-      prompt: promptLines.join("\n"),
+      prompt: promptFor(opts.skillDelivery ?? "installed"),
+      inlineSkillPrompt: promptFor("inline"),
       file: rel,
       unresolvedCount: 0,
       comments: [],

@@ -48,6 +48,7 @@ Hand-editing markers with the Edit tool is a distant third and only when neither
 | \`mc_list(file, actionable?)\` | \`list <file> [--actionable]\` | Threads and pending suggestions as JSON, including each thread's live anchored text. The actionable flag keeps only open threads whose last comment is not yours. |
 | \`mc_reply(file, threadId, body)\` | \`reply <file> <threadId> --body TEXT\` | Appends a reply authored by \`claude\` with the correct \`c<N>\` id and timestamp. |
 | \`mc_rewrite(file, threadId, with)\` | \`rewrite <file> <threadId> --with TEXT\` | Replaces the text between a thread's markers and updates its \`quote\`. Both markers are preserved by construction. |
+| \`mc_edit(file, old, new, occurrence?)\` | \`edit <file> --old TEXT --new TEXT [--occurrence N]\` | Replaces exact text outside anchored spans (prose, frontmatter). Refuses anything that touches a marker or the threads region — use \`mc_rewrite\` inside an anchor. |
 | \`mc_open(file, quote, body, occurrence?)\` | \`open <file> --quote TEXT --body TEXT [--occurrence N]\` | Opens a new thread on a passage: mints a unique id, wraps the passage, appends the thread line. |
 | \`mc_resolve(file, threadId)\` | \`resolve <file> <threadId>\` | Marks a thread resolved. Only when the human asks. |
 | \`mc_suggest(file, quote, with, note?, occurrence?)\` | \`suggest <file> --quote TEXT --with TEXT [--note TEXT] [--occurrence N]\` | Proposes an edit without applying it (suggest mode). Keeps the original in the prose. |
@@ -57,7 +58,7 @@ Hand-editing markers with the Edit tool is a distant third and only when neither
 
 Two of these do more than they look like they do: **\`mc_check\` ends the pass** — the extension shows the human a "Claude is working…" row on every thread it sent you, and your closing \`mc_check\` on a file is what clears it; skip it and they're left watching a spinner for work you already finished. **\`mc_status\` is free and worth it** — a review pass over three files is minutes of silence otherwise, and one short present-tense phrase per phase shows up next to the indicator and in the status bar.
 
-Ordinary prose edits — text outside an anchored span — still use the Edit tool as normal; the tools/CLI are for *marker-level* changes only. Every \`mdc\` command prints JSON to stdout with exit codes \`0\` ok, \`1\` usage error, \`2\` integrity violation; mutating commands validate before writing and refuse a change that would introduce a new integrity problem, so a failed command leaves the file untouched rather than half-edited.
+Ordinary prose edits — text outside an anchored span — may use \`mc_edit\` (CLI: \`mdc edit\`), which refuses anything that would touch a marker or the threads region; the Edit tool remains fine too in interactive sessions. Every \`mdc\` command prints JSON to stdout with exit codes \`0\` ok, \`1\` usage error, \`2\` integrity violation; mutating commands validate before writing and refuse a change that would introduce a new integrity problem, so a failed command leaves the file untouched rather than half-edited.
 
 **Both paths refuse rather than guess.** Ambiguous passage (appears more than once)? Pass the occurrence. Inside a code span? Choose a different anchor. Never work around a refusal by hand-editing — it's telling you the edit was unsafe, and the hand-edit would perform it anyway.
 
@@ -79,7 +80,7 @@ Group by file. Within a file, order edits by anchor position (earlier first). Fo
 
 For each thread, in order:
 
-1. **Make the prose change.** Rewriting the anchored passage: replace the text *between* the markers with \`mc_rewrite(file, threadId, with: "…")\` (CLI: \`rewrite <file> <threadId> --with "…"\`) — updates \`quote\` in the same operation, can't drop or split a marker. Editing prose outside the anchored span: use the Edit tool normally, markers stay put. Removing the anchored passage: delete both markers and the passage with the Edit tool — the thread orphans and shows as "broken anchor", the correct outcome; do NOT re-anchor to nearby unrelated text.
+1. **Make the prose change.** Rewriting the anchored passage: replace the text *between* the markers with \`mc_rewrite(file, threadId, with: "…")\` (CLI: \`rewrite <file> <threadId> --with "…"\`) — updates \`quote\` in the same operation, can't drop or split a marker. Editing prose outside the anchored span: use \`mc_edit\`/\`mdc edit\` (or the Edit tool interactively), markers stay put. Removing the anchored passage: delete both markers and the passage with the Edit tool — the thread orphans and shows as "broken anchor", the correct outcome; do NOT re-anchor to nearby unrelated text.
 
 2. **Append a reply:** \`mc_reply(file, threadId, body: "…")\` (CLI: \`reply <file> <threadId> --body "…"\`). Assigns the next \`c<N>\` id, sets \`author\` to \`"claude"\` and \`ts\` to now, appends to the thread, leaves everything else untouched. Write one or two specific sentences — quote the new wording, name the section or file/function you changed. Don't say "done".
 

@@ -49,9 +49,38 @@ describe("buildSendModeItems", () => {
     expect(items.some((i) => i.mode === "clipboard")).toBe(true);
   });
 
+  // 10x-plan-4 P0.1: headless is listed only when it would actually run, and
+  // then first — offered, never chosen (the picker only appears when nothing
+  // was auto-detected, and the pick is the human's).
+  it("leaves headless out when it isn't available", () => {
+    for (const headlessAvailable of [undefined, false]) {
+      const items = buildSendModeItems({ terminalDetected: false, headlessAvailable });
+      expect(items.map((i) => i.mode)).toEqual(["terminal", "clipboard"]);
+    }
+  });
+
+  it("lists headless first, as the recommended choice, when available", () => {
+    const items = buildSendModeItems({ terminalDetected: false, headlessAvailable: true });
+    expect(items.map((i) => i.mode)).toEqual(["headless", "terminal", "clipboard"]);
+    expect(items[0]!.label).toBe("Run Claude for me — recommended");
+    // Only one item may claim "recommended".
+    expect(items.filter((i) => /recommended/i.test(i.label))).toHaveLength(1);
+    expect(items[1]!.label).toBe("Send to your Claude terminal");
+  });
+
+  it("tells the human what headless may do before they pick it", () => {
+    const headless = buildSendModeItems({ terminalDetected: false, headlessAvailable: true })[0]!;
+    expect(headless.detail).toMatch(/only read files and use the review tools/);
+    expect(headless.detail).toMatch(/cancel/i);
+  });
+
   it("carries no jargon in any label, description, or detail", () => {
-    for (const terminalDetected of [true, false]) {
-      for (const item of buildSendModeItems({ terminalDetected })) {
+    for (const [terminalDetected, headlessAvailable] of [
+      [true, false],
+      [false, false],
+      [false, true],
+    ] as const) {
+      for (const item of buildSendModeItems({ terminalDetected, headlessAvailable })) {
         for (const field of [item.label, item.description, item.detail]) {
           if (!field) continue;
           for (const re of NO_JARGON) {
@@ -67,8 +96,8 @@ describe("picker/settings parity", () => {
   // Every concrete mode the picker can hand back must be a value someone can
   // actually set in `markdownCollab.sendMode`, and vice versa (minus `ask`,
   // which isn't a delivery — it's what leads to the picker in the first
-  // place). A future mode (`headless`, a later initiative) only has to be
-  // added in both places for this test to keep passing.
+  // place). `headless` (10x-plan-4 P0.1) is only listed when available, so the
+  // builder is asked both ways.
   const packageJson = JSON.parse(
     fs.readFileSync(path.join(__dirname, "..", "..", "package.json"), "utf8"),
   );
@@ -79,7 +108,9 @@ describe("picker/settings parity", () => {
   const pickerModes = [
     ...new Set(
       [true, false].flatMap((terminalDetected) =>
-        buildSendModeItems({ terminalDetected }).map((i) => i.mode),
+        [true, false].flatMap((headlessAvailable) =>
+          buildSendModeItems({ terminalDetected, headlessAvailable }).map((i) => i.mode),
+        ),
       ),
     ),
   ] satisfies PickerSendMode[];

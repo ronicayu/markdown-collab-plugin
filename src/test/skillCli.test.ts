@@ -261,6 +261,45 @@ describe("mdc CLI: mutation keeps markers intact", () => {
   });
 });
 
+describe("mdc CLI: edit", () => {
+  it("replaces exact prose text and exits 0", () => {
+    const doc = writeDoc("a.md", DOC);
+    const r = run(["edit", doc, "--old", "a cap of 30 seconds", "--new", "a cap of 60 seconds"]);
+    expect(r.status).toBe(0);
+    const data = json(r);
+    expect(data.action).toBe("edit");
+    const after = fs.readFileSync(doc, "utf8");
+    expect(after).toContain("a cap of 60 seconds");
+    expect(checkIntegrity(after).ok).toBe(true);
+  });
+
+  it("refuses an ambiguous match and names the --occurrence flag", () => {
+    const doc = writeDoc("d.md", "# Dup\n\nThe token expires. The token refreshes.\n");
+    const r = run(["edit", doc, "--old", "token", "--new", "key"]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/appears 2 times/);
+    expect(r.stderr).toMatch(/--occurrence/);
+  });
+
+  it("refuses an edit that touches a review marker, leaving the file unchanged", () => {
+    const doc = writeDoc("a.md", DOC);
+    const id = json(run(["open", doc, "--quote", "bearer token", "--body", "q"])).threadId;
+    const before = fs.readFileSync(doc, "utf8");
+    const r = run(["edit", doc, "--old", `<!--mc:a:${id}-->bearer`, "--new", "x"]);
+    expect(r.status).toBe(1);
+    expect(fs.readFileSync(doc, "utf8")).toBe(before);
+  });
+
+  it("--new '' deletes the matched text", () => {
+    const doc = writeDoc("a.md", DOC);
+    const r = run(["edit", doc, "--old", "a bearer token", "--new", ""]);
+    expect(r.status).toBe(0);
+    const after = fs.readFileSync(doc, "utf8");
+    expect(after).not.toContain("bearer token");
+    expect(checkIntegrity(after).ok).toBe(true);
+  });
+});
+
 describe("mdc CLI: refuses rather than guesses", () => {
   it("refuses an ambiguous passage and names the occurrence count", () => {
     const doc = writeDoc("d.md", "# Dup\n\nThe token expires. The token refreshes.\n");

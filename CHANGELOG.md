@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.35.2 — 2026-09-27 (GitHub only)
+
+### Added: Run Claude for me (10x-plan-4 P0.1)
+
+A fourth send mode, `headless`, labelled **Run Claude for me**. On send, the
+extension starts Claude Code itself: `claude -p` in the workspace folder,
+pointed at the extension's own review tool server. The run shows in the status
+bar as `Claude is reviewing guide.md · 1m 20s`, or as the phase Claude reports
+with `mc_status`. The tooltip names the last tool and the call count, and a
+click offers Cancel run, Show logs, and Open review view. When it finishes, a
+notification carries the first line of Claude's report, with Show report (the
+whole message, plus turns and an estimated cost) and Open review view. Nobody
+has to find a terminal.
+
+The run has a closed tool set: Read, Glob, Grep, and the markdown-collab tools.
+There is no Edit, no Write, and no Bash, and `--strict-mcp-config` keeps the
+project's other MCP servers from starting. Every change Claude makes goes
+through the tool server, so it lands as an editor edit you can undo, checked
+before it lands. The user's own Claude Code hooks are switched off for the run:
+a SessionStart hook that injects a persona would rewrite the report, and a Stop
+hook would fire for a review nobody is watching. Managed hooks still run. The
+token travels in a 0600 temp file that is deleted when the process exits, and
+the prompt goes over stdin, so neither is ever on a command line.
+
+It is offered, never chosen for you. The first-send picker lists it first, as
+the recommended choice, only when Claude Code is found (on PATH, in the usual
+install locations, or at the new `markdownCollab.claudePath`), the workspace is
+trusted, and the tool server is running. A running Claude terminal is still
+picked automatically, as before. If headless is your mode but can't run at send
+time, the send goes to the terminal and the toast says why. If Claude Code can't
+load the tools because MCP is disabled by policy, that send goes to the terminal
+and headless stops being offered in the workspace until Reset Send Mode. If it
+isn't signed in, you're offered a terminal to sign in from. A run stops itself
+after 30 minutes. `markdownCollab.headlessModel` picks the model.
+
+Tested end to end against a real Claude Code 2.1.283: a review of the tutorial
+document finished in 56 seconds and 10 turns, every change arriving through the
+tool server with no permission denials.
+
+### Added: `mc_edit` and `mdc edit`
+
+A headless run has no Edit tool, so prose outside anchored spans needed a
+marker-safe path. `mc_edit(file, old, new, occurrence?)` replaces exact text the
+way the Edit tool does, and refuses (`not_editable`) anything that touches a
+review marker or the threads region. Ambiguous text is refused with the match
+count unless `occurrence` is given. The CLI gets the same verb over the same
+shared operation, and interactive sessions can keep using the Edit tool.
+
+### Changed: prompts say where the workflow lives
+
+Headless prompts open with "Follow the Markdown Collab review workflow in your
+instructions…" instead of naming a skill that isn't installed there, because the
+skill text rides along as the system prompt. Everything after the opener is the
+same text.
+
+### Fixed: a sample threads block in a code fence became the live one
+
+A document that shows the storage format, such as a README or the walkthrough,
+carries an example `<!--mc:threads:begin-->` block inside a fenced code block.
+The parser took the last begin marker at face value, so the first comment on
+such a file was written inside the fence, and the sample's own thread came back
+unanchored. The headless end-to-end run found it on the walkthrough document.
+Markers inside code were already inert for anchors; the threads region now
+follows the same rule. A region at the end of the file is always accepted, so an
+unterminated fence earlier in the document can't hide it.
+
+### Fixed: tool refusals logged as "unknown"
+
+The log line for a refused tool call read the refusal code from the wrong level
+of the result, so every refusal was logged with code `unknown`.
+
 ## 0.35.1 — 2026-09-27 (GitHub only)
 
 ### Added: a title-bar icon and keybindings (10x-plan-4 P2.1)

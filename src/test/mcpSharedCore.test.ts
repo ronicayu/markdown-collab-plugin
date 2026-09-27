@@ -35,7 +35,7 @@ describe("one implementation per verb", () => {
       expect(source, `${name} should import the shared ops`).toMatch(
         /from "(\.\.\/)?inlineComments\/docOps"/,
       );
-      for (const op of ["opReply", "opOpen", "opRewrite", "opSuggest", "opAccept", "opReject", "opList"]) {
+      for (const op of ["opReply", "opOpen", "opRewrite", "opEdit", "opSuggest", "opAccept", "opReject", "opList"]) {
         expect(source, `${name} should call ${op}`).toContain(op);
       }
     }
@@ -59,9 +59,9 @@ describe("one implementation per verb", () => {
     // Every mutating op must run the pre-write check. Count the calls rather
     // than trusting one to be in the right place.
     const gates = ops.match(/assertNoNewIssues\(/g) ?? [];
-    // One definition + one call per mutating verb (reply, rewrite, open,
+    // One definition + one call per mutating verb (reply, rewrite, edit, open,
     // resolve, suggest, accept, reject).
-    expect(gates.length).toBeGreaterThanOrEqual(8);
+    expect(gates.length).toBeGreaterThanOrEqual(9);
   });
 });
 

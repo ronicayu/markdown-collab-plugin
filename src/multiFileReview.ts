@@ -11,6 +11,7 @@
 // selection to workspace-relative paths and byte sizes.
 
 import { reviewModeClosing, type ReviewPayload } from "./sendToClaude";
+import { workflowOpener, type SkillDelivery } from "./skillDelivery";
 
 export interface ReviewFile {
   /** Workspace-relative path, POSIX separators (it goes into a prompt). */
@@ -48,18 +49,23 @@ export const CROSS_DOCUMENT_DIMENSION = [
 export function buildMultiFileReviewPayload(
   files: ReviewFile[],
   focus?: string,
+  opts: { skillDelivery?: SkillDelivery } = {},
 ): ReviewPayload {
   const rels = files.map((f) => f.rel);
   const trimmedFocus = focus?.trim();
-  const lines: string[] = [
-    `Use the vs-markdown-collab skill in Review Mode on these ${rels.length} files:`,
-    "",
-    ...rels.map((rel) => `- \`${rel}\``),
-  ];
-  if (trimmedFocus) lines.push("", `Focus: ${trimmedFocus}`);
-  lines.push("", CROSS_DOCUMENT_DIMENSION, "", reviewModeClosing(rels.length));
+  const promptFor = (delivery: SkillDelivery): string => {
+    const lines: string[] = [
+      `${workflowOpener(delivery)} in Review Mode on these ${rels.length} files:`,
+      "",
+      ...rels.map((rel) => `- \`${rel}\``),
+    ];
+    if (trimmedFocus) lines.push("", `Focus: ${trimmedFocus}`);
+    lines.push("", CROSS_DOCUMENT_DIMENSION, "", reviewModeClosing(rels.length));
+    return lines.join("\n");
+  };
   return {
-    prompt: lines.join("\n"),
+    prompt: promptFor(opts.skillDelivery ?? "installed"),
+    inlineSkillPrompt: promptFor("inline"),
     file: selectionLabel(rels),
     files: rels,
     unresolvedCount: 0,
