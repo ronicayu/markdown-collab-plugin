@@ -182,6 +182,83 @@ test("replying to a stale thread clears the badge", async ({ page }) => {
   await expect(card.locator(".badge.stale")).toHaveCount(0);
 });
 
+// 10x-plan-4 P2.1: n/p/r/e unified keyboard map for the thread list (outside
+// the diff overlay, which uncommittedDiff.spec.ts already covers for n/p).
+
+test("n moves the highlight to the next thread card, p to the previous, wrapping at both ends", async ({ page }) => {
+  const answered = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+  const open = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  await expect(page.locator(".thread-card.highlighted")).toHaveCount(0);
+
+  // Nothing highlighted yet: n starts at the first card in document order.
+  await page.keyboard.press("n");
+  await expect(answered).toHaveClass(/highlighted/);
+  await expect(open).not.toHaveClass(/highlighted/);
+
+  await page.keyboard.press("n");
+  await expect(open).toHaveClass(/highlighted/);
+  await expect(answered).not.toHaveClass(/highlighted/);
+
+  // Past the last card, n wraps to the first.
+  await page.keyboard.press("n");
+  await expect(answered).toHaveClass(/highlighted/);
+
+  // p from the first card wraps back to the last.
+  await page.keyboard.press("p");
+  await expect(open).toHaveClass(/highlighted/);
+  await expect(answered).not.toHaveClass(/highlighted/);
+});
+
+test("r focuses the highlighted thread's reply textarea, expanding a collapsed card first", async ({ page }) => {
+  const card = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+  await card.locator(".thread-collapse").click();
+  await expect(card).toHaveClass(/collapsed/);
+
+  await page.keyboard.press("n"); // highlights the first card (answered)
+  await expect(card).toHaveClass(/highlighted/);
+
+  await page.keyboard.press("r");
+  await expect(card).not.toHaveClass(/collapsed/);
+  const focused = await card
+    .locator(".reply-box textarea")
+    .evaluate((el) => el === document.activeElement);
+  expect(focused).toBe(true);
+});
+
+test("r is a no-op when nothing is highlighted", async ({ page }) => {
+  await page.keyboard.press("r");
+  const anyFocused = await page.evaluate(
+    () => document.activeElement instanceof HTMLTextAreaElement,
+  );
+  expect(anyFocused).toBe(false);
+});
+
+test("e posts toggle-resolve for the highlighted thread — the same message Resolve posts", async ({ page }) => {
+  await page.keyboard.press("n"); // highlights the first card (answered)
+  await page.keyboard.press("e");
+  expect(await awaitPosted(page, "toggle-resolve")).toEqual({
+    type: "toggle-resolve",
+    threadId: fixture.answeredThreadId,
+  });
+});
+
+test("n/p/r/e are inert while a reply textarea has focus", async ({ page }) => {
+  const replyTextarea = page.locator(
+    `.thread-card[data-thread="${fixture.openThreadId}"] .reply-box textarea`,
+  );
+  await replyTextarea.click();
+
+  await page.keyboard.press("n");
+  await page.keyboard.press("p");
+  await page.keyboard.press("e");
+  // "r" also just types a letter into the focused textarea — assert it did
+  // NOT steal focus toward some other thread's reply box.
+  await page.keyboard.press("r");
+
+  await expect(page.locator(".thread-card.highlighted")).toHaveCount(0);
+  expect(await posted(page)).toEqual([]);
+});
+
 test("Accept all needs a second click, and only appears for more than one suggestion", async ({ page }) => {
   // 10x-plan-2 P3.3. One suggestion is the fixture's default: the bulk action
   // would be a second button doing what Accept already does.

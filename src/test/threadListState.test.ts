@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  adjacentThreadId,
   chunkThreads,
   claudeSummary,
   emptyListMessage,
@@ -176,6 +177,58 @@ describe("nextUnreadThreadId", () => {
   it("returns null when nothing is unread", () => {
     expect(nextUnreadThreadId([thread("a"), thread("b")], null)).toBeNull();
     expect(nextUnreadThreadId([], null)).toBeNull();
+  });
+});
+
+describe("adjacentThreadId", () => {
+  const threads = [thread("a"), thread("b"), thread("c")];
+
+  it("returns null for an empty list", () => {
+    expect(adjacentThreadId([], "open", null, 1)).toBeNull();
+    expect(adjacentThreadId([], "open", "a", -1)).toBeNull();
+  });
+
+  it("wraps onto itself for a single item", () => {
+    const one = [thread("a")];
+    expect(adjacentThreadId(one, "open", "a", 1)).toBe("a");
+    expect(adjacentThreadId(one, "open", "a", -1)).toBe("a");
+  });
+
+  it("starts at the first card when nothing is highlighted", () => {
+    expect(adjacentThreadId(threads, "open", null, 1)).toBe("a");
+  });
+
+  it("starts at the last card when nothing is highlighted and moving backward", () => {
+    expect(adjacentThreadId(threads, "open", null, -1)).toBe("c");
+  });
+
+  it("wraps forward from the last card to the first", () => {
+    expect(adjacentThreadId(threads, "open", "c", 1)).toBe("a");
+  });
+
+  it("wraps backward from the first card to the last", () => {
+    expect(adjacentThreadId(threads, "open", "a", -1)).toBe("c");
+  });
+
+  it("steps forward and backward through the middle", () => {
+    expect(adjacentThreadId(threads, "open", "a", 1)).toBe("b");
+    expect(adjacentThreadId(threads, "open", "c", -1)).toBe("b");
+  });
+
+  it("treats a current id outside the filtered list as no selection", () => {
+    // "b" is resolved, so the "open" filter never contains it — moving next
+    // from a stale/foreign cursor starts fresh rather than dead-ending.
+    const mixed = [thread("a"), thread("b", { status: "resolved" }), thread("c")];
+    expect(adjacentThreadId(mixed, "open", "b", 1)).toBe("a");
+    expect(adjacentThreadId(mixed, "open", "b", -1)).toBe("c");
+  });
+
+  it("recomputes against the current filter, not a stale one", () => {
+    const mixed = [thread("a"), thread("b", { status: "resolved" }), thread("c")];
+    // Under "open", stepping past "a" wraps straight to "c" — "b" isn't in it.
+    expect(adjacentThreadId(mixed, "open", "a", 1)).toBe("c");
+    // Under "all", "b" is back in the list between "a" and "c".
+    expect(adjacentThreadId(mixed, "all", "a", 1)).toBe("b");
   });
 });
 

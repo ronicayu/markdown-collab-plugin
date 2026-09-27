@@ -14,6 +14,7 @@ import { createDiffNav, isNavKeyContext } from "../../webviewShared/diffNav";
 import { planHighlightSlices } from "../../webviewShared/highlightSlices";
 import {
   THREAD_RENDER_CHUNK,
+  adjacentThreadId,
   chunkThreads,
   claudeSummary,
   emptyListMessage,
@@ -638,21 +639,7 @@ dom.collapseAll.addEventListener("click", () => {
 dom.claudeNext.addEventListener("click", () => {
   if (!currentState) return;
   const nextId = nextUnreadThreadId(currentState.threads, highlightedThreadId);
-  if (!nextId) return;
-  const target = currentState.threads.find((t) => t.id === nextId);
-  if (!target) return;
-  highlightedThreadId = target.id;
-  // Scroll the card into view, then scroll the preview to the anchor.
-  const card = dom.threadsList.querySelector<HTMLElement>(
-    `.thread-card[data-thread="${cssEscape(target.id)}"]`,
-  );
-  if (card) {
-    card.scrollIntoView({ behavior: "smooth", block: "center" });
-    for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
-      c.classList.toggle("highlighted", c.dataset.thread === target.id);
-    }
-  }
-  scrollPreviewTo(target);
+  if (nextId) focusThread(nextId);
 });
 
 function cssEscape(s: string): string {
@@ -687,6 +674,80 @@ let highlightedThreadId: string | null = null;
 const pendingDeleteThread = new Set<string>();
 const pendingDeleteComment = new Set<string>(); // composite "threadId:commentId"
 
+/**
+ * Highlight `id`'s card, scroll it into view, and scroll the preview to its
+ * anchor. Shared by "Next unread from Claude", the `n`/`p` thread navigation,
+ * and the auto-scroll-to-new-review path — all three are "make this thread
+ * the one the reviewer is looking at", and used to each reimplement it
+ * slightly differently.
+ *
+ * Raises the render cap first when the card hasn't been built yet (same rule
+ * `maybeScrollToNewReview` always used): a review pass that landed threads
+ * past the chunk limit would otherwise scroll toward a card that doesn't
+ * exist in the DOM.
+ */
+function focusThread(id: string): void {
+  if (!currentState) return;
+  const target = currentState.threads.find((t) => t.id === id);
+  if (!target) return;
+  highlightedThreadId = target.id;
+
+  const revealAndScroll = (): void => {
+    const card = dom.threadsList.querySelector<HTMLElement>(
+      `.thread-card[data-thread="${cssEscape(target.id)}"]`,
+    );
+    if (card) {
+      smoothScrollIntoView(card, "center");
+      for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
+        c.classList.toggle("highlighted", c.dataset.thread === target.id);
+      }
+    }
+    scrollPreviewTo(target);
+  };
+
+  const targetIndex = filterThreads(currentState.threads, filter).findIndex((t) => t.id === target.id);
+  if (targetIndex >= renderedThreadLimit) {
+    renderedThreadLimit = Math.ceil((targetIndex + 1) / THREAD_RENDER_CHUNK) * THREAD_RENDER_CHUNK;
+    renderThreads(currentState);
+    // Defer one frame so the freshly-rendered card is in the DOM.
+    requestAnimationFrame(revealAndScroll);
+  } else {
+    revealAndScroll();
+  }
+}
+
+/** Move the highlight to the next (`delta` 1) / previous (`delta` -1) card in the current filter. */
+function moveThreadHighlight(delta: 1 | -1): void {
+  if (!currentState) return;
+  const nextId = adjacentThreadId(currentState.threads, filter, highlightedThreadId, delta);
+  if (nextId) focusThread(nextId);
+}
+
+/**
+ * Focus the highlighted thread's reply textarea, expanding the card first if
+ * it's collapsed (the textarea is `display: none` inside a collapsed card,
+ * so a `.focus()` on it would silently do nothing). No-op if nothing is
+ * highlighted.
+ */
+function focusReplyOnHighlighted(): void {
+  if (!highlightedThreadId) return;
+  if (collapsedThreads.has(highlightedThreadId)) setThreadCollapsed(highlightedThreadId, false);
+  const card = dom.threadsList.querySelector<HTMLElement>(
+    `.thread-card[data-thread="${cssEscape(highlightedThreadId)}"]`,
+  );
+  card?.querySelector<HTMLTextAreaElement>(".reply-box textarea")?.focus();
+}
+
+/**
+ * Resolve the highlighted thread if it's open, reopen it if resolved — posts
+ * exactly the message the card's own Resolve/Reopen button posts, so the host
+ * can't tell the two apart. No-op if nothing is highlighted.
+ */
+function resolveOrReopenHighlighted(): void {
+  if (!highlightedThreadId) return;
+  vscode.postMessage({ type: "toggle-resolve", threadId: highlightedThreadId });
+}
+
 function render(state: SerializedState): void {
   currentState = state;
   renderPreview(state);
@@ -707,32 +768,10 @@ function maybeScrollToNewReview(state: SerializedState): void {
     });
   if (newClaudeUnread.length === 0) return;
   const target = newClaudeUnread[0];
-  highlightedThreadId = target.id;
-  // A big review pass can push the first new thread past the render cap. Raise
-  // the budget far enough to include it and rebuild, or "Claude finished —
-  // here's the first finding" would scroll to a card that was never built.
-  const targetIndex = filterThreads(state.threads, filter).findIndex((t) => t.id === target.id);
-  if (targetIndex >= renderedThreadLimit) {
-    renderedThreadLimit =
-      Math.ceil((targetIndex + 1) / THREAD_RENDER_CHUNK) * THREAD_RENDER_CHUNK;
-    renderThreads(state);
-  }
   // Clear the snapshot first so re-entry doesn't loop on subsequent updates.
   pendingReviewSnapshot = null;
   savePendingReviewSnapshot();
-  // Defer one frame so the freshly-rendered card is in the DOM.
-  requestAnimationFrame(() => {
-    const card = dom.threadsList.querySelector<HTMLElement>(
-      `.thread-card[data-thread="${cssEscape(target.id)}"]`,
-    );
-    if (card) {
-      card.scrollIntoView({ behavior: "smooth", block: "center" });
-      for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
-        c.classList.toggle("highlighted", c.dataset.thread === target.id);
-      }
-    }
-    scrollPreviewTo(target);
-  });
+  focusThread(target.id);
 }
 
 let mermaidInitialized = false;
@@ -789,6 +828,7 @@ function paintDiffStripes(prose: string, diff: DiffState | null): void {
   renderDiffBadge(diff);
   if (!diff) {
     diffNav.setStops([]);
+    updateKeysHint();
     return;
   }
   // 1-based line for each prose offset, via a sorted line-start table.
@@ -830,6 +870,20 @@ function paintDiffStripes(prose: string, diff: DiffState | null): void {
   diffNav.setStops(
     Array.from(dom.preview.querySelectorAll<HTMLElement>(".mc-diff-changed, .mc-diff-removed")),
   );
+  updateKeysHint();
+}
+
+/**
+ * The hint names what n/p will actually do. They step changes whenever the
+ * change arrows are showing and walk threads otherwise, so the line follows
+ * the arrows' visibility rather than the diff badge: a diff with no changes
+ * has no arrows, and there n/p walk threads.
+ */
+function updateKeysHint(): void {
+  const hint = document.getElementById("keys-hint");
+  if (!hint) return;
+  const target = dom.diffNav.hidden ? "threads" : "changes";
+  hint.textContent = `n / p to move between ${target} · r reply · e resolve`;
 }
 
 const diffNav = createDiffNav({
@@ -840,13 +894,26 @@ const diffNav = createDiffNav({
   currentClass: "mc-diff-current",
 });
 
-// n/p step through changes, GitHub-style — but never while typing in the
-// find bar, a composer, or a reply box.
+// One keyboard map for n/p/r/e (10x-plan-4 P2.1, unifying the diff-nav
+// shortcut that already existed with the thread navigation added alongside
+// it). While the diff overlay is showing, n/p step through changed blocks,
+// GitHub-style, exactly as before; otherwise they walk the highlight through
+// the current filtered thread list. r focuses the highlighted thread's
+// reply box; e resolves/reopens it. Deliberately no `a` for "accept" — a
+// single-key accept with no visible target is a footgun. Never fires with a
+// modifier held or while typing in the find bar, a composer, or a reply box.
 document.addEventListener("keydown", (e) => {
-  if (dom.diffNav.hidden || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
   if (!isNavKeyContext(e.target)) return;
-  if (e.key === "n") diffNav.step(1);
-  else if (e.key === "p") diffNav.step(-1);
+  if (e.key === "n" || e.key === "p") {
+    const delta = e.key === "n" ? 1 : -1;
+    if (!dom.diffNav.hidden) diffNav.step(delta);
+    else moveThreadHighlight(delta);
+  } else if (e.key === "r") {
+    focusReplyOnHighlighted();
+  } else if (e.key === "e") {
+    resolveOrReopenHighlighted();
+  }
 });
 
 /** The block that sits directly under #preview — never inside a list or table. */
@@ -1621,16 +1688,29 @@ function renderComment(thread: ThreadState, c: InlineComment, pending = false): 
 
 
 
+/**
+ * `scrollIntoView` that drops to `"auto"` when the OS has "reduce motion" on
+ * — smooth scrolling is decoration, not information, and a user who turned it
+ * off shouldn't get it back just because this view added more jump targets
+ * (n/p thread navigation, "Next unread from Claude").
+ */
+function smoothScrollIntoView(el: Element, block: ScrollLogicalPosition): void {
+  const behavior: ScrollBehavior = matchMedia("(prefers-reduced-motion: reduce)").matches
+    ? "auto"
+    : "smooth";
+  el.scrollIntoView({ behavior, block });
+}
+
 function scrollSidebarTo(id: string): void {
   const el = dom.threadsList.querySelector<HTMLElement>(`[data-thread="${id}"]`);
-  if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (el) smoothScrollIntoView(el, "center");
 }
 
 function scrollPreviewTo(t: ThreadState): void {
   if (!t.anchor) return;
   const el = dom.preview.querySelector<HTMLElement>(`mark[data-thread="${t.id}"]`);
   if (el) {
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    smoothScrollIntoView(el, "center");
     el.classList.add("flash");
     setTimeout(() => el.classList.remove("flash"), 1200);
   }

@@ -262,6 +262,14 @@ mark.mc-hl.mc-hl--suggestion {
   color: var(--fg);
 }
 
+/* One muted line naming the in-webview keys — not a tooltip, since it's
+   worth knowing before the first hover, not after. */
+#keys-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .skill-warning {
   display: flex;
   align-items: center;

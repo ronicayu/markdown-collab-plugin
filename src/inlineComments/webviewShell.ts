@@ -46,7 +46,7 @@ export function inlineCommentsAppBody(): string {
       </div>
       <div id="claude-summary" hidden>
         <span id="claude-summary-text"></span>
-        <button id="claude-next" class="btn-link" title="Jump to the next unread thread from Claude.">Next</button>
+        <button id="claude-next" class="btn-link" title="Jump to the next unread thread from Claude. (Cmd/Ctrl+K, Cmd/Ctrl+Alt+N)">Next</button>
       </div>
       <div class="filter-row">
         <label><input type="radio" name="filter" value="open" checked> Open</label>
@@ -59,6 +59,7 @@ export function inlineCommentsAppBody(): string {
         <button id="remove-resolved" class="btn-ghost danger" hidden title="Delete every resolved comment from this file. Open comments and pending suggestions are kept.">Remove resolved</button>
         <button id="finalize-doc" class="btn-ghost danger" hidden title="Remove ALL review data — every comment, marker, and pending suggestion — leaving clean markdown ready to commit.">Remove all</button>
       </div>
+      <div id="keys-hint">n / p to move between threads · r reply · e resolve</div>
       <div id="skill-warning" class="skill-warning" hidden>
         <span id="skill-warning-text"></span>
         <button id="skill-install" class="btn-link"></button>

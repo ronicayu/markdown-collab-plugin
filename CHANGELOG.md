@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.35.1 — 2026-09-27 (GitHub only)
+
+### Added: a title-bar icon and keybindings (10x-plan-4 P2.1)
+
+The review view finally has a way in that isn't the command palette: a comment
+icon in the title bar of every Markdown file, next to the built-in preview's.
+It opens the view in the current editor group, as 0.34.94 settled.
+
+Three keybindings, all scoped to Markdown:
+
+- `Cmd+K Cmd+Alt+V` opens the review view.
+- `Cmd+K Cmd+Alt+M` comments on the selection.
+- `Cmd+K Cmd+Alt+N` jumps to the next unread thread from Claude.
+
+On Windows and Linux they are the same with `Ctrl`. Round 3 of the plan had
+proposed `Cmd+K Cmd+M` and `Cmd+K Cmd+C`, but VS Code already binds both, to
+Toggle Maximize Editor Group and Add Line Comment. Taking `Cmd+K Cmd+C` in
+Markdown would have broken commenting-out for everyone who uses it. The chords
+above were checked against VS Code 1.139's own keybindings and those of its
+bundled extensions, and nothing claims them.
+
+### Added: n, p, r, e in the review view
+
+`n` and `p` walk the highlight through the threads the current filter shows,
+wrapping at both ends. When the diff overlay's change arrows are showing, they
+step through changes instead, as they already did. `r` puts the cursor in the
+highlighted thread's reply box, expanding a collapsed card first. `e` resolves
+or reopens it. There is deliberately no key for accepting a suggestion: a
+one-key accept with no visible target is a footgun. A muted line under the
+filters names the keys, and says "changes" instead of "threads" whenever that
+is what `n` and `p` will do. The scrolls these keys trigger respect
+`prefers-reduced-motion`.
+
+"Next unread from Claude", the new keys, and the jump to Claude's first finding
+after a review now share one routine for "make this the thread the reviewer is
+looking at". There used to be three copies of it.
+
 ## 0.35.0 — 2026-09-27 (GitHub only)
 
 ### Removed: the `mcp`, `channel`, and `mcp-channel` send modes (10x-plan-4 P0.3)

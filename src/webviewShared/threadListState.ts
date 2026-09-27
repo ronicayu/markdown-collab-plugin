@@ -110,6 +110,33 @@ export function nextUnreadThreadId(threads: ListThread[], currentId: string | nu
 }
 
 /**
+ * The next/previous card in `filter`'s current list, wrapping at both ends.
+ * `delta` is +1 for "next" (`n`), -1 for "previous" (`p`) — the in-webview
+ * thread navigation (10x-plan-4 P2.1), which walks whatever the filter is
+ * currently showing rather than a fixed "unread" subset like
+ * `nextUnreadThreadId` does.
+ *
+ * `currentId` not being in the filtered list (nothing highlighted yet, the
+ * highlighted thread just left the filter, or the filter itself just
+ * changed) is treated as "start fresh": `n` lands on the first card, `p` on
+ * the last, so the walk never dead-ends on a stale or absent cursor.
+ */
+export function adjacentThreadId(
+  threads: ListThread[],
+  filter: ThreadFilter,
+  currentId: string | null,
+  delta: 1 | -1,
+): string | null {
+  const filtered = filterThreads(threads, filter);
+  if (filtered.length === 0) return null;
+  const currentIdx = currentId ? filtered.findIndex((t) => t.id === currentId) : -1;
+  if (currentIdx === -1) {
+    return delta === 1 ? filtered[0].id : filtered[filtered.length - 1].id;
+  }
+  return filtered[(currentIdx + delta + filtered.length) % filtered.length].id;
+}
+
+/**
  * Whether the collapse-all control should collapse or expand next: expand only
  * when everything is already collapsed, so a partially-collapsed list
  * collapses the rest rather than flipping to expanded.

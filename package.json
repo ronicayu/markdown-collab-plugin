@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with Claude Code — inline comments anchored in the file, a live AI co-editor, suggestions you accept or reject, and GitHub/GitLab PR review.",
-  "version": "0.35.0",
+  "version": "0.35.1",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -109,7 +109,8 @@
       {
         "command": "markdownCollab.openInlineCommentsView",
         "title": "Markdown Collab: Open Inline Comments View",
-        "category": "Markdown Collab"
+        "category": "Markdown Collab",
+        "icon": "$(comment-discussion)"
       },
       {
         "command": "markdownCollab.askClaudeToReview",
@@ -300,6 +301,26 @@
         }
       }
     },
+    "keybindings": [
+      {
+        "command": "markdownCollab.openInlineCommentsView",
+        "key": "ctrl+k ctrl+alt+v",
+        "mac": "cmd+k cmd+alt+v",
+        "when": "editorLangId == markdown"
+      },
+      {
+        "command": "markdownCollab.commentOnSelection",
+        "key": "ctrl+k ctrl+alt+m",
+        "mac": "cmd+k cmd+alt+m",
+        "when": "editorTextFocus && editorLangId == markdown && editorHasSelection"
+      },
+      {
+        "command": "markdownCollab.nextUnreadFromClaude",
+        "key": "ctrl+k ctrl+alt+n",
+        "mac": "cmd+k cmd+alt+n",
+        "when": "editorLangId == markdown || activeWebviewPanelId == 'markdownCollab.inlineCommentsView'"
+      }
+    ],
     "menus": {
       "commandPalette": [
         {
@@ -427,6 +448,13 @@
           "command": "markdownCollab.finalizeDocument",
           "when": "resourceExtname == .md",
           "group": "navigation@34"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "markdownCollab.openInlineCommentsView",
+          "when": "resourceLangId == markdown",
+          "group": "navigation"
         }
       ],
       "editor/title/context": [

@@ -183,6 +183,21 @@ Run **Markdown Collab: Register Review Tools with Claude Code** (or accept the p
 
 Registering is always your call, and nothing depends on it: the tools can be disabled entirely on Claude's side (enterprise policy, `--strict-mcp-config`), so every prompt asks Claude to use them *if it has them* and otherwise to use the `mdc` helper the skill installs. Either way the file ends up the same; the tools just make Claude's edits undoable and checked before they land.
 
+## Keyboard
+
+The comment icon in a Markdown file's title bar opens the review view. From the keyboard:
+
+| Keys (mac / win + linux) | Where | Does |
+|---|---|---|
+| `Cmd+K Cmd+Alt+V` / `Ctrl+K Ctrl+Alt+V` | a Markdown editor | Open the review view |
+| `Cmd+K Cmd+Alt+M` / `Ctrl+K Ctrl+Alt+M` | a Markdown editor with a selection | Comment on the selection |
+| `Cmd+K Cmd+Alt+N` / `Ctrl+K Ctrl+Alt+N` | a Markdown editor or the review view | Next unread thread from Claude |
+| `n` / `p` | the review view | Next / previous thread (next / previous change when the diff is showing) |
+| `r` | the review view | Reply to the highlighted thread |
+| `e` | the review view | Resolve or reopen the highlighted thread |
+
+The single keys do nothing while you're typing in a box. There's no key for accepting a suggestion on purpose: that stays a click on the card you can see.
+
 ## Commands
 
 | Command | Purpose |
