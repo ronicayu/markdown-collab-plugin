@@ -10,6 +10,7 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { describe, expect, it } from "vitest";
+import { HOST_FILES, readHostSources } from "./hostSources";
 
 const read = (rel: string): string => readFileSync(resolve(__dirname, "..", rel), "utf8");
 
@@ -26,7 +27,7 @@ describe("adding a comment never requires a workspace folder", () => {
     // The message itself is the marker: if it comes back, some path has
     // started gating on a workspace folder again.
     for (const rel of [
-      "extension.ts",
+      ...HOST_FILES, // extension.ts + the command families P3.2 split out of it
       "collab/collabEditorProvider.ts",
       "sendToClaude.ts",
       "inlineComments/sendToClaude.ts",
@@ -41,10 +42,13 @@ describe("adding a comment never requires a workspace folder", () => {
   });
 
   it("the send and review paths resolve a folder instead of demanding one", () => {
-    const extension = read("extension.ts");
-    expect(extension).toContain("folderForDocument(");
+    // Across the host sources, not just extension.ts: P3.2 moved the send and
+    // review paths into src/commands/*.ts, and a gate could resurface in any
+    // of them.
+    const hosts = readHostSources();
+    expect(hosts).toContain("folderForDocument(");
     // Every remaining getWorkspaceFolder call must be a query, not a gate.
-    const gates = extension.match(/getWorkspaceFolder\([^)]*\);\s*\n\s*if \(!folder\)/g) ?? [];
+    const gates = hosts.match(/getWorkspaceFolder\([^)]*\);\s*\n\s*if \(!folder\)/g) ?? [];
     expect(gates).toEqual([]);
   });
 });

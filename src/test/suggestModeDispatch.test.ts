@@ -104,11 +104,14 @@ describe("every send path reads the suggest-mode toggle", () => {
   // A source-level guard, deliberately: the bug was a caller forgetting an
   // optional argument, which type-checks fine and which builder tests can't
   // see. Anything that dispatches a payload has to consult the setting.
-  const HOSTS = ["extension.ts", "inlineComments/inlineCommentsPanel.ts"];
+  //
+  // "extension.ts" until 10x-plan-4 P3.2 moved these call sites into
+  // src/commands/send.ts along with the rest of the send family.
+  const HOSTS = ["commands/send.ts", "inlineComments/inlineCommentsPanel.ts"];
 
   it("finds the call sites it means to guard", () => {
     const sites = HOSTS.flatMap(payloadCallSites);
-    // 2 in extension.ts (per-thread send + copy) + 1 (send all)
+    // 2 in commands/send.ts (per-thread send + copy) + 1 (send all)
     // + 4 in the panel (send, copy, per-thread send, per-thread copy).
     expect(sites.length).toBeGreaterThanOrEqual(6);
   });
@@ -142,7 +145,8 @@ describe("dispatch marks its threads pending", () => {
   // Marking lives in `dispatchReviewPayload`'s delivery branches rather than
   // in each command, so a new send path cannot forget it — the earlier draft
   // of this feature marked at call sites and immediately missed one.
-  const source = fs.readFileSync(path.join(__dirname, "..", "extension.ts"), "utf8");
+  // dispatchReviewPayload lives in src/commands/send.ts since 10x-plan-4 P3.2.
+  const source = fs.readFileSync(path.join(__dirname, "..", "commands/send.ts"), "utf8");
 
   function dispatcherBody(): string {
     const start = source.indexOf("async function dispatchReviewPayload(");

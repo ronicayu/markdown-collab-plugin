@@ -95,7 +95,9 @@ describe("the host wires the same rule", () => {
   });
 
   it("marks protocol evidence only for the mcp send mode", () => {
-    const extension = readFileSync(resolve(__dirname, "../extension.ts"), "utf8");
-    expect(extension).toMatch(/markPayloadPending\(payload, folder, mode === "mcp" \? "protocol" : "inferred"\)/);
+    // dispatchReviewPayload lives in src/commands/send.ts since 10x-plan-4
+    // P3.2 split it out of extension.ts.
+    const send = readFileSync(resolve(__dirname, "../commands/send.ts"), "utf8");
+    expect(send).toMatch(/markPayloadPending\(payload, folder, mode === "mcp" \? "protocol" : "inferred"\)/);
   });
 });

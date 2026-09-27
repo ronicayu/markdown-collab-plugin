@@ -7,10 +7,9 @@
 // answer.
 
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "fs";
-import { resolve } from "path";
 import { DocOpError, opOpenAt } from "../inlineComments/docOps";
 import { parse } from "../inlineComments/format";
+import { readHostSources } from "./hostSources";
 
 const DOC = `---
 title: Guide
@@ -133,8 +132,9 @@ describe("opOpenAt", () => {
 describe("the editor's comment path uses the shared verb", () => {
   // The same rule 10x-plan-2 P0.1 set for the CLI and the MCP tools, now that
   // there is a third front end: the human's. A hand-rolled `addThread` call in
-  // extension.ts would compile fine and skip the integrity gate.
-  const extension = readFileSync(resolve(__dirname, "../extension.ts"), "utf8");
+  // extension.ts (now: any host source — 10x-plan-4 P3.2 split it into
+  // src/commands/*.ts) would compile fine and skip the integrity gate.
+  const extension = readHostSources();
 
   it("calls opOpenAt rather than the format engine's mutators", () => {
     expect(extension).toContain("opOpenAt(");

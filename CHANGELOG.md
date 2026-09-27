@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.34.97 — 2026-09-27 (GitHub only)
+
+### Changed: `extension.ts` split into per-family command modules (10x-plan-4 P3.2)
+
+`extension.ts` had grown to 1848 lines: activation, every command
+registration, and all of the send, dispatch, picker, review, and comment logic
+in one file. Each command family now lives in its own module under
+`src/commands/` (send, review, comments, setup, diagnostics) behind a
+`registerXCommands(deps)` entry point, and `extension.ts` is activation and
+wiring only, at 198 lines. A test keeps it under 400.
+
+Purely internal: no command id, setting, string, or behavior changed. Every
+moved function is byte-identical to the original. The guard tests that read
+`extension.ts` as text now read the modules the logic moved to, and each was
+checked to still fail when the thing it forbids is reintroduced.
+
+This lands first because the rest of round 4 adds code to the send path, and
+it should land in the right file.
+
 ## 0.34.96 — 2026-09-06 (GitHub only)
 
 ### Fixed: "Remove resolved" and "Finalize document" left the file unsaved
