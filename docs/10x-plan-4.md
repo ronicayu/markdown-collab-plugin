@@ -1,8 +1,32 @@
 # Markdown Collab — 10x Plan, Round 4: zero setup, any agent
 
-> **Status: PROPOSED** (written 2026-09-27 against v0.34.96). Rounds 1–3 live in
-> `10x-plan.md`, `10x-plan-2.md`, `10x-plan-3.md`. Round 3's P0 shipped; its P1–P3
-> did not, and are folded into this round's P2 rather than left dangling.
+> **Status: IMPLEMENTED on branch `round-4`** (v0.34.97–0.35.8, all `[skip-publish]`,
+> nothing pushed or tagged). Every initiative landed as its own version with a
+> CHANGELOG entry; unit, webview e2e, and integration suites green at every step.
+>
+> | Initiative | Version | Notes |
+> |---|---|---|
+> | P3.2 split `extension.ts` | 0.34.97 | 1848 → 198 lines; guard keeps it under 400 |
+> | P0.3 subtraction | 0.35.0 | channel transports deleted in one step (normalization of legacy values stays permanently); skill cut 30% by words, guarded by a word ceiling, not a line ceiling |
+> | P2.1 icon + keybindings | 0.35.1 | Round 3's `cmd+k cmd+m` / `cmd+k cmd+c` collide with VS Code defaults; shipped `cmd+k cmd+alt+v/m/n`, verified free in VS Code 1.139 |
+> | P0.1 headless runs | 0.35.2 | `--tools Read,Glob,Grep` instead of a deny list; no `--max-turns` in the CLI, so a 30-minute budget; user hooks off via `--settings {"disableAllHooks":true}`; prompt on stdin. Also fixed: a fenced sample threads block was parsed as the live one |
+> | P1.1 connect an agent | 0.35.3 | Cursor in-app via `vscode.cursor.mcp.registerServer`; Gemini deliberately under "Other" (its config can't take the token from the environment); `engines.vscode` not raised |
+> | P0.2 plugin + P1.3 instructions | 0.35.4 | plugin ships inside the `.vsix` and installs from a local marketplace the extension owns (always the extension's version); the GitHub marketplace also exists; `mc_edit` can delete complete anchored spans |
+> | P2.4 empty state, reverse nav, a11y | 0.35.5 | "Review with Claude" forces headless for that one dispatch; availability never blocks first paint |
+> | P1.2 agent identity | 0.35.6 | optional `"agent": true` on comments; attribution from MCP sessions, verified against real Claude Code |
+> | P3.1 / P3.3 / P3.4 | 0.35.7 | live editor frozen + bundle budget; two GIFs (text-editor presence can't be recorded from the harness); diagnostics for the new paths |
+> | P2.2 review-pass progress | 0.35.8 | waiting → receiving → arrived, completion from `mc_check`, a fresh checkpoint, or a 90 s quiet period; also fixed `mdc check` never writing the checkpoint the README promised |
+> | P2.3 picker wording | 0.35.0 | done as part of the subtraction |
+>
+> **Open questions — defaults taken:** (1) headless is offered first, never
+> auto-selected; (2) live editor frozen; (3) marketplace manifest lives in this
+> repo; (4) Claude copy kept for Claude users, agent names follow authorship —
+> whether all copy should follow the workspace's configured agent is raised for
+> a later round; (5) nothing promoted to stable.
+>
+> **Not done, needs Ronica:** promotion to stable / any tag or push; Anthropic
+> plugin-directory submission; manual passes against real Cursor and Codex
+> installs; a Windows run of headless mode.
 
 **Audience:** Opus 5.5, acting as implementing engineer. Each initiative has motivation, design direction, key files, and acceptance criteria. Work top-to-bottom within a tier; tiers are ordered by leverage. Every "What NOT to do" rule from rounds 1–3 still stands; the new ones are at the end.
 
