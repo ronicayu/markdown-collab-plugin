@@ -3,9 +3,11 @@
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/markdown-collab.markdown-collab-plugin?label=VS%20Code%20Marketplace&color=4F46E5)](https://marketplace.visualstudio.com/items?itemName=markdown-collab.markdown-collab-plugin)
 [![Open VSX](https://img.shields.io/open-vsx/v/markdown-collab/markdown-collab-plugin?label=Open%20VSX&color=4F46E5)](https://open-vsx.org/extension/markdown-collab/markdown-collab-plugin)
 
-Review Markdown *with* Claude Code, in VS Code. Comments anchor to the text and live **inside
-the `.md` file**, so review state survives a commit, a branch switch, and a colleague opening
-the file. There is no sidecar and no database.
+Review Markdown *with* Claude, in VS Code — comments anchored in the file itself, no sidecar and no database.
+
+![Claude's empty-state review button, three comment threads landing, and reviewing them with the keyboard](media/gifs/review-with-claude.gif)
+
+Click **Review with Claude**: Claude reads your doc and leaves comments you triage — no terminal, no setup beyond having Claude Code signed in.
 
 ## The loop
 
@@ -23,6 +25,8 @@ the file. There is no sidecar and no database.
 **Flip it:** right-click a `.md` → **Ask Claude to Review This Doc**, optionally say what to
 focus on, and Claude opens a thread per concern for you to triage. No cap — if thirty things
 warrant a thread, you get thirty.
+
+![A pending suggestion accepted with a click, and a thread resolved](media/gifs/review-loop.gif)
 
 ## Try it in one minute
 
@@ -143,7 +147,9 @@ If a rewrite removes the anchored passage entirely, the thread's markers go with
 
 ### The live editor (WYSIWYG + AI co-editing)
 
-Prefer editing rendered Markdown directly? Right-click a `.md` file → **Markdown Collab: Open Live Editor** (or **Reopen with → Markdown Collab (live editor)**). It's a WYSIWYG editor with the same comment panel alongside it.
+This surface is experimental and frozen for new features — new capabilities land in the review view first and are ported here only on request.
+
+Prefer editing rendered Markdown directly? Right-click a `.md` file → **Markdown Collab: Open Live Editor (experimental)** (or **Reopen with → Markdown Collab (live editor, experimental)**). It's a WYSIWYG editor with the same comment panel alongside it.
 
 It's built for **one human + Claude on the same machine** — not multi-user network sync:
 
@@ -232,7 +238,7 @@ The single keys do nothing while you're typing in a box. There's no key for acce
 | `Markdown Collab: Set Up Claude Code` | Install the Markdown Collab plugin into Claude Code (skill, `mdc` CLI, post-edit marker check) from the extension's local marketplace, replacing the standalone skill if one is installed. Falls back to writing `~/.claude/skills/vs-markdown-collab/` when Claude Code has no plugin support, and says why. |
 | `Markdown Collab: Initialize AGENTS.md` | Append a convention block to `<workspace>/AGENTS.md` (for non–Claude-Code agents). |
 | `Markdown Collab: Open Inline Comments View` | Open the rendered view with an inline-threads sidebar. Comments are stored inside the `.md` file. The right-click action on `.md` files. |
-| `Markdown Collab: Open Live Editor` | Open the WYSIWYG live editor with the comment panel — you and Claude co-edit the same `.md` (single human + Claude, no relay). |
+| `Markdown Collab: Open Live Editor (experimental)` | Open the WYSIWYG live editor with the comment panel — you and Claude co-edit the same `.md` (single human + Claude, no relay). Experimental and frozen for new features; see [The live editor](#the-live-editor-wysiwyg--ai-co-editing). |
 | `Markdown Collab: Review PR / MR` | Review the Markdown files changed in a GitHub PR or GitLab MR via the `gh` / `glab` CLI. |
 | `Markdown Collab: Ask Claude to Review This Doc` | Ask Claude to act as the reviewer (v0.29+). Prompts for an optional focus directive, then sends a Review Mode payload through the configured send mode. Claude opens one thread per concern; you triage in the sidebar. |
 | `Markdown Collab: Ask Claude to Review These Docs` | Same, over a folder or a multi-select of `.md` files — one review pass across all of them, including cross-document consistency (v0.34.55+). Right-click a folder in the explorer. |
