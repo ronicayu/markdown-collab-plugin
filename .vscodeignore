@@ -28,6 +28,10 @@ test-results/**
 # src/claudePlugin.ts) and writes its own local marketplace around it.
 .claude-plugin/**
 .markdown-collab/**
+# README GIFs (10x-plan-4 P3.3): committed for the marketplace listing, which
+# renders README.md straight from the repository — the .vsix itself never
+# shows them, so they'd only add dead weight to every install.
+media/gifs/**
 docs/**
 package-lock.json
 **/*.vsix

@@ -91,6 +91,29 @@ if (shipped.length > 0) {
   process.exit(1);
 }
 
+// The live editor is frozen (10x-plan-4 P3.1): no new features land there, so
+// its bundle shouldn't grow either. `mermaid` and `mxgraph` are already
+// dynamic imports, guarded separately by src/test/liveEditorFreeze.test.ts;
+// this checks growth, not splitting — a guard the freeze doesn't have to be
+// remembered to enforce.
+//
+// Budget measured 2026-09-27 on branch round-4-p3x: `npm run compile` then
+// `wc -c out/webview/client.js` read 4,595,596 bytes. The number below is
+// that measurement + 3% slack for minifier/dependency jitter across
+// machines, floored to an integer. Raising it is a deliberate act — bump the
+// comment's measurement alongside it, don't just widen the number.
+const WEBVIEW_CLIENT_BUDGET_BYTES = 4_733_463;
+
+const clientJsBuffer = execFileSync("unzip", ["-p", vsix, "extension/out/webview/client.js"], {
+  maxBuffer: 64 * 1024 * 1024,
+});
+if (clientJsBuffer.length > WEBVIEW_CLIENT_BUDGET_BYTES) {
+  console.error(
+    `::error::extension/out/webview/client.js is ${clientJsBuffer.length} bytes, over the frozen-live-editor budget of ${WEBVIEW_CLIENT_BUDGET_BYTES} bytes (10x-plan-4 P3.1) — the live editor doesn't get new features, so it shouldn't get a bigger bundle either; if this growth is deliberate, remeasure and update the comment in scripts/verify-package.mjs`,
+  );
+  process.exit(1);
+}
+
 // Read the packaged host bundle straight out of the archive so we check what
 // actually shipped, not what happens to be in ./out.
 const bundle = execFileSync("unzip", ["-p", vsix, "extension/out/extension.js"], {

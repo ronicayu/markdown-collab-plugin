@@ -1,11 +1,15 @@
 {
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
-  "description": "Review Markdown with Claude Code — inline comments anchored in the file, a live AI co-editor, suggestions you accept or reject, and GitHub/GitLab PR review.",
-  "version": "0.35.6",
+  "description": "Claude reviews your Markdown in VS Code — inline comments stored in the file, suggestions you accept or reject, and runs that need no terminal. Works with Cursor, Codex, and Copilot agents too.",
+  "version": "0.35.7",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
+  "galleryBanner": {
+    "color": "#1E1B2E",
+    "theme": "dark"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/ronicayu/markdown-collab-plugin.git"
@@ -37,7 +41,11 @@
     "wysiwyg",
     "gitlab",
     "technical writing",
-    "docs"
+    "docs",
+    "cursor",
+    "codex",
+    "copilot",
+    "headless"
   ],
   "activationEvents": [
     "onLanguage:markdown",
@@ -108,7 +116,7 @@
       },
       {
         "command": "markdownCollab.openCollabEditor",
-        "title": "Markdown Collab: Open Live Editor",
+        "title": "Markdown Collab: Open Live Editor (experimental)",
         "category": "Markdown Collab"
       },
       {
@@ -547,7 +555,7 @@
     "customEditors": [
       {
         "viewType": "markdownCollab.collabEditor",
-        "displayName": "Markdown Collab (live editor)",
+        "displayName": "Markdown Collab (live editor, experimental)",
         "selector": [
           {
             "filenamePattern": "*.md"
@@ -641,7 +649,8 @@
     "test:integration": "npm run clean && npm run compile && node ./out/test/integration/runTest.js",
     "bundle:skill-cli": "node scripts/build-skill-cli.mjs",
     "build:plugin": "node scripts/build-plugin.mjs",
-    "copy:shared-css": "node scripts/copy-shared-css.mjs"
+    "copy:shared-css": "node scripts/copy-shared-css.mjs",
+    "record:gifs": "node scripts/record-gifs.mjs"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.10.3",

@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.35.7 — 2026-09-27 (GitHub only)
+
+### Changed: the live editor is frozen, and says so (10x-plan-4 P3.1)
+
+The live editor is labelled experimental wherever it's named: the command, the
+"Reopen with" entry, and the README. It costs like a primary surface, with a
+4.4 MB bundle and 11 of the 76 fixes in this changelog, while being a secondary
+one. No new features land there, and bugs are triaged rather than hunted. The
+packaging check now fails if its bundle grows past a measured budget, so the
+freeze doesn't depend on anyone remembering it.
+
+### Added: diagnostics that cover the new paths (10x-plan-4 P3.4)
+
+**Report a Problem** now says:
+
+- whether `claude` resolves, where, and at which version, or why not;
+- whether a headless run could start right now, and how the last one ended
+  (turns, estimated cost, failure reason), never the prompt or the report;
+- which agent clients are connected, from `.mcp.json`, `.cursor/mcp.json`, and
+  `.codex/config.toml` plus the in-process Copilot and Cursor registrations.
+
+### Added: two GIFs, and a listing that leads with the one-button path (10x-plan-4 P3.3)
+
+The README opens with **Review with Claude**: click it, and triage the
+comments Claude leaves. There's a GIF for each direction of the loop, recorded
+by `npm run record:gifs` from the same harness the webview e2e suite drives, so
+they can be re-recorded instead of going stale. They live in the repository,
+not the `.vsix`. The marketplace description and keywords now say the product
+works with Cursor, Codex, and Copilot agents too.
+
+The text editor's decorations, hover, and CodeLens aren't in a GIF. They're
+drawn by VS Code's own editor, which the harness can't record, and a staged
+imitation would misrepresent them.
+
+### Fixed: an empty "Next" bar at the top of every comment sidebar
+
+The "N new from Claude" bar is hidden when no thread came from Claude, but its
+`display: flex` outranked the browser's rule for the `hidden` attribute. Since
+0.29 an empty bar with a lone "Next" link sat above every thread list. Recording
+the GIFs made it obvious. A spec now checks that the bar stays hidden.
+
 ## 0.35.6 — 2026-09-27 (GitHub only)
 
 ### Added: the agent has a name, and it isn't always "claude" (10x-plan-4 P1.2)

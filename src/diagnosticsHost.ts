@@ -13,6 +13,10 @@ import { currentMcpServer } from "./mcpServer";
 import { checkClaudeSkill, installedClaudePlugin } from "./skill";
 import { CONVENTIONS_REL } from "./reviewConventions";
 import type { DiagnosticsSnapshot } from "./diagnostics";
+import { lookupClaude, headlessAvailability } from "./transports/headlessHost";
+import { isFinished, lastHeadlessRun, unavailableReasonText } from "./transports/headless";
+import { currentCopilotProvider, hasCursorInAppApi, isAgentConnected } from "./mcpServer/agentConnections";
+import { codexTablePresent } from "./mcpServer/clients/codex";
 
 const REMEMBERED_SEND_MODE_KEY = "markdownCollab.rememberedSendMode";
 
@@ -52,6 +56,72 @@ export async function collectDiagnostics(
   );
   const claudePlugin = await safe(() => installedClaudePlugin(os.homedir()), null);
 
+  // Reuses lookupClaude's per-activation cache (transports/headlessHost.ts) —
+  // this never spawns its own `claude --version` probe; it reads whatever the
+  // picker or headless availability check already found (or triggers the one
+  // lookup lazily, the same as they would).
+  const claudeBinary = await safe<DiagnosticsSnapshot["claudeBinary"]>(async () => {
+    const lookup = await lookupClaude();
+    return lookup.ok
+      ? { path: lookup.claude.path, version: lookup.claude.version.raw }
+      : { error: lookup.error };
+  }, undefined);
+
+  // Headless (10x-plan-4 P0.1): available now, and the last finished run's
+  // shape only — never the prompt or the report text `runHeadless` produced.
+  const headless = await safe<DiagnosticsSnapshot["headless"]>(async () => {
+    const availability = await headlessAvailability(context.workspaceState);
+    const record = lastHeadlessRun();
+    const state = record?.run.state;
+    const lastRun =
+      record && state && isFinished(state)
+        ? {
+            state: state.kind,
+            fileLabel: record.fileLabel,
+            turns: state.kind === "done" ? (state.numTurns ?? null) : null,
+            costUsd: state.kind === "done" ? (state.costUsd ?? null) : null,
+            failureReason:
+              state.kind === "failed"
+                ? state.detail
+                : state.kind === "cancelled"
+                  ? `cancelled (${state.reason})`
+                  : null,
+          }
+        : null;
+    return {
+      available: availability.ok,
+      unavailableReason: availability.ok ? null : unavailableReasonText(availability.reason),
+      lastRun,
+    };
+  }, undefined);
+
+  // Agent connections (10x-plan-4 P1.1): in-process state for the clients
+  // that don't write a file, plus a yes/no read of each client's config —
+  // never its contents (a header the file happens to hold, port included, is
+  // not secret; the token it never carries is what matters).
+  const agentConnections = await safe<DiagnosticsSnapshot["agentConnections"]>(async () => {
+    const folder = folders[0];
+    const readFile = async (...rel: string[]): Promise<string | null> => {
+      if (!folder) return null;
+      try {
+        const uri = vscode.Uri.joinPath(folder.uri, ...rel);
+        return Buffer.from(await vscode.workspace.fs.readFile(uri)).toString("utf8");
+      } catch {
+        return null;
+      }
+    };
+    const cursorMcpJson = (await readFile(".cursor", "mcp.json"))?.includes("markdown-collab") ?? false;
+    const codexText = await readFile(".codex", "config.toml");
+    return {
+      copilotConnected: currentCopilotProvider() !== null && isAgentConnected(context, "copilot"),
+      cursorInAppConnected: hasCursorInAppApi() && isAgentConnected(context, "cursor-inapp"),
+      // `.mcp.json` is the same file `registered` above already read.
+      mcpJson: registered,
+      cursorMcpJson,
+      codexConfig: codexText !== null && codexTablePresent(codexText),
+    };
+  }, undefined);
+
   // Only markdown documents VS Code already has open — this must not walk the
   // workspace. A diagnostics command that scans a monorepo is one nobody runs.
   const documents: DiagnosticsSnapshot["documents"] = [];
@@ -86,6 +156,9 @@ export async function collectDiagnostics(
     suggestMode: config.get<boolean>("proposeEditsAsSuggestions", false),
     skillStatus,
     claudePlugin,
+    claudeBinary,
+    headless,
+    agentConnections,
     // The port is safe to report; the token is not, and is never read here.
     mcpServer: server ? { port: server.port, registered } : null,
     claudeTerminalVisible: terminalNames.some((n) => /claude/i.test(n)),

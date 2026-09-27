@@ -340,6 +340,13 @@ test("thread list and cards carry feed / article / posinset semantics", async ({
   await expect(cards.nth(1)).toHaveAttribute("aria-setsize", "2");
 });
 
+// It was `display: flex`, which outranks the UA `[hidden]` rule, so the empty
+// bar sat at the top of every sidebar since 0.29. The fixture's threads were
+// started by a person, so there is nothing for it to summarize.
+test("the Claude summary bar stays hidden when no thread came from Claude", async ({ page }) => {
+  await expect(page.locator("#claude-summary")).toBeHidden();
+});
+
 test("the claude-summary line and the pending row are aria-live", async ({ page }) => {
   await expect(page.locator("#claude-summary-text")).toHaveAttribute("aria-live", "polite");
 
