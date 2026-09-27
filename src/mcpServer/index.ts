@@ -24,6 +24,7 @@ import * as vscode from "vscode";
 import type { Logger } from "../logging";
 import { isInsideRoot } from "../pathUtils";
 import { claudePending } from "../claudePendingService";
+import { reviewPassPending } from "../reviewPassPendingService";
 import { minimalEdit } from "../inlineComments/minimalEdit";
 import { serveMcp, type McpHttpServer } from "./httpServer";
 import { SessionRegistry } from "./sessions";
@@ -162,6 +163,12 @@ export function buildToolDeps(deps: McpHostDeps): ToolDeps {
  * `mc_status` without a file applies to every document currently waiting: the
  * beacon is about the pass, and a multi-file pass reports phases like "reading
  * 2 of 3" that belong to all of them.
+ *
+ * Feeds the review-pass tracker (`reviewPassPending`, 10x-plan-4 P2.2)
+ * alongside the per-thread one, unconditionally: a tool call against a
+ * document that isn't part of any live review pass is simply ignored there
+ * (there's nothing to look up), so this never needs to know which of the two
+ * — or both, or neither — actually apply.
  */
 export function pendingSignalsFromToolCalls(event: {
   tool: string;
@@ -170,15 +177,25 @@ export function pendingSignalsFromToolCalls(event: {
   agent: string;
 }): void {
   if (event.tool === "mc_status") {
-    if (event.file) claudePending.noteActivity(event.file, { phase: event.note, agent: event.agent });
-    else claudePending.noteActivityEverywhere({ phase: event.note, agent: event.agent });
+    if (event.file) {
+      claudePending.noteActivity(event.file, { phase: event.note, agent: event.agent });
+      reviewPassPending.noteActivity(event.file, { phase: event.note, agent: event.agent });
+    } else {
+      claudePending.noteActivityEverywhere({ phase: event.note, agent: event.agent });
+      reviewPassPending.noteActivityEverywhere({ phase: event.note, agent: event.agent });
+    }
     return;
   }
   if (!event.file) return;
   // The skill ends each file with mc_check, so that call is the completion
   // signal. Anything else is progress.
-  if (event.tool === "mc_check") claudePending.noteComplete(event.file);
-  else claudePending.noteActivity(event.file, { agent: event.agent });
+  if (event.tool === "mc_check") {
+    claudePending.noteComplete(event.file);
+    reviewPassPending.noteComplete(event.file);
+  } else {
+    claudePending.noteActivity(event.file, { agent: event.agent });
+    reviewPassPending.noteActivity(event.file, { agent: event.agent });
+  }
 }
 
 /**

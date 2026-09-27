@@ -739,6 +739,63 @@ function truncate(s, max = 80) {
   return s.length <= max ? s : `${s.slice(0, max)}\u2026`;
 }
 
+// src/inlineComments/deltaReview.ts
+function contentHashOf(source) {
+  return hashAnchorText(normalize(stripAllInlineMarkup(source)));
+}
+function normalize(text) {
+  return text.replace(/[ \t]+$/gm, "").replace(/\s+$/, "");
+}
+function splitSections(prose) {
+  const lines = prose.split("\n");
+  const sections = [];
+  const seen = /* @__PURE__ */ new Map();
+  let current = {
+    heading: null,
+    startLine: 1,
+    body: []
+  };
+  const push = () => {
+    if (current.heading === null && current.body.join("").trim() === "" && sections.length === 0) {
+      return;
+    }
+    const key = current.heading ?? "\0preamble";
+    const ordinal = seen.get(key) ?? 0;
+    seen.set(key, ordinal + 1);
+    sections.push({
+      heading: current.heading,
+      ordinal,
+      startLine: current.startLine,
+      text: current.body.join("\n")
+    });
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^#{1,6}\s+(.+?)\s*#*\s*$/.exec(lines[i]);
+    if (m) {
+      push();
+      current = { heading: m[1].trim(), startLine: i + 1, body: [lines[i]] };
+    } else {
+      current.body.push(lines[i]);
+    }
+  }
+  push();
+  return sections;
+}
+function sectionHashes(source) {
+  return splitSections(stripAllInlineMarkup(source)).map((s) => ({
+    heading: s.heading,
+    hash: hashAnchorText(normalize(s.text))
+  }));
+}
+function checkpointFor(source, now = () => (/* @__PURE__ */ new Date()).toISOString(), gitRef) {
+  return {
+    ts: now(),
+    contentHash: contentHashOf(source),
+    ...gitRef ? { gitRef } : {},
+    sections: sectionHashes(source)
+  };
+}
+
 // src/agentIdentity.ts
 var KNOWN_AGENT_SLUGS = /* @__PURE__ */ new Set(["claude", "codex", "cursor", "copilot", "gemini", "agent"]);
 function isAgentComment(c) {
@@ -1079,6 +1136,28 @@ function opCheck(source) {
     }))
   };
 }
+function opCheckpoint(source, now = () => (/* @__PURE__ */ new Date()).toISOString(), gitRef) {
+  const report = checkIntegrity(source);
+  if (!report.ok) {
+    throw new DocOpError("integrity", "refusing to checkpoint a document with integrity problems", {
+      issues: report.issues
+    });
+  }
+  const checkpoint = checkpointFor(source, now, gitRef);
+  const next = withThreads(source, parse(source).threads, void 0, checkpoint);
+  assertNoNewIssues(source, next);
+  return { next, result: { checkpoint } };
+}
+function opCheckAndCheckpoint(source, now = () => (/* @__PURE__ */ new Date()).toISOString(), gitRef) {
+  const report = opCheck(source);
+  if (!report.ok) return { report };
+  try {
+    const stamped = opCheckpoint(source, now, gitRef);
+    return { report, next: stamped.next, checkpoint: stamped.result.checkpoint };
+  } catch {
+    return { report };
+  }
+}
 
 // src/skillCli/checkHook.ts
 import * as path from "node:path";
@@ -1277,8 +1356,9 @@ function cmdReject(file, anchorId) {
 function cmdCheck(file, repair) {
   const source = readDoc(file);
   if (!repair) {
-    const report = opCheck(source);
-    out({ file, ...report });
+    const { report, next, checkpoint } = opCheckAndCheckpoint(source);
+    if (next !== void 0) writeFileSync(file, next, "utf8");
+    out(checkpoint ? { file, ...report, checkpointed: checkpoint.ts } : { file, ...report });
     process.exit(report.ok ? EXIT_OK : EXIT_INTEGRITY);
   }
   const result = repairIntegrity(source);

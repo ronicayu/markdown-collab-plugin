@@ -13,8 +13,7 @@
 import {
   DocOpError,
   opAccept,
-  opCheck,
-  opCheckpoint,
+  opCheckAndCheckpoint,
   opEdit,
   opList,
   opOpen,
@@ -408,20 +407,14 @@ export async function callTool(
       return text({ file: key, ...opList(source, args.actionable === true) });
     }
     if (name === "mc_check") {
-      const report = opCheck(source);
       // A healthy document also gets a review checkpoint: this call is the one
-      // moment we know a pass over this file finished (P1.1). A broken one is
-      // reported and left alone — checkpointing damage would tell the next pass
-      // the damage had been reviewed.
-      if (report.ok) {
-        try {
-          const stamped = opCheckpoint(source, now);
-          await deps.writeDoc(key, stamped.next);
-          return text({ file: key, ...report, checkpointed: stamped.result.checkpoint.ts });
-        } catch {
-          // The checkpoint is a nicety; never turn a clean check into a failure.
-          return text({ file: key, ...report });
-        }
+      // moment we know a pass over this file finished (P1.1). Shared with
+      // `mdc check` (no `--repair`) via `opCheckAndCheckpoint` so the two
+      // front ends can't drift on when a checkpoint gets written.
+      const { report, next, checkpoint } = opCheckAndCheckpoint(source, now);
+      if (next !== undefined && checkpoint) {
+        await deps.writeDoc(key, next);
+        return text({ file: key, ...report, checkpointed: checkpoint.ts });
       }
       return text({ file: key, ...report });
     }

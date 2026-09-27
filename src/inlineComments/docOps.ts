@@ -759,3 +759,38 @@ export function opCheckpoint(
   assertNoNewIssues(source, next);
   return { next, result: { checkpoint } };
 }
+
+/** What `opCheck` + a conditional `opCheckpoint` hands back — `next`/`checkpoint` are only present when the document was healthy and got a fresh checkpoint. */
+export interface CheckAndCheckpointResult {
+  report: CheckResult;
+  next?: string;
+  checkpoint?: ReviewCheckpoint;
+}
+
+/**
+ * `mc_check` and `mdc check` (no `--repair`) want the exact same thing — the
+ * integrity report, and, on a healthy document, a fresh review checkpoint —
+ * and used to each spell it out themselves, which is how the CLI path ended
+ * up never checkpointing at all (10x-plan-4 P2.2 integrating-session note:
+ * README always said the checkpoint comes from either front end). One
+ * function now, called by both, so they can't diverge again.
+ *
+ * A broken document is reported and left untouched — checkpointing damage
+ * would tell the next pass the damage had been reviewed and approved, same
+ * refusal `opCheckpoint` makes on its own.
+ */
+export function opCheckAndCheckpoint(
+  source: string,
+  now: () => string = () => new Date().toISOString(),
+  gitRef?: string,
+): CheckAndCheckpointResult {
+  const report = opCheck(source);
+  if (!report.ok) return { report };
+  try {
+    const stamped = opCheckpoint(source, now, gitRef);
+    return { report, next: stamped.next, checkpoint: stamped.result.checkpoint };
+  } catch {
+    // The checkpoint is a nicety; never turn a clean check into a failure.
+    return { report };
+  }
+}

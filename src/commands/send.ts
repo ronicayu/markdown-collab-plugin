@@ -12,6 +12,9 @@ import {
 } from "../inlineComments/sendToClaude";
 import { parse as parseInline } from "../inlineComments/format";
 import { claudePending } from "../claudePendingService";
+import { reviewPassPending } from "../reviewPassPendingService";
+import { snapshotReviewPass } from "../reviewPassPending";
+import { startReviewPassWatch } from "../reviewPassWatch";
 import { CONVENTIONS_REL, withConventions } from "../reviewConventions";
 import {
   mcpToolsDirective,
@@ -203,6 +206,12 @@ export async function dispatchReviewPayload(
     threads: payload.comments.length,
   });
 
+  // Kept for the review-pass tracker (10x-plan-4 P2.2): "Resend" re-dispatches
+  // through this same function from scratch, which redoes the conventions
+  // merge and the mcp-tools-directive append below — storing either of those
+  // already applied would double them up on a resend.
+  const originalPayload = payload;
+
   // Standing conventions ride along on every dispatch, whatever the mode
   // (10x-plan-2 P1.2). Done here rather than in each payload builder so no send
   // path can be the one that forgets them.
@@ -350,9 +359,15 @@ export async function dispatchReviewPayload(
       chars: delivered.prompt.length,
     });
     await markPayloadPending(payload, folder);
+    if (intent.kind === "review-request") {
+      // The pulse this whole module exists for (10x-plan-4 P2.2): a review
+      // request carries no comments, so `markPayloadPending` above is a no-op
+      // for it — this is the only tracker that ever engages for this send.
+      void startReviewPassWatch(folder, originalPayload, intent, log);
+    }
     const msg =
       intent.kind === "review-request"
-        ? `Claude is reviewing — threads will appear when it's done. (Sent to "${sendResult.terminalName}".)`
+        ? `Sent to "${sendResult.terminalName}" for review — the status bar shows when comments arrive.`
         : `Sent to "${sendResult.terminalName}".`;
     void vscode.window.showInformationMessage(`${msg}${suffix}`);
   };
@@ -399,6 +414,11 @@ export async function dispatchReviewPayload(
   if (mode === "clipboard") {
     await vscode.env.clipboard.writeText(delivered.prompt);
     log.info("prompt copied to the clipboard", { chars: delivered.prompt.length });
+    if (intent.kind === "review-request") {
+      // Clipboard delivery is exactly as "did it actually get read?" blind as
+      // terminal delivery — same pulse, same reason (10x-plan-4 P2.2).
+      void startReviewPassWatch(folder, originalPayload, intent, log);
+    }
     const msg =
       intent.kind === "review-request"
         ? `Review-request prompt for \`${payload.file}\` copied — paste into Claude Code.`
@@ -568,5 +588,50 @@ export function registerSendCommands(deps: CommandDeps): void {
     vscode.commands.registerCommand("markdownCollab.headlessStatus", () =>
       headlessStatusSnapshot(context.workspaceState, sendLog.scope("headless")),
     ),
+    // Internal: a plain-data view of the review-pass tracker for the status
+    // bar's own tests and the integration suite (10x-plan-4 P2.2) — same
+    // reason `headlessStatus` exists above: the suite loads its own module
+    // copies and can't see bundle-internal state any other way. With a uri,
+    // the pass tracked for that document's folder; with none, whichever pass
+    // is currently shown in the status bar.
+    vscode.commands.registerCommand("markdownCollab.reviewPassStatus", (uri?: vscode.Uri) => {
+      if (uri instanceof vscode.Uri) {
+        const folder = folderForDocument(uri);
+        const record = reviewPassPending.get(folder.uri.toString());
+        // Guards a real race, not just a hypothetical one: right after a fresh
+        // dispatch, the folder's previous pass (a different file, possibly
+        // already "arrived") can still be in place until the new one's
+        // snapshot finishes — a caller asking about ITS file must see
+        // nothing yet, not someone else's finished pass.
+        return record && record.files.includes(uri.toString()) ? snapshotReviewPass(record) : null;
+      }
+      return snapshotReviewPass(reviewPassPending.current());
+    }),
+    // Internal: the status bar's "Resend" action on a stale pass. Re-dispatches
+    // the exact payload/intent the record was created with, through the same
+    // path a fresh "Ask Claude to Review" would take — mode is re-resolved
+    // (config/remembered/detect/ask) rather than forced, since whatever made
+    // the first attempt go stale (no terminal, wrong mode) deserves a fresh
+    // decision, not a repeat of it.
+    vscode.commands.registerCommand("markdownCollab.resendReviewPass", async () => {
+      const record = reviewPassPending.current();
+      if (!record) return;
+      const folderUri = vscode.Uri.parse(record.folderKey);
+      const folder =
+        vscode.workspace.getWorkspaceFolder(folderUri) ??
+        ({ uri: folderUri, name: path.basename(folderUri.fsPath) || folderUri.fsPath, index: 0 } as vscode.WorkspaceFolder);
+      // `ReviewPassPayload`/`ReviewPassIntent` are structurally identical to
+      // `ReviewPayload`/`DispatchIntent` by construction (see
+      // `reviewPassPending.ts`'s module header) — this is the one place that
+      // relationship has to be spelled out with a cast instead of inferred.
+      await dispatchReviewPayload(
+        record.payload as unknown as ReviewPayload,
+        sendLog,
+        terminalTracker,
+        context.workspaceState,
+        folder,
+        record.intent,
+      );
+    }),
   );
 }

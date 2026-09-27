@@ -33,7 +33,7 @@ import { checkIntegrity, repairIntegrity } from "../inlineComments/integrity";
 import {
   DocOpError,
   opAccept,
-  opCheck,
+  opCheckAndCheckpoint,
   opEdit,
   opList,
   opOpen,
@@ -249,8 +249,14 @@ function cmdReject(file: string, anchorId: string): void {
 function cmdCheck(file: string, repair: boolean): void {
   const source = readDoc(file);
   if (!repair) {
-    const report = opCheck(source);
-    out({ file, ...report });
+    // Shares `opCheckAndCheckpoint` with `mc_check` (10x-plan-4 P2.2
+    // integrating-session note): a healthy document gets a review checkpoint
+    // here too, so "Review Changes Since Last Pass" becomes incremental for a
+    // terminal Claude using this CLI, not just one going through the MCP
+    // tools. A broken document is reported and left untouched, as before.
+    const { report, next, checkpoint } = opCheckAndCheckpoint(source);
+    if (next !== undefined) writeFileSync(file, next, "utf8");
+    out(checkpoint ? { file, ...report, checkpointed: checkpoint.ts } : { file, ...report });
     process.exit(report.ok ? EXIT_OK : EXIT_INTEGRITY);
   }
 

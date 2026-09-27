@@ -414,6 +414,70 @@ describe("mdc CLI: check and repair", () => {
   });
 });
 
+// 10x-plan-4 P2.2 integrating-session note: `mc_check` has always stamped a
+// review checkpoint on a healthy document; `mdc check` (no `--repair`) didn't,
+// even though the README's "changes since last pass" section always claimed
+// either front end does it. `opCheckAndCheckpoint` (docOps.ts) is now the one
+// place both call, so a terminal Claude using the CLI gets an incremental
+// next pass too.
+describe("mdc CLI: check writes a review checkpoint", () => {
+  it("a healthy document gets a checkpoint, reported in the JSON and readable back from the file", () => {
+    const doc = writeDoc("a.md", DOC);
+    const r = run(["check", doc]);
+    expect(r.status).toBe(0);
+    const data = json(r);
+    expect(data.ok).toBe(true);
+    expect(typeof data.checkpointed).toBe("string");
+    const after = fs.readFileSync(doc, "utf8");
+    expect(parse(after).checkpoint?.ts).toBe(data.checkpointed);
+  });
+
+  it("a second check updates the checkpoint's ts", async () => {
+    const doc = writeDoc("a.md", DOC);
+    const first = json(run(["check", doc]));
+    // A real clock tick, not a fake one — the CLI stamps `Date.now()`, and a
+    // same-millisecond rerun would make a strict inequality a coin flip.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const second = json(run(["check", doc]));
+    expect(second.checkpointed).not.toBe(first.checkpointed);
+    expect(Date.parse(second.checkpointed)).toBeGreaterThan(Date.parse(first.checkpointed));
+  });
+
+  it("a broken document gets no checkpoint at all, and is left untouched", () => {
+    const doc = writeDoc("a.md", DOC);
+    const id = json(run(["open", doc, "--quote", "exponential backoff", "--body", "q"])).threadId;
+    const raw = fs.readFileSync(doc, "utf8");
+    fs.writeFileSync(doc, raw.replace(`<!--mc:/a:${id}-->`, ""), "utf8");
+    const before = fs.readFileSync(doc, "utf8");
+
+    const r = run(["check", doc]);
+    expect(r.status).toBe(2);
+    expect(json(r).checkpointed).toBeUndefined();
+    expect(fs.readFileSync(doc, "utf8")).toBe(before);
+  });
+
+  it("check --hook stays read-only — no checkpoint, ever", () => {
+    const doc = writeDoc("hook-checkpoint.md", DOC);
+    const before = fs.readFileSync(doc, "utf8");
+    const stdin = JSON.stringify({ cwd: tmp, tool_input: { file_path: doc } });
+    const r = runWithStdin(["check", "--hook"], stdin);
+    expect(r.status).toBe(0);
+    expect(fs.readFileSync(doc, "utf8")).toBe(before);
+    expect(parse(fs.readFileSync(doc, "utf8")).checkpoint).toBeNull();
+  });
+
+  it("check --repair stays checkpoint-free too — repair is a distinct affordance", () => {
+    const doc = writeDoc("a.md", DOC);
+    const id = json(run(["open", doc, "--quote", "exponential backoff", "--body", "q"])).threadId;
+    const healthy = fs.readFileSync(doc, "utf8");
+    fs.writeFileSync(doc, healthy.replace(`<!--mc:/a:${id}-->`, ""), "utf8");
+    const r = run(["check", doc, "--repair"]);
+    expect(r.status).toBe(0);
+    expect(json(r).checkpointed).toBeUndefined();
+    expect(parse(fs.readFileSync(doc, "utf8")).checkpoint).toBeNull();
+  });
+});
+
 describe("mdc CLI: check --hook", () => {
   it("garbage stdin exits 0 with empty stderr", () => {
     const r = runWithStdin(["check", "--hook"], "not json {{{");

@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.35.8 — 2026-09-27 (GitHub only)
+
+### Added: a pulse for review requests sent through the terminal or clipboard (10x-plan-4 P2.2)
+
+"Ask Claude to Review" in `terminal` or `clipboard` mode used to produce one
+toast and then silence until threads happened to land. Nothing told a thinking
+Claude apart from a paste that never arrived. The status bar now follows every
+review request, and each state it shows is something the extension actually
+observed:
+
+- `Sent for review · 1m 20s` while the dispatch is all that's known.
+- `Claude: <phase>` or `Claude is reviewing <file>` once a tool call shows
+  Claude is working.
+- `Review in progress · N new comments` while threads are landing. The skill
+  opens threads one at a time, so the first one arriving doesn't mean the pass
+  is done.
+- `Review arrived: N new comments`, or "no concerns found", once every file is
+  finished. A file counts as finished on Claude's closing check, on a review
+  checkpoint written after the request went out, or after 90 seconds with
+  nothing new.
+- `Review sent 10m ago — nothing arrived` after ten minutes without anything at
+  all, with Resend, Dismiss, and Show logs on click.
+
+Threads are noticed whether they arrive through an open editor or as a plain
+write to disk, so a terminal Claude using the `mdc` CLI is covered with no panel
+open. Headless runs keep their own, richer status. The toast after a terminal
+send no longer claims "Claude is reviewing"; it says the prompt was sent and
+that the status bar will show when comments arrive.
+
+### Fixed: `mdc check` now records the review checkpoint, like `mc_check`
+
+The README has said the checkpoint that makes "Review Changes Since Last Pass"
+incremental is written when Claude works through the MCP tools or the `mdc`
+CLI. Only `mc_check` ever wrote it. A terminal Claude using the CLI could review
+a file every day and never get an incremental second pass. Both now call one
+shared operation: `mdc check <file>` on a healthy document stamps the checkpoint
+and reports `checkpointed: <ts>`. `--repair` and the plugin's `--hook` are
+unchanged, and the hook stays read-only.
+
 ## 0.35.7 — 2026-09-27 (GitHub only)
 
 ### Changed: the live editor is frozen, and says so (10x-plan-4 P3.1)
