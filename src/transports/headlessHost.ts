@@ -19,7 +19,7 @@ import * as vscode from "vscode";
 import type { Logger } from "../logging";
 import { currentMcpServer } from "../mcpServer";
 import { claudePending } from "../claudePendingService";
-import { SKILL_CONTENT } from "../skill";
+import { headlessSystemPrompt } from "../skillText";
 import type { ReviewPayload } from "../sendToClaude";
 import { firstLine, headlessDoneToast, headlessReportDocument } from "../headlessStatusText";
 import {
@@ -34,7 +34,6 @@ import {
   activeHeadlessRun,
   activeHeadlessRuns,
   decideHeadlessAvailability,
-  headlessSystemPrompt,
   lastHeadlessRun,
   trackHeadlessRun,
   unavailableReasonText,
@@ -165,7 +164,7 @@ export async function runHeadless(d: HeadlessDelivery): Promise<"started" | "dec
     version: d.ready.claude.version,
     cwd: key,
     prompt: d.prompt,
-    systemPrompt: headlessSystemPrompt(SKILL_CONTENT),
+    systemPrompt: headlessSystemPrompt(),
     server: d.ready.server,
     model,
     fileLabel: d.payload.file,

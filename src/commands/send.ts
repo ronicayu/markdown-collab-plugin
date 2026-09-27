@@ -5,6 +5,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import type { Logger } from "../logging";
 import { folderForDocument } from "../workspaceFolder";
+import { workflowOpener } from "../skillDelivery";
 import {
   buildInlinePayload,
   buildSingleThreadPayload,
@@ -57,7 +58,7 @@ async function invokeCopyClaudePrompt(): Promise<void> {
   const doc = editor.document;
   const folder = folderForDocument(doc.uri);
   const rel = path.relative(folder.uri.fsPath, doc.uri.fsPath);
-  const prompt = `Use the vs-markdown-collab skill to address the unresolved review comments on ${rel}.`;
+  const prompt = `${workflowOpener()} to address the unresolved review comments on ${rel}.`;
   await vscode.env.clipboard.writeText(prompt);
   void vscode.window.showInformationMessage(
     "Prompt copied — paste into Claude Code.",

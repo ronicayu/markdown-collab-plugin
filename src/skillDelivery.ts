@@ -11,7 +11,9 @@
 // Pure: imported by the vscode-free prompt builders.
 
 /**
- * `installed` — the skill lives in `~/.claude/skills/` (terminal, clipboard).
+ * `installed` — the skill is installed in Claude Code (terminal, clipboard):
+ *   as the plugin's `markdown-collab:review`, or on older installs as the
+ *   standalone `vs-markdown-collab` in `~/.claude/skills/`.
  * `inline` — the skill text is the system prompt (headless runs).
  */
 export type SkillDelivery = "installed" | "inline";
@@ -20,5 +22,8 @@ export type SkillDelivery = "installed" | "inline";
 export function workflowOpener(delivery: SkillDelivery = "installed"): string {
   return delivery === "inline"
     ? "Follow the Markdown Collab review workflow in your instructions"
-    : "Use the vs-markdown-collab skill";
+    : // Both names: which one a session has depends on whether Set Up Claude
+      // Code installed the plugin or fell back to the standalone skill, and
+      // the prompt is built before anything could know.
+      "Use the Markdown Collab review skill (`markdown-collab:review`, or `vs-markdown-collab` on older installs)";
 }

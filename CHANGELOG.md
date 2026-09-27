@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.35.4 — 2026-09-27 (GitHub only)
+
+### Added: the Claude side ships as a Claude Code plugin (10x-plan-4 P0.2)
+
+**Markdown Collab: Install Claude Skill** is now **Set Up Claude Code**. It
+installs the Markdown Collab plugin, which brings three things:
+
+- the review workflow as a skill, also runnable as `/markdown-collab:review`;
+- the `mdc` CLI on Claude's PATH, so every instruction says `mdc check <file>`
+  instead of a path into your home directory;
+- a check after every edit. After each Edit or Write to a reviewed `.md`, the
+  plugin runs `mdc check --hook`, and if the edit broke a comment marker, Claude
+  is told in the same turn, with the list of problems. Round 1 could only ask
+  for that in prose.
+
+The hook reports real damage only: an unpaired marker, a malformed thread
+line, a duplicate id. A thread left unanchored because its passage was deleted
+is the intended outcome of a deletion, so it doesn't trigger the hook, which
+would otherwise fire on every later edit and push Claude to re-anchor onto
+unrelated text. The hook runs node directly rather than through a shell, so it
+doesn't depend on one being there.
+
+The plugin ships inside the extension and installs from a marketplace the
+extension writes on your machine, so the Claude side is always exactly the
+extension's version: no fingerprint, no drift, no network. When a new version
+ships you're offered **Update** once. The standalone skill in
+`~/.claude/skills/vs-markdown-collab/` is removed when the plugin installs,
+since both at once would register the workflow twice. It is still the fallback
+when `claude` isn't found or has no plugin support, and the toast says which
+route it took and why. To get the Claude side without the extension, run
+`claude plugin marketplace add ronicayu/markdown-collab-plugin`, then
+`claude plugin install markdown-collab@markdown-collab`.
+
+Verified against Claude Code 2.1.283. `claude plugin validate --strict` passes
+for the plugin and both marketplaces. A full install, re-install, and update
+ran in an isolated config directory, and a real session saw the hook's report
+after an edit that broke a marker.
+
+### Added: the workflow travels with the server (10x-plan-4 P1.3)
+
+Any agent that connects to the review tools now gets the workflow, not just
+ten tool descriptions: list, act, and finish with `mc_check`; only the human
+resolves; review mode never edits prose and has no thread cap; suggest mode
+routes everything through `mc_suggest`. It arrives as the server's
+`instructions` (under 2 KB), and in full from a new **`mc_help`** tool. Every
+tool that writes now says "If unsure of the workflow, call mc_help first."
+
+The standalone skill, the plugin's skill, the headless system prompt, and the
+server instructions are four renderings of one text, so they can't disagree.
+The standalone rendering is byte-identical to 0.35.3's apart from three
+deliberate edits, and a test holds it to that.
+
+### Changed: `mc_edit` can delete an anchored passage
+
+An `old` that spans a thread's open marker, its text, and its close marker
+removes all three, and the thread is left unanchored by design, as the
+workflow has always said a deletion should. A range holding only one marker of
+a pair, or splitting one, is still refused. Headless runs had no way to delete
+a commented passage before this.
+
+### Changed: smaller things
+
+- Prompts name the skill both ways: `markdown-collab:review`, or
+  `vs-markdown-collab` on older installs. The terminal directive mentions
+  `mc_edit` for prose outside anchors.
+- The inline view's "skill missing" banner and **Report a Problem** count an
+  installed plugin as installed, and the report names its version. Detection
+  honors `CLAUDE_CONFIG_DIR`.
+- CI fails if the committed plugin drifts from what the build generates.
+
 ## 0.35.3 — 2026-09-27 (GitHub only)
 
 ### Added: Connect an Agent (10x-plan-4 P1.1)

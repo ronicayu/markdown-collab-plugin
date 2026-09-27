@@ -27,6 +27,7 @@ import { claudePending } from "../claudePendingService";
 import { minimalEdit } from "../inlineComments/minimalEdit";
 import { serveMcp, type McpHttpServer } from "./httpServer";
 import { callTool, TOOLS, ToolRefusal, type ToolDeps } from "./tools";
+import { renderMcpInstructions } from "../skillText";
 import {
   DESCRIPTOR_REL,
   ENV_TOKEN,
@@ -36,12 +37,6 @@ import {
   mergeMcpJson,
   preferredPort,
 } from "./registration";
-
-const SERVER_INSTRUCTIONS =
-  "Markdown Collab review tools. Threads and suggestions live inline in the .md file; these tools are the " +
-  "only safe way to change them — never hand-edit `<!--mc:...-->` markers. Start with mc_list, act with " +
-  "mc_reply / mc_open / mc_rewrite / mc_suggest, and finish every file with mc_check (which also tells the " +
-  "human you are done). Writes go through the editor, so the human can undo them.";
 
 export interface McpServerHandle {
   readonly url: string;
@@ -207,7 +202,9 @@ export async function startMcpServer(
       onError: (m) => deps.log.warn("transport error", m),
       handlers: {
         serverInfo: { name: MCP_SERVER_NAME, version: extensionVersion(context) },
-        instructions: SERVER_INSTRUCTIONS,
+        // The workflow in brief, from the same sections as the skill (10x-plan-4
+        // P1.3): a client with no skill installed still learns list → act → check.
+        instructions: renderMcpInstructions(),
         tools: TOOLS,
         callTool: (name, args) => callTool(name, args, toolDeps),
       },

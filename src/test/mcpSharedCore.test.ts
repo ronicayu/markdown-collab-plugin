@@ -11,6 +11,7 @@ import { readFileSync } from "fs";
 import { resolve } from "path";
 import { opList, opReply, opRewrite } from "../inlineComments/docOps";
 import { addThread } from "../inlineComments/format";
+import { renderMcpInstructions, renderSkill } from "../skillText";
 
 const read = (rel: string): string => readFileSync(resolve(__dirname, "..", rel), "utf8");
 const cli = read("skillCli/mdc.ts");
@@ -68,24 +69,35 @@ describe("one implementation per verb", () => {
 describe("the skill and the server agree on the tool names", () => {
   // The skill is prose; the catalog is code. A rename on either side leaves the
   // other telling Claude to call something that doesn't exist — and the failure
-  // mode is Claude quietly falling back to hand-editing markers.
-  const skill = read("skill.ts");
+  // mode is Claude quietly falling back to hand-editing markers. Checked on
+  // every rendering, since each is read by a different kind of session.
+  const renderings = {
+    legacy: renderSkill("legacy"),
+    plugin: renderSkill("plugin"),
+    headless: renderSkill("headless"),
+  };
+  const advertised = read("mcpServer/tools.ts")
+    .match(/name: "(mc_[a-z_]+)"/g)!
+    .map((m) => m.slice(7, -1));
 
-  it("every advertised tool is named in the skill", () => {
-    const advertised = read("mcpServer/tools.ts")
-      .match(/name: "(mc_[a-z_]+)"/g)!
-      .map((m) => m.slice(7, -1));
+  it("every advertised tool is named in every rendering of the skill", () => {
     expect(advertised.length).toBeGreaterThanOrEqual(10);
-    for (const tool of advertised) {
-      expect(skill, `SKILL.md should document ${tool}`).toContain(tool);
+    for (const [target, skill] of Object.entries(renderings)) {
+      // mc_help *returns* the skill, so the skill has no reason to name it;
+      // the MCP instructions are where a client learns it exists.
+      for (const tool of advertised.filter((t) => t !== "mc_help")) {
+        expect(skill, `the ${target} skill should document ${tool}`).toContain(tool);
+      }
     }
+    expect(renderMcpInstructions()).toContain("mc_help");
   });
 
-  it("the skill invents no tools the server doesn't expose", () => {
+  it("no rendering invents a tool the server doesn't expose", () => {
     const tools = read("mcpServer/tools.ts");
-    const mentioned = new Set(skill.match(/\bmc_[a-z_]+\b/g) ?? []);
-    for (const tool of mentioned) {
-      expect(tools, `the server should expose ${tool}`).toContain(`name: "${tool}"`);
+    for (const text of [...Object.values(renderings), renderMcpInstructions()]) {
+      for (const tool of new Set(text.match(/\bmc_[a-z_]+\b/g) ?? [])) {
+        expect(tools, `the server should expose ${tool}`).toContain(`name: "${tool}"`);
+      }
     }
   });
 });

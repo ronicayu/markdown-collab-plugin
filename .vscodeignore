@@ -23,6 +23,10 @@ test-results/**
 .gitignore
 .github/**
 .claude/**
+# The GitHub marketplace manifest is for people installing the Claude Code
+# plugin without the extension. The extension ships plugin/ itself (see
+# src/claudePlugin.ts) and writes its own local marketplace around it.
+.claude-plugin/**
 .markdown-collab/**
 docs/**
 package-lock.json

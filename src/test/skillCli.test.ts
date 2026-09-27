@@ -52,6 +52,17 @@ function run(args: string[]): RunResult {
   }
 }
 
+/** Like `run`, but pipes `stdinInput` in — for `mdc check --hook`, which reads its target off stdin rather than argv. */
+function runWithStdin(args: string[], stdinInput: string): RunResult {
+  try {
+    const stdout = execFileSync("node", [scriptPath, ...args], { encoding: "utf8", input: stdinInput });
+    return { status: 0, stdout, stderr: "" };
+  } catch (e) {
+    const err = e as { status: number; stdout: string; stderr: string };
+    return { status: err.status, stdout: err.stdout ?? "", stderr: err.stderr ?? "" };
+  }
+}
+
 function json(r: RunResult): any {
   try {
     return JSON.parse(r.stdout);
@@ -400,5 +411,35 @@ describe("mdc CLI: check and repair", () => {
     expect(data.remaining.some((i: { kind: string }) => i.kind === "unanchored-thread")).toBe(true);
     // Prose untouched — no guessing.
     expect(fs.readFileSync(doc, "utf8").split("<!--mc:threads:begin-->")[0]).toBe(proseBefore);
+  });
+});
+
+describe("mdc CLI: check --hook", () => {
+  it("garbage stdin exits 0 with empty stderr", () => {
+    const r = runWithStdin(["check", "--hook"], "not json {{{");
+    expect(r.status).toBe(0);
+    expect(r.stderr).toBe("");
+  });
+
+  it("a healthy document exits 0", () => {
+    const doc = writeDoc("hook-healthy.md", DOC);
+    json(run(["open", doc, "--quote", "exponential backoff", "--body", "q"]));
+    const stdin = JSON.stringify({ cwd: tmp, tool_input: { file_path: doc } });
+    const r = runWithStdin(["check", "--hook"], stdin);
+    expect(r.status).toBe(0);
+    expect(r.stderr).toBe("");
+  });
+
+  it("a document with a removed close marker exits 2 and names the problem on stderr", () => {
+    const doc = writeDoc("hook-broken.md", DOC);
+    const id = json(run(["open", doc, "--quote", "exponential backoff", "--body", "q"])).threadId;
+    const raw = fs.readFileSync(doc, "utf8");
+    fs.writeFileSync(doc, raw.replace(`<!--mc:/a:${id}-->`, ""), "utf8");
+
+    const stdin = JSON.stringify({ cwd: tmp, tool_input: { file_path: doc } });
+    const r = runWithStdin(["check", "--hook"], stdin);
+
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("comment-marker problem");
   });
 });

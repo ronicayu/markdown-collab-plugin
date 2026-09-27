@@ -30,6 +30,7 @@ import { pendingLabel } from "../inlineComments/claudePending";
 import { classifyLink } from "./linkRouter";
 import { isExternalLinkSafe } from "./urlAllowlist";
 import { folderForDocument } from "../workspaceFolder";
+import { workflowOpener } from "../skillDelivery";
 import { imageResourceRootPaths } from "../webviewShared/resourceRoots";
 import type { Logger } from "../logging";
 
@@ -870,7 +871,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         // Mimic its payload directly.
         const folder = folderForDocument(document.uri);
         const rel = path.relative(folder.uri.fsPath, document.uri.fsPath);
-        const prompt = `Use the vs-markdown-collab skill to address the unresolved review comments on ${rel}.`;
+        const prompt = `${workflowOpener()} to address the unresolved review comments on ${rel}.`;
         await vscode.env.clipboard.writeText(prompt);
         void vscode.window.showInformationMessage(
           "Prompt copied — paste into Claude Code.",

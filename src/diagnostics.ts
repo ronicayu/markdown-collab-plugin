@@ -22,6 +22,11 @@ export interface DiagnosticsSnapshot {
   rememberedSendMode: string | null;
   suggestMode: boolean;
   skillStatus: "missing" | "outdated" | "current" | "unknown";
+  /**
+   * The Claude Code plugin as Claude Code's registry records it; null when not
+   * installed. Optional so a snapshot built without the probe still renders.
+   */
+  claudePlugin?: { id: string; version: string } | null;
   /** null when the tool server isn't running. Never carries the token. */
   mcpServer: { port: number; registered: boolean } | null;
   claudeTerminalVisible: boolean;
@@ -65,6 +70,11 @@ export function formatDiagnostics(s: DiagnosticsSnapshot): string {
   lines.push("");
   lines.push("## Claude wiring");
   lines.push(`- Skill: ${s.skillStatus}`);
+  if (s.claudePlugin !== undefined) {
+    lines.push(
+      `- Claude Code plugin: ${s.claudePlugin ? `${s.claudePlugin.id} ${s.claudePlugin.version}` : "not installed"}`,
+    );
+  }
   lines.push(
     s.mcpServer
       ? `- Tool server: running on port ${s.mcpServer.port}, registered in .mcp.json: ${yesNo(s.mcpServer.registered)}`

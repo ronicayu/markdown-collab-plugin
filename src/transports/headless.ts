@@ -150,33 +150,9 @@ export function mcpConfigJson(server: { url: string; token: string }): string {
   )}\n`;
 }
 
-/**
- * Prepended to the skill text. The skill is written for an interactive session
- * that may have the Edit tool and the `mdc` CLI; this says which of its paths
- * exist here, so Claude doesn't spend turns reaching for tools it lacks.
- */
-export const HEADLESS_PREAMBLE =
-  "You are running non-interactively inside the Markdown Collab VS Code extension. " +
-  "Your only tools are Read, Glob, Grep and the markdown-collab MCP tools. " +
-  "There is no Edit/Write/Bash and no mdc CLI: use mc_edit for prose outside anchored spans, " +
-  "mc_rewrite inside them, mc_suggest in suggest mode. Finish every file you touched with mc_check. " +
-  "Your final message is shown to the human as your report — keep it to the per-file summary the " +
-  "Reporting section describes.";
-
-/** Drop a leading `---` YAML block: it is skill-loader metadata, not instructions. */
-export function stripFrontmatter(text: string): string {
-  const m = /^---\r?\n[\s\S]*?\r?\n---\r?\n/.exec(text);
-  return m ? text.slice(m[0].length) : text;
-}
-
-/**
- * The system prompt for a headless run. A headless session can't rely on the
- * skill being installed, so the skill rides along — the same text, not a
- * headless fork of it, so the two can't drift.
- */
-export function headlessSystemPrompt(skill: string): string {
-  return `${HEADLESS_PREAMBLE}\n\n${stripFrontmatter(skill).trimStart()}`;
-}
+// The system prompt a run carries — the tools-only rendering of the skill plus
+// a preamble naming this session's tools — is built in `skillText.ts`, next to
+// every other rendering of the same text (`headlessSystemPrompt`).
 
 // ---------------------------------------------------------------------------
 // The stream (pure)

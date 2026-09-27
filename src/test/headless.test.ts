@@ -11,23 +11,20 @@ import * as fs from "fs";
 import * as path from "path";
 import { describe, expect, it } from "vitest";
 import {
-  HEADLESS_PREAMBLE,
   buildHeadlessArgs,
   HEADLESS_SETTINGS,
   decideHeadlessAvailability,
-  headlessSystemPrompt,
   isAuthResultText,
   isAuthRetry,
   mcpConfigJson,
   parseStreamLine,
   shortToolName,
-  stripFrontmatter,
   supportsPermissionPrompts,
   unavailableReasonText,
   type HeadlessEvent,
 } from "../transports/headless";
 import { parseClaudeVersion } from "../transports/claudeBinary";
-import { SKILL_CONTENT } from "../skill";
+import { HEADLESS_PREAMBLE, headlessSystemPrompt, renderSkill } from "../skillText";
 
 const FIXTURES = path.join(__dirname, "fixtures", "headless");
 const TOKEN = "f".repeat(64);
@@ -117,18 +114,20 @@ describe("temp-file contents", () => {
     });
   });
 
-  it("the system prompt is the preamble plus the skill, minus its frontmatter", () => {
-    const prompt = headlessSystemPrompt(SKILL_CONTENT);
-    expect(prompt.startsWith(HEADLESS_PREAMBLE)).toBe(true);
-    expect(prompt).not.toMatch(/^name: vs-markdown-collab$/m);
+  it("the system prompt is the preamble plus the tools-only skill, no frontmatter", () => {
+    const prompt = headlessSystemPrompt();
+    expect(prompt).toBe(`${HEADLESS_PREAMBLE}\n\n${renderSkill("headless")}`);
+    expect(prompt).not.toMatch(/^name: /m);
     expect(prompt).toContain("# Markdown Collab — agentic review-address skill");
-    expect(stripFrontmatter("no frontmatter here")).toBe("no frontmatter here");
   });
 
   it("the preamble names the closed tool set and the tools to use instead", () => {
-    for (const phrase of ["Read, Glob, Grep", "no Edit/Write/Bash", "no mdc CLI", "mc_edit", "mc_rewrite", "mc_suggest", "mc_check"]) {
+    for (const phrase of ["Read, Glob, Grep", "no Edit/Write/Bash", "mc_edit", "mc_rewrite", "mc_suggest", "mc_check"]) {
       expect(HEADLESS_PREAMBLE).toContain(phrase);
     }
+    // A headless run has no CLI; naming it — even to say it's absent — only
+    // invites Claude to go looking for it.
+    expect(HEADLESS_PREAMBLE).not.toContain("mdc");
   });
 });
 

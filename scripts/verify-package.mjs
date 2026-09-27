@@ -44,7 +44,22 @@ const REQUIRED = [
   // bundled, so it must ship from node_modules.
   "extension/node_modules/mermaid/dist/mermaid.min.js",
   "extension/node_modules/mermaid/package.json",
+  // The Claude Code plugin, which Set Up Claude Code copies into a local
+  // marketplace and installs from (10x-plan-4 P0.2). A package without it
+  // silently falls back to the standalone skill on every machine.
+  "extension/plugin/.claude-plugin/plugin.json",
+  "extension/plugin/skills/review/SKILL.md",
+  "extension/plugin/lib/mdc.mjs",
+  "extension/plugin/hooks/hooks.json",
+  "extension/plugin/bin/mdc",
 ];
+
+/**
+ * Files that must NOT ship. The GitHub marketplace manifest points at
+ * `./plugin` in the repository; inside the extension it would be a second,
+ * unused marketplace definition.
+ */
+const FORBIDDEN = ["extension/.claude-plugin/marketplace.json"];
 
 /**
  * Modules the host bundle is allowed to require at runtime: `vscode` is
@@ -54,11 +69,25 @@ const REQUIRED = [
 const ALLOWED_EXTERNALS = new Set(["vscode", "bufferutil", "utf-8-validate"]);
 
 const listing = execFileSync("unzip", ["-l", vsix], { encoding: "utf8" });
-const missing = REQUIRED.filter((rel) => !listing.includes(rel));
+// Exact entry names, not substrings: "extension/plugin/bin/mdc" is a prefix
+// of "extension/plugin/bin/mdc.cmd", and a substring match would pass a
+// package that shipped only the Windows shim.
+const entries = new Set(
+  listing
+    .split("\n")
+    .map((line) => /^\s*\d+\s+\S+\s+\S+\s+(.+)$/.exec(line)?.[1]?.trim())
+    .filter(Boolean),
+);
+const missing = REQUIRED.filter((rel) => !entries.has(rel));
 if (missing.length > 0) {
   for (const rel of missing) {
     console.error(`::error::missing ${rel} in the vsix — .vscodeignore or the bundle steps are out of sync`);
   }
+  process.exit(1);
+}
+const shipped = FORBIDDEN.filter((rel) => entries.has(rel));
+if (shipped.length > 0) {
+  for (const rel of shipped) console.error(`::error::${rel} is in the vsix — .vscodeignore should exclude it`);
   process.exit(1);
 }
 
@@ -93,5 +122,5 @@ if (unbundled.length > 0) {
 }
 
 console.log(
-  `verify-package: ${path.basename(vsix)} has all ${REQUIRED.length} required assets and no unbundled requires`,
+  `verify-package: ${path.basename(vsix)} has all ${REQUIRED.length} required assets, none of the ${FORBIDDEN.length} excluded ones, and no unbundled requires`,
 );

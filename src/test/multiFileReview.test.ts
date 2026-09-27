@@ -22,6 +22,7 @@ describe("buildMultiFileReviewPayload", () => {
 
   it("invokes the skill in Review Mode", () => {
     const p = buildMultiFileReviewPayload(files("a.md", "b.md"));
+    expect(p.prompt).toContain("markdown-collab:review");
     expect(p.prompt).toContain("vs-markdown-collab");
     expect(p.prompt).toContain("Review Mode");
   });

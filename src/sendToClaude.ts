@@ -24,8 +24,9 @@ export type SendMode = "headless" | "terminal" | "clipboard" | "ask";
 export function mcpToolsDirective(): string {
   return (
     "If the `markdown-collab` MCP tools are in your tool list, use them for this pass — mc_list to read, " +
-    "mc_reply / mc_open / mc_rewrite / mc_suggest to act, mc_status to say what you're doing, and mc_check " +
-    "on each file when you're done; if they aren't, use the `mdc` CLI as the skill describes."
+    "mc_reply / mc_open / mc_rewrite / mc_suggest to act, mc_edit for prose outside anchored spans, " +
+    "mc_status to say what you're doing, and mc_check on each file when you're done; if they aren't, " +
+    "use the `mdc` CLI as the skill describes."
   );
 }
 

@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with Claude Code — inline comments anchored in the file, a live AI co-editor, suggestions you accept or reject, and GitHub/GitLab PR review.",
-  "version": "0.35.3",
+  "version": "0.35.4",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -75,7 +75,7 @@
     "commands": [
       {
         "command": "markdownCollab.installClaudeSkill",
-        "title": "Markdown Collab: Install Claude Skill"
+        "title": "Markdown Collab: Set Up Claude Code"
       },
       {
         "command": "markdownCollab.repairInlineComments",
@@ -572,8 +572,8 @@
           },
           {
             "id": "install-skill",
-            "title": "Install the Claude skill",
-            "description": "Claude needs the skill to know how to act on your comments. One command, once per machine.\n[Install the skill](command:markdownCollab.installClaudeSkill)",
+            "title": "Set up Claude Code",
+            "description": "Claude needs the Markdown Collab plugin to know how to act on your comments. One command, once per machine.\n[Set up Claude Code](command:markdownCollab.installClaudeSkill)",
             "media": {
               "markdown": "media/walkthrough/skill.md"
             },
@@ -625,7 +625,7 @@
     ]
   },
   "scripts": {
-    "compile": "npm run bundle:skill-cli && tsc -p . && tsc -p tsconfig.webview.json && npm run bundle:extension && npm run bundle:webview && npm run bundle:inline-comments && npm run bundle:pr-review && npm run copy:shared-css && npm run copy:fixtures",
+    "compile": "npm run bundle:skill-cli && npm run build:plugin && tsc -p . && tsc -p tsconfig.webview.json && npm run bundle:extension && npm run bundle:webview && npm run bundle:inline-comments && npm run bundle:pr-review && npm run copy:shared-css && npm run copy:fixtures",
     "watch": "tsc -w -p .",
     "bundle:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --external:bufferutil --external:utf-8-validate --outfile=out/extension.js --minify --sourcemap=linked --legal-comments=none",
     "bundle:webview": "esbuild src/webview/client.ts --bundle --format=iife --outfile=out/webview/client.js --target=es2020 --platform=browser --minify --sourcemap=linked --legal-comments=none",
@@ -640,6 +640,7 @@
     "clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\"",
     "test:integration": "npm run clean && npm run compile && node ./out/test/integration/runTest.js",
     "bundle:skill-cli": "node scripts/build-skill-cli.mjs",
+    "build:plugin": "node scripts/build-plugin.mjs",
     "copy:shared-css": "node scripts/copy-shared-css.mjs"
   },
   "devDependencies": {

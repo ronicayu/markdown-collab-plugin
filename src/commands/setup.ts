@@ -1,12 +1,22 @@
-// First-run and setup commands: the Claude skill, AGENTS.md, the playground
-// tutorial, and re-registering the MCP server (10x-plan-4 P3.2 split of
-// extension.ts).
+// First-run and setup commands: Set Up Claude Code (the plugin, or the
+// standalone skill as a fallback), AGENTS.md, the playground tutorial, and
+// re-registering the MCP server (10x-plan-4 P3.2 split of extension.ts).
 
+import { execFile } from "node:child_process";
 import * as os from "os";
+import * as path from "path";
 import * as vscode from "vscode";
 import type { Logger } from "../logging";
 import { ensureAgentsSnippet } from "../agents";
-import { checkClaudeSkill, installClaudeSkill, skillFingerprint } from "../skill";
+import { checkClaudeSkill, installClaudeSkill, removeLegacySkill, skillFingerprint } from "../skill";
+import {
+  LOCAL_MARKETPLACE_DIRNAME,
+  installedLocalPlugin,
+  setUpClaudePlugin,
+  type ClaudeRunner,
+} from "../claudePlugin";
+import { spawnCommand } from "../transports/claudeBinary";
+import { lookupClaude } from "../transports/headlessHost";
 import { buildTutorialDocument, TUTORIAL_REL } from "../tutorial";
 import {
   currentMcpServer,
@@ -71,16 +81,91 @@ async function invokeOpenTutorial(log: Logger): Promise<void> {
 }
 
 const SKILL_PROMPT_KEY = "markdownCollab.skillPromptedFingerprint";
+/** The extension version the plugin-drift check last ran for. */
+const PLUGIN_PROMPT_KEY = "markdownCollab.pluginPromptedVersion";
+
+/** Every `claude plugin …` step gets this long; a registry refresh is seconds. */
+const PLUGIN_COMMAND_TIMEOUT_MS = 60_000;
 
 /**
- * On startup, nudge the user to install/update the Claude skill if it's
- * missing or out of date — otherwise they only find out by opening the
- * comments panel. Gated per skill version so it prompts once, not every time.
+ * `claude <args>` through `execFile`: an argument array, never a command
+ * string (on Windows a `.cmd` shim needs the shell, and `spawnCommand` quotes
+ * every argument for it). Output goes to the log at trace level — it is what a
+ * "Set Up didn't work" report needs, and noise otherwise.
+ */
+export function claudeRunner(bin: string, log: Logger): ClaudeRunner {
+  return (args) =>
+    new Promise((resolve) => {
+      const spec = spawnCommand(bin, args, process.platform);
+      execFile(
+        spec.command,
+        spec.args,
+        {
+          shell: spec.shell,
+          timeout: PLUGIN_COMMAND_TIMEOUT_MS,
+          windowsHide: true,
+          encoding: "utf8",
+          maxBuffer: 4 * 1024 * 1024,
+        },
+        (err, stdout, stderr) => {
+          // A numeric `code` is the exit status; a string one (ENOENT) or none
+          // at all (killed by the timeout) means there was no exit status.
+          const exit = err ? (err as { code?: unknown }).code : 0;
+          const code = typeof exit === "number" ? exit : null;
+          log.trace(`claude ${args.join(" ")} → ${code ?? "no exit status"}`, { stdout, stderr });
+          resolve({ code, stdout, stderr, error: code === null && err ? err.message : undefined });
+        },
+      );
+    });
+}
+
+/** The plugin shipped inside this extension, and where its local marketplace lives. */
+function pluginPaths(context: vscode.ExtensionContext): { sourcePluginDir: string; marketplaceDir: string } {
+  return {
+    sourcePluginDir: path.join(context.extensionPath, "plugin"),
+    marketplaceDir: path.join(context.globalStorageUri.fsPath, LOCAL_MARKETPLACE_DIRNAME),
+  };
+}
+
+/**
+ * On startup, nudge the user when the Claude side is out of date — otherwise
+ * they only find out by opening the comments panel.
+ *
+ * Plugin installs are checked once per extension version, through
+ * `claude plugin list --json` (a process, so not on every activation): the
+ * plugin comes from this extension's own local marketplace, so a version that
+ * differs from the extension's means the Claude side is stale. Standalone
+ * skill installs keep the fingerprint check they always had, gated per skill
+ * version so it prompts once, not every time.
  */
 export async function maybePromptSkillUpdate(
   context: vscode.ExtensionContext,
   log: Logger,
 ): Promise<void> {
+  const extensionVersion = String(context.extension?.packageJSON?.version ?? "");
+  if (extensionVersion && context.globalState.get<string>(PLUGIN_PROMPT_KEY) !== extensionVersion) {
+    await context.globalState.update(PLUGIN_PROMPT_KEY, extensionVersion);
+    try {
+      const lookup = await lookupClaude(log);
+      if (lookup.ok) {
+        const installed = await installedLocalPlugin(claudeRunner(lookup.claude.path, log));
+        if (installed) {
+          if (installed.version === extensionVersion) return;
+          const choice = await vscode.window.showInformationMessage(
+            "Markdown Collab's Claude Code plugin is out of date " +
+              `(${installed.version}; this extension is ${extensionVersion}).`,
+            "Update",
+            "Not now",
+          );
+          if (choice === "Update") await updatePluginFromNudge(context, lookup.claude.path, log);
+          return;
+        }
+      }
+    } catch (e) {
+      log.error("plugin version check failed", e);
+    }
+  }
+
   let status: Awaited<ReturnType<typeof checkClaudeSkill>>;
   try {
     status = await checkClaudeSkill(os.homedir());
@@ -96,10 +181,10 @@ export async function maybePromptSkillUpdate(
   if (context.globalState.get<string>(SKILL_PROMPT_KEY) === fingerprint) return;
   await context.globalState.update(SKILL_PROMPT_KEY, fingerprint);
 
-  const action = status === "missing" ? "Install skill" : "Update skill";
+  const action = status === "missing" ? "Set Up Claude Code" : "Update";
   const message =
     status === "missing"
-      ? "Markdown Collab: the Claude skill isn't installed. Claude needs it to read and act on your comments."
+      ? "Markdown Collab: Claude Code isn't set up for your comments yet. Claude needs it to read and act on them."
       : "Markdown Collab: the Claude skill is out of date. Update it so Claude follows the latest comment-handling behavior.";
   const choice = await vscode.window.showInformationMessage(message, action, "Not now");
   if (choice === action) {
@@ -107,22 +192,74 @@ export async function maybePromptSkillUpdate(
   }
 }
 
-async function invokeInstallClaudeSkill(
+async function updatePluginFromNudge(
+  context: vscode.ExtensionContext,
+  claudePath: string,
   log: Logger,
 ): Promise<void> {
+  const outcome = await setUpClaudePlugin({ run: claudeRunner(claudePath, log), ...pluginPaths(context) });
+  if (outcome.ok) {
+    void vscode.window.showInformationMessage(
+      `Claude Code plugin updated to ${outcome.version}. Restart running Claude sessions (or run /reload-plugins) to pick it up.`,
+    );
+  } else {
+    log.warn("plugin update failed", { reason: outcome.reason });
+    void vscode.window.showErrorMessage(`Markdown Collab: couldn't update the Claude Code plugin — ${outcome.reason}.`);
+  }
+}
+
+/**
+ * Set Up Claude Code (`markdownCollab.installClaudeSkill`, the id kept from
+ * when this only installed the skill). The plugin is the way: skill, CLI on
+ * PATH, and the marker hook, installed from the extension's own local
+ * marketplace. The standalone skill is the fallback — no `claude` binary, a
+ * Claude Code without plugin commands, or any step failing — so the command
+ * always leaves Claude able to act on comments, and says which route it took.
+ */
+async function invokeSetUpClaudeCode(context: vscode.ExtensionContext, log: Logger): Promise<void> {
+  let fallbackReason: string;
+  const lookup = await lookupClaude(log);
+  if (!lookup.ok) {
+    fallbackReason = `Claude Code wasn't found (${lookup.error})`;
+  } else {
+    const outcome = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "Markdown Collab: setting up Claude Code…" },
+      () => setUpClaudePlugin({ run: claudeRunner(lookup.claude.path, log), ...pluginPaths(context) }),
+    );
+    if (outcome.ok) {
+      log.info("claude plugin installed", { version: outcome.version });
+      // Both at once would register the workflow twice.
+      const removed = await removeLegacySkill(os.homedir()).catch((e: unknown) => {
+        log.warn("could not remove the standalone skill", e);
+        return [] as string[];
+      });
+      if (removed.length > 0) log.info("removed the standalone skill", { files: removed.length });
+      void vscode.window.showInformationMessage(
+        "Claude Code plugin installed. Restart running Claude sessions (or run /reload-plugins) to pick it up.",
+      );
+      return;
+    }
+    fallbackReason = outcome.reason;
+    if (outcome.unsupported) log.info("claude plugin unavailable, using the standalone skill", { reason: outcome.reason });
+    else log.warn("claude plugin setup failed, using the standalone skill", { reason: outcome.reason });
+  }
+  await installLegacySkill(log, fallbackReason);
+}
+
+/** Today's standalone install, with why the plugin wasn't used in every toast. */
+async function installLegacySkill(log: Logger, fallbackReason: string): Promise<void> {
+  const why = `(the Claude Code plugin wasn't used: ${fallbackReason})`;
   try {
     const result = await installClaudeSkill(os.homedir());
     if (result.action === "installed") {
-      void vscode.window.showInformationMessage(
-        `Markdown Collab skill installed at ${result.path}.`,
-      );
+      void vscode.window.showInformationMessage(`Markdown Collab skill installed at ${result.path} ${why}.`);
     } else if (result.action === "already-present") {
       void vscode.window.showInformationMessage(
-        `Markdown Collab skill is already up to date at ${result.path}.`,
+        `Markdown Collab skill is already up to date at ${result.path} ${why}.`,
       );
     } else {
       const pick = await vscode.window.showWarningMessage(
-        `A different Markdown Collab skill already exists at ${result.path}.`,
+        `A different Markdown Collab skill already exists at ${result.path} ${why}.`,
         "Overwrite",
         "Cancel",
       );
@@ -381,7 +518,7 @@ export function registerSetupCommands(deps: CommandDeps): void {
       cursorInAppConnected: isAgentConnected(context, "cursor-inapp"),
     })),
     vscode.commands.registerCommand("markdownCollab.installClaudeSkill", async () => {
-      await invokeInstallClaudeSkill(skillLog);
+      await invokeSetUpClaudeCode(context, skillLog);
     }),
     // `reviewLog`, not `skillLog`: the tutorial is a review-view entry point,
     // logged like the rest of that surface (matches the original wiring).

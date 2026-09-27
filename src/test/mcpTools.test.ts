@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { TOOLS, callTool, type ToolDeps } from "../mcpServer/tools";
+import { HELP_HINT, TOOLS, callTool, type ToolDeps } from "../mcpServer/tools";
+import { renderSkill } from "../skillText";
 import { addThread, parse } from "../inlineComments/format";
 import { checkIntegrity } from "../inlineComments/integrity";
 
@@ -41,11 +42,12 @@ function body(result: { content: Array<{ text: string }> }): any {
 }
 
 describe("mcp tool catalog", () => {
-  it("advertises every verb the CLI has, plus the status beacon", () => {
+  it("advertises every verb the CLI has, plus the status beacon and mc_help", () => {
     expect(TOOLS.map((t) => t.name).sort()).toEqual([
       "mc_accept",
       "mc_check",
       "mc_edit",
+      "mc_help",
       "mc_list",
       "mc_open",
       "mc_reject",
@@ -67,9 +69,42 @@ describe("mcp tool catalog", () => {
 
   it("requires `file` on every tool that touches a document", () => {
     for (const t of TOOLS) {
-      if (t.name === "mc_status") continue;
+      if (t.name === "mc_status" || t.name === "mc_help") continue;
       expect(t.inputSchema.required, `${t.name}`).toContain("file");
     }
+  });
+
+  // 10x-plan-4 P1.3: a client that doesn't surface `instructions` sees only the
+  // tool descriptions, so every write points at the workflow.
+  it("ends every mutating tool's description with the mc_help hint, and only those", () => {
+    const mutating = ["mc_reply", "mc_open", "mc_rewrite", "mc_edit", "mc_resolve", "mc_suggest", "mc_accept", "mc_reject"];
+    for (const t of TOOLS) {
+      if (mutating.includes(t.name)) {
+        expect(t.description.endsWith(" If unsure of the workflow, call mc_help first."), t.name).toBe(true);
+      } else {
+        expect(t.description, t.name).not.toContain(HELP_HINT.trim());
+      }
+    }
+  });
+});
+
+describe("mc_help", () => {
+  it("takes no arguments", () => {
+    const help = TOOLS.find((t) => t.name === "mc_help")!;
+    expect(help.inputSchema.properties).toEqual({});
+    expect(help.inputSchema.required).toEqual([]);
+  });
+
+  it("returns the headless (tools-only) rendering of the skill, verbatim", async () => {
+    const h = harness();
+    const r = await h.call("mc_help");
+    expect(r.isError).toBeUndefined();
+    expect(r.content).toHaveLength(1);
+    expect(r.content[0]!.text).toBe(renderSkill("headless"));
+    // Needs no file, touches nothing, and reports no document to the pending
+    // indicators.
+    expect(h.calls).toEqual([{ tool: "mc_help" }]);
+    expect(h.read()).toBe(DOC);
   });
 });
 

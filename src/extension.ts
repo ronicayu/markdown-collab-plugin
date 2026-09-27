@@ -185,9 +185,9 @@ export function activate(context: vscode.ExtensionContext): void {
   registerSendCommands(deps);
   registerReviewCommands(deps);
 
-  // On startup, nudge the user to install/update the Claude skill if it's
-  // missing or out of date — otherwise they only find out by opening the
-  // comments panel. Gated per skill version so it prompts once, not every time.
+  // On startup, nudge the user when the Claude side (plugin or standalone
+  // skill) is missing or out of date — otherwise they only find out by opening
+  // the comments panel. Gated so it prompts once per version, not every time.
   void maybePromptSkillUpdate(context, skillLog);
 }
 

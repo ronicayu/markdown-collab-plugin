@@ -41,7 +41,7 @@ no configuration. Delete the file when you're done.
      ```
    - **Cursor / Windsurf / VSCodium / Gitpod** (Open VSX) — search **Markdown Collab** in Extensions, or install from the [Open VSX listing](https://open-vsx.org/extension/markdown-collab/markdown-collab-plugin).
    - **Manual / fallback** — grab the latest `.vsix` from the [GitHub Releases page](https://github.com/ronicayu/markdown-collab-plugin/releases) (`code --install-extension markdown-collab-plugin-*.vsix`), or build from source (see [Development](#development)).
-2. **Install the Claude skill (one-time per machine).** `Cmd-Shift-P` → **Markdown Collab: Install Claude Skill**. This drops the skill instructions and bundled helpers into `~/.claude/skills/vs-markdown-collab/`.
+2. **Set up Claude Code (one-time per machine).** `Cmd-Shift-P` → **Markdown Collab: Set Up Claude Code**. This installs the Markdown Collab plugin for Claude Code — the review workflow as `/markdown-collab:review`, the marker-safe `mdc` CLI on Claude's PATH, and a check that tells Claude when an edit breaks a comment marker — from a marketplace the extension keeps locally, so the plugin always matches the extension's version. Restart running Claude sessions (or run `/reload-plugins`) afterwards. On a Claude Code without plugin support, it installs the standalone skill into `~/.claude/skills/vs-markdown-collab/` instead. Without the extension, the plugin is also available from this repository: `claude plugin marketplace add ronicayu/markdown-collab-plugin`, then `claude plugin install markdown-collab@markdown-collab`.
 3. **Open a Markdown file**, then right-click it → **Markdown Collab: Open Inline Comments View**.
 4. **Select a passage in the rendered view** → **+ Comment on selection** → write your note.
 5. **Click Send to Claude.** The first time you'll pick how to send it; the answer is
@@ -192,7 +192,7 @@ With `headless`, clicking **Send to Claude** or **Ask Claude to Review** starts 
 
 Run **Markdown Collab: Register Review Tools with Claude Code** (or accept the prompt on first activation) to add a `markdown-collab` entry to the workspace's `.mcp.json`. No token is written to that file — the URL and a per-session token travel through the environment of terminals VS Code spawns, so a committed `.mcp.json` leaks nothing and a fresh window mints a fresh token.
 
-Registering is always your call, and nothing depends on it: the tools can be disabled entirely on Claude's side (enterprise policy, `--strict-mcp-config`), so every prompt asks Claude to use them *if it has them* and otherwise to use the `mdc` helper the skill installs. Either way the file ends up the same; the tools just make Claude's edits undoable and checked before they land.
+Registering is always your call, and nothing depends on it: the tools can be disabled entirely on Claude's side (enterprise policy, `--strict-mcp-config`), so every prompt asks Claude to use them *if it has them* and otherwise to use the `mdc` CLI that comes with the plugin (or the standalone skill). Either way the file ends up the same; the tools just make Claude's edits undoable and checked before they land.
 
 ## Using other agents
 
@@ -228,7 +228,7 @@ The single keys do nothing while you're typing in a box. There's no key for acce
 
 | Command | Purpose |
 |---|---|
-| `Markdown Collab: Install Claude Skill` | Write `~/.claude/skills/vs-markdown-collab/SKILL.md` and the bundled `mdc.mjs` helper. |
+| `Markdown Collab: Set Up Claude Code` | Install the Markdown Collab plugin into Claude Code (skill, `mdc` CLI, post-edit marker check) from the extension's local marketplace, replacing the standalone skill if one is installed. Falls back to writing `~/.claude/skills/vs-markdown-collab/` when Claude Code has no plugin support, and says why. |
 | `Markdown Collab: Initialize AGENTS.md` | Append a convention block to `<workspace>/AGENTS.md` (for non–Claude-Code agents). |
 | `Markdown Collab: Open Inline Comments View` | Open the rendered view with an inline-threads sidebar. Comments are stored inside the `.md` file. The right-click action on `.md` files. |
 | `Markdown Collab: Open Live Editor` | Open the WYSIWYG live editor with the comment panel — you and Claude co-edit the same `.md` (single human + Claude, no relay). |

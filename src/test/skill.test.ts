@@ -5,10 +5,13 @@ import * as path from "path";
 import {
   CLI_SCRIPT_CONTENT,
   CLI_SCRIPT_REL,
+  PLUGIN_REGISTRY_REL,
   SKILL_CONTENT,
   SKILL_REL_PATH,
   checkClaudeSkill,
   installClaudeSkill,
+  installedClaudePlugin,
+  removeLegacySkill,
   skillFingerprint,
 } from "../skill";
 import { createHash } from "crypto";
@@ -238,8 +241,47 @@ describe("installClaudeSkill", () => {
   });
 });
 
+/** Write Claude Code's plugin registry, in the shape 2.1.283 writes it. */
+async function writeRegistry(plugins: Record<string, Array<Record<string, unknown>>>): Promise<void> {
+  const target = path.join(tmpHome, PLUGIN_REGISTRY_REL);
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  await fs.writeFile(target, JSON.stringify({ version: 2, plugins }), "utf8");
+}
+
 describe("checkClaudeSkill", () => {
   it("reports 'missing' when nothing is installed", async () => {
+    expect(await checkClaudeSkill(tmpHome)).toBe("missing");
+  });
+
+  // 10x-plan-4 P0.2: the plugin carries its own skill and the standalone files
+  // are removed when it's installed — so a plugin user must never be told the
+  // skill is missing (the inline view's banner reads this).
+  it("reports 'current' when the plugin is installed, with no standalone skill at all", async () => {
+    await writeRegistry({
+      "markdown-collab@markdown-collab-local": [{ scope: "user", version: "0.36.0", installPath: "/x" }],
+    });
+    expect(await checkClaudeSkill(tmpHome)).toBe("current");
+  });
+
+  it("counts the plugin from the GitHub marketplace too", async () => {
+    await writeRegistry({ "markdown-collab@markdown-collab": [{ scope: "user", version: "0.36.0" }] });
+    expect(await checkClaudeSkill(tmpHome)).toBe("current");
+  });
+
+  it("prefers the plugin over a stale standalone skill", async () => {
+    await installClaudeSkill(tmpHome);
+    await fs.writeFile(path.join(tmpHome, SKILL_REL_PATH), "stale", "utf8");
+    await writeRegistry({ "markdown-collab@markdown-collab-local": [{ scope: "user", version: "0.36.0" }] });
+    expect(await checkClaudeSkill(tmpHome)).toBe("current");
+  });
+
+  it("ignores project- and local-scope installs, other plugins, and a registry it can't read", async () => {
+    await writeRegistry({
+      "markdown-collab@markdown-collab-local": [{ scope: "project", projectPath: "/other", version: "0.36.0" }],
+      "markdown-collab-extras@somewhere": [{ scope: "user", version: "1.0.0" }],
+    });
+    expect(await checkClaudeSkill(tmpHome)).toBe("missing");
+    await fs.writeFile(path.join(tmpHome, PLUGIN_REGISTRY_REL), "{not json", "utf8");
     expect(await checkClaudeSkill(tmpHome)).toBe("missing");
   });
 
@@ -266,6 +308,58 @@ describe("checkClaudeSkill", () => {
     await fs.writeFile(skillTarget, SKILL_CONTENT, "utf8");
     // SKILL.md matches but mdc.mjs was never written.
     expect(await checkClaudeSkill(tmpHome)).toBe("outdated");
+  });
+});
+
+describe("installedClaudePlugin", () => {
+  it("returns the id and version Claude Code recorded, or null", async () => {
+    expect(await installedClaudePlugin(tmpHome, {})).toBeNull();
+    await writeRegistry({
+      "superpowers@claude-plugins-official": [{ scope: "user", version: "6.4.1" }],
+      "markdown-collab@markdown-collab-local": [{ scope: "user", version: "0.36.0" }],
+    });
+    expect(await installedClaudePlugin(tmpHome, {})).toEqual({
+      id: "markdown-collab@markdown-collab-local",
+      version: "0.36.0",
+    });
+  });
+
+  it("reads the registry from CLAUDE_CONFIG_DIR when Claude Code's config was moved", async () => {
+    const moved = path.join(tmpHome, "elsewhere");
+    await fs.mkdir(path.join(moved, "plugins"), { recursive: true });
+    await fs.writeFile(
+      path.join(moved, "plugins", "installed_plugins.json"),
+      JSON.stringify({ plugins: { "markdown-collab@markdown-collab": [{ scope: "user", version: "1.0.0" }] } }),
+      "utf8",
+    );
+    expect(await installedClaudePlugin(tmpHome, { CLAUDE_CONFIG_DIR: moved })).toEqual({
+      id: "markdown-collab@markdown-collab",
+      version: "1.0.0",
+    });
+    expect(await installedClaudePlugin(tmpHome, {})).toBeNull();
+  });
+});
+
+describe("removeLegacySkill", () => {
+  it("removes every file the standalone install wrote, then the empty directory", async () => {
+    await installClaudeSkill(tmpHome);
+    await fs.writeFile(path.join(tmpHome, STALE_TAIL_REL), "old", "utf8");
+    const removed = await removeLegacySkill(tmpHome);
+    expect(removed.map((p) => path.basename(p)).sort()).toEqual(["SKILL.md", "mdc-tail.mjs", "mdc.mjs"]);
+    await expect(fs.stat(path.dirname(path.join(tmpHome, SKILL_REL_PATH)))).rejects.toThrow();
+  });
+
+  it("keeps the directory when the user has something else in it", async () => {
+    await installClaudeSkill(tmpHome);
+    const mine = path.join(path.dirname(path.join(tmpHome, SKILL_REL_PATH)), "notes.md");
+    await fs.writeFile(mine, "mine", "utf8");
+    await removeLegacySkill(tmpHome);
+    expect(await fs.readFile(mine, "utf8")).toBe("mine");
+    await expect(fs.stat(path.join(tmpHome, SKILL_REL_PATH))).rejects.toThrow();
+  });
+
+  it("is a no-op when nothing was installed", async () => {
+    expect(await removeLegacySkill(tmpHome)).toEqual([]);
   });
 });
 

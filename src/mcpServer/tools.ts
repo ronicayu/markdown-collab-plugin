@@ -26,6 +26,7 @@ import {
   type OpOutcome,
 } from "../inlineComments/docOps";
 import type { McpTool, ToolResult } from "./protocol";
+import { renderSkill } from "../skillText";
 
 export interface ToolDeps {
   /**
@@ -67,7 +68,7 @@ const FILE_PROP = {
   },
 } as const;
 
-export const TOOLS: readonly McpTool[] = [
+const BASE_TOOLS: readonly McpTool[] = [
   {
     name: "mc_list",
     title: "List review threads",
@@ -145,9 +146,10 @@ export const TOOLS: readonly McpTool[] = [
     title: "Edit prose",
     description:
       "Replace exact text in the document, for prose outside anchored spans — to change text inside a thread's " +
-      "anchor, use mc_rewrite instead. Never touches review markers or the threads region; a match that would is " +
-      "refused with not_editable. Ambiguous text (appears more than once) is refused unless occurrence (1-based) " +
-      "is given.",
+      "anchor, use mc_rewrite instead. To delete an anchored passage, make `old` span its open marker, the " +
+      "passage and its close marker: the thread is left unanchored, by design. Anything else that touches a " +
+      "review marker (splits one, or holds only one of a pair) or the threads region is refused with " +
+      "not_editable. Ambiguous text (appears more than once) is refused unless occurrence (1-based) is given.",
     inputSchema: {
       type: "object",
       properties: {
@@ -254,6 +256,45 @@ export const TOOLS: readonly McpTool[] = [
   },
 ];
 
+/**
+ * The tools that change a document. Their descriptions point at `mc_help`: a
+ * client that doesn't surface the server's `instructions` sees nothing of the
+ * workflow but these descriptions, and a write is where a wrong guess costs.
+ */
+const MUTATING_TOOLS = new Set([
+  "mc_reply",
+  "mc_open",
+  "mc_rewrite",
+  "mc_edit",
+  "mc_resolve",
+  "mc_suggest",
+  "mc_accept",
+  "mc_reject",
+]);
+
+export const HELP_HINT = " If unsure of the workflow, call mc_help first.";
+
+/**
+ * `mc_help` (10x-plan-4 P1.3): the whole tools-only workflow, for clients that
+ * don't show `instructions` to the model (or show them and still leave it
+ * unsure). The same text a headless run gets as its system prompt, minus that
+ * run's preamble — see `renderSkill` in skillText.ts.
+ */
+const HELP_TOOL: McpTool = {
+  name: "mc_help",
+  title: "Review workflow",
+  description:
+    "Return the full Markdown Collab review workflow: how to address comments, review mode, suggest mode, " +
+    "verification, and what to report. Takes no arguments. Call it before your first edit if you haven't " +
+    "been given the workflow.",
+  inputSchema: { type: "object", properties: {}, required: [] },
+};
+
+export const TOOLS: readonly McpTool[] = [
+  ...BASE_TOOLS.map((t) => (MUTATING_TOOLS.has(t.name) ? { ...t, description: t.description + HELP_HINT } : t)),
+  HELP_TOOL,
+];
+
 function text(value: unknown): ToolResult {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
 }
@@ -336,6 +377,10 @@ export async function callTool(
   deps: ToolDeps,
 ): Promise<ToolResult> {
   try {
+    if (name === "mc_help") {
+      deps.onCall?.({ tool: name });
+      return { content: [{ type: "text", text: renderSkill("headless") }] };
+    }
     if (name === "mc_status") {
       const note = str(args, "note");
       deps.onCall?.({ tool: name, file: optionalStr(args, "file"), note });

@@ -27,7 +27,7 @@
 // than they found it.
 
 import { writeSync } from "node:fs";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { stripAllInlineMarkup } from "../inlineComments/format";
 import { checkIntegrity, repairIntegrity } from "../inlineComments/integrity";
 import {
@@ -45,6 +45,7 @@ import {
   type DocOpCode,
   type OpOutcome,
 } from "../inlineComments/docOps";
+import { runCheckHook, type HookIo } from "./checkHook";
 
 const EXIT_OK = 0;
 const EXIT_USAGE = 1;
@@ -65,6 +66,8 @@ const USAGE = `mdc — Markdown Collab inline-comment CLI
   mdc accept <file> <anchorId>                apply a pending suggestion
   mdc reject <file> <anchorId>                drop a pending suggestion, keep the original
   mdc check <file> [--repair]                 integrity report; exit 2 if broken
+  mdc check --hook                            Claude Code PostToolUse hook: reads the hook JSON on stdin;
+                                              exit 2 + report on stderr if the edited .md has broken markers
 
 All commands print JSON to stdout. Exit codes: 0 ok, 1 usage, 2 integrity.`;
 
@@ -267,6 +270,44 @@ function cmdCheck(file: string, repair: boolean): void {
   process.exit(result.remaining.length === 0 ? EXIT_OK : EXIT_INTEGRITY);
 }
 
+/**
+ * Real filesystem I/O for `runCheckHook`. A directory must read as "missing"
+ * rather than throw or return its listing — `statSync` guards that before
+ * `readFileSync` ever runs.
+ */
+const realHookIo: HookIo = {
+  readFile(absPath: string): string | null {
+    try {
+      if (!statSync(absPath).isFile()) return null;
+      return readFileSync(absPath, "utf8");
+    } catch {
+      return null;
+    }
+  },
+  cwd: () => process.cwd(),
+};
+
+/**
+ * `mdc check --hook` — no positional file, no JSON on stdout. Claude Code
+ * gives us the edited path on stdin; everything else is `runCheckHook`'s
+ * call. Reading stdin can itself fail (no stdin attached, a closed pipe) —
+ * that is exactly the kind of thing this guard must survive silently rather
+ * than crash the hook over.
+ */
+function cmdCheckHook(): void {
+  let stdinText: string;
+  try {
+    stdinText = readFileSync(0, "utf8");
+  } catch {
+    process.exit(EXIT_OK);
+  }
+  const outcome = runCheckHook(stdinText, realHookIo);
+  // writeSync, like `out()`: on macOS a pipe write is asynchronous, and the
+  // exit below would race it — and the report IS the point of exit 2.
+  if (outcome.stderr) writeSync(2, outcome.stderr);
+  process.exit(outcome.exitCode);
+}
+
 function main(): void {
   const argv = process.argv.slice(2);
   if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") {
@@ -321,6 +362,10 @@ function main(): void {
       if (!rest[0] || !rest[1]) fail("usage: mdc reject <file> <anchorId>");
       return cmdReject(rest[0], rest[1]);
     case "check":
+      // The hook form takes no positional file — Claude Code gives us the
+      // path on stdin instead — so it must be checked before the usage
+      // guard below rejects a bare `mdc check --hook` for lacking one.
+      if (flags.hook === true) return cmdCheckHook();
       if (!rest[0]) fail("usage: mdc check <file> [--repair]");
       return cmdCheck(rest[0], flags.repair === true);
     default:

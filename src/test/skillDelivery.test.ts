@@ -19,7 +19,8 @@ import { workflowOpener } from "../skillDelivery";
 import { Uri, workspace } from "./vscode-stub";
 
 const ROOT = "/ws";
-const INSTALLED = "Use the vs-markdown-collab skill";
+const INSTALLED =
+  "Use the Markdown Collab review skill (`markdown-collab:review`, or `vs-markdown-collab` on older installs)";
 const INLINE = "Follow the Markdown Collab review workflow in your instructions";
 
 const DOC = addThread("The retry uses exponential backoff.", 15, 34, {

@@ -87,18 +87,39 @@ export interface OpOutcome<T> {
  * than it started with. Pre-write, unlike the check-after-write the CLI used to
  * do: the caller can surface a structured refusal while the file still holds
  * its last good state.
+ *
+ * `opts.expectedUnanchored` names anchor ids whose `unanchored-thread` issue is
+ * the INTENDED outcome of this write, not damage — `opEdit` passes the ids of
+ * threads whose complete marker pair it just deleted (10x-plan-4: that is how
+ * an anchored passage is removed without an Edit tool; see its doc comment).
+ * Those specific issues are left out of the before/after count so a
+ * deliberate, by-design "broken anchor" doesn't refuse its own edit. Nothing
+ * else is exempted: an `unanchored-suggestion` issue for the same id still
+ * counts in full — a suggestion has no quote fallback, so losing one is
+ * always damage, never a shrug.
  */
-export function assertNoNewIssues(before: string, after: string): IntegrityIssue[] {
+export function assertNoNewIssues(
+  before: string,
+  after: string,
+  opts?: { expectedUnanchored?: ReadonlySet<string> },
+): IntegrityIssue[] {
   const wasBroken = checkIntegrity(before).issues.length;
   const report = checkIntegrity(after);
-  if (report.issues.length > wasBroken) {
-    const introduced = report.issues.length - wasBroken;
+  const expected = opts?.expectedUnanchored;
+  const countable =
+    expected && expected.size > 0
+      ? report.issues.filter(
+          (i) => !(i.kind === "unanchored-thread" && i.threadId !== undefined && expected.has(i.threadId)),
+        )
+      : report.issues;
+  if (countable.length > wasBroken) {
+    const introduced = countable.length - wasBroken;
     throw new DocOpError(
       "integrity",
-      `refusing to write — the change would introduce ${introduced} integrity problem(s): ${report.issues
+      `refusing to write — the change would introduce ${introduced} integrity problem(s): ${countable
         .map((i) => i.message)
         .join("; ")}`,
-      { issues: report.issues },
+      { issues: countable },
     );
   }
   return report.issues;
@@ -307,13 +328,28 @@ export function opRewrite(
  * corrupting either. To change the text INSIDE a thread's anchor, use
  * `opRewrite` (`mc_rewrite`) instead — it splices between the markers and
  * keeps them by construction.
+ *
+ * The one exception: `old` may contain one or more anchor pairs COMPLETE —
+ * both the open marker and its matching close marker, wholly inside the
+ * matched range. That is the only way a headless run can delete an anchored
+ * passage at all, since there is no Edit tool to remove the open marker, the
+ * text, and the close marker by hand — the workflow says to do exactly that,
+ * all three together. The thread(s) that anchored them come out of the edit
+ * unanchored ON PURPOSE: `parse().unanchoredThreadIds` will list them, the
+ * human sees a broken anchor, and — this is the part a repair pass or a
+ * future edit must respect — the thread must never be silently re-anchored
+ * to nearby text. Nobody decided that nearby text is what the thread is
+ * still about; that is now a human call. See the marker-range check below
+ * for exactly what still refuses, and `assertNoNewIssues`'s
+ * `expectedUnanchored` for how the resulting `unanchored-thread` issues are
+ * kept from refusing the very edit that created them.
  */
 export function opEdit(
   source: string,
   old: string,
   replacement: string,
   occurrence = 0,
-): OpOutcome<{ occurrence: number; occurrences: number; line: number }> {
+): OpOutcome<{ occurrence: number; occurrences: number; line: number; unanchored: string[] }> {
   if (old === "") {
     throw new DocOpError("empty_selection", "old text must not be empty — give the exact text to replace", { old });
   }
@@ -386,32 +422,54 @@ export function opEdit(
     );
   }
 
-  // Refuse anything that touches a review marker — contains one whole, or
-  // splits one in half. Use the parser's own marker positions rather than a
-  // second regex: paired markers from parse().anchors, and any unpaired or
-  // duplicate marker (a hand-corrupted document) from inspect(), which reads
-  // the same scan. Editing strictly BETWEEN a pair (touching neither marker)
-  // is fine — integrity-safe, and staleness tracking will flag the thread.
-  const markerRanges: Array<{ start: number; end: number }> = [];
-  for (const a of parsed.anchors.values()) {
-    markerRanges.push({ start: a.openStart, end: a.openEnd });
-    markerRanges.push({ start: a.closeStart, end: a.closeEnd });
+  // Marker rule: touching a review marker refuses UNLESS the range holds one
+  // or more anchor pairs COMPLETE — both the open and close marker of the
+  // same id wholly inside [start, end). That is how an anchored passage is
+  // deleted without an Edit tool (see the doc comment above): the open
+  // marker, the anchored text, and the close marker go together, and the
+  // thread they anchored becomes unanchored by design — a broken anchor for
+  // the human to see, never silently re-attached elsewhere. (A suggestion's
+  // pair passes this check but not the integrity gate below: a suggestion
+  // has no quote to fall back on, so losing its span is still damage.)
+  //
+  // Everything else that involves a marker still refuses, same as before:
+  //   - splitting a marker (the range starts or ends partway through it, or
+  //     sits wholly inside it) — never safe, complete pair or not.
+  //   - containing only one marker of a pair — its partner still points at
+  //     live text, so removing one alone would leave it dangling.
+  //   - touching an unpaired marker (from inspect().unpairedMarkers) — a
+  //     hand-corrupted marker has no partner, so it can never be "complete".
+  // Editing strictly BETWEEN a pair (touching neither marker) is unaffected —
+  // integrity-safe as before, and staleness tracking will flag the thread.
+  const touchesRange = (m: { start: number; end: number }) => m.start < end && start < m.end;
+  const wholeInRange = (m: { start: number; end: number }) => start <= m.start && m.end <= end;
+  const MARKER_MESSAGE =
+    "that text contains only one of a thread's two markers (or splits a marker); to delete an anchored passage include both markers and the text between them; to change text inside an anchor use mc_rewrite";
+
+  // Anchor ids (thread or suggestion) whose complete pair falls inside the
+  // range — passed to assertNoNewIssues so the resulting unanchored-thread
+  // issue(s) don't refuse the very edit that created them on purpose.
+  const removedPairIds = new Set<string>();
+  for (const [id, a] of parsed.anchors) {
+    const open = { start: a.openStart, end: a.openEnd };
+    const close = { start: a.closeStart, end: a.closeEnd };
+    const openTouches = touchesRange(open);
+    const closeTouches = touchesRange(close);
+    if (!openTouches && !closeTouches) continue; // pair untouched by this range — not relevant
+    if (openTouches && closeTouches && wholeInRange(open) && wholeInRange(close)) {
+      removedPairIds.add(id);
+      continue;
+    }
+    throw new DocOpError("not_editable", MARKER_MESSAGE, { old });
   }
   for (const m of inspect(source).unpairedMarkers) {
-    markerRanges.push({ start: m.start, end: m.end });
-  }
-  for (const m of markerRanges) {
-    if (m.start < end && start < m.end) {
-      throw new DocOpError(
-        "not_editable",
-        "that text touches a review marker; markers are managed by the tools — use mc_rewrite to change text inside a thread's anchor",
-        { old },
-      );
+    if (touchesRange(m)) {
+      throw new DocOpError("not_editable", MARKER_MESSAGE, { old });
     }
   }
 
   const next = source.slice(0, start) + replacement + source.slice(end);
-  assertNoNewIssues(source, next);
+  assertNoNewIssues(source, next, { expectedUnanchored: removedPairIds });
 
   return {
     next,
@@ -419,6 +477,9 @@ export function opEdit(
       occurrence: index + 1,
       occurrences: candidates.length,
       line: source.slice(0, start).split("\n").length,
+      // Threads only: a removed pair can also be an orphan anchor (markers
+      // whose thread was already gone), which leaves nothing unanchored.
+      unanchored: parsed.threads.filter((t) => removedPairIds.has(t.id)).map((t) => t.id),
     },
   };
 }

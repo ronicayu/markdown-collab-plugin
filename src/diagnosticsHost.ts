@@ -10,7 +10,7 @@ import * as vscode from "vscode";
 import { parse as parseInline } from "./inlineComments/format";
 import { claudePending } from "./claudePendingService";
 import { currentMcpServer } from "./mcpServer";
-import { checkClaudeSkill } from "./skill";
+import { checkClaudeSkill, installedClaudePlugin } from "./skill";
 import { CONVENTIONS_REL } from "./reviewConventions";
 import type { DiagnosticsSnapshot } from "./diagnostics";
 
@@ -50,6 +50,7 @@ export async function collectDiagnostics(
     () => checkClaudeSkill(os.homedir()),
     "unknown",
   );
+  const claudePlugin = await safe(() => installedClaudePlugin(os.homedir()), null);
 
   // Only markdown documents VS Code already has open — this must not walk the
   // workspace. A diagnostics command that scans a monorepo is one nobody runs.
@@ -84,6 +85,7 @@ export async function collectDiagnostics(
     rememberedSendMode: (context.workspaceState.get<string>(REMEMBERED_SEND_MODE_KEY) ?? null),
     suggestMode: config.get<boolean>("proposeEditsAsSuggestions", false),
     skillStatus,
+    claudePlugin,
     // The port is safe to report; the token is not, and is never read here.
     mcpServer: server ? { port: server.port, registered } : null,
     claudeTerminalVisible: terminalNames.some((n) => /claude/i.test(n)),

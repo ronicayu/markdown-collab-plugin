@@ -51,6 +51,16 @@ describe("formatDiagnostics", () => {
     expect(out).not.toContain("http://");
   });
 
+  // 10x-plan-4 P0.2: "is the skill installed?" now has two answers.
+  it("names the Claude Code plugin and its version when installed, and says so when not", () => {
+    const withPlugin = formatDiagnostics(
+      snapshot({ claudePlugin: { id: "markdown-collab@markdown-collab-local", version: "0.35.4" } }),
+    );
+    expect(withPlugin).toContain("Claude Code plugin: markdown-collab@markdown-collab-local 0.35.4");
+    expect(formatDiagnostics(snapshot({ claudePlugin: null }))).toContain("Claude Code plugin: not installed");
+    expect(formatDiagnostics(snapshot())).not.toContain("Claude Code plugin:");
+  });
+
   it("says plainly when the tool server is down", () => {
     expect(formatDiagnostics(snapshot({ mcpServer: null }))).toContain("Tool server: not running");
   });
