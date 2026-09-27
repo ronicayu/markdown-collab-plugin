@@ -157,6 +157,14 @@ export interface CommentCardOptions {
    * (10x-plan-2 P0.2). Omitted means the default.
    */
   pendingLabel?: string;
+  /**
+   * Announce the pending row to screen readers as it changes (10x-plan-4
+   * P2.4). Off by default: the pending row is shared by all three review
+   * surfaces, but only the inline view's a11y pass asked for the live
+   * announcement — turning it on everywhere would be a feature the live
+   * editor and the PR view never asked for.
+   */
+  pendingAriaLive?: boolean;
   /** Render as a nested reply (indented, lighter chrome). */
   reply?: boolean;
   actions?: CardAction[];
@@ -232,6 +240,10 @@ export function buildCommentCard(opts: CommentCardOptions): HTMLElement {
   if (opts.pending) {
     const working = document.createElement("div");
     working.className = "mc-card__pending";
+    if (opts.pendingAriaLive) {
+      working.setAttribute("role", "status");
+      working.setAttribute("aria-live", "polite");
+    }
     const dot = document.createElement("span");
     dot.className = "mc-card__pending-dot";
     working.appendChild(dot);

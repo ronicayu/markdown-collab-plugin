@@ -19,6 +19,7 @@ import { slugifyHeading } from "../../inlineComments/linkParse";
 import { buildComposer, buildCommentBody, buildCommentCard, type ComposerHandle } from "../../webviewShared/commentUi";
 import { resolveImageSrc, type ImageBaseUris } from "../../webviewShared/imageSrc";
 import { createDiffNav, isNavKeyContext } from "../../webviewShared/diffNav";
+import { smoothScrollIntoView } from "../../webviewShared/scrollIntoView";
 
 interface VsCodeApi {
   postMessage(msg: ClientToHost): void;
@@ -362,7 +363,7 @@ function blockForLine(line: number): HTMLElement | null {
 function scrollPreviewToLine(line: number): void {
   const target = blockForLine(line);
   if (!target) return;
-  target.scrollIntoView({ behavior: "smooth", block: "center" });
+  smoothScrollIntoView(target, "center");
   flashBlock(target);
 }
 
@@ -471,7 +472,7 @@ function revealComments(targets: MarkerTarget[]): void {
     if (card) cards.push(card);
   }
   if (cards.length === 0) return;
-  cards[0].scrollIntoView({ behavior: "smooth", block: "center" });
+  smoothScrollIntoView(cards[0], "center");
   for (const card of cards) flashCard(card);
 }
 
@@ -536,12 +537,12 @@ function scrollPreviewToFragment(fragment: string): void {
   }
   const byId = dom.preview.querySelector<HTMLElement>(`[id="${CSS.escape(decoded)}"]`);
   if (byId) {
-    byId.scrollIntoView({ behavior: "smooth", block: "start" });
+    smoothScrollIntoView(byId, "start");
     return;
   }
   for (const h of dom.preview.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6")) {
     if (slugifyHeading(h.textContent || "") === decoded) {
-      h.scrollIntoView({ behavior: "smooth", block: "start" });
+      smoothScrollIntoView(h, "start");
       return;
     }
   }

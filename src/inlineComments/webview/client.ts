@@ -17,15 +17,17 @@ import {
   adjacentThreadId,
   chunkThreads,
   claudeSummary,
-  emptyListMessage,
+  emptyState,
   filterThreads,
   matchesFilter,
   nextCollapseAllAction,
   nextUnreadThreadId,
   threadCountLabel,
+  type EmptyState,
   type ThreadFilter,
 } from "../../webviewShared/threadListState";
 import { buildComposer, buildCommentBody, buildCommentCard, buildSuggestionCard, type CardAction } from "../../webviewShared/commentUi";
+import { smoothScrollIntoView } from "../../webviewShared/scrollIntoView";
 import { resolveImageSrc, type ImageBaseUris } from "../../webviewShared/imageSrc";
 import { LINE_ATTR, LINE_ENV_KEY, displayLine } from "../../webviewShared/lineNumbers";
 // Scroll position comes from the DOM, which is what the reader actually sees;
@@ -127,6 +129,14 @@ interface InitMsg {
   pendingThreadIds?: string[];
   /** Host-decided wording for the waiting row (10x-plan-2 P0.2). */
   pendingLabel?: string;
+  /**
+   * Whether the host can run Claude for this workspace right now — the same
+   * check the send-mode picker uses (10x-plan-4 P2.4). Drives which label the
+   * empty-state card's button shows and, on click, whether the host forces
+   * that one dispatch through headless or falls back to normal mode
+   * resolution.
+   */
+  headlessAvailable?: boolean;
 }
 
 type SkillStatus = "missing" | "outdated" | "current";
@@ -143,6 +153,7 @@ interface UpdateMsg {
   suggestMode?: boolean;
   pendingThreadIds?: string[];
   pendingLabel?: string;
+  headlessAvailable?: boolean;
 }
 
 interface ReviewPendingMsg {
@@ -292,7 +303,7 @@ dom.outlineToggle.addEventListener("click", () => {
 function scrollPreviewToHeadingIndex(index: number): void {
   const all = dom.preview.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6");
   const target = all[index];
-  if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (target) smoothScrollIntoView(target, "start");
 }
 
 /** Highlight the outline entry for whatever heading is at the top of the view. */
@@ -463,7 +474,7 @@ function highlightCurrent(scroll: boolean): void {
   const cur = findMatches[findIndex];
   if (!cur) return;
   cur.classList.add("mc-search--current");
-  if (scroll) cur.scrollIntoView({ block: "center", behavior: "smooth" });
+  if (scroll) smoothScrollIntoView(cur, "center");
 }
 
 function findStep(delta: number): void {
@@ -590,14 +601,14 @@ function scrollPreviewToFragment(fragment: string): void {
   // 1. Try exact id match (in case anything in the preview has ids).
   const byId = dom.preview.querySelector<HTMLElement>(`[id="${cssEscape(decoded)}"]`);
   if (byId) {
-    byId.scrollIntoView({ behavior: "smooth", block: "start" });
+    smoothScrollIntoView(byId, "start");
     return;
   }
   // 2. Match by slug against every heading in the preview.
   const headings = dom.preview.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6");
   for (const h of Array.from(headings)) {
     if (slugifyHeading(h.textContent || "") === decoded) {
-      h.scrollIntoView({ behavior: "smooth", block: "start" });
+      smoothScrollIntoView(h, "start");
       return;
     }
   }
@@ -658,6 +669,9 @@ let pendingThreadIds: ReadonlySet<string> = new Set();
 // What the waiting row says. The host owns the wording because only it knows
 // whether the wait is inferred or protocol-backed.
 let pendingLabelText = "Claude is working\u2026";
+// Whether the host can run Claude headlessly for this workspace right now \u2014
+// only meaningful for the empty-state card's button label (10x-plan-4 P2.4).
+let headlessAvailable = false;
 /** First click on "Accept all" arms it; the second applies (P3.3). */
 let acceptAllArmed = false;
 // How many thread cards the list is currently allowed to build. Grows by a
@@ -673,6 +687,22 @@ let highlightedThreadId: string | null = null;
 // see nothing happen.
 const pendingDeleteThread = new Set<string>();
 const pendingDeleteComment = new Set<string>(); // composite "threadId:commentId"
+
+/**
+ * Move the "current card" state (`.highlighted` class + roving `tabindex`)
+ * to `id`, without touching anything else — callers that already re-render
+ * the whole list get this for free from `renderThreadCard`; the ones that
+ * don't (a click, `focusThread`'s reveal, a preview-mark click) call this
+ * instead of a full re-render so an in-progress reply textarea elsewhere in
+ * the list survives.
+ */
+function updateHighlightedCardDom(id: string): void {
+  for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
+    const match = c.dataset.thread === id;
+    c.classList.toggle("highlighted", match);
+    c.tabIndex = match ? 0 : -1;
+  }
+}
 
 /**
  * Highlight `id`'s card, scroll it into view, and scroll the preview to its
@@ -696,11 +726,15 @@ function focusThread(id: string): void {
     const card = dom.threadsList.querySelector<HTMLElement>(
       `.thread-card[data-thread="${cssEscape(target.id)}"]`,
     );
+    updateHighlightedCardDom(target.id);
     if (card) {
       smoothScrollIntoView(card, "center");
-      for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
-        c.classList.toggle("highlighted", c.dataset.thread === target.id);
-      }
+      // Roving tabindex (10x-plan-4 P2.4): move DOM focus with the highlight
+      // so a keyboard user (n/p, "Next unread from Claude") lands where the
+      // screen reader is now looking. `preventScroll` because the line above
+      // already positioned the scroll — a second, focus-driven scroll would
+      // just fight it.
+      card.focus({ preventScroll: true });
     }
     scrollPreviewTo(target);
   };
@@ -746,6 +780,16 @@ function focusReplyOnHighlighted(): void {
 function resolveOrReopenHighlighted(): void {
   if (!highlightedThreadId) return;
   vscode.postMessage({ type: "toggle-resolve", threadId: highlightedThreadId });
+}
+
+/**
+ * Reverse navigation (10x-plan-4 P2.4): open the highlighted thread's
+ * anchored text in a text editor — the same message the card's own `↗`
+ * button posts. No-op if nothing is highlighted.
+ */
+function openHighlightedInEditor(): void {
+  if (!highlightedThreadId) return;
+  vscode.postMessage({ type: "open-in-editor", threadId: highlightedThreadId });
 }
 
 function render(state: SerializedState): void {
@@ -883,7 +927,7 @@ function updateKeysHint(): void {
   const hint = document.getElementById("keys-hint");
   if (!hint) return;
   const target = dom.diffNav.hidden ? "threads" : "changes";
-  hint.textContent = `n / p to move between ${target} · r reply · e resolve`;
+  hint.textContent = `n / p to move between ${target} · r reply · e resolve · o open in editor`;
 }
 
 const diffNav = createDiffNav({
@@ -913,6 +957,8 @@ document.addEventListener("keydown", (e) => {
     focusReplyOnHighlighted();
   } else if (e.key === "e") {
     resolveOrReopenHighlighted();
+  } else if (e.key === "o") {
+    openHighlightedInEditor();
   }
 });
 
@@ -1269,7 +1315,7 @@ function buildHighlightMark(
       const card = dom.threadsList.querySelector<HTMLElement>(
         `[data-suggestion-id="${cssEscape(suggestionId)}"]`,
       );
-      card?.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (card) smoothScrollIntoView(card, "center");
     });
   } else {
     mark.className = `mc-hl ${status === "resolved" ? "mc-hl-resolved" : ""}`;
@@ -1278,9 +1324,7 @@ function buildHighlightMark(
       e.stopPropagation();
       highlightedThreadId = threadId;
       scrollSidebarTo(threadId);
-      for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
-        c.classList.toggle("highlighted", c.dataset.thread === threadId);
-      }
+      updateHighlightedCardDom(threadId);
     });
   }
   return mark;
@@ -1333,18 +1377,26 @@ function renderThreads(state: SerializedState): void {
   renderClaudeSummary(state);
   if (filtered.length === 0) {
     if (state.suggestions.length === 0) {
-      const empty = document.createElement("p");
-      empty.className = "empty";
-      empty.textContent = emptyListMessage(filter);
-      list.appendChild(empty);
+      list.appendChild(
+        buildEmptyStateEl(
+          emptyState({
+            filter,
+            totalThreads: state.threads.length,
+            headlessAvailable,
+          }),
+        ),
+      );
     }
     return;
   }
   // Build at most a chunk of cards per pass. A 300-thread review used to build
   // every card before the panel painted anything; the rest arrive on click.
   const chunk = chunkThreads(filtered, renderedThreadLimit);
-  for (const t of chunk.visible) {
-    list.appendChild(renderThreadCard(t));
+  for (let i = 0; i < chunk.visible.length; i++) {
+    // posinset/setsize are against the full filtered list, not just what's
+    // built so far — a screen reader announcing "3 of 300" should say the
+    // list's real shape, even though only the first chunk has DOM behind it.
+    list.appendChild(renderThreadCard(chunk.visible[i], i + 1, filtered.length));
   }
   if (chunk.moreLabel) {
     const more = document.createElement("button");
@@ -1356,6 +1408,33 @@ function renderThreads(state: SerializedState): void {
     });
     list.appendChild(more);
   }
+}
+
+/**
+ * The thread list's empty state (10x-plan-4 P2.4): a plain line when a filter
+ * is hiding real threads, a small card that teaches the two ways to start a
+ * thread when the doc has never had one.
+ */
+function buildEmptyStateEl(state: EmptyState): HTMLElement {
+  if (state.kind === "filtered") {
+    const p = document.createElement("p");
+    p.className = "empty";
+    p.textContent = state.message;
+    return p;
+  }
+  const card = document.createElement("div");
+  card.className = "mc-empty-state";
+  const headline = document.createElement("div");
+  headline.className = "mc-empty-state__headline";
+  headline.textContent = state.headline;
+  const hint = document.createElement("div");
+  hint.className = "mc-empty-state__hint";
+  hint.textContent = state.hint;
+  const action = document.createElement("button");
+  action.textContent = state.action.label;
+  action.addEventListener("click", () => vscode.postMessage(state.action.message));
+  card.append(headline, hint, action);
+  return card;
 }
 
 /**
@@ -1406,7 +1485,7 @@ function renderSuggestion(s: SuggestionState): HTMLElement {
     onClick: s.anchor
       ? () => {
           const mark = dom.preview.querySelector<HTMLElement>(`[data-suggestion-id="${cssEscape(s.anchorId)}"]`);
-          mark?.scrollIntoView({ behavior: "smooth", block: "center" });
+          if (mark) smoothScrollIntoView(mark, "center");
         }
       : undefined,
   });
@@ -1430,7 +1509,7 @@ function renderClaudeSummary(state: SerializedState): void {
   dom.claudeNext.disabled = summary.unread === 0;
 }
 
-function renderThreadCard(t: ThreadState): HTMLElement {
+function renderThreadCard(t: ThreadState, posinset: number, setsize: number): HTMLElement {
   const card = document.createElement("section");
   card.className = "thread-card";
   if (t.status === "resolved") card.classList.add("resolved");
@@ -1438,15 +1517,27 @@ function renderThreadCard(t: ThreadState): HTMLElement {
   if (isClaudeUnread(t)) card.classList.add("claude-unread");
   if (collapsedThreads.has(t.id)) card.classList.add("collapsed");
   card.dataset.thread = t.id;
+  // a11y (10x-plan-4 P2.4): the list is a `role="feed"`, so each card reads as
+  // an article with its position in that feed and a label a screen reader can
+  // announce without expanding it.
+  card.setAttribute("role", "article");
+  card.setAttribute("aria-posinset", String(posinset));
+  card.setAttribute("aria-setsize", String(setsize));
+  const root = t.comments[0];
+  if (root) {
+    card.setAttribute("aria-label", `${root.author}: ${root.body.slice(0, 60)}`);
+  }
+  // Roving tabindex: only the highlighted card is in the Tab order. Before
+  // anything is explicitly highlighted, the first card in the feed takes the
+  // role instead of leaving the whole feed unreachable by keyboard.
+  card.tabIndex = (highlightedThreadId ? t.id === highlightedThreadId : posinset === 1) ? 0 : -1;
   card.addEventListener("click", () => {
     highlightedThreadId = t.id;
     scrollPreviewTo(t);
-    // Update only the .highlighted class on cards; do NOT re-render the
-    // list, because that would blow away any in-progress reply textarea
-    // content the user has typed on a different card.
-    for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
-      c.classList.toggle("highlighted", c.dataset.thread === t.id);
-    }
+    // Update only the .highlighted class (and roving tabindex) on cards; do
+    // NOT re-render the list, because that would blow away any in-progress
+    // reply textarea content the user has typed on a different card.
+    updateHighlightedCardDom(t.id);
   });
 
   const head = document.createElement("header");
@@ -1488,6 +1579,15 @@ function renderThreadCard(t: ThreadState): HTMLElement {
 
   const actions = document.createElement("div");
   actions.className = "thread-actions";
+  const openInEditorBtn = document.createElement("button");
+  openInEditorBtn.className = "btn-ghost thread-open-in-editor";
+  openInEditorBtn.textContent = "↗";
+  openInEditorBtn.title = "Open in text editor";
+  openInEditorBtn.setAttribute("aria-label", "Open in text editor");
+  openInEditorBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    vscode.postMessage({ type: "open-in-editor", threadId: t.id });
+  });
   const resolveBtn = document.createElement("button");
   resolveBtn.className = "btn-ghost";
   resolveBtn.textContent = t.status === "resolved" ? "Reopen" : "Resolve";
@@ -1530,7 +1630,7 @@ function renderThreadCard(t: ThreadState): HTMLElement {
     e.stopPropagation();
     vscode.postMessage({ type: "copy-claude-comment", threadId: t.id });
   });
-  actions.append(sendClaudeBtn, copyClaudeBtn, resolveBtn, deleteBtn);
+  actions.append(openInEditorBtn, sendClaudeBtn, copyClaudeBtn, resolveBtn, deleteBtn);
   if (armed) {
     const cancelBtn = document.createElement("button");
     cancelBtn.className = "btn-ghost";
@@ -1683,22 +1783,8 @@ function renderComment(thread: ThreadState, c: InlineComment, pending = false): 
     actions,
     pending,
     pendingLabel: pendingLabelText,
+    pendingAriaLive: true,
   });
-}
-
-
-
-/**
- * `scrollIntoView` that drops to `"auto"` when the OS has "reduce motion" on
- * — smooth scrolling is decoration, not information, and a user who turned it
- * off shouldn't get it back just because this view added more jump targets
- * (n/p thread navigation, "Next unread from Claude").
- */
-function smoothScrollIntoView(el: Element, block: ScrollLogicalPosition): void {
-  const behavior: ScrollBehavior = matchMedia("(prefers-reduced-motion: reduce)").matches
-    ? "auto"
-    : "smooth";
-  el.scrollIntoView({ behavior, block });
 }
 
 function scrollSidebarTo(id: string): void {
@@ -1970,12 +2056,14 @@ window.addEventListener("message", (ev) => {
     updateSuggestModeToggle(msg.suggestMode ?? false);
     pendingThreadIds = new Set(msg.pendingThreadIds ?? []);
     if (msg.pendingLabel) pendingLabelText = msg.pendingLabel;
+    headlessAvailable = msg.headlessAvailable ?? false;
     currentDiff = msg.diff ?? null;
     render(msg.state);
   } else if (msg.type === "update") {
     updateSuggestModeToggle(msg.suggestMode ?? false);
     pendingThreadIds = new Set(msg.pendingThreadIds ?? []);
     if (msg.pendingLabel) pendingLabelText = msg.pendingLabel;
+    headlessAvailable = msg.headlessAvailable ?? false;
     currentDiff = msg.diff ?? null;
     render(msg.state);
   } else if (msg.type === "review-pending") {
@@ -2021,7 +2109,7 @@ function scrollPreviewToProseOffset(proseOffset: number): void {
       }
     }
     if (!best) return;
-    best.scrollIntoView({ behavior: "smooth", block: "start" });
+    smoothScrollIntoView(best, "start");
   });
 }
 

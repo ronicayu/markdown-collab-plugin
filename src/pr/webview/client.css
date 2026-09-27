@@ -166,6 +166,15 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
   0% { background: var(--diff-add-bg-strong); box-shadow: 0 0 0 2px var(--accent); }
   100% { background: transparent; box-shadow: 0 0 0 2px transparent; }
 }
+/* 10x-plan-4 P2.4: these are jump-here emphasis, not information — the click
+   that triggered them already did the informing — so reduced motion just
+   turns the animation off rather than trying to preserve an end state. */
+@media (prefers-reduced-motion: reduce) {
+  #preview .pr-jump-flash,
+  .card-jump-flash {
+    animation: none;
+  }
+}
 
 #floating-add {
   position: fixed;

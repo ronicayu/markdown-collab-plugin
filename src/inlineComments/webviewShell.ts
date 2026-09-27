@@ -45,7 +45,7 @@ export function inlineCommentsAppBody(): string {
         <button id="collapse-threads" class="btn-link" title="Hide comments panel" aria-label="Hide comments panel">›</button>
       </div>
       <div id="claude-summary" hidden>
-        <span id="claude-summary-text"></span>
+        <span id="claude-summary-text" role="status" aria-live="polite"></span>
         <button id="claude-next" class="btn-link" title="Jump to the next unread thread from Claude. (Cmd/Ctrl+K, Cmd/Ctrl+Alt+N)">Next</button>
       </div>
       <div class="filter-row">
@@ -65,7 +65,7 @@ export function inlineCommentsAppBody(): string {
         <button id="skill-install" class="btn-link"></button>
       </div>
     </header>
-    <div id="threads-list"></div>
+    <div id="threads-list" role="feed"></div>
     <div id="composer" hidden></div>
   </aside>
 </div>`;

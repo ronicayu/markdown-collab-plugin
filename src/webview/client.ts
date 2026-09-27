@@ -46,6 +46,7 @@ import { slugifyHeading } from "../inlineComments/linkParse";
 import { resolveImageSrc, type ImageBaseUris } from "../webviewShared/imageSrc";
 import { parseHtmlImage } from "../webviewShared/htmlImage";
 import { displayLine, topLevelBlockLines } from "../webviewShared/lineNumbers";
+import { smoothScrollIntoView } from "../webviewShared/scrollIntoView";
 // Navigation reuses scrollEditorToFragment, which slugifies headings itself
 // with the same function the outline uses.
 import { buildOutline } from "../webviewShared/outline";
@@ -368,7 +369,7 @@ function scrollEditorToHeadingIndex(index: number): void {
   editor?.action((ctx) => {
     const root = ctx.get(editorViewCtx).dom as HTMLElement;
     const target = root.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6")[index];
-    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (target) smoothScrollIntoView(target, "start");
   });
 }
 
@@ -657,7 +658,7 @@ function renderNotice(): void {
     slot.innerHTML = `<button type="button" class="mdc-banner mdc-banner--info mdc-banner--jump" title="Scroll to Claude's edit">${escapeHtml(sidebarState.notice)} ↗</button>`;
     slot.querySelector<HTMLButtonElement>(".mdc-banner--jump")?.addEventListener("click", () => {
       const mark = editorContainer?.querySelector<HTMLElement>(".mdc-claude-edit");
-      mark?.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (mark) smoothScrollIntoView(mark, "center");
     });
   } else {
     slot.innerHTML = `<div class="mdc-banner mdc-banner--info" role="status">${escapeHtml(sidebarState.notice)}</div>`;
@@ -1286,7 +1287,7 @@ function revealCommentInSidebar(commentId: string): void {
   }
   const card = sidebarEl.querySelector<HTMLElement>(`.mdc-comment[data-id="${cssEscape(commentId)}"]`);
   if (!card) return;
-  card.scrollIntoView({ behavior: "smooth", block: "center" });
+  smoothScrollIntoView(card, "center");
   card.classList.remove("mdc-comment--flash");
   void card.offsetWidth;
   card.classList.add("mdc-comment--flash");
@@ -1337,7 +1338,7 @@ function jumpToAnchor(comment: CommentSummary): void {
     try {
       const dom = view.domAtPos(pmRange.from).node as Element | null;
       if (dom && (dom as HTMLElement).scrollIntoView) {
-        (dom as HTMLElement).scrollIntoView({ behavior: "smooth", block: "center" });
+        smoothScrollIntoView(dom as HTMLElement, "center");
       }
     } catch {
       /* ignore */
@@ -2254,12 +2255,12 @@ function scrollEditorToFragment(fragment: string): void {
     const root = ctx.get(editorViewCtx).dom as HTMLElement;
     const byId = root.querySelector<HTMLElement>(`[id="${cssEscape(decoded)}"]`);
     if (byId) {
-      byId.scrollIntoView({ behavior: "smooth", block: "start" });
+      smoothScrollIntoView(byId, "start");
       return;
     }
     for (const h of Array.from(root.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6"))) {
       if (slugifyHeading(h.textContent || "") === decoded) {
-        h.scrollIntoView({ behavior: "smooth", block: "start" });
+        smoothScrollIntoView(h, "start");
         return;
       }
     }

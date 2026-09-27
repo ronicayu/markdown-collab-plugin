@@ -194,6 +194,12 @@ mark.mc-hl {
 mark.mc-hl.mc-hl-resolved { background: var(--hl-resolved); }
 mark.mc-hl.flash { background: var(--hl-flash); }
 mark.mc-hl:hover { filter: brightness(1.15); }
+/* The flash is a color transition, not a keyframe animation, but it's still
+   motion a "reduce motion" user asked not to see (10x-plan-4 P2.4) — cut
+   straight to the end color instead of easing into it. */
+@media (prefers-reduced-motion: reduce) {
+  mark.mc-hl { transition: none; }
+}
 /* A pending suggestion's original text: dashed underline in the accent color,
    distinct from the solid comment highlight. */
 mark.mc-hl.mc-hl--suggestion {
@@ -360,6 +366,27 @@ mark.mc-hl.mc-hl--suggestion {
   text-align: center;
 }
 
+/* First-run empty state (10x-plan-4 P2.4): a small card instead of a line of
+   grey text, since a doc with zero comments needs to teach how to start one,
+   not just say there aren't any. */
+.mc-empty-state {
+  margin: 16px 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.mc-empty-state__headline {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.mc-empty-state__hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
 .thread-card {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -376,6 +403,13 @@ mark.mc-hl.mc-hl--suggestion {
 }
 .thread-card.resolved { opacity: 0.7; }
 .thread-card.resolved .thread-quote { text-decoration: line-through; }
+/* Roving-tabindex focus ring (10x-plan-4 P2.4) — the card is only reachable
+   by keyboard when it's the current one, so it needs a visible marker that
+   isn't the same border color the hover/highlighted states already use. */
+.thread-card:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, #0090f1);
+  outline-offset: 2px;
+}
 
 /* Quote on top; action buttons stack below it on their own row. The
    buttons used to sit to the right of the quote, which got cramped on

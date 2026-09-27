@@ -498,6 +498,12 @@ body { overflow: hidden; }
   0% { background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 220, 0, 0.45)); }
   100% { background-color: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.05)); }
 }
+/* 10x-plan-4 P2.4: cut every keyframe animation on this surface when the OS
+   asked for reduced motion — these are jump-here emphasis, not information,
+   so removing them loses nothing a click didn't already convey. */
+@media (prefers-reduced-motion: reduce) {
+  .mdc-comment--flash { animation: none; }
+}
 
 .mdc-comment-header {
   display: flex;
@@ -669,6 +675,9 @@ body { overflow: hidden; }
   0% { background: var(--vscode-editor-findMatchBackground, rgba(255, 180, 0, 0.7)); }
   100% { background: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 220, 0, 0.25)); }
 }
+@media (prefers-reduced-motion: reduce) {
+  .mdc-anchor-highlight--pulse { animation: none; }
+}
 
 /* The span Claude just edited (externalChange). Green insert-tint that fades
    out over the decoration's lifetime, so the eye lands on what changed. */
@@ -681,6 +690,15 @@ body { overflow: hidden; }
   0% { background: color-mix(in srgb, var(--vscode-charts-green, #4caf50) 42%, transparent); }
   70% { background: color-mix(in srgb, var(--vscode-charts-green, #4caf50) 30%, transparent); }
   100% { background: color-mix(in srgb, var(--vscode-charts-green, #4caf50) 0%, transparent); }
+}
+/* This tint is information (what Claude just changed), not just emphasis, so
+   reduced motion keeps a flat mid-tone instead of removing it outright — it
+   just stops animating out on its own. */
+@media (prefers-reduced-motion: reduce) {
+  .mdc-claude-edit {
+    animation: none;
+    background: color-mix(in srgb, var(--vscode-charts-green, #4caf50) 30%, transparent);
+  }
 }
 
 /* The presence notice, when clickable (scrolls to Claude's edit). */

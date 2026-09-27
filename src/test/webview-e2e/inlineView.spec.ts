@@ -283,3 +283,94 @@ test("Accept all needs a second click, and only appears for more than one sugges
     type: "accept-all-suggestions",
   });
 });
+
+// 10x-plan-4 P2.4: reverse navigation, a11y. (The empty-state variants live in
+// inlineViewEmptyState.spec.ts — each of those needs its own `init` payload,
+// and this file's `beforeEach` already booted the page once with the shared
+// fixture; a second `init`-time script injection into the same page throws.)
+
+test("the ↗ button posts open-in-editor for that thread", async ({ page }) => {
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  await card.getByRole("button", { name: "Open in text editor" }).click();
+  expect(await awaitPosted(page, "open-in-editor")).toEqual({
+    type: "open-in-editor",
+    threadId: fixture.openThreadId,
+  });
+});
+
+test("o opens the highlighted thread in the editor", async ({ page }) => {
+  await page.keyboard.press("n"); // highlights the first card (answered)
+  await page.keyboard.press("o");
+  expect(await awaitPosted(page, "open-in-editor")).toEqual({
+    type: "open-in-editor",
+    threadId: fixture.answeredThreadId,
+  });
+});
+
+test("o is a no-op when nothing is highlighted", async ({ page }) => {
+  await page.keyboard.press("o");
+  expect(await posted(page)).toEqual([]);
+});
+
+test("o is inert while a reply textarea has focus", async ({ page }) => {
+  const replyTextarea = page.locator(
+    `.thread-card[data-thread="${fixture.openThreadId}"] .reply-box textarea`,
+  );
+  await replyTextarea.click();
+  await page.keyboard.press("o");
+  expect(await posted(page)).toEqual([]);
+});
+
+test("the keys hint lists o", async ({ page }) => {
+  await expect(page.locator("#keys-hint")).toContainText("o open in editor");
+});
+
+test("thread list and cards carry feed / article / posinset semantics", async ({ page }) => {
+  await expect(page.locator("#threads-list")).toHaveAttribute("role", "feed");
+  const cards = page.locator(".thread-card");
+  await expect(cards).toHaveCount(2);
+  for (const card of await cards.all()) {
+    await expect(card).toHaveAttribute("role", "article");
+    const label = await card.getAttribute("aria-label");
+    expect(label).toBeTruthy();
+  }
+  await expect(cards.nth(0)).toHaveAttribute("aria-posinset", "1");
+  await expect(cards.nth(0)).toHaveAttribute("aria-setsize", "2");
+  await expect(cards.nth(1)).toHaveAttribute("aria-posinset", "2");
+  await expect(cards.nth(1)).toHaveAttribute("aria-setsize", "2");
+});
+
+test("the claude-summary line and the pending row are aria-live", async ({ page }) => {
+  await expect(page.locator("#claude-summary-text")).toHaveAttribute("aria-live", "polite");
+
+  await pushToWebview(page, {
+    type: "update",
+    state: inlineInit(fixture.source).state,
+    suggestMode: false,
+    pendingThreadIds: [fixture.openThreadId],
+  });
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  await expect(card.locator(".mc-card__pending")).toHaveAttribute("aria-live", "polite");
+});
+
+test("roving tabindex: only the highlighted card is in the tab order, and it follows n/p", async ({ page }) => {
+  const answered = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+  const open = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+
+  // Nothing explicitly highlighted yet — the first card in the feed still
+  // takes the roving role so Tab can reach the list at all.
+  await expect(answered).toHaveAttribute("tabindex", "0");
+  await expect(open).toHaveAttribute("tabindex", "-1");
+
+  await page.keyboard.press("n");
+  await expect(answered).toHaveAttribute("tabindex", "0");
+  await expect(open).toHaveAttribute("tabindex", "-1");
+
+  await page.keyboard.press("n");
+  await expect(answered).toHaveAttribute("tabindex", "-1");
+  await expect(open).toHaveAttribute("tabindex", "0");
+
+  await page.keyboard.press("p");
+  await expect(answered).toHaveAttribute("tabindex", "0");
+  await expect(open).toHaveAttribute("tabindex", "-1");
+});

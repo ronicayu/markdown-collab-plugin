@@ -184,6 +184,13 @@ export async function dispatchReviewPayload(
   workspaceState: vscode.Memento,
   folder: vscode.WorkspaceFolder,
   intent: DispatchIntent = { kind: "address" },
+  /**
+   * Skip mode resolution (config / remembered / detect / ask) entirely and
+   * deliver through this mode for this one dispatch (10x-plan-4 P2.4's
+   * empty-state "Review with Claude" button). Never persisted — the next
+   * ordinary send still resolves the mode the normal way.
+   */
+  opts?: { forceMode?: SendMode },
 ): Promise<void> {
   const headlessLog = log.scope("headless");
   // Every send starts here, so this is the line that tells a stuck dispatch
@@ -211,61 +218,70 @@ export async function dispatchReviewPayload(
     conventions: conventions ? `${conventions.length} chars` : "none",
   });
 
-  const config = vscode.workspace.getConfiguration("markdownCollab");
-  const rawMode = config.get<unknown>("sendMode", "ask");
-  const normalizedMode = normalizeSendModeValue(rawMode);
-  let mode = normalizedMode.mode;
-  if (normalizedMode.kind === "legacy") {
-    log.info("legacy sendMode setting normalized to terminal", { rawMode: String(rawMode) });
-    await maybeShowLegacySendModeToast(workspaceState);
-  } else if (normalizedMode.kind === "unknown") {
-    log.warn(
-      `markdownCollab.sendMode "${String(rawMode)}" is not recognized; falling back to "ask". ` +
-        `Valid values: ask, headless, terminal, clipboard.`,
-    );
-    void vscode.window.showWarningMessage(
-      `markdownCollab.sendMode "${String(rawMode)}" is no longer supported — falling back to ask. Update your settings to one of: headless, terminal, clipboard.`,
-    );
-  }
+  let mode: SendMode;
   let justRemembered = false;
   /** Set when this send's mode was auto-detected rather than chosen. */
   let detected: SendModeDetection | null = null;
-  if (mode === "ask") {
-    const remembered = workspaceState.get<unknown>(REMEMBERED_SEND_MODE_KEY);
-    const rememberedNormalized = normalizeSendModeValue(remembered);
-    if (rememberedNormalized.kind === "legacy") {
-      mode = rememberedNormalized.mode;
-      log.trace("remembered send mode was retired; using terminal", { remembered: String(remembered) });
+  if (opts?.forceMode) {
+    // The caller already decided — e.g. the empty-state card's button, which
+    // exists specifically so headless can run without a detour through the
+    // picker. Config, remembered choice, and auto-detect are all skipped.
+    mode = opts.forceMode;
+    log.info("send mode forced for this dispatch", { mode });
+  } else {
+    const config = vscode.workspace.getConfiguration("markdownCollab");
+    const rawMode = config.get<unknown>("sendMode", "ask");
+    const normalizedMode = normalizeSendModeValue(rawMode);
+    mode = normalizedMode.mode;
+    if (normalizedMode.kind === "legacy") {
+      log.info("legacy sendMode setting normalized to terminal", { rawMode: String(rawMode) });
       await maybeShowLegacySendModeToast(workspaceState);
-      await workspaceState.update(REMEMBERED_SEND_MODE_KEY, mode);
-    } else if (isConcreteSendMode(remembered)) {
-      mode = remembered;
-      log.trace("using the send mode remembered for this workspace", { mode });
-    } else {
-      // Before asking, look at what's actually running. A visible Claude REPL
-      // answers the question the quick-pick was asking, and the user has no
-      // way to make that call better than we can.
-      detected = detectSendMode({ claudeTerminal: tracker.anyClaudeTerminal() });
-      if (detected) {
-        mode = detected.mode;
-        log.info("send mode auto-detected", { mode: detected.mode, reason: detected.reason });
+    } else if (normalizedMode.kind === "unknown") {
+      log.warn(
+        `markdownCollab.sendMode "${String(rawMode)}" is not recognized; falling back to "ask". ` +
+          `Valid values: ask, headless, terminal, clipboard.`,
+      );
+      void vscode.window.showWarningMessage(
+        `markdownCollab.sendMode "${String(rawMode)}" is no longer supported — falling back to ask. Update your settings to one of: headless, terminal, clipboard.`,
+      );
+    }
+    if (mode === "ask") {
+      const remembered = workspaceState.get<unknown>(REMEMBERED_SEND_MODE_KEY);
+      const rememberedNormalized = normalizeSendModeValue(remembered);
+      if (rememberedNormalized.kind === "legacy") {
+        mode = rememberedNormalized.mode;
+        log.trace("remembered send mode was retired; using terminal", { remembered: String(remembered) });
+        await maybeShowLegacySendModeToast(workspaceState);
+        await workspaceState.update(REMEMBERED_SEND_MODE_KEY, mode);
+      } else if (isConcreteSendMode(remembered)) {
+        mode = remembered;
+        log.trace("using the send mode remembered for this workspace", { mode });
       } else {
-        // Headless is offered only when it would actually run — never
-        // auto-selected: nothing but the human's pick chooses it.
-        const headless = await headlessAvailability(workspaceState, headlessLog);
-        const picked = await pickSendMode(payload.unresolvedCount, intent, {
-          terminalDetected: tracker.anyClaudeTerminal(),
-          headlessAvailable: headless.ok,
-        });
-        if (!picked) {
-          log.info("send cancelled at the mode picker");
-          return;
+        // Before asking, look at what's actually running. A visible Claude REPL
+        // answers the question the quick-pick was asking, and the user has no
+        // way to make that call better than we can.
+        detected = detectSendMode({ claudeTerminal: tracker.anyClaudeTerminal() });
+        if (detected) {
+          mode = detected.mode;
+          log.info("send mode auto-detected", { mode: detected.mode, reason: detected.reason });
+        } else {
+          // Headless is offered only when it would actually run — never
+          // auto-selected: nothing but the human's pick chooses it.
+          const headless = await headlessAvailability(workspaceState, headlessLog);
+          const picked = await pickSendMode(payload.unresolvedCount, intent, {
+            terminalDetected: tracker.anyClaudeTerminal(),
+            headlessAvailable: headless.ok,
+          });
+          if (!picked) {
+            log.info("send cancelled at the mode picker");
+            return;
+          }
+          mode = picked;
+          log.info("send mode picked by the user", { mode });
         }
-        mode = picked;
-        log.info("send mode picked by the user", { mode });
+        await workspaceState.update(REMEMBERED_SEND_MODE_KEY, mode);
+        justRemembered = true;
       }
-      await workspaceState.update(REMEMBERED_SEND_MODE_KEY, mode);
-      justRemembered = true;
     }
   }
 
