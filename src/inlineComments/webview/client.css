@@ -309,6 +309,10 @@ mark.mc-hl.mc-hl--suggestion {
   border-left: 3px solid var(--accent, #6c8eef);
   border-radius: 4px;
 }
+/* Same trap as .skill-warning above: `display: flex` outranks the UA
+   `[hidden]` rule, so the empty bar showed on every document, Claude threads
+   or not. */
+#claude-summary[hidden] { display: none; }
 #claude-summary #claude-summary-text { color: var(--muted); flex: 1; }
 #claude-summary button { font-size: 11px; }
 
