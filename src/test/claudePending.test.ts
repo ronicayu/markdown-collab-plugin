@@ -75,6 +75,12 @@ describe("isAnswered", () => {
     expect(isAnswered(snap1, thread("a1", ["ronica", "claude"]))).toBe(true);
   });
 
+  it("is true once ANY agent adds a comment, not just claude", () => {
+    // 10x-plan-4 P1.2: a Codex reply answers the wait exactly like Claude's
+    // would — the human isn't the one still owed an answer either way.
+    expect(isAnswered(snap1, thread("a1", ["ronica", "codex"]))).toBe(true);
+  });
+
   it("stays false when the HUMAN adds a comment while waiting", () => {
     // Counting alone would clear the indicator here, which is wrong: Claude
     // still owes a reply.
@@ -404,6 +410,14 @@ describe("pendingLabel", () => {
     );
   });
 
+  it("an inferred wait says Claude even if an agent slug somehow got attached", () => {
+    // Inferred waits only ever come from a terminal send, which only ever
+    // talks to Claude (10x-plan-4 P1.2) — the agent field is irrelevant here.
+    expect(pendingLabel({ evidence: "inferred", active: true, agent: "codex" })).toBe(
+      "Claude is working…",
+    );
+  });
+
   it("names the phase when Claude reported one", () => {
     expect(pendingLabel({ evidence: "protocol", active: true, phase: "opening threads" })).toBe(
       "Claude: opening threads",
@@ -415,5 +429,77 @@ describe("pendingLabel", () => {
     expect(pendingLabel({ evidence: "protocol", active: true })).toBe(
       "Claude is working on this file…",
     );
+  });
+
+  // 10x-plan-4 P1.2: protocol evidence names whichever agent actually earned
+  // it — a Codex-only wait says Codex throughout.
+  it("names Codex when the protocol evidence came from Codex", () => {
+    expect(pendingLabel({ evidence: "protocol", active: true, phase: "reading", agent: "codex" })).toBe(
+      "Codex: reading",
+    );
+    expect(pendingLabel({ evidence: "protocol", active: true, agent: "codex" })).toBe(
+      "Codex is working on this file…",
+    );
+    expect(pendingLabel({ evidence: "protocol", active: false, agent: "codex" })).toBe(
+      "Sent to Codex…",
+    );
+  });
+
+  it("reads as 'the agent' for the generic slug (an unknown/absent session)", () => {
+    // "agent" is the literal fallback slug `SessionRegistry.slugFor` returns
+    // for a session it never saw `initialize` on — distinct from a slug
+    // `agentSlugFromClientName` derived from an actual (if unrecognized)
+    // client name, which gets its own capitalized name instead.
+    expect(pendingLabel({ evidence: "protocol", active: true, agent: "agent" })).toBe(
+      "the agent is working on this file…",
+    );
+  });
+
+  it("title-cases an unrecognized-but-real client slug rather than genericizing it", () => {
+    expect(pendingLabel({ evidence: "protocol", active: true, agent: "my-weird-client" })).toBe(
+      "My-weird-client is working on this file…",
+    );
+  });
+});
+
+// 10x-plan-4 P1.2: the tracker learns which agent a protocol wait belongs to
+// from the tool calls themselves.
+describe("ClaudePendingTracker — agent attribution", () => {
+  function makeTracker() {
+    let now = T0;
+    const tracker = new ClaudePendingTracker(
+      () => undefined,
+      () => now,
+      1000,
+      () => 0 as unknown as ReturnType<typeof setTimeout>,
+      () => undefined,
+    );
+    return { tracker, advance: (ms: number) => (now += ms) };
+  }
+
+  const DOC = "/ws/docs/guide.md";
+  const threads = [thread("a1", ["ronica"])];
+
+  it("learns the agent from noteActivity and reports it in status()", () => {
+    const { tracker } = makeTracker();
+    tracker.mark(DOC, threads, ["a1"], "inferred");
+    tracker.noteActivity(DOC, { agent: "codex" });
+    expect(tracker.status(DOC, threads).agent).toBe("codex");
+  });
+
+  it("keeps the last-known agent when a later call carries none", () => {
+    const { tracker } = makeTracker();
+    tracker.mark(DOC, threads, ["a1"], "inferred");
+    tracker.noteActivity(DOC, { agent: "codex", phase: "step 1" });
+    tracker.noteActivity(DOC, { phase: "step 2" });
+    expect(tracker.status(DOC, threads)).toMatchObject({ agent: "codex", phase: "step 2" });
+  });
+
+  it("a fresh dispatch forgets the previous pass's agent, same as its phase", () => {
+    const { tracker } = makeTracker();
+    tracker.mark(DOC, threads, ["a1"], "protocol");
+    tracker.noteActivity(DOC, { agent: "codex" });
+    tracker.mark(DOC, threads, ["a1"], "protocol");
+    expect(tracker.status(DOC, threads).agent).toBeUndefined();
   });
 });

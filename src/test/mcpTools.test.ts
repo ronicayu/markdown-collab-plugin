@@ -14,7 +14,7 @@ Suggest mode ships behind a setting.
 /** An in-memory workspace: one file, recorded writes. */
 function harness(initial = DOC) {
   const files = new Map<string, string>([["/ws/guide.md", initial]]);
-  const calls: Array<{ tool: string; file?: string; note?: string }> = [];
+  const calls: Array<{ tool: string; file?: string; note?: string; agent: string }> = [];
   const deps: ToolDeps = {
     resolveFile: async (file) => {
       const key = file.startsWith("/") ? file : `/ws/${file}`;
@@ -32,7 +32,8 @@ function harness(initial = DOC) {
     deps,
     calls,
     read: (key = "/ws/guide.md") => files.get(key)!,
-    call: (name: string, args: Record<string, unknown> = {}) => callTool(name, args, deps),
+    call: (name: string, args: Record<string, unknown> = {}, author?: string) =>
+      callTool(name, args, deps, author),
   };
 }
 
@@ -103,7 +104,7 @@ describe("mc_help", () => {
     expect(r.content[0]!.text).toBe(renderSkill("headless"));
     // Needs no file, touches nothing, and reports no document to the pending
     // indicators.
-    expect(h.calls).toEqual([{ tool: "mc_help" }]);
+    expect(h.calls).toEqual([{ tool: "mc_help", agent: "claude" }]);
     expect(h.read()).toBe(DOC);
   });
 });
@@ -253,7 +254,12 @@ describe("mc_status", () => {
     expect(r.isError).toBeUndefined();
     expect(body(r)).toEqual({ ok: true, note: "reading 2 of 3 files" });
     expect(h.read()).toBe(before);
-    expect(h.calls.at(-1)).toEqual({ tool: "mc_status", file: undefined, note: "reading 2 of 3 files" });
+    expect(h.calls.at(-1)).toEqual({
+      tool: "mc_status",
+      file: undefined,
+      note: "reading 2 of 3 files",
+      agent: "claude",
+    });
   });
 });
 
@@ -263,8 +269,60 @@ describe("call notification", () => {
     await h.call("mc_list", { file: "guide.md" });
     await h.call("mc_check", { file: "guide.md" });
     expect(h.calls).toEqual([
-      { tool: "mc_list", file: "/ws/guide.md" },
-      { tool: "mc_check", file: "/ws/guide.md" },
+      { tool: "mc_list", file: "/ws/guide.md", agent: "claude" },
+      { tool: "mc_check", file: "/ws/guide.md", agent: "claude" },
     ]);
+  });
+
+  it("carries the calling agent's slug, not just claude's", async () => {
+    const h = harness();
+    await h.call("mc_list", { file: "guide.md" }, "codex");
+    expect(h.calls).toEqual([{ tool: "mc_list", file: "/ws/guide.md", agent: "codex" }]);
+  });
+});
+
+describe("author threading (10x-plan-4 P1.2)", () => {
+  it("mc_open with a non-default author lands that author, agent: true, on the comment", async () => {
+    const h = harness();
+    body(await h.call("mc_open", { file: "guide.md", quote: "nested lists", body: "?" }, "codex"));
+    const thread = parse(h.read()).threads[0]!;
+    expect(thread.comments[0]).toMatchObject({ author: "codex", agent: true });
+  });
+
+  it("mc_reply with a non-default author lands that author, agent: true", async () => {
+    const seeded = addThread(DOC, DOC.indexOf("nested lists"), DOC.indexOf("nested lists") + 12, {
+      author: "ronica",
+      body: "Ordered too?",
+      ts: "2026-07-01T00:00:00.000Z",
+    });
+    const h = harness(seeded.source);
+    body(await h.call("mc_reply", { file: "guide.md", threadId: seeded.thread.id, body: "yes" }, "cursor"));
+    const thread = parse(h.read()).threads.find((t) => t.id === seeded.thread.id)!;
+    expect(thread.comments.at(-1)).toMatchObject({ author: "cursor", agent: true });
+  });
+
+  it("mc_suggest with a non-default author lands that author, agent: true", async () => {
+    const h = harness();
+    body(
+      await h.call(
+        "mc_suggest",
+        { file: "guide.md", quote: "Suggest mode ships behind a setting.", with: "off by default." },
+        "gemini",
+      ),
+    );
+    const suggestion = parse(h.read()).suggestions[0]!;
+    expect(suggestion).toMatchObject({ author: "gemini", agent: true });
+  });
+
+  it("opList(actionable) treats a Codex-answered thread as no longer waiting on Claude", async () => {
+    const h = harness();
+    const opened = body(
+      await h.call("mc_open", { file: "guide.md", quote: "nested lists", body: "human note" }, "claude"),
+    );
+    // A human opened nothing here; simulate the human still owing nothing and
+    // Codex having already answered — actionable should exclude it.
+    body(await h.call("mc_reply", { file: "guide.md", threadId: opened.threadId, body: "codex replied" }, "codex"));
+    const listed = body(await h.call("mc_list", { file: "guide.md", actionable: true }));
+    expect(listed.threads.find((t: { id: string }) => t.id === opened.threadId)).toBeUndefined();
   });
 });

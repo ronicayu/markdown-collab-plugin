@@ -93,6 +93,33 @@ describe("serveMcp", () => {
     expect(JSON.parse(r.body).result.serverInfo.name).toBe("markdown-collab");
   });
 
+  // 10x-plan-4 P1.2: streamable HTTP issues a session id on `initialize` so a
+  // later `tools/call` can be attributed to whichever agent connected.
+  it("issues an Mcp-Session-Id on initialize when the client sent none", async () => {
+    const s = await start();
+    const r = await post(s, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { clientInfo: { name: "codex-mcp-client" } },
+    });
+    const sessionId = r.headers.get("mcp-session-id");
+    expect(sessionId).toBeTruthy();
+  });
+
+  it("does not mint a second session id once the client is already carrying one", async () => {
+    const s = await start();
+    const first = await post(s, { jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+    const sessionId = first.headers.get("mcp-session-id")!;
+    const second = await post(
+      s,
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "mc_list" } },
+      { headers: { "mcp-session-id": sessionId } },
+    );
+    expect(second.headers.get("mcp-session-id")).toBeNull();
+    expect(second.status).toBe(200);
+  });
+
   it("lists and calls tools", async () => {
     const s = await start();
     const list = JSON.parse((await post(s, { jsonrpc: "2.0", id: 1, method: "tools/list" })).body);

@@ -65,7 +65,27 @@ export interface ProtocolHandlers {
   /** Shown to the client after initialize — the server's own usage notes. */
   instructions?: string;
   tools: readonly McpTool[];
-  callTool(name: string, args: Record<string, unknown>): Promise<ToolResult>;
+  /**
+   * `author` is the calling session's agent slug (10x-plan-4 P1.2) —
+   * resolved via `resolveAuthor` below before the handler ever sees the
+   * call, so every tool implementation just takes it as a parameter rather
+   * than re-deriving it.
+   */
+  callTool(name: string, args: Record<string, unknown>, author: string): Promise<ToolResult>;
+  /**
+   * Record the client's declared name for a session, from `initialize`'s
+   * `clientInfo.name`. Optional: a caller with no session tracking (most unit
+   * tests, and any transport that never passes a `sessionId` to `handleRpc`)
+   * simply never has this called, and every `tools/call` falls back to
+   * `resolveAuthor`'s absence case.
+   */
+  recordSession?(sessionId: string, clientName: string | undefined): void;
+  /**
+   * The agent slug a session id resolves to. Absent entirely means "no
+   * session tracking at all" — `handleRpc` then defaults every call to
+   * `claude`, which is what every caller before this change effectively was.
+   */
+  resolveAuthor?(sessionId: string | undefined): string;
 }
 
 function ok(id: string | number | null, result: unknown): JsonRpcResponse {
@@ -95,6 +115,13 @@ export function negotiateVersion(requested: unknown): string {
 export async function handleRpc(
   msg: unknown,
   h: ProtocolHandlers,
+  /**
+   * The transport's session id for this request — from the `Mcp-Session-Id`
+   * header, minted fresh by the transport on an `initialize` that arrived
+   * without one (10x-plan-4 P1.2). `undefined` when the transport does no
+   * session tracking at all.
+   */
+  sessionId?: string,
 ): Promise<JsonRpcResponse | null> {
   if (typeof msg !== "object" || msg === null || Array.isArray(msg)) {
     return err(null, RPC_INVALID_REQUEST, "expected a JSON-RPC request object");
@@ -108,13 +135,16 @@ export async function handleRpc(
   const id = req.id ?? null;
 
   switch (req.method) {
-    case "initialize":
+    case "initialize": {
+      const clientInfo = req.params?.clientInfo as { name?: string } | undefined;
+      if (sessionId !== undefined) h.recordSession?.(sessionId, clientInfo?.name);
       return ok(id, {
         protocolVersion: negotiateVersion(req.params?.protocolVersion),
         capabilities: { tools: { listChanged: false } },
         serverInfo: h.serverInfo,
         ...(h.instructions ? { instructions: h.instructions } : {}),
       });
+    }
 
     case "notifications/initialized":
     case "initialized":
@@ -139,7 +169,8 @@ export async function handleRpc(
         return err(id, RPC_METHOD_NOT_FOUND, `unknown tool: ${name}`);
       }
       try {
-        const result = await h.callTool(name, (rawArgs as Record<string, unknown>) ?? {});
+        const author = h.resolveAuthor?.(sessionId) ?? "claude";
+        const result = await h.callTool(name, (rawArgs as Record<string, unknown>) ?? {}, author);
         return ok(id, result);
       } catch (e) {
         // A throw here is a bug in the server, not a refused operation —

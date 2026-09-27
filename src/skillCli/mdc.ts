@@ -54,20 +54,27 @@ const EXIT_INTEGRITY = 2;
 const USAGE = `mdc — Markdown Collab inline-comment CLI
 
   mdc list <file> [--actionable]              threads as JSON
-  mdc reply <file> <threadId> --body TEXT     append a reply authored by claude
+  mdc reply <file> <threadId> --body TEXT [--author SLUG]
+                                              append a reply authored by claude (or --author)
   mdc rewrite <file> <threadId> --with TEXT   replace the anchored span, markers preserved
   mdc edit <file> --old TEXT --new TEXT [--occurrence N]
                                               replace exact prose text outside anchored spans
-  mdc open <file> --quote TEXT --body TEXT [--occurrence N]
+  mdc open <file> --quote TEXT --body TEXT [--occurrence N] [--author SLUG]
                                               open a new thread on a passage
-  mdc resolve <file> <threadId>               mark a thread resolved
-  mdc suggest <file> --quote TEXT --with TEXT [--note TEXT] [--occurrence N]
+  mdc resolve <file> <threadId> [--author SLUG]
+                                              mark a thread resolved
+  mdc suggest <file> --quote TEXT --with TEXT [--note TEXT] [--occurrence N] [--author SLUG]
                                               propose an edit (accept/reject in the UI)
   mdc accept <file> <anchorId>                apply a pending suggestion
   mdc reject <file> <anchorId>                drop a pending suggestion, keep the original
   mdc check <file> [--repair]                 integrity report; exit 2 if broken
   mdc check --hook                            Claude Code PostToolUse hook: reads the hook JSON on stdin;
                                               exit 2 + report on stderr if the edited .md has broken markers
+
+  --author SLUG applies to reply/open/resolve/suggest — the agent writing the
+  comment (10x-plan-4 P1.2). Defaults to "claude"; every headless Claude Code
+  run is that default, so nothing changes for it. Sets the comment's JSON
+  "agent" flag alongside "author".
 
 All commands print JSON to stdout. Exit codes: 0 ok, 1 usage, 2 integrity.`;
 
@@ -198,24 +205,24 @@ function cmdList(file: string, actionableOnly: boolean): void {
   out({ file, ...opList(readDoc(file), actionableOnly) });
 }
 
-function cmdReply(file: string, threadId: string, body: string): void {
-  apply(file, "reply", (s) => opReply(s, threadId, body));
+function cmdReply(file: string, threadId: string, body: string, author: string): void {
+  apply(file, "reply", (s) => opReply(s, threadId, body, undefined, author));
 }
 
 function cmdRewrite(file: string, threadId: string, replacement: string): void {
   apply(file, "rewrite", (s) => opRewrite(s, threadId, replacement));
 }
 
-function cmdOpen(file: string, quote: string, body: string, occurrence: number): void {
-  apply(file, "open", (s) => opOpen(s, quote, body, occurrence));
+function cmdOpen(file: string, quote: string, body: string, occurrence: number, author: string): void {
+  apply(file, "open", (s) => opOpen(s, quote, body, occurrence, undefined, author));
 }
 
 function cmdEdit(file: string, old: string, replacement: string, occurrence: number): void {
   apply(file, "edit", (s) => opEdit(s, old, replacement, occurrence));
 }
 
-function cmdResolve(file: string, threadId: string): void {
-  apply(file, "resolve", (s) => opResolve(s, threadId));
+function cmdResolve(file: string, threadId: string, author: string): void {
+  apply(file, "resolve", (s) => opResolve(s, threadId, undefined, author));
 }
 
 function cmdSuggest(
@@ -224,8 +231,9 @@ function cmdSuggest(
   proposed: string,
   note: string | undefined,
   occurrence: number,
+  author: string,
 ): void {
-  apply(file, "suggest", (s) => opSuggest(s, quote, proposed, { note, occurrence }));
+  apply(file, "suggest", (s) => opSuggest(s, quote, proposed, { note, occurrence }, undefined, author));
 }
 
 function cmdAccept(file: string, anchorId: string): void {
@@ -316,14 +324,18 @@ function main(): void {
   }
   const { _, flags } = parseArgs(argv);
   const [command, ...rest] = _;
+  // The agent writing the comment (10x-plan-4 P1.2). "claude" is the default
+  // for compatibility — every existing caller, including every headless
+  // Claude Code run, never passes `--author` and keeps behaving as before.
+  const author = typeof flags.author === "string" && flags.author !== "" ? flags.author : "claude";
 
   switch (command) {
     case "list":
       if (!rest[0]) fail("usage: mdc list <file> [--actionable]");
       return cmdList(rest[0], flags.actionable === true);
     case "reply":
-      if (!rest[0] || !rest[1]) fail("usage: mdc reply <file> <threadId> --body TEXT");
-      return cmdReply(rest[0], rest[1], str(flags, "body"));
+      if (!rest[0] || !rest[1]) fail("usage: mdc reply <file> <threadId> --body TEXT [--author SLUG]");
+      return cmdReply(rest[0], rest[1], str(flags, "body"), author);
     case "rewrite":
       if (!rest[0] || !rest[1]) fail("usage: mdc rewrite <file> <threadId> --with TEXT");
       return cmdRewrite(rest[0], rest[1], str(flags, "with"));
@@ -336,24 +348,28 @@ function main(): void {
         typeof flags.occurrence === "string" ? Number(flags.occurrence) : 0,
       );
     case "open":
-      if (!rest[0]) fail("usage: mdc open <file> --quote TEXT --body TEXT [--occurrence N]");
+      if (!rest[0]) fail("usage: mdc open <file> --quote TEXT --body TEXT [--occurrence N] [--author SLUG]");
       return cmdOpen(
         rest[0],
         str(flags, "quote"),
         str(flags, "body"),
         typeof flags.occurrence === "string" ? Number(flags.occurrence) : 0,
+        author,
       );
     case "resolve":
-      if (!rest[0] || !rest[1]) fail("usage: mdc resolve <file> <threadId>");
-      return cmdResolve(rest[0], rest[1]);
+      if (!rest[0] || !rest[1]) fail("usage: mdc resolve <file> <threadId> [--author SLUG]");
+      return cmdResolve(rest[0], rest[1], author);
     case "suggest":
-      if (!rest[0]) fail("usage: mdc suggest <file> --quote TEXT --with TEXT [--note TEXT] [--occurrence N]");
+      if (!rest[0]) {
+        fail("usage: mdc suggest <file> --quote TEXT --with TEXT [--note TEXT] [--occurrence N] [--author SLUG]");
+      }
       return cmdSuggest(
         rest[0],
         str(flags, "quote"),
         str(flags, "with"),
         typeof flags.note === "string" ? flags.note : undefined,
         typeof flags.occurrence === "string" ? Number(flags.occurrence) : 0,
+        author,
       );
     case "accept":
       if (!rest[0] || !rest[1]) fail("usage: mdc accept <file> <anchorId>");

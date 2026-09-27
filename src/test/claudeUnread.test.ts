@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { isClaudeReviewed, isClaudeUnread, type ClaudeUnreadThread } from "../inlineComments/claudeUnread";
+import {
+  isClaudeReviewed,
+  isClaudeUnread,
+  unreadAgentSlug,
+  type ClaudeUnreadThread,
+} from "../inlineComments/claudeUnread";
 
 function thread(
-  comments: Array<{ author: string; deleted?: boolean }>,
+  comments: Array<{ author: string; deleted?: boolean; agent?: boolean }>,
   status: "open" | "resolved" = "open",
 ): ClaudeUnreadThread {
   return { status, comments };
@@ -105,5 +110,39 @@ describe("isClaudeUnread × isClaudeReviewed — mutual exclusion on claude-init
     const t = thread([{ author: "claude" }], "resolved");
     expect(isClaudeUnread(t)).toBe(false);
     expect(isClaudeReviewed(t)).toBe(true);
+  });
+});
+
+// 10x-plan-4 P1.2: any agent, not just Claude, can open or answer a thread —
+// "unread"/"reviewed" is about whether a HUMAN has engaged, not which agent.
+describe("isClaudeUnread / isClaudeReviewed — non-Claude agents", () => {
+  it("a codex-only open thread is unread", () => {
+    expect(isClaudeUnread(thread([{ author: "codex" }]))).toBe(true);
+  });
+
+  it("a thread Codex opened and Cursor also replied to is still unread (no human yet)", () => {
+    expect(isClaudeUnread(thread([{ author: "codex" }, { author: "cursor" }]))).toBe(true);
+  });
+
+  it("a human reply closes out a codex-initiated thread same as a claude one", () => {
+    const t = thread([{ author: "codex" }, { author: "ronica" }]);
+    expect(isClaudeUnread(t)).toBe(false);
+    expect(isClaudeReviewed(t)).toBe(true);
+  });
+
+  it("the explicit agent flag is enough even for an unrecognized slug", () => {
+    expect(isClaudeUnread(thread([{ author: "some-future-agent", agent: true }]))).toBe(true);
+  });
+});
+
+describe("unreadAgentSlug", () => {
+  it("names the agent that opened an unread thread", () => {
+    expect(unreadAgentSlug(thread([{ author: "codex" }]))).toBe("codex");
+    expect(unreadAgentSlug(thread([{ author: "claude" }]))).toBe("claude");
+  });
+
+  it("is undefined once the thread is no longer unread", () => {
+    expect(unreadAgentSlug(thread([{ author: "claude" }, { author: "ronica" }]))).toBeUndefined();
+    expect(unreadAgentSlug(thread([{ author: "ronica" }]))).toBeUndefined();
   });
 });

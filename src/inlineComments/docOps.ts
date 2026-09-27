@@ -32,6 +32,7 @@ import {
 import { checkpointFor } from "./deltaReview";
 import { checkIntegrity, type IntegrityIssue } from "./integrity";
 import { hashAnchorText, staleThreadIds, withRefreshedAnchorHash } from "./staleness";
+import { isAgentComment } from "../agentIdentity";
 
 /** Machine-readable reason an operation refused. */
 export type DocOpCode =
@@ -209,7 +210,13 @@ export interface ListResult {
 
 /**
  * The document's review state. `actionable` narrows to threads that are open
- * and whose last word is not Claude's — the ones still owed a reply.
+ * and whose last comment isn't an agent's — the ones still owed a reply.
+ *
+ * "Not an agent's" rather than "not Claude's" (10x-plan-4 P1.2): the question
+ * this answers is "is the human waiting on an agent here?", and a reply from
+ * ANY agent — Codex answering a thread Claude opened, say — means the answer
+ * is no. The old literal check against the single string "claude" got this wrong by accident: a
+ * thread another agent had just answered still counted as waiting on Claude.
  */
 export function opList(source: string, actionable = false): ListResult {
   const parsed = parse(source);
@@ -219,7 +226,7 @@ export function opList(source: string, actionable = false): ListResult {
       if (!actionable) return true;
       if (t.status !== "open") return false;
       const last = lastLiveComment(t);
-      return last !== undefined && last.author !== "claude";
+      return last !== undefined && !isAgentComment(last);
     })
     .map((t) => {
       const a = parsed.anchors.get(t.id);
@@ -262,13 +269,14 @@ export function opReply(
   threadId: string,
   body: string,
   now = () => new Date().toISOString(),
+  author = "claude",
 ): OpOutcome<{ threadId: string; commentId: string }> {
   const thread = findThread(source, threadId);
   // Claude just read this passage to answer about it, so its reply is the new
   // baseline for "text changed since this comment" (P1.3).
   const replied = withRefreshedAnchorHash(
     parse(source),
-    appendReply(thread, { author: "claude", body, ts: now() }),
+    appendReply(thread, { author, agent: true, body, ts: now() }),
   );
   const next = replaceThread(source, threadId, replied);
   assertNoNewIssues(source, next);
@@ -490,11 +498,12 @@ export function opOpen(
   body: string,
   occurrence = 0,
   now = () => new Date().toISOString(),
+  author = "claude",
 ): OpOutcome<{ threadId: string; quote: string }> {
   const at = locatePassage(source, quote, occurrence);
   let result;
   try {
-    result = addThread(source, at, at + quote.length, { author: "claude", body, ts: now() });
+    result = addThread(source, at, at + quote.length, { author, agent: true, body, ts: now() });
   } catch (e) {
     // addThread refuses frontmatter, the threads region, and code.
     throw new DocOpError("not_anchorable", (e as Error).message, { quote });
@@ -541,12 +550,13 @@ export function opResolve(
   source: string,
   threadId: string,
   now = () => new Date().toISOString(),
+  author = "claude",
 ): OpOutcome<{ threadId: string }> {
   const thread = findThread(source, threadId);
   const next = replaceThread(source, threadId, {
     ...thread,
     status: "resolved",
-    resolvedBy: "claude",
+    resolvedBy: author,
     resolvedTs: now(),
   });
   assertNoNewIssues(source, next);
@@ -632,12 +642,14 @@ export function opSuggest(
   proposed: string,
   opts: { note?: string; occurrence?: number; threadId?: string } = {},
   now = () => new Date().toISOString(),
+  author = "claude",
 ): OpOutcome<{ anchorId: string; original: string; proposed: string }> {
   const at = locatePassage(source, quote, opts.occurrence ?? 0);
   let result;
   try {
     result = addSuggestion(source, at, at + quote.length, {
-      author: "claude",
+      author,
+      agent: true,
       proposed,
       note: opts.note,
       threadId: opts.threadId,

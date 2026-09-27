@@ -30,6 +30,14 @@
 //
 // Pure and vscode-free: the tracker takes an injected clock and scheduler so
 // the expiry path is testable without waiting ten minutes.
+//
+// Naming the agent (10x-plan-4 P1.2): an "inferred" wait always says Claude —
+// it exists only for a terminal send, and that path only ever talks to
+// Claude. A "protocol" wait's evidence IS a tool call, and a tool call now
+// carries the calling agent's slug, so `noteActivity`/`noteComplete` learn it
+// there and `pendingLabel` names whichever agent is actually doing the work.
+
+import { agentDisplayName, isAgentComment } from "../agentIdentity";
 
 /** How long a thread may wait, with no signal at all, before we stop claiming Claude is working on it. */
 export const PENDING_TIMEOUT_MS = 10 * 60 * 1000;
@@ -56,7 +64,7 @@ export interface PendingThread {
 export interface PendingInputThread {
   id: string;
   status: "open" | "resolved";
-  comments: Array<{ author: string; deleted?: boolean }>;
+  comments: Array<{ author: string; deleted?: boolean; agent?: boolean }>;
 }
 
 /** What the views need to render the wait. */
@@ -68,9 +76,16 @@ export interface PendingStatus {
   phase?: string;
   /** True once Claude has actually called a tool for this document. */
   active: boolean;
+  /**
+   * The agent slug protocol evidence was last recorded under, when there is
+   * any (`noteActivity`/`noteComplete` learn it from the tool call). Absent
+   * for a purely "inferred" wait — that path never learns who picked up the
+   * terminal send, and it is always Claude anyway.
+   */
+  agent?: string;
 }
 
-function liveComments(t: PendingInputThread): Array<{ author: string; deleted?: boolean }> {
+function liveComments(t: PendingInputThread): Array<{ author: string; deleted?: boolean; agent?: boolean }> {
   return t.comments.filter((c) => !c.deleted);
 }
 
@@ -96,17 +111,18 @@ export function snapshotPending(
 /**
  * Has this thread been answered since its snapshot?
  *
- * Answered means: a new comment arrived AND the last one is Claude's. Counting
- * alone would clear the indicator when the *human* adds a note while waiting;
- * checking only the author would clear it on a thread Claude had already
- * replied to before the dispatch.
+ * Answered means: a new comment arrived AND the last one is an agent's (any
+ * agent — 10x-plan-4 P1.2: whichever one picked up the reply, the human isn't
+ * the one still owed an answer). Counting alone would clear the indicator
+ * when the *human* adds a note while waiting; checking only the author would
+ * clear it on a thread an agent had already replied to before the dispatch.
  */
 export function isAnswered(snapshot: PendingThread, thread: PendingInputThread | undefined): boolean {
   if (!thread) return true; // deleted while waiting — nothing left to wait for
   if (thread.status === "resolved") return true;
   const live = liveComments(thread);
   if (live.length <= snapshot.commentCount) return false;
-  return live[live.length - 1]!.author === "claude";
+  return isAgentComment(live[live.length - 1]!);
 }
 
 /**
@@ -131,6 +147,8 @@ interface DocSignals {
   active: boolean;
   /** Latest `mc_status` note. */
   phase?: string;
+  /** Slug of the agent the last tool call for this document came from. */
+  agent?: string;
 }
 
 /**
@@ -196,12 +214,13 @@ export class ClaudePendingTracker {
    * place a wait ever becomes "protocol" — and it upgrades every snapshot for the
    * document, not just ones that already had it.
    */
-  public noteActivity(docKey: string, opts: { phase?: string } = {}): void {
+  public noteActivity(docKey: string, opts: { phase?: string; agent?: string } = {}): void {
     const snapshots = this.byDoc.get(docKey);
     const previous = this.signals.get(docKey);
     const next: DocSignals = {
       active: true,
       phase: opts.phase ?? previous?.phase,
+      agent: opts.agent ?? previous?.agent,
     };
     this.signals.set(docKey, next);
     if (!snapshots || snapshots.length === 0) {
@@ -224,7 +243,7 @@ export class ClaudePendingTracker {
    * of them, and dropping it would leave the row silent for exactly the long
    * passes the beacon exists for.
    */
-  public noteActivityEverywhere(opts: { phase?: string } = {}): void {
+  public noteActivityEverywhere(opts: { phase?: string; agent?: string } = {}): void {
     for (const docKey of [...this.byDoc.keys()]) this.noteActivity(docKey, opts);
   }
 
@@ -273,6 +292,7 @@ export class ClaudePendingTracker {
       evidence: remaining.some((s) => s.evidence === "protocol") ? "protocol" : "inferred",
       phase: signals?.phase,
       active: signals?.active ?? false,
+      agent: signals?.agent,
     };
   }
 
@@ -293,6 +313,7 @@ export class ClaudePendingTracker {
       evidence: snapshots.some((s) => s.evidence === "protocol") ? "protocol" : "inferred",
       phase: signals?.phase,
       active: signals?.active ?? false,
+      agent: signals?.agent,
     };
   }
 
@@ -350,10 +371,18 @@ export class ClaudePendingTracker {
  * The line the views show under a waiting thread. Protocol-grade evidence earns
  * a specific claim; inferred evidence keeps the vaguer one, because it is a
  * guess and should read like one.
+ *
+ * An inferred wait always says Claude (10x-plan-4 P1.2): it is only ever
+ * recorded for a terminal send, and that path only ever talks to Claude — the
+ * wording rule's "keep Claude's copy exactly as it reads today" case. A
+ * protocol wait names whichever agent's tool call actually earned it,
+ * defaulting to Claude when a caller has evidence but hasn't learned who from
+ * (`status`/`peek` built before any tool call carried a slug).
  */
-export function pendingLabel(status: Pick<PendingStatus, "evidence" | "phase" | "active">): string {
+export function pendingLabel(status: Pick<PendingStatus, "evidence" | "phase" | "active" | "agent">): string {
   if (status.evidence !== "protocol") return "Claude is working…";
-  if (status.phase) return `Claude: ${status.phase}`;
-  if (status.active) return "Claude is working on this file…";
-  return "Sent to Claude…";
+  const agent = agentDisplayName(status.agent ?? "claude");
+  if (status.phase) return `${agent.noun}: ${status.phase}`;
+  if (status.active) return `${agent.sentence} is working on this file…`;
+  return `Sent to ${agent.sentence}…`;
 }

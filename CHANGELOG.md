@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.35.6 — 2026-09-27 (GitHub only)
+
+### Added: the agent has a name, and it isn't always "claude" (10x-plan-4 P1.2)
+
+Every agent-written comment used to be stamped `author: "claude"`, and every
+check for "is this the agent's move or the human's?" compared against that one
+word. That held while Claude Code was the only thing that could call the tools.
+It stopped holding when Connect an Agent (0.35.3) let Cursor, Codex, Copilot,
+and anything else that speaks MCP connect: a Codex reply showed up as Claude's.
+
+The tool server now issues an `Mcp-Session-Id` on `initialize` and remembers
+which agent each session belongs to, from the client's own name. The map lives
+in memory, holds at most 64 sessions, and nothing is written to disk. Every
+`mc_*` call is attributed to the agent that made it: `claude`, `codex`,
+`cursor`, `copilot`, `gemini`, or a slug taken from an unfamiliar client's
+name. Checked against a real Claude Code 2.1.283, which identifies itself,
+keeps the session, and lands as `claude`.
+
+Comments and suggestions an agent writes also carry `"agent": true` next to
+`author`, so an agent the extension has no name for still counts as an agent.
+The field is optional: files written before this parse exactly as they did,
+recognized by the same short list of names the old check hard-coded, and the
+golden corpus has a two-agent case to hold that. `mdc` gained a matching
+`--author` flag that defaults to `claude`.
+
+What changed on screen follows who did the work. The sidebar's "N new from…"
+line, the status bar, the review digest, the comment card's author label, and
+the text-editor hover and CodeLens name the agent: its own name when there's
+one, "agents" when several answered. Copy that names Claude by design, like
+Send to Claude and Ask Claude to Review, still does. Whether that copy should
+itself depend on which agent a workspace uses is a question for a later round.
+
 ## 0.35.5 — 2026-09-27 (GitHub only)
 
 ### Added: an empty state that teaches (10x-plan-4 P2.4)

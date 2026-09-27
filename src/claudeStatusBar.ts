@@ -22,6 +22,7 @@
 import * as vscode from "vscode";
 import { claudePending, onPendingChanged } from "./claudePendingService";
 import type { PendingStatus } from "./inlineComments/claudePending";
+import { agentDisplayName } from "./agentIdentity";
 import { headlessStatusBar } from "./headlessStatusText";
 import {
   activeHeadlessRuns,
@@ -33,13 +34,19 @@ import {
 /** How long "Claude finished …" stays up. Long enough to notice, short enough to not linger. */
 const DONE_FLASH_MS = 8000;
 
-/** What the status bar should read, or null to hide it. */
+/**
+ * What the status bar should read, or null to hide it. Names whichever agent
+ * the protocol evidence actually came from (10x-plan-4 P1.2) — defaulting to
+ * Claude, both because that's the overwhelming common case and because an
+ * "inferred" wait (filtered out above) never earns a slug at all.
+ */
 export function statusBarText(status: PendingStatus, fileLabel: string): string | null {
   if (status.threadIds.length === 0) return null;
   if (status.evidence !== "protocol") return null;
-  if (status.phase) return `$(loading~spin) Claude: ${status.phase}`;
-  if (status.active) return `$(loading~spin) Claude is working on ${fileLabel}`;
-  return `$(loading~spin) Sent ${fileLabel} to Claude`;
+  const agent = agentDisplayName(status.agent ?? "claude");
+  if (status.phase) return `$(loading~spin) ${agent.noun}: ${status.phase}`;
+  if (status.active) return `$(loading~spin) ${agent.sentence} is working on ${fileLabel}`;
+  return `$(loading~spin) Sent ${fileLabel} to ${agent.sentence}`;
 }
 
 /**

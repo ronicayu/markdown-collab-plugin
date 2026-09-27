@@ -41,9 +41,10 @@ export interface ToolDeps {
   /**
    * Called for every tool invocation before it runs, with the resolved document
    * key when the tool names one. The lifecycle signals (P0.2) hang off this:
-   * it is the first hard evidence that Claude is actually working.
+   * it is the first hard evidence that Claude is actually working. `agent` is
+   * the calling session's slug (10x-plan-4 P1.2).
    */
-  onCall?(event: { tool: string; file?: string; note?: string }): void;
+  onCall?(event: { tool: string; file?: string; note?: string; agent: string }): void;
   /** Fired when a call is refused. The result still goes back to Claude. */
   onRefusal?(event: { tool: string; code: string; message: string }): void;
   now?(): string;
@@ -82,7 +83,9 @@ const BASE_TOOLS: readonly McpTool[] = [
         ...FILE_PROP,
         actionable: {
           type: "boolean",
-          description: "Only threads that are open and not already answered by claude.",
+          // Read by every connected agent (10x-plan-4 P1.1), not just Claude —
+          // "you" here is whichever agent is asking, per its own session.
+          description: "Only threads that are open and not already answered by you.",
         },
       },
       required: ["file"],
@@ -92,7 +95,7 @@ const BASE_TOOLS: readonly McpTool[] = [
     name: "mc_reply",
     title: "Reply to a thread",
     description:
-      "Append a reply authored by claude to an existing thread. Use this to answer the human's question — " +
+      "Append a reply, authored by you, to an existing thread. Use this to answer the human's question — " +
       "it is not a way to edit the document.",
     inputSchema: {
       type: "object",
@@ -231,7 +234,7 @@ const BASE_TOOLS: readonly McpTool[] = [
     title: "Check document integrity",
     description:
       "Report anchor/thread integrity for a document, and record that you reviewed it in this state. " +
-      "End every pass with this: it clears the human's 'Claude is working…' indicator, and the record it " +
+      "End every pass with this: it clears the human's 'is working…' indicator, and the record it " +
       "leaves is what lets the next pass review only what changed.",
     inputSchema: {
       type: "object",
@@ -375,20 +378,28 @@ export async function callTool(
   name: string,
   args: Record<string, unknown>,
   deps: ToolDeps,
+  /**
+   * The calling session's agent slug (10x-plan-4 P1.2) — resolved by the
+   * protocol layer from `initialize`'s `clientInfo.name` before the call ever
+   * reaches here. Defaults to `claude` so every existing caller (the `mdc`
+   * CLI without `--author`, a test harness that never wires up sessions)
+   * keeps behaving exactly as it did before this parameter existed.
+   */
+  author = "claude",
 ): Promise<ToolResult> {
   try {
     if (name === "mc_help") {
-      deps.onCall?.({ tool: name });
+      deps.onCall?.({ tool: name, agent: author });
       return { content: [{ type: "text", text: renderSkill("headless") }] };
     }
     if (name === "mc_status") {
       const note = str(args, "note");
-      deps.onCall?.({ tool: name, file: optionalStr(args, "file"), note });
+      deps.onCall?.({ tool: name, file: optionalStr(args, "file"), note, agent: author });
       return text({ ok: true, note });
     }
 
     const key = await deps.resolveFile(str(args, "file"));
-    deps.onCall?.({ tool: name, file: key });
+    deps.onCall?.({ tool: name, file: key, agent: author });
     const source = await deps.readDoc(key);
     const now = deps.now;
 
@@ -422,10 +433,10 @@ export async function callTool(
 
     switch (name) {
       case "mc_reply":
-        return write(opReply(source, str(args, "threadId"), str(args, "body"), now), "reply");
+        return write(opReply(source, str(args, "threadId"), str(args, "body"), now, author), "reply");
       case "mc_open":
         return write(
-          opOpen(source, str(args, "quote"), str(args, "body"), occurrenceOf(args), now),
+          opOpen(source, str(args, "quote"), str(args, "body"), occurrenceOf(args), now, author),
           "open",
         );
       case "mc_rewrite":
@@ -436,7 +447,7 @@ export async function callTool(
           "edit",
         );
       case "mc_resolve":
-        return write(opResolve(source, str(args, "threadId"), now), "resolve");
+        return write(opResolve(source, str(args, "threadId"), now, author), "resolve");
       case "mc_suggest":
         return write(
           opSuggest(
@@ -449,6 +460,7 @@ export async function callTool(
               occurrence: occurrenceOf(args),
             },
             now,
+            author,
           ),
           "suggest",
         );

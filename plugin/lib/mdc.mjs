@@ -236,6 +236,12 @@ function parseSuggestions(body) {
         anchorId: obj.anchorId,
         threadId: typeof obj.threadId === "string" ? obj.threadId : void 0,
         author: typeof obj.author === "string" ? obj.author : "claude",
+        // Unlike a thread's `comments` array (kept as the raw parsed objects,
+        // so any field on them — including this one — already survives a
+        // round trip for free), a suggestion is rebuilt field by field here.
+        // Forgetting a field in this list means it was never truly optional —
+        // it was silently deleted the moment the file was next saved.
+        agent: typeof obj.agent === "boolean" ? obj.agent : void 0,
         ts: typeof obj.ts === "string" ? obj.ts : "",
         original: obj.original,
         proposed: obj.proposed,
@@ -359,6 +365,7 @@ function renderThreadsRegion(threads, suggestions = [], checkpoint = null) {
     const obj = { anchorId: s.anchorId };
     if (s.threadId) obj.threadId = s.threadId;
     obj.author = s.author;
+    if (s.agent) obj.agent = true;
     obj.ts = s.ts;
     obj.original = s.original;
     obj.proposed = s.proposed;
@@ -439,7 +446,9 @@ function addThread(source, selStart, selEnd, comment) {
     id,
     quote,
     status: "open",
-    comments: [{ id: "c1", author: comment.author, ts, body: comment.body }],
+    comments: [
+      { id: "c1", author: comment.author, ...comment.agent ? { agent: true } : {}, ts, body: comment.body }
+    ],
     // The author is looking at this text right now, so it is the baseline the
     // "text changed since this comment" badge compares against (P1.3).
     anchorHash: hashAnchorText(quote)
@@ -506,6 +515,7 @@ function appendReply(thread, reply) {
       {
         id: nextId,
         author: reply.author,
+        ...reply.agent ? { agent: true } : {},
         ts,
         body: reply.body,
         parent: reply.parent
@@ -537,6 +547,7 @@ function addSuggestion(source, selStart, selEnd, suggestion) {
     anchorId,
     threadId: suggestion.threadId,
     author: suggestion.author,
+    agent: suggestion.agent,
     ts: suggestion.ts ?? (/* @__PURE__ */ new Date()).toISOString(),
     original,
     proposed: suggestion.proposed,
@@ -728,6 +739,13 @@ function truncate(s, max = 80) {
   return s.length <= max ? s : `${s.slice(0, max)}\u2026`;
 }
 
+// src/agentIdentity.ts
+var KNOWN_AGENT_SLUGS = /* @__PURE__ */ new Set(["claude", "codex", "cursor", "copilot", "gemini", "agent"]);
+function isAgentComment(c) {
+  if (c.agent === true) return true;
+  return KNOWN_AGENT_SLUGS.has(c.author.toLowerCase());
+}
+
 // src/inlineComments/docOps.ts
 var DocOpError = class extends Error {
   constructor(code, message, details) {
@@ -807,7 +825,7 @@ function opList(source, actionable = false) {
     if (!actionable) return true;
     if (t.status !== "open") return false;
     const last = lastLiveComment(t);
-    return last !== void 0 && last.author !== "claude";
+    return last !== void 0 && !isAgentComment(last);
   }).map((t) => {
     const a = parsed.anchors.get(t.id);
     return {
@@ -841,11 +859,11 @@ function opList(source, actionable = false) {
     suggestions
   };
 }
-function opReply(source, threadId, body, now = () => (/* @__PURE__ */ new Date()).toISOString()) {
+function opReply(source, threadId, body, now = () => (/* @__PURE__ */ new Date()).toISOString(), author = "claude") {
   const thread = findThread(source, threadId);
   const replied = withRefreshedAnchorHash(
     parse(source),
-    appendReply(thread, { author: "claude", body, ts: now() })
+    appendReply(thread, { author, agent: true, body, ts: now() })
   );
   const next = replaceThread(source, threadId, replied);
   assertNoNewIssues(source, next);
@@ -970,34 +988,35 @@ function opEdit(source, old, replacement, occurrence = 0) {
     }
   };
 }
-function opOpen(source, quote, body, occurrence = 0, now = () => (/* @__PURE__ */ new Date()).toISOString()) {
+function opOpen(source, quote, body, occurrence = 0, now = () => (/* @__PURE__ */ new Date()).toISOString(), author = "claude") {
   const at = locatePassage(source, quote, occurrence);
   let result;
   try {
-    result = addThread(source, at, at + quote.length, { author: "claude", body, ts: now() });
+    result = addThread(source, at, at + quote.length, { author, agent: true, body, ts: now() });
   } catch (e) {
     throw new DocOpError("not_anchorable", e.message, { quote });
   }
   assertNoNewIssues(source, result.source);
   return { next: result.source, result: { threadId: result.thread.id, quote } };
 }
-function opResolve(source, threadId, now = () => (/* @__PURE__ */ new Date()).toISOString()) {
+function opResolve(source, threadId, now = () => (/* @__PURE__ */ new Date()).toISOString(), author = "claude") {
   const thread = findThread(source, threadId);
   const next = replaceThread(source, threadId, {
     ...thread,
     status: "resolved",
-    resolvedBy: "claude",
+    resolvedBy: author,
     resolvedTs: now()
   });
   assertNoNewIssues(source, next);
   return { next, result: { threadId } };
 }
-function opSuggest(source, quote, proposed, opts = {}, now = () => (/* @__PURE__ */ new Date()).toISOString()) {
+function opSuggest(source, quote, proposed, opts = {}, now = () => (/* @__PURE__ */ new Date()).toISOString(), author = "claude") {
   const at = locatePassage(source, quote, opts.occurrence ?? 0);
   let result;
   try {
     result = addSuggestion(source, at, at + quote.length, {
-      author: "claude",
+      author,
+      agent: true,
       proposed,
       note: opts.note,
       threadId: opts.threadId,
@@ -1119,20 +1138,27 @@ var EXIT_INTEGRITY = 2;
 var USAGE = `mdc \u2014 Markdown Collab inline-comment CLI
 
   mdc list <file> [--actionable]              threads as JSON
-  mdc reply <file> <threadId> --body TEXT     append a reply authored by claude
+  mdc reply <file> <threadId> --body TEXT [--author SLUG]
+                                              append a reply authored by claude (or --author)
   mdc rewrite <file> <threadId> --with TEXT   replace the anchored span, markers preserved
   mdc edit <file> --old TEXT --new TEXT [--occurrence N]
                                               replace exact prose text outside anchored spans
-  mdc open <file> --quote TEXT --body TEXT [--occurrence N]
+  mdc open <file> --quote TEXT --body TEXT [--occurrence N] [--author SLUG]
                                               open a new thread on a passage
-  mdc resolve <file> <threadId>               mark a thread resolved
-  mdc suggest <file> --quote TEXT --with TEXT [--note TEXT] [--occurrence N]
+  mdc resolve <file> <threadId> [--author SLUG]
+                                              mark a thread resolved
+  mdc suggest <file> --quote TEXT --with TEXT [--note TEXT] [--occurrence N] [--author SLUG]
                                               propose an edit (accept/reject in the UI)
   mdc accept <file> <anchorId>                apply a pending suggestion
   mdc reject <file> <anchorId>                drop a pending suggestion, keep the original
   mdc check <file> [--repair]                 integrity report; exit 2 if broken
   mdc check --hook                            Claude Code PostToolUse hook: reads the hook JSON on stdin;
                                               exit 2 + report on stderr if the edited .md has broken markers
+
+  --author SLUG applies to reply/open/resolve/suggest \u2014 the agent writing the
+  comment (10x-plan-4 P1.2). Defaults to "claude"; every headless Claude Code
+  run is that default, so nothing changes for it. Sets the comment's JSON
+  "agent" flag alongside "author".
 
 All commands print JSON to stdout. Exit codes: 0 ok, 1 usage, 2 integrity.`;
 function out(obj) {
@@ -1224,23 +1250,23 @@ function apply(file, action, run, opts = {}) {
 function cmdList(file, actionableOnly) {
   out({ file, ...opList(readDoc(file), actionableOnly) });
 }
-function cmdReply(file, threadId, body) {
-  apply(file, "reply", (s) => opReply(s, threadId, body));
+function cmdReply(file, threadId, body, author) {
+  apply(file, "reply", (s) => opReply(s, threadId, body, void 0, author));
 }
 function cmdRewrite(file, threadId, replacement) {
   apply(file, "rewrite", (s) => opRewrite(s, threadId, replacement));
 }
-function cmdOpen(file, quote, body, occurrence) {
-  apply(file, "open", (s) => opOpen(s, quote, body, occurrence));
+function cmdOpen(file, quote, body, occurrence, author) {
+  apply(file, "open", (s) => opOpen(s, quote, body, occurrence, void 0, author));
 }
 function cmdEdit(file, old, replacement, occurrence) {
   apply(file, "edit", (s) => opEdit(s, old, replacement, occurrence));
 }
-function cmdResolve(file, threadId) {
-  apply(file, "resolve", (s) => opResolve(s, threadId));
+function cmdResolve(file, threadId, author) {
+  apply(file, "resolve", (s) => opResolve(s, threadId, void 0, author));
 }
-function cmdSuggest(file, quote, proposed, note, occurrence) {
-  apply(file, "suggest", (s) => opSuggest(s, quote, proposed, { note, occurrence }));
+function cmdSuggest(file, quote, proposed, note, occurrence, author) {
+  apply(file, "suggest", (s) => opSuggest(s, quote, proposed, { note, occurrence }, void 0, author));
 }
 function cmdAccept(file, anchorId) {
   apply(file, "accept", (s) => opAccept(s, anchorId), { integrityCodes: ["unanchored"] });
@@ -1307,13 +1333,14 @@ function main() {
   }
   const { _, flags } = parseArgs(argv);
   const [command, ...rest] = _;
+  const author = typeof flags.author === "string" && flags.author !== "" ? flags.author : "claude";
   switch (command) {
     case "list":
       if (!rest[0]) fail("usage: mdc list <file> [--actionable]");
       return cmdList(rest[0], flags.actionable === true);
     case "reply":
-      if (!rest[0] || !rest[1]) fail("usage: mdc reply <file> <threadId> --body TEXT");
-      return cmdReply(rest[0], rest[1], str(flags, "body"));
+      if (!rest[0] || !rest[1]) fail("usage: mdc reply <file> <threadId> --body TEXT [--author SLUG]");
+      return cmdReply(rest[0], rest[1], str(flags, "body"), author);
     case "rewrite":
       if (!rest[0] || !rest[1]) fail("usage: mdc rewrite <file> <threadId> --with TEXT");
       return cmdRewrite(rest[0], rest[1], str(flags, "with"));
@@ -1326,24 +1353,28 @@ function main() {
         typeof flags.occurrence === "string" ? Number(flags.occurrence) : 0
       );
     case "open":
-      if (!rest[0]) fail("usage: mdc open <file> --quote TEXT --body TEXT [--occurrence N]");
+      if (!rest[0]) fail("usage: mdc open <file> --quote TEXT --body TEXT [--occurrence N] [--author SLUG]");
       return cmdOpen(
         rest[0],
         str(flags, "quote"),
         str(flags, "body"),
-        typeof flags.occurrence === "string" ? Number(flags.occurrence) : 0
+        typeof flags.occurrence === "string" ? Number(flags.occurrence) : 0,
+        author
       );
     case "resolve":
-      if (!rest[0] || !rest[1]) fail("usage: mdc resolve <file> <threadId>");
-      return cmdResolve(rest[0], rest[1]);
+      if (!rest[0] || !rest[1]) fail("usage: mdc resolve <file> <threadId> [--author SLUG]");
+      return cmdResolve(rest[0], rest[1], author);
     case "suggest":
-      if (!rest[0]) fail("usage: mdc suggest <file> --quote TEXT --with TEXT [--note TEXT] [--occurrence N]");
+      if (!rest[0]) {
+        fail("usage: mdc suggest <file> --quote TEXT --with TEXT [--note TEXT] [--occurrence N] [--author SLUG]");
+      }
       return cmdSuggest(
         rest[0],
         str(flags, "quote"),
         str(flags, "with"),
         typeof flags.note === "string" ? flags.note : void 0,
-        typeof flags.occurrence === "string" ? Number(flags.occurrence) : 0
+        typeof flags.occurrence === "string" ? Number(flags.occurrence) : 0,
+        author
       );
     case "accept":
       if (!rest[0] || !rest[1]) fail("usage: mdc accept <file> <anchorId>");

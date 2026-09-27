@@ -115,6 +115,25 @@ describe("claudeSummary", () => {
     expect(s.unread).toBe(0);
   });
 
+  // 10x-plan-4 P1.2: the label names whichever agent(s) the unread threads
+  // actually came from.
+  it("names Codex when every unread thread came from Codex", () => {
+    const s = claudeSummary([thread("a", { author: "codex" }), thread("b", { author: "codex" })]);
+    expect(s.text).toBe("2 new from Codex · 0 reviewed");
+  });
+
+  it("falls back to 'agents' when unread threads came from more than one agent", () => {
+    const s = claudeSummary([thread("a", { author: "codex" }), thread("b", { author: "claude" })]);
+    expect(s.unread).toBe(2);
+    expect(s.text).toBe("2 new from Agents · 0 reviewed");
+  });
+
+  it("reviewed count isn't agent-specific — a codex thread a human replied to still counts", () => {
+    const s = claudeSummary([thread("a", { author: "codex", replies: ["ronica"] })]);
+    expect(s.unread).toBe(0);
+    expect(s.reviewed).toBe(1);
+  });
+
   it("ignores human-authored threads entirely", () => {
     const s = claudeSummary([thread("a"), thread("b", { replies: ["claude"] })]);
     expect(s.hasAny).toBe(false);

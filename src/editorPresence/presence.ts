@@ -13,7 +13,8 @@
 // the wiring in `index.ts` stays thin enough to read.
 
 import type { InlineThread, ParsedDocument } from "../inlineComments/format";
-import { isClaudeUnread } from "../inlineComments/claudeUnread";
+import { isClaudeUnread, unreadAgentSlug } from "../inlineComments/claudeUnread";
+import { agentGroupLabel } from "../agentIdentity";
 import { formatRelativeTime } from "../collab/relativeTime";
 
 /** Half-open `[start, end)` offsets into the document source. */
@@ -128,8 +129,11 @@ export function presenceLensLabel(parsed: ParsedDocument): string | null {
     if (unresolved > 0 && unresolved !== threads) parts.push(`${unresolved} unresolved`);
     else if (unresolved === 0) parts.push("all resolved");
   }
-  const unread = parsed.threads.filter(isClaudeUnread).length;
-  if (unread > 0) parts.push(`${unread} new from Claude`);
+  const unreadThreads = parsed.threads.filter(isClaudeUnread);
+  if (unreadThreads.length > 0) {
+    const agent = agentGroupLabel(unreadThreads.map((t) => unreadAgentSlug(t) ?? "claude")).noun;
+    parts.push(`${unreadThreads.length} new from ${agent}`);
+  }
   if (suggestions > 0) parts.push(`${suggestions} suggestion${suggestions === 1 ? "" : "s"}`);
 
   return `${parts.join(" · ")} — open review view`;
@@ -185,7 +189,9 @@ export function hoverFor(
 
   const badges: string[] = [];
   if (thread.status === "resolved") badges.push("resolved");
-  else if (isClaudeUnread(thread)) badges.push("new from Claude");
+  else if (isClaudeUnread(thread)) {
+    badges.push(`new from ${agentGroupLabel([unreadAgentSlug(thread) ?? "claude"]).noun}`);
+  }
   if (parsed.suggestions.some((s) => s.threadId === thread.id)) badges.push("has a suggestion");
   lines.push(
     `**Markdown Collab** — ${live.length} comment${live.length === 1 ? "" : "s"}` +

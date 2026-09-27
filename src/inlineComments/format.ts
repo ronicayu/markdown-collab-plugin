@@ -23,6 +23,16 @@ export interface InlineComment {
   /** Set when this comment replies to another in the same thread. */
   parent?: string;
   author: string;
+  /**
+   * Set by the tools/CLI on every comment an agent writes (10x-plan-4 P1.2).
+   * Optional and additive, like `anchorHash`: a file written before this
+   * change has no such field on any comment, and `isAgentComment` falls back
+   * to recognizing the author string itself for those. New agent-authored
+   * comments always carry it, regardless of which agent's slug `author` is —
+   * that is what keeps a future, not-yet-known agent's comments recognizable
+   * without another format change.
+   */
+  agent?: boolean;
   /** ISO-8601 UTC timestamp. */
   ts: string;
   /** Markdown body. */
@@ -69,6 +79,8 @@ export interface InlineSuggestion {
   /** Optional link to a comment thread this suggestion discusses. */
   threadId?: string;
   author: string;
+  /** Same contract as `InlineComment.agent` (10x-plan-4 P1.2). */
+  agent?: boolean;
   /** ISO-8601 UTC timestamp. */
   ts: string;
   /** The current text, wrapped by this suggestion's anchor markers. */
@@ -427,6 +439,12 @@ function parseSuggestions(body: string): InlineSuggestion[] {
         anchorId: obj.anchorId,
         threadId: typeof obj.threadId === "string" ? obj.threadId : undefined,
         author: typeof obj.author === "string" ? obj.author : "claude",
+        // Unlike a thread's `comments` array (kept as the raw parsed objects,
+        // so any field on them — including this one — already survives a
+        // round trip for free), a suggestion is rebuilt field by field here.
+        // Forgetting a field in this list means it was never truly optional —
+        // it was silently deleted the moment the file was next saved.
+        agent: typeof obj.agent === "boolean" ? obj.agent : undefined,
         ts: typeof obj.ts === "string" ? obj.ts : "",
         original: obj.original,
         proposed: obj.proposed,
@@ -634,6 +652,7 @@ export function renderThreadsRegion(
     const obj: Record<string, unknown> = { anchorId: s.anchorId };
     if (s.threadId) obj.threadId = s.threadId;
     obj.author = s.author;
+    if (s.agent) obj.agent = true;
     obj.ts = s.ts;
     obj.original = s.original;
     obj.proposed = s.proposed;
@@ -751,7 +770,7 @@ export function addThread(
   source: string,
   selStart: number,
   selEnd: number,
-  comment: { author: string; body: string; ts?: string },
+  comment: { author: string; body: string; ts?: string; agent?: boolean },
 ): { source: string; thread: InlineThread } {
   if (selEnd < selStart) throw new Error("selEnd must be >= selStart");
   // Keep the open marker out of a heading's `#` prefix so the line stays a heading.
@@ -770,7 +789,9 @@ export function addThread(
     id,
     quote,
     status: "open",
-    comments: [{ id: "c1", author: comment.author, ts, body: comment.body }],
+    comments: [
+      { id: "c1", author: comment.author, ...(comment.agent ? { agent: true as const } : {}), ts, body: comment.body },
+    ],
     // The author is looking at this text right now, so it is the baseline the
     // "text changed since this comment" badge compares against (P1.3).
     anchorHash: hashAnchorText(quote),
@@ -861,7 +882,7 @@ export function finalizeSource(source: string): string {
 /** Add a reply to an existing thread. Returns the new thread or null if not found. */
 export function appendReply(
   thread: InlineThread,
-  reply: { author: string; body: string; ts?: string; parent?: string },
+  reply: { author: string; body: string; ts?: string; parent?: string; agent?: boolean },
 ): InlineThread {
   const ts = reply.ts ?? new Date().toISOString();
   const nextId = nextCommentId(thread);
@@ -872,6 +893,7 @@ export function appendReply(
       {
         id: nextId,
         author: reply.author,
+        ...(reply.agent ? { agent: true as const } : {}),
         ts,
         body: reply.body,
         parent: reply.parent,
@@ -900,7 +922,7 @@ export function addSuggestion(
   source: string,
   selStart: number,
   selEnd: number,
-  suggestion: { author: string; proposed: string; note?: string; threadId?: string; ts?: string },
+  suggestion: { author: string; proposed: string; note?: string; threadId?: string; ts?: string; agent?: boolean },
 ): { source: string; suggestion: InlineSuggestion } {
   if (selEnd < selStart) throw new Error("selEnd must be >= selStart");
   selStart = startPastHeadingPrefix(source, selStart, selEnd);
@@ -918,6 +940,7 @@ export function addSuggestion(
     anchorId,
     threadId: suggestion.threadId,
     author: suggestion.author,
+    agent: suggestion.agent,
     ts: suggestion.ts ?? new Date().toISOString(),
     original,
     proposed: suggestion.proposed,

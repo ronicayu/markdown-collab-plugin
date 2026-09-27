@@ -11,7 +11,8 @@
 // (SerializedState.threads vs CommentSummary), so these take the narrowest
 // structure each function needs rather than a shared nominal type.
 
-import { isClaudeReviewed, isClaudeUnread } from "../inlineComments/claudeUnread";
+import { isClaudeReviewed, isClaudeUnread, unreadAgentSlug } from "../inlineComments/claudeUnread";
+import { agentGroupLabel } from "../agentIdentity";
 
 export type ThreadFilter = "open" | "all" | "resolved" | "claude-unread";
 
@@ -66,16 +67,27 @@ export interface ClaudeSummary {
 /**
  * Counts for the "N new from Claude · M reviewed" row. A thread is counted
  * once: unread until the human replies or resolves it, reviewed after.
+ *
+ * The label names whichever agent(s) the unread threads actually came from
+ * (10x-plan-4 P1.2, the wording rule): "Claude" when that's the only one
+ * involved — the common case, worded exactly as before — the other agent's
+ * name when every unread thread came from one non-Claude agent, and the
+ * generic "agents" when more than one distinct agent contributed.
  */
 export function claudeSummary(threads: ListThread[]): ClaudeSummary {
   let unread = 0;
   let reviewed = 0;
+  const unreadSlugs: string[] = [];
   for (const t of threads) {
-    if (isClaudeUnread(t)) unread++;
-    else if (isClaudeReviewed(t)) reviewed++;
+    if (isClaudeUnread(t)) {
+      unread++;
+      const slug = unreadAgentSlug(t);
+      if (slug) unreadSlugs.push(slug);
+    } else if (isClaudeReviewed(t)) reviewed++;
   }
   const hasAny = unread + reviewed > 0;
-  const unreadLabel = unread === 1 ? "1 new from Claude" : `${unread} new from Claude`;
+  const agentNoun = agentGroupLabel(unreadSlugs).noun;
+  const unreadLabel = unread === 1 ? `1 new from ${agentNoun}` : `${unread} new from ${agentNoun}`;
   const reviewedLabel = reviewed === 1 ? "1 reviewed" : `${reviewed} reviewed`;
   return {
     unread,

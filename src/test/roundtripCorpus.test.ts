@@ -52,6 +52,14 @@ type Op =
   /** Comment on the `occurrence`-th (1-based) appearance of `quote`. */
   | { do: "comment"; quote: string; occurrence?: number; body?: string }
   | { do: "reply"; thread: number; body: string }
+  /**
+   * An agent-authored thread — `agent: true` on the JSON, same as `mc_open`
+   * writes (10x-plan-4 P1.2). `agent` here is the slug (`"claude"`,
+   * `"codex"`, ...), not the boolean flag.
+   */
+  | { do: "agentComment"; quote: string; occurrence?: number; body?: string; agent: string }
+  /** An agent-authored reply, same contract as `agentComment`. */
+  | { do: "agentReply"; thread: number; body: string; agent: string }
   | { do: "resolve"; thread: number }
   | { do: "deleteThread"; thread: number }
   /** Rewrite the text between a thread's markers (markers stay put). */
@@ -131,6 +139,26 @@ function applyOp(state: State, op: Op): State {
         state.source,
         t.id,
         appendReply(t, { author: "claude", body: op.body, ts: TS }),
+      );
+      return next;
+    }
+    case "agentComment": {
+      const at = offsetOfOccurrence(state.source, op.quote, op.occurrence ?? 1);
+      const r = addThread(state.source, at, at + op.quote.length, {
+        author: op.agent,
+        agent: true,
+        body: op.body ?? `note on ${op.quote}`,
+        ts: TS,
+      });
+      next.source = r.source;
+      return next;
+    }
+    case "agentReply": {
+      const t = threadAt(state.source, op.thread);
+      next.source = replaceThread(
+        state.source,
+        t.id,
+        appendReply(t, { author: op.agent, agent: true, body: op.body, ts: TS }),
       );
       return next;
     }
@@ -333,6 +361,21 @@ const SCRIPTS: Script[] = [
       { do: "reply", thread: 0, body: "text was removed" },
     ],
   },
+  {
+    // 10x-plan-4 P1.2: `agent: true` comments from two different agents in
+    // the same file — Codex opens a thread, Claude opens a separate one and
+    // Codex later replies to it, and a human resolves the first. Every
+    // invariant (including I5, serialization stability) must hold exactly as
+    // it does for a human/Claude-only file.
+    fixture: "tables.md",
+    name: "agent: true comments from two different agents round-trip",
+    ops: [
+      { do: "agentComment", quote: "pending", occurrence: 1, body: "codex: what stage?", agent: "codex" },
+      { do: "agentComment", quote: "pending", occurrence: 2, body: "claude: noting this", agent: "claude" },
+      { do: "agentReply", thread: 1, body: "codex chiming in too", agent: "codex" },
+      { do: "resolve", thread: 0 },
+    ],
+  },
 ];
 
 describe("round-trip corpus", () => {
@@ -352,6 +395,49 @@ describe("round-trip corpus", () => {
       });
     });
   }
+});
+
+// 10x-plan-4 P1.2: the generic corpus loop above proves the agent-authored
+// script satisfies every existing invariant; this checks the specific claim
+// that initiative adds — the `agent` field actually reaches the bytes on
+// disk (not just a self-consistent in-memory round trip) and both agents'
+// comments keep their own identity through it.
+describe("round-trip corpus: agent-authored comments", () => {
+  it("both agents' comments carry agent: true in the serialized JSON", () => {
+    const source = fixture("tables.md");
+    let state: State = {
+      source,
+      expectedProse: stripAllInlineMarkup(source),
+      edited: new Set(),
+      corrupted: false,
+    };
+    for (const op of [
+      { do: "agentComment", quote: "pending", occurrence: 1, body: "codex note", agent: "codex" } as const,
+      { do: "agentComment", quote: "pending", occurrence: 2, body: "claude note", agent: "claude" } as const,
+    ]) {
+      state = applyOp(state, op);
+    }
+
+    // Raw bytes: both slugs' comments actually got the flag written, not just
+    // an in-memory object that happens to survive re-parsing itself.
+    expect(state.source).toContain('"author":"codex"');
+    expect(state.source).toContain('"author":"claude"');
+    const agentFlagCount = (state.source.match(/"agent":true/g) ?? []).length;
+    expect(agentFlagCount).toBe(2);
+
+    const threads = parse(state.source).threads;
+    const codexThread = threads.find((t) => t.comments[0]?.author === "codex")!;
+    const claudeThread = threads.find((t) => t.comments[0]?.author === "claude")!;
+    expect(codexThread.comments[0]).toMatchObject({ author: "codex", agent: true });
+    expect(claudeThread.comments[0]).toMatchObject({ author: "claude", agent: true });
+
+    // And a second parse/serialize cycle (what every subsequent op does)
+    // changes nothing about either flag.
+    const reserialized = withThreads(state.source, threads);
+    const reparsed = parse(reserialized).threads;
+    expect(reparsed.find((t) => t.comments[0]?.author === "codex")!.comments[0]).toMatchObject({ agent: true });
+    expect(reparsed.find((t) => t.comments[0]?.author === "claude")!.comments[0]).toMatchObject({ agent: true });
+  });
 });
 
 // --- corruption and repair ------------------------------------------------

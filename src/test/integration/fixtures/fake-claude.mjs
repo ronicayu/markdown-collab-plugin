@@ -82,6 +82,13 @@ if (process.env.FAKE_CLAUDE_TRACE) {
 }
 
 let rpcId = 0;
+// The streamable-HTTP transport issues an `Mcp-Session-Id` on `initialize`
+// (10x-plan-4 P1.2) and a compliant client echoes it on every request after —
+// that's how the real Claude Code CLI's author slug reaches the document
+// (`initialize`'s `clientInfo.name` → the session → every `tools/call`). This
+// stub models that faithfully rather than being a special case the extension
+// happens to tolerate.
+let sessionId;
 async function rpc(method, params) {
   const res = await fetch(server.url, {
     method: "POST",
@@ -89,9 +96,12 @@ async function rpc(method, params) {
       ...server.headers,
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
+      ...(sessionId ? { "mcp-session-id": sessionId } : {}),
     },
     body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method, params }),
   });
+  const gotSessionId = res.headers.get("mcp-session-id");
+  if (gotSessionId) sessionId = gotSessionId;
   if (res.status === 202) return null;
   if (!res.ok) throw new Error(`${method}: HTTP ${res.status}`);
   return res.json();
@@ -107,7 +117,11 @@ async function connect() {
     if (!init || init.error) return { status: "failed", tools: [] };
     await fetch(server.url, {
       method: "POST",
-      headers: { ...server.headers, "content-type": "application/json" },
+      headers: {
+        ...server.headers,
+        "content-type": "application/json",
+        ...(sessionId ? { "mcp-session-id": sessionId } : {}),
+      },
       body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
     });
     const list = await rpc("tools/list", {});

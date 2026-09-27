@@ -10,6 +10,20 @@
 import type MarkdownIt from "markdown-it";
 import { createCommentRenderer } from "./markdownPipeline";
 import { formatRelativeTime } from "../collab/relativeTime";
+import { agentDisplayName, isAgentComment } from "../agentIdentity";
+
+/**
+ * What the card shows for an author: the agent's display name for an agent
+ * comment (10x-plan-4 P1.2 — a raw `"codex"` author string used to render
+ * literally, same as a human's name would), unchanged for a human's own name.
+ * `isAgentComment` here only has the author string to go on (the card option
+ * doesn't carry the JSON `agent` flag), so it falls back to the known-slug
+ * check — which is every slug this extension has ever written, so it's
+ * accurate for every comment that reaches a card.
+ */
+function authorLabel(author: string): string {
+  return isAgentComment({ author }) ? agentDisplayName(author).noun : author;
+}
 
 export interface ComposerHandle {
   /** The composer root element to mount. */
@@ -207,7 +221,7 @@ export function buildCommentCard(opts: CommentCardOptions): HTMLElement {
   meta.className = "mc-card__meta";
   const author = document.createElement("span");
   author.className = "mc-card__author";
-  author.textContent = opts.author;
+  author.textContent = authorLabel(opts.author);
   meta.appendChild(author);
   if (opts.timestamp !== undefined) {
     const time = document.createElement("span");
@@ -313,7 +327,7 @@ export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
   meta.className = "mc-card__meta";
   const author = document.createElement("span");
   author.className = "mc-card__author";
-  author.textContent = opts.author;
+  author.textContent = authorLabel(opts.author);
   meta.appendChild(author);
   const verb = document.createElement("span");
   verb.className = "mc-card__time";

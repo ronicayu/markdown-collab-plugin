@@ -26,6 +26,7 @@ import { isInsideRoot } from "../pathUtils";
 import { claudePending } from "../claudePendingService";
 import { minimalEdit } from "../inlineComments/minimalEdit";
 import { serveMcp, type McpHttpServer } from "./httpServer";
+import { SessionRegistry } from "./sessions";
 import { callTool, TOOLS, ToolRefusal, type ToolDeps } from "./tools";
 import { renderMcpInstructions } from "../skillText";
 import {
@@ -48,8 +49,10 @@ export interface McpServerHandle {
 /** Callbacks the rest of the extension wires in (lifecycle signals land here). */
 export interface McpHostDeps {
   log: Logger;
-  /** Fired for every tool call, before it runs. */
-  onToolCall?(event: { tool: string; file?: string; note?: string }): void;
+  /** Fired for every tool call, before it runs. `agent` is the calling
+   * session's slug (10x-plan-4 P1.2) — Claude when the client is Claude Code,
+   * whatever `agentSlugFromClientName` resolved otherwise. */
+  onToolCall?(event: { tool: string; file?: string; note?: string; agent: string }): void;
 }
 
 let running: (McpServerHandle & { server: McpHttpServer }) | null = null;
@@ -138,6 +141,7 @@ export function buildToolDeps(deps: McpHostDeps): ToolDeps {
           ? vscode.workspace.asRelativePath(vscode.Uri.parse(event.file))
           : undefined,
         note: event.note,
+        agent: event.agent,
       });
       deps.onToolCall?.(event);
     },
@@ -163,17 +167,18 @@ export function pendingSignalsFromToolCalls(event: {
   tool: string;
   file?: string;
   note?: string;
+  agent: string;
 }): void {
   if (event.tool === "mc_status") {
-    if (event.file) claudePending.noteActivity(event.file, { phase: event.note });
-    else claudePending.noteActivityEverywhere({ phase: event.note });
+    if (event.file) claudePending.noteActivity(event.file, { phase: event.note, agent: event.agent });
+    else claudePending.noteActivityEverywhere({ phase: event.note, agent: event.agent });
     return;
   }
   if (!event.file) return;
   // The skill ends each file with mc_check, so that call is the completion
   // signal. Anything else is progress.
   if (event.tool === "mc_check") claudePending.noteComplete(event.file);
-  else claudePending.noteActivity(event.file);
+  else claudePending.noteActivity(event.file, { agent: event.agent });
 }
 
 /**
@@ -193,6 +198,10 @@ export async function startMcpServer(
   // sitting in a file with no process behind it.
   const token = randomBytes(32).toString("hex");
   const toolDeps = buildToolDeps(deps);
+  // One registry per running server: which agent a session belongs to is
+  // only meaningful for as long as the connection issuing it is alive
+  // (10x-plan-4 P1.2).
+  const sessions = new SessionRegistry();
 
   let server: McpHttpServer;
   try {
@@ -206,7 +215,9 @@ export async function startMcpServer(
         // P1.3): a client with no skill installed still learns list → act → check.
         instructions: renderMcpInstructions(),
         tools: TOOLS,
-        callTool: (name, args) => callTool(name, args, toolDeps),
+        callTool: (name, args, author) => callTool(name, args, toolDeps, author),
+        recordSession: (sessionId, clientName) => sessions.record(sessionId, clientName),
+        resolveAuthor: (sessionId) => sessions.slugFor(sessionId),
       },
     });
   } catch (e) {
