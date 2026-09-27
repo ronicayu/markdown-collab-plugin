@@ -4,6 +4,7 @@ import {
   chunkThreads,
   claudeSummary,
   emptyListMessage,
+  emptyState,
   filterThreads,
   matchesFilter,
   nextCollapseAllAction,
@@ -146,6 +147,54 @@ describe("emptyListMessage", () => {
   it("blames the filter otherwise", () => {
     expect(emptyListMessage("resolved")).toMatch(/filter/i);
     expect(emptyListMessage("all")).toMatch(/filter/i);
+  });
+});
+
+describe("emptyState", () => {
+  it("blames the filter when threads exist but it hides them all", () => {
+    const state = emptyState({ filter: "resolved", totalThreads: 3, headlessAvailable: false });
+    expect(state).toEqual({ kind: "filtered", message: emptyListMessage("resolved") });
+  });
+
+  it("is first-run when the doc has never had a comment, regardless of filter", () => {
+    const state = emptyState({ filter: "open", totalThreads: 0, headlessAvailable: false });
+    expect(state.kind).toBe("first-run");
+  });
+
+  it("labels the button 'Review with Claude' when headless is available", () => {
+    const state = emptyState({ filter: "open", totalThreads: 0, headlessAvailable: true });
+    if (state.kind !== "first-run") throw new Error("expected first-run");
+    expect(state.action.label).toBe("Review with Claude");
+    expect(state.action.message).toEqual({ type: "empty-state-review" });
+  });
+
+  it("labels the button 'Ask Claude to review this doc' when headless is unavailable", () => {
+    const state = emptyState({ filter: "open", totalThreads: 0, headlessAvailable: false });
+    if (state.kind !== "first-run") throw new Error("expected first-run");
+    expect(state.action.label).toBe("Ask Claude to review this doc");
+  });
+
+  it("shows both keybinding forms when the platform isn't known", () => {
+    const state = emptyState({ filter: "open", totalThreads: 0, headlessAvailable: false });
+    if (state.kind !== "first-run") throw new Error("expected first-run");
+    expect(state.hint).toContain("Cmd+K Cmd+Alt+M");
+    expect(state.hint).toContain("Ctrl+K Ctrl+Alt+M");
+  });
+
+  it("collapses to one keybinding form when the platform is known", () => {
+    const mac = emptyState({ filter: "open", totalThreads: 0, headlessAvailable: false, platform: "mac" });
+    const other = emptyState({ filter: "open", totalThreads: 0, headlessAvailable: false, platform: "other" });
+    if (mac.kind !== "first-run" || other.kind !== "first-run") throw new Error("expected first-run");
+    expect(mac.hint).toContain("Cmd+K Cmd+Alt+M");
+    expect(mac.hint).not.toContain("Ctrl+K");
+    expect(other.hint).toContain("Ctrl+K Ctrl+Alt+M");
+    expect(other.hint).not.toContain("Cmd+K");
+  });
+
+  it("always uses the same headline", () => {
+    const state = emptyState({ filter: "all", totalThreads: 0, headlessAvailable: true });
+    if (state.kind !== "first-run") throw new Error("expected first-run");
+    expect(state.headline).toBe("No comments yet.");
   });
 });
 

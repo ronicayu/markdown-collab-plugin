@@ -6,7 +6,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import type { Logger } from "../logging";
 import { folderForDocument } from "../workspaceFolder";
-import { buildReviewRequestPayload } from "../sendToClaude";
+import { buildReviewRequestPayload, type SendMode } from "../sendToClaude";
 import {
   buildMultiFileReviewPayload,
   totalBytes,
@@ -170,6 +170,8 @@ async function invokeAskClaudeToReviewSelection(
   delta = false,
   /** A focus decided by the caller; skips the focus prompt. "" = general review. */
   presetFocus?: string,
+  /** Force this dispatch's send mode, bypassing config/remembered/ask (10x-plan-4 P2.4). */
+  forceMode?: SendMode,
 ): Promise<void> {
   if (selection.length === 0) {
     void vscode.window.showWarningMessage(
@@ -197,7 +199,7 @@ async function invokeAskClaudeToReviewSelection(
       );
       return;
     }
-    await invokeAskClaudeToReview(doc, log, tracker, workspaceState, globalState, delta, presetFocus);
+    await invokeAskClaudeToReview(doc, log, tracker, workspaceState, globalState, delta, presetFocus, forceMode);
     return;
   }
 
@@ -218,6 +220,7 @@ async function invokeAskClaudeToReviewSelection(
     workspaceState,
     globalState,
     presetFocus,
+    forceMode,
   );
 }
 
@@ -233,6 +236,7 @@ async function invokeAskClaudeToReviewMulti(
   workspaceState: vscode.Memento,
   globalState: vscode.Memento,
   presetFocus?: string,
+  forceMode?: SendMode,
 ): Promise<void> {
   const folder = folderForDocument(uris[0]);
   // The payload's paths are relative to one folder, so a selection spanning
@@ -292,6 +296,7 @@ async function invokeAskClaudeToReviewMulti(
     workspaceState,
     folder,
     { kind: "review-request", hasFocus: Boolean(trimmedFocus) },
+    forceMode ? { forceMode } : undefined,
   );
 }
 
@@ -362,6 +367,8 @@ async function invokeAskClaudeToReview(
   /** Review only what changed since the last recorded pass (10x-plan-2 P1.1). */
   delta = false,
   presetFocus?: string,
+  /** Force this dispatch's send mode, bypassing config/remembered/ask (10x-plan-4 P2.4). */
+  forceMode?: SendMode,
 ): Promise<void> {
   const folder = folderForDocument(doc.uri);
 
@@ -410,6 +417,7 @@ async function invokeAskClaudeToReview(
     workspaceState,
     folder,
     { kind: "review-request", hasFocus: Boolean(trimmedFocus) },
+    forceMode ? { forceMode } : undefined,
   );
 }
 
@@ -499,6 +507,16 @@ function presetFocusFrom(opts: { focus?: unknown } | undefined): string | undefi
   return focus.trim();
 }
 
+/**
+ * A send mode forced by a programmatic caller (10x-plan-4 P2.4's empty-state
+ * button, via `handleEmptyStateReview`) — anything not one of the three
+ * concrete modes means "don't force one", same as an absent value.
+ */
+function forceModeFrom(opts: { forceMode?: unknown } | undefined): SendMode | undefined {
+  const mode = opts?.forceMode;
+  return mode === "headless" || mode === "terminal" || mode === "clipboard" ? mode : undefined;
+}
+
 /** Register the review-mode family of commands: conventions, summary, "Ask
  * Claude to Review" (single/folder/changes), and the unread walk. */
 export function registerReviewCommands(deps: CommandDeps): void {
@@ -522,7 +540,7 @@ export function registerReviewCommands(deps: CommandDeps): void {
   const askClaudeToReview = async (
     arg?: vscode.Uri,
     selected?: vscode.Uri[],
-    opts?: { focus?: unknown },
+    opts?: { focus?: unknown; forceMode?: unknown },
   ): Promise<void> => {
     await invokeAskClaudeToReviewSelection(
       resolveSelection(arg, selected),
@@ -532,6 +550,7 @@ export function registerReviewCommands(deps: CommandDeps): void {
       context.globalState,
       false,
       presetFocusFrom(opts),
+      forceModeFrom(opts),
     );
   };
   context.subscriptions.push(

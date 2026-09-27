@@ -14,6 +14,7 @@ import {
   startMcpServer,
 } from "./mcpServer";
 import { reconnectAgents } from "./mcpServer/agentConnections";
+import { lookupClaude } from "./transports/headlessHost";
 import { parse as parseInline } from "./inlineComments/format";
 import { activateClaudeStatusBar } from "./claudeStatusBar";
 import { TerminalTracker } from "./transports/terminalTracker";
@@ -102,6 +103,11 @@ export function activate(context: vscode.ExtensionContext): void {
     // token fresh every session, and Codex's config carries a literal port —
     // now that there's a handle to hand them (10x-plan-4 P1.1).
     await reconnectAgents(context, handle, rootLog.scope("mcp"));
+    // Warm the `claude` lookup in the background, so the first send-mode
+    // picker and the review view's empty state don't wait on a
+    // `claude --version` probe. Untrusted workspaces never run headless, so
+    // they never probe.
+    if (vscode.workspace.isTrusted) void lookupClaude(rootLog.scope("headless"));
   });
 
   // Live WYSIWYG editor for a single human + Claude on the same machine. There

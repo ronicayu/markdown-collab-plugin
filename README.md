@@ -221,6 +221,7 @@ The comment icon in a Markdown file's title bar opens the review view. From the 
 | `n` / `p` | the review view | Next / previous thread (next / previous change when the diff is showing) |
 | `r` | the review view | Reply to the highlighted thread |
 | `e` | the review view | Resolve or reopen the highlighted thread |
+| `o` | the review view | Open the highlighted thread's anchored text in the text editor |
 
 The single keys do nothing while you're typing in a box. There's no key for accepting a suggestion on purpose: that stays a click on the card you can see.
 

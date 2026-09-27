@@ -58,7 +58,7 @@ type ClaudeLookup = { ok: true; claude: ResolvedClaude } | { ok: false; error: s
  * takes effect without a reload. The probe spawns a process; the picker must
  * not do that on every click.
  */
-let lookupCache: { key: string; lookup: Promise<ClaudeLookup> } | null = null;
+let lookupCache: { key: string; lookup: Promise<ClaudeLookup>; settled?: ClaudeLookup } | null = null;
 
 export function lookupClaude(log?: Logger): Promise<ClaudeLookup> {
   const configured =
@@ -78,8 +78,33 @@ export function lookupClaude(log?: Logger): Promise<ClaudeLookup> {
     log?.info("claude binary found", { binary: found.path, via: found.source, version: probe.version.raw });
     return { ok: true, claude: { path: found.path, version: probe.version, source: found.source } };
   })();
-  lookupCache = { key: configured, lookup };
+  const entry: { key: string; lookup: Promise<ClaudeLookup>; settled?: ClaudeLookup } = { key: configured, lookup };
+  lookupCache = entry;
+  void lookup.then((r) => {
+    entry.settled = r;
+  });
   return lookup;
+}
+
+/**
+ * Headless availability without waiting: the answer if the binary lookup has
+ * already finished, or null while it hasn't. For surfaces that render on open
+ * (the review view's empty state) — they show the non-headless wording at once
+ * and correct it when the lookup lands, instead of holding their first paint
+ * on a `claude --version` that can take seconds.
+ */
+export function headlessAvailableNow(workspaceState: vscode.Memento): boolean | null {
+  if (!vscode.workspace.isTrusted) return false;
+  const configured =
+    vscode.workspace.getConfiguration("markdownCollab").get<string>("claudePath", "") ?? "";
+  const settled = lookupCache && lookupCache.key === configured ? lookupCache.settled : undefined;
+  if (!settled) return null;
+  return decideHeadlessAvailability({
+    trusted: true,
+    binaryResolved: settled.ok,
+    serverRunning: currentMcpServer() !== null,
+    mcpFailedHere: workspaceState.get<boolean>(MCP_UNAVAILABLE_KEY) === true,
+  }).ok;
 }
 
 export type HeadlessAvailability =

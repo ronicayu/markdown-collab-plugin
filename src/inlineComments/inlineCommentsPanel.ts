@@ -24,6 +24,7 @@ import { checkClaudeSkill, type SkillStatus } from "../skill";
 import { runDrawioRead } from "../collab/drawioService";
 import { claudePending, onPendingChanged } from "../claudePendingService";
 import { pendingLabel } from "./claudePending";
+import { headlessAvailability, headlessAvailableNow } from "../transports/headlessHost";
 import { detectUrlScheme, parseLinkHref, slugifyHeading } from "./linkParse";
 import type { LineRange } from "../pr/diff";
 import { headFileContent, repoRootFor } from "../uncommitted/gitUncommitted";
@@ -87,6 +88,13 @@ interface InitMessage {
   pendingThreadIds: string[];
   /** What to say under those threads — protocol evidence earns a specific phrase. */
   pendingLabel: string;
+  /**
+   * Whether a headless Claude run is available right now — the same check
+   * `commands/send.ts` uses for the send-mode picker (10x-plan-4 P2.4). Drives
+   * the empty-state card's button label and, on click, whether the dispatch
+   * is forced through headless.
+   */
+  headlessAvailable: boolean;
 }
 
 interface UpdateMessage {
@@ -96,6 +104,7 @@ interface UpdateMessage {
   suggestMode: boolean;
   pendingThreadIds: string[];
   pendingLabel: string;
+  headlessAvailable: boolean;
 }
 
 interface SkillStatusMessage {
@@ -224,6 +233,15 @@ interface FinalizeRequest {
   type: "finalize";
 }
 
+interface OpenInEditorRequest {
+  type: "open-in-editor";
+  threadId: string;
+}
+
+interface EmptyStateReviewRequest {
+  type: "empty-state-review";
+}
+
 type ClientMessage =
   | ReadyMessage
   | AddCommentRequest
@@ -244,7 +262,9 @@ type ClientMessage =
   | AcceptAllSuggestionsRequest
   | RemoveResolvedRequest
   | FinalizeRequest
-  | ToggleSuggestModeRequest;
+  | ToggleSuggestModeRequest
+  | OpenInEditorRequest
+  | EmptyStateReviewRequest;
 
 /** Dependencies the panel needs from the extension host (kept narrow so tests can stub them). */
 export interface InlinePanelDeps {
@@ -331,6 +351,8 @@ export class InlineCommentsPanel {
 
   private readonly disposables: vscode.Disposable[] = [];
   private pendingApply = false;
+  /** A background binary lookup started for the empty state is in flight. */
+  private headlessLookupPending = false;
 
   /** Set by reveal() when an open request includes a scroll target. Consumed once on the next `ready` after init. */
   private pendingScroll: RevealOpts | null = null;
@@ -535,6 +557,10 @@ ${inlineCommentsAppBody()}
           "markdownCollab.finalizeDocument",
           this.doc.uri,
         );
+      case "open-in-editor":
+        return this.handleOpenInEditor(msg.threadId);
+      case "empty-state-review":
+        return this.handleEmptyStateReview();
     }
   }
 
@@ -593,6 +619,32 @@ ${inlineCommentsAppBody()}
     await vscode.env.clipboard.writeText(payload.prompt);
     void vscode.window.showInformationMessage(
       "Inline comments: thread prompt copied to clipboard.",
+    );
+  }
+
+  private async handleOpenInEditor(threadId: string): Promise<void> {
+    return openThreadInEditor(this.doc, threadId);
+  }
+
+  /**
+   * "Review with Claude" / "Ask Claude to review this doc" from the
+   * first-run empty-state card (10x-plan-4 P2.4) — the first-minute path for
+   * a document with zero threads. When headless can actually run here, force
+   * this one dispatch through it, skipping the send-mode prompt entirely:
+   * the whole point of a one-click button is not landing in another picker.
+   * Otherwise fall through to the plain command, which resolves the
+   * configured/remembered mode (or asks) exactly like the title-bar entry
+   * point does. Either way this is the same command normal "Ask Claude to
+   * Review" runs through, focus prompt included — not a second, cut-down
+   * copy of that flow.
+   */
+  private async handleEmptyStateReview(): Promise<void> {
+    const avail = await headlessAvailability(this.context.workspaceState);
+    await vscode.commands.executeCommand(
+      "markdownCollab.askClaudeToReview",
+      this.doc.uri,
+      undefined,
+      avail.ok ? { forceMode: "headless" } : undefined,
     );
   }
 
@@ -866,6 +918,7 @@ ${inlineCommentsAppBody()}
       suggestMode: readSuggestMode(),
       pendingThreadIds: this.pendingThreadIds(),
       pendingLabel: this.pendingLabelText(),
+      headlessAvailable: this.headlessAvailableForRender(),
     };
     await this.panel.webview.postMessage(msg);
   }
@@ -882,6 +935,28 @@ ${inlineCommentsAppBody()}
     await this.panel.webview.postMessage(msg);
   }
 
+  /**
+   * Whether the empty state may offer "Review with Claude", without holding the
+   * render on the binary lookup. A cold lookup renders as unavailable and
+   * starts one; when it lands, the view gets one more push with the real answer.
+   */
+  private headlessAvailableForRender(): boolean {
+    const now = headlessAvailableNow(this.context.workspaceState);
+    if (now !== null) return now;
+    if (!this.headlessLookupPending) {
+      this.headlessLookupPending = true;
+      void headlessAvailability(this.context.workspaceState)
+        .then((a) => {
+          if (a.ok) void this.pushState();
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          this.headlessLookupPending = false;
+        });
+    }
+    return false;
+  }
+
   private async pushState(): Promise<void> {
     // Callers include editor-less triggers (diff refresh, pending-set
     // changes) where a GC'd document would otherwise render frozen content.
@@ -894,6 +969,7 @@ ${inlineCommentsAppBody()}
       suggestMode: readSuggestMode(),
       pendingThreadIds: this.pendingThreadIds(),
       pendingLabel: this.pendingLabelText(),
+      headlessAvailable: this.headlessAvailableForRender(),
     };
     await this.panel.webview.postMessage(msg);
   }
@@ -919,6 +995,37 @@ ${inlineCommentsAppBody()}
     this.disposables.length = 0;
     this.onDispose();
   }
+}
+
+/**
+ * Reverse navigation (10x-plan-4 P2.4): open the anchored text of one thread
+ * in a text editor. Source offsets, not prose offsets — `openEnd`..`closeStart`
+ * is exactly the raw markdown between the marker pair, excluding the markers
+ * themselves, which is what a human editing the file wants selected. Opens in
+ * the active editor group, consistent with 0.34.94's "review views open in
+ * the current editor group" decision. Exported (like `resolveScrollProseOffset`
+ * and `findHeadingLine` below) so the integration suite can drive it directly
+ * against a real `vscode.TextDocument`, without a live webview panel to post
+ * the triggering message through.
+ */
+export async function openThreadInEditor(doc: vscode.TextDocument, threadId: string): Promise<void> {
+  const anchor = parse(doc.getText()).anchors.get(threadId);
+  if (!anchor) {
+    void vscode.window.showInformationMessage(
+      "This comment's text was removed, so there's nothing to jump to.",
+    );
+    return;
+  }
+  const range = new vscode.Range(
+    doc.positionAt(anchor.openEnd),
+    doc.positionAt(anchor.closeStart),
+  );
+  const editor = await vscode.window.showTextDocument(doc, {
+    viewColumn: vscode.ViewColumn.Active,
+    preserveFocus: false,
+    selection: range,
+  });
+  editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
 }
 
 /**

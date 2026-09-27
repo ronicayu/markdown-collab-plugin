@@ -96,6 +96,73 @@ export function emptyListMessage(filter: ThreadFilter): string {
   return "No comments match this filter.";
 }
 
+/** A filter is hiding threads that exist — the plain one-line message. */
+export interface FilteredEmptyState {
+  kind: "filtered";
+  message: string;
+}
+
+/**
+ * The doc has never had a comment on it — the first-minute path, not a filter
+ * artifact. Rendered as a small card instead of a line of grey text (10x-plan-4
+ * P2.4 / round-3 P3.1): a brand-new user staring at a blank sidebar has no way
+ * to know a comment is even possible, let alone that Claude can start one.
+ */
+export interface FirstRunEmptyState {
+  kind: "first-run";
+  headline: string;
+  hint: string;
+  action: {
+    label: string;
+    /** Posted verbatim by the card's button. */
+    message: { type: "empty-state-review" };
+  };
+}
+
+export type EmptyState = FilteredEmptyState | FirstRunEmptyState;
+
+const HINT_BOTH_FORMS =
+  "Select text in the preview and click Comment — or, in the text editor, select it and press Cmd+K Cmd+Alt+M (Ctrl+K Ctrl+Alt+M).";
+const HINT_MAC =
+  "Select text in the preview and click Comment — or, in the text editor, select it and press Cmd+K Cmd+Alt+M.";
+const HINT_OTHER =
+  "Select text in the preview and click Comment — or, in the text editor, select it and press Ctrl+K Ctrl+Alt+M.";
+
+/**
+ * What the empty state should show. Two branches, not one message with a
+ * condition folded in — a filter hiding real threads and a document nobody has
+ * ever commented on call for different UI (a line of text vs. a card with a
+ * button), and `emptyListMessage` already owns the wording for the first.
+ *
+ * `platform` lets a caller that knows the webview's OS collapse the hint to
+ * one keybinding form; omitted (e.g. this function tested in isolation, or a
+ * host that never bothered to detect it), both forms are spelled out so the
+ * hint is still correct everywhere.
+ */
+export function emptyState(opts: {
+  filter: ThreadFilter;
+  /** Every thread in the document, before filtering — 0 means "never reviewed". */
+  totalThreads: number;
+  /** Whether a headless Claude run is available right now (same check the send-mode picker uses). */
+  headlessAvailable: boolean;
+  platform?: "mac" | "other";
+}): EmptyState {
+  if (opts.totalThreads > 0) {
+    return { kind: "filtered", message: emptyListMessage(opts.filter) };
+  }
+  const hint =
+    opts.platform === "mac" ? HINT_MAC : opts.platform === "other" ? HINT_OTHER : HINT_BOTH_FORMS;
+  return {
+    kind: "first-run",
+    headline: "No comments yet.",
+    hint,
+    action: {
+      label: opts.headlessAvailable ? "Review with Claude" : "Ask Claude to review this doc",
+      message: { type: "empty-state-review" },
+    },
+  };
+}
+
 /**
  * The next unread-from-Claude thread after `currentId`, wrapping at the end.
  * `null` when there are none. Passing an id that isn't in the unread list

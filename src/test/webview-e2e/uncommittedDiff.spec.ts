@@ -164,7 +164,9 @@ test.describe("change navigation", () => {
       isNew: false,
     });
     // The hint names what n/p do here: step changes, not threads.
-    await expect(page.locator("#keys-hint")).toHaveText("n / p to move between changes · r reply · e resolve");
+    await expect(page.locator("#keys-hint")).toHaveText(
+      "n / p to move between changes · r reply · e resolve · o open in editor",
+    );
     await page.keyboard.press("n");
     await expect(page.locator("#diff-nav-count")).toHaveText("1 / 2");
     await page.keyboard.press("p");

@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.35.5 — 2026-09-27 (GitHub only)
+
+### Added: an empty state that teaches (10x-plan-4 P2.4)
+
+A document nobody has commented on used to show one grey line. It now shows a
+small card: how to start a comment (select text and click Comment, or
+`Cmd+K Cmd+Alt+M` / `Ctrl+K Ctrl+Alt+M` in the text editor), and one button.
+The button reads **Review with Claude** when a headless run can go straight
+through, and runs the review in headless mode whatever your send mode is set
+to, since a one-click button shouldn't land you in a picker. Otherwise it reads
+**Ask Claude to review this doc** and follows your send mode as usual. Either
+way it is the same Ask Claude to Review command, focus prompt included. A
+filter that merely hides existing threads still gets the one-line message.
+
+The view never waits on Claude Code to draw that card. Whether headless is
+available depends on a `claude --version` probe, which can take seconds on a
+cold start. The card renders with the non-headless wording at once and updates
+when the probe lands, and the probe now runs in the background at activation,
+so the answer is usually there before the view opens.
+
+### Added: from the review view back to the source
+
+Each thread card has a small `↗` button, and `o` does the same from the
+keyboard. It opens the text editor in the current group with the anchored
+passage selected and centered. A thread whose passage was deleted says so
+instead of opening nothing.
+
+### Changed: the review views work with a screen reader
+
+- The "Claude is working…" row and the "N new from Claude" line are live
+  regions, so changes are announced.
+- The thread list is a feed of articles, each labelled with its author and the
+  start of its first comment, with its position in the list.
+- The highlighted card holds keyboard focus as `n` and `p` move it, with a
+  visible focus ring, using a roving tabindex rather than only a CSS class.
+- Every smooth scroll and flash animation in all three review surfaces respects
+  `prefers-reduced-motion`. A test fails if a new smooth scroll bypasses the
+  shared helper.
+
 ## 0.35.4 — 2026-09-27 (GitHub only)
 
 ### Added: the Claude side ships as a Claude Code plugin (10x-plan-4 P0.2)
