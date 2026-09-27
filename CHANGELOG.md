@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.35.0 — 2026-09-27 (GitHub only)
+
+### Removed: the `mcp`, `channel`, and `mcp-channel` send modes (10x-plan-4 P0.3)
+
+Five send modes were three ideas under five names. `channel` (an event log
+plus a tailer Claude had to watch with `Monitor`) and `mcp-channel` (Claude
+Code's research-preview channels, which only accept allowlisted plugins and so
+could never reach a `server:` entry outside
+`--dangerously-load-development-channels`) existed for harness setups that no
+longer describe how anyone runs Claude Code. `mcp` was `terminal` plus one line
+of prompt.
+
+All three are gone, with `src/transports/eventLog.ts`,
+`src/transports/mcpChannel.ts`, and the `mdc-tail.mjs` / `mdc-channel.mjs`
+helpers. The skill installer deletes those two helpers if an older install left
+them behind. A `markdownCollab.sendMode` setting or a remembered workspace
+choice of `mcp`, `channel`, `mcp-channel`, or the ancient `ipc` now behaves as
+`terminal`, with one toast per workspace saying so.
+
+### Changed: every send asks Claude to use the review tools if it has them
+
+The line that used to be the whole of `mcp` mode now goes out on every terminal
+and clipboard send. It is worded to be harmless when the tools are absent, since
+the skill already falls back to the `mdc` CLI. Nobody has to pick a mode to get
+undoable, checked edits any more; registering the tools is enough.
+
+### Changed: "Claude is working…" is earned by a tool call, not by the mode
+
+Every dispatch now starts as an inferred wait. The first real tool call against
+the document upgrades it to a protocol-backed one, mid-flight, and the closing
+`mc_check` clears it whichever grade it reached. Before, the grade was fixed at
+dispatch by which mode you had picked.
+
+### Changed: a picker with two choices, in plain words
+
+"Send to your Claude terminal (recommended)" and "Copy to clipboard". The item
+list is a pure builder now, and a test holds it and the settings enum in
+lockstep. The settings descriptions say when you would want each mode instead
+of how it is implemented.
+
+### Changed: the skill is 30% shorter
+
+6,477 words down to 4,570. The channel sections are gone, the MCP-tool and CLI
+reference tables are one table, and "Anti-patterns" folded into the invariants
+it repeated. The Review Mode rubric, the worked examples, the no-upper-bound
+rule, and the hand-editing appendix are untouched. A test caps it at 5,000
+words; the cap counts words rather than lines, because un-wrapping a paragraph
+shrinks the line count without removing anything Claude has to read.
+
+README, walkthrough, Settings, Commands, Storage layout, and Troubleshooting
+dropped their channel-mode material.
+
 ## 0.34.97 — 2026-09-27 (GitHub only)
 
 ### Changed: `extension.ts` split into per-family command modules (10x-plan-4 P3.2)

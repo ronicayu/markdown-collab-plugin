@@ -11,21 +11,18 @@ import {
 } from "../inlineComments/sendToClaude";
 import { parse as parseInline } from "../inlineComments/format";
 import { claudePending } from "../claudePendingService";
-import type { PendingEvidence } from "../inlineComments/claudePending";
 import { CONVENTIONS_REL, withConventions } from "../reviewConventions";
 import {
   mcpToolsDirective,
   type ReviewPayload,
   type SendMode,
 } from "../sendToClaude";
-import { currentMcpServer } from "../mcpServer";
-import { EVENT_LOG_REL, EventLog } from "../transports/eventLog";
-import { hasMcpChannelEndpoint, sendViaMcpChannel } from "../transports/mcpChannel";
 import {
   CHANGE_HINT,
   detectSendMode,
   type SendModeDetection,
 } from "../transports/detectSendMode";
+import { buildSendModeItems } from "../transports/sendModePicker";
 import { sendViaTerminal, startClaudeTerminal } from "../transports/terminal";
 import type { TerminalTracker } from "../transports/terminalTracker";
 import type { CommandDeps } from "./deps";
@@ -62,25 +59,52 @@ async function invokeCopyClaudePrompt(): Promise<void> {
 const REMEMBERED_SEND_MODE_KEY = "markdownCollab.rememberedSendMode";
 
 function isConcreteSendMode(v: unknown): v is Exclude<SendMode, "ask"> {
-  return (
-    v === "terminal" ||
-    v === "mcp" ||
-    v === "channel" ||
-    v === "mcp-channel" ||
-    v === "clipboard"
-  );
+  return v === "terminal" || v === "clipboard";
 }
 
-function normalizeSendMode(v: unknown): SendMode {
-  if (v === "ask" || isConcreteSendMode(v)) return v;
-  return "ask";
+/**
+ * `mcp`, `channel`, `mcp-channel` (and the ancient `ipc`, renamed to `channel`
+ * back in 0.11.0) all delivered to a terminal already — the ceremony around
+ * them is what 10x-plan-4 P0.3 deleted. A value in this set, whether it came
+ * from the setting or from a remembered workspace choice, now behaves exactly
+ * like `terminal`; anything else that isn't a real mode is unrecognized
+ * garbage and keeps the older "fall back to ask" behavior.
+ */
+const LEGACY_SEND_MODES = new Set(["mcp", "channel", "mcp-channel", "ipc"]);
+
+export type SendModeNormalization =
+  | { kind: "ok"; mode: SendMode }
+  /** A retired value that now behaves like `terminal`. */
+  | { kind: "legacy"; mode: "terminal" }
+  /** Never a valid value — falls back to `ask` with a warning. */
+  | { kind: "unknown"; mode: "ask" };
+
+/** Pure so the legacy-normalization rules are unit-testable without vscode. */
+export function normalizeSendModeValue(v: unknown): SendModeNormalization {
+  if (v === "ask" || isConcreteSendMode(v)) return { kind: "ok", mode: v };
+  if (LEGACY_SEND_MODES.has(v as string)) return { kind: "legacy", mode: "terminal" };
+  return { kind: "unknown", mode: "ask" };
+}
+
+const LEGACY_SEND_MODE_TOAST_KEY = "markdownCollab.legacySendModeToastShown";
+
+/**
+ * The retirement notice fires once per workspace, not once per send — nobody
+ * needs to be told twice that the mode they had picked no longer exists.
+ */
+export async function maybeShowLegacySendModeToast(workspaceState: vscode.Memento): Promise<void> {
+  if (workspaceState.get<boolean>(LEGACY_SEND_MODE_TOAST_KEY)) return;
+  await workspaceState.update(LEGACY_SEND_MODE_TOAST_KEY, true);
+  void vscode.window.showInformationMessage(
+    "Markdown Collab: that send mode was retired — sends now go to the Claude terminal. " +
+      "Claude still uses the review tools when it has them.",
+  );
 }
 
 async function invokeSendAllToClaude(
   doc: vscode.TextDocument,
   log: Logger,
   tracker: TerminalTracker,
-  eventLogs: Map<string, EventLog>,
   workspaceState: vscode.Memento,
 ): Promise<void> {
   const folder = folderForDocument(doc.uri);
@@ -93,15 +117,7 @@ async function invokeSendAllToClaude(
     );
     return;
   }
-  await dispatchReviewPayload(
-    inlinePayload,
-    log,
-    tracker,
-    eventLogs,
-    workspaceState,
-    folder,
-  );
-
+  await dispatchReviewPayload(inlinePayload, log, tracker, workspaceState, folder);
 }
 
 /**
@@ -112,24 +128,21 @@ async function invokeSendAllToClaude(
  * from each command, so a new send path cannot forget it. Review-mode payloads
  * carry no comments and therefore mark nothing — they create threads instead
  * of addressing existing ones, so there is no card to annotate.
+ *
+ * Always "inferred": since 10x-plan-4 P0.3 no send path can claim protocol
+ * evidence up front — a tool call is what earns that (see
+ * `inlineComments/claudePending.ts`'s `noteActivity`), not the mode picked.
  */
 async function markPayloadPending(
   payload: ReviewPayload,
   folder: vscode.WorkspaceFolder,
-  /**
-   * "protocol" only when the dispatch asked Claude to work through the MCP
-   * tools — then the tool calls, not a timer, decide when the wait ends
-   * (10x-plan-2 P0.2). Every other transport is fire-and-forget, and the
-   * indicator says so.
-   */
-  evidence: PendingEvidence = "inferred",
 ): Promise<void> {
   const threadIds = payload.comments.map((c) => c.id);
   if (threadIds.length === 0) return;
   try {
     const uri = vscode.Uri.joinPath(folder.uri, payload.file);
     const doc = await vscode.workspace.openTextDocument(uri);
-    claudePending.mark(uri.toString(), parseInline(doc.getText()).threads, threadIds, evidence);
+    claudePending.mark(uri.toString(), parseInline(doc.getText()).threads, threadIds, "inferred");
   } catch {
     // The indicator is a nicety; never fail a successful send over it.
   }
@@ -160,7 +173,6 @@ export async function dispatchReviewPayload(
   payload: ReviewPayload,
   log: Logger,
   tracker: TerminalTracker,
-  eventLogs: Map<string, EventLog>,
   workspaceState: vscode.Memento,
   folder: vscode.WorkspaceFolder,
   intent: DispatchIntent = { kind: "address" },
@@ -186,14 +198,18 @@ export async function dispatchReviewPayload(
 
   const config = vscode.workspace.getConfiguration("markdownCollab");
   const rawMode = config.get<unknown>("sendMode", "ask");
-  let mode = normalizeSendMode(rawMode);
-  if (mode !== rawMode) {
+  const normalizedMode = normalizeSendModeValue(rawMode);
+  let mode = normalizedMode.mode;
+  if (normalizedMode.kind === "legacy") {
+    log.info("legacy sendMode setting normalized to terminal", { rawMode: String(rawMode) });
+    await maybeShowLegacySendModeToast(workspaceState);
+  } else if (normalizedMode.kind === "unknown") {
     log.warn(
       `markdownCollab.sendMode "${String(rawMode)}" is not recognized; falling back to "ask". ` +
-        `Valid values: ask, terminal, channel, clipboard. (The "ipc" mode was renamed to "channel" in 0.11.0.)`,
+        `Valid values: ask, terminal, clipboard.`,
     );
     void vscode.window.showWarningMessage(
-      `markdownCollab.sendMode "${String(rawMode)}" is no longer supported — falling back to ask. Update your settings to one of: terminal, channel, clipboard.`,
+      `markdownCollab.sendMode "${String(rawMode)}" is no longer supported — falling back to ask. Update your settings to one of: terminal, clipboard.`,
     );
   }
   let justRemembered = false;
@@ -201,26 +217,26 @@ export async function dispatchReviewPayload(
   let detected: SendModeDetection | null = null;
   if (mode === "ask") {
     const remembered = workspaceState.get<unknown>(REMEMBERED_SEND_MODE_KEY);
-    if (isConcreteSendMode(remembered)) {
+    const rememberedNormalized = normalizeSendModeValue(remembered);
+    if (rememberedNormalized.kind === "legacy") {
+      mode = rememberedNormalized.mode;
+      log.trace("remembered send mode was retired; using terminal", { remembered: String(remembered) });
+      await maybeShowLegacySendModeToast(workspaceState);
+      await workspaceState.update(REMEMBERED_SEND_MODE_KEY, mode);
+    } else if (isConcreteSendMode(remembered)) {
       mode = remembered;
       log.trace("using the send mode remembered for this workspace", { mode });
     } else {
       // Before asking, look at what's actually running. A visible Claude REPL
-      // or a live MCP channel answers the question the quick-pick was asking,
-      // and the user has no way to make that call better than we can.
-      detected = detectSendMode({
-        claudeTerminal: tracker.anyClaudeTerminal(),
-        mcpChannelEndpoint: await hasMcpChannelEndpoint(folder.uri.fsPath),
-      });
+      // answers the question the quick-pick was asking, and the user has no
+      // way to make that call better than we can.
+      detected = detectSendMode({ claudeTerminal: tracker.anyClaudeTerminal() });
       if (detected) {
         mode = detected.mode;
         log.info("send mode auto-detected", { mode: detected.mode, reason: detected.reason });
       } else {
-        // MCP is offered, never auto-selected: it can be disabled entirely on
-        // Claude's side (enterprise policy, --strict-mcp-config), so a default
-        // that depends on it would silently break for those users.
         const picked = await pickSendMode(payload.unresolvedCount, intent, {
-          mcpAvailable: currentMcpServer() !== null,
+          terminalDetected: tracker.anyClaudeTerminal(),
         });
         if (!picked) {
           log.info("send cancelled at the mode picker");
@@ -242,9 +258,18 @@ export async function dispatchReviewPayload(
 
   log.info("delivering", { mode, file: payload.file });
 
+  // Appended unconditionally: it's harmless when the tools aren't in Claude's
+  // tool list (the skill's own CLI fallback covers that case), and folding
+  // `mcp` into `terminal` only works because this line no longer needs a mode
+  // of its own to gate it (10x-plan-4 P0.3).
+  const delivered: ReviewPayload = {
+    ...payload,
+    prompt: `${payload.prompt}\n\n${mcpToolsDirective()}`,
+  };
+
   if (mode === "clipboard") {
-    await vscode.env.clipboard.writeText(payload.prompt);
-    log.info("prompt copied to the clipboard", { chars: payload.prompt.length });
+    await vscode.env.clipboard.writeText(delivered.prompt);
+    log.info("prompt copied to the clipboard", { chars: delivered.prompt.length });
     const msg =
       intent.kind === "review-request"
         ? `Review-request prompt for \`${payload.file}\` copied — paste into Claude Code.`
@@ -255,166 +280,61 @@ export async function dispatchReviewPayload(
     return;
   }
 
-  if (mode === "mcp" && currentMcpServer() === null) {
-    // The chosen mode's server isn't up (window reloaded, port lost). Degrade
-    // rather than fail: the prompt still gets delivered, Claude just edits the
-    // old way. Said out loud, because the human picked MCP on purpose.
-    log.warn("send mode mcp requested but the tool server is not running; falling back to terminal");
-    void vscode.window.showWarningMessage(
-      "Markdown Collab: the review tool server isn't running — sending to the terminal without it.",
-    );
-    mode = "terminal";
-  }
-
-  if (mode === "terminal" || mode === "mcp") {
-    const delivered: ReviewPayload =
-      mode === "mcp"
-        ? { ...payload, prompt: `${payload.prompt}\n\n${mcpToolsDirective()}` }
-        : payload;
-    const sendResult = await sendViaTerminal(delivered, tracker, {
-      log,
-      offerStartTerminal: async () => {
-        const choice = await vscode.window.showInformationMessage(
-          "No Claude terminal detected.",
-          { modal: false },
-          "Start Claude in new terminal",
-          "Switch to clipboard",
-          "Cancel",
-        );
-        log.info("no Claude terminal detected", { choice: choice ?? "dismissed" });
-        if (choice === "Start Claude in new terminal") {
-          const terminal = startClaudeTerminal(tracker, log);
-          // Give the REPL a beat to initialize before we paste into it.
-          await new Promise((r) => setTimeout(r, 1500));
-          return terminal;
-        }
-        if (choice === "Switch to clipboard") {
-          // `delivered`, not `payload`: in mcp mode the tools directive is part
-          // of the prompt, and a hand-paste needs it too.
-          await vscode.env.clipboard.writeText(delivered.prompt);
-          void vscode.window.showInformationMessage(
-            "Prompt copied — paste into Claude Code.",
-          );
-        }
-        return null;
-      },
-    });
-    if (!sendResult.ok && sendResult.reason === "no-target") {
-      // The clipboard fallback toast above already fired; nothing more to do.
-      log.warn("send abandoned: no terminal to deliver to");
-      return;
-    }
-    if (!sendResult.ok) {
-      log.info("send cancelled", { reason: sendResult.reason });
-      return;
-    }
-    log.info("delivered to terminal", {
-      terminal: sendResult.terminalName,
-      mode,
-      chars: delivered.prompt.length,
-    });
-    await markPayloadPending(payload, folder, mode === "mcp" ? "protocol" : "inferred");
-    const msg =
-      intent.kind === "review-request"
-        ? `Claude is reviewing — threads will appear when it's done. (Sent to "${sendResult.terminalName}".)`
-        : `Sent to "${sendResult.terminalName}".`;
-    void vscode.window.showInformationMessage(`${msg}${rememberedSuffix}`);
-    return;
-  }
-
-  if (mode === "channel" || mode === "mcp-channel") {
-    const folderKey = folder.uri.fsPath;
-    let eventLog = eventLogs.get(folderKey);
-    if (!eventLog) {
-      eventLog = new EventLog(folderKey);
-      eventLogs.set(folderKey, eventLog);
-    }
-    let envelope;
-    try {
-      envelope = await eventLog.append(payload);
-    } catch (e) {
-      log.error("event log append failed", e);
-      void vscode.window.showErrorMessage(
-        `Could not write to event log: ${(e as Error).message}`,
+  // mode === "terminal": the only delivery left besides clipboard/ask.
+  const sendResult = await sendViaTerminal(delivered, tracker, {
+    log,
+    offerStartTerminal: async () => {
+      const choice = await vscode.window.showInformationMessage(
+        "No Claude terminal detected.",
+        { modal: false },
+        "Start Claude in new terminal",
+        "Switch to clipboard",
+        "Cancel",
       );
-      return;
-    }
-    await markPayloadPending(payload, folder);
-    if (mode === "channel") {
-      void vscode.window.showInformationMessage(
-        `Appended to ${EVENT_LOG_REL}. In Claude, run \`mdc-tail.mjs\` in background and Monitor it.${rememberedSuffix}`,
-      );
-      return;
-    }
-    // mcp-channel: also push directly to the running MCP channel server so
-    // the event arrives as a <channel> tag on Claude's next turn.
-    const result = await sendViaMcpChannel(folderKey, envelope);
-    log.info("mcp-channel push", { ok: result.ok, reason: result.ok ? undefined : result.reason });
-    if (result.ok) {
-      void vscode.window.showInformationMessage(
-        `Sent via MCP channel.${rememberedSuffix}`,
-      );
-    } else if (result.reason === "not-running") {
-      // An endpoint file can outlive the server that wrote it. If we picked
-      // this mode ourselves off that file, un-remember it so the next send
-      // asks properly instead of failing the same way forever.
-      if (detected?.mode === "mcp-channel") {
-        await workspaceState.update(REMEMBERED_SEND_MODE_KEY, undefined);
+      log.info("no Claude terminal detected", { choice: choice ?? "dismissed" });
+      if (choice === "Start Claude in new terminal") {
+        const terminal = startClaudeTerminal(tracker, log);
+        // Give the REPL a beat to initialize before we paste into it.
+        await new Promise((r) => setTimeout(r, 1500));
+        return terminal;
       }
-      void vscode.window.showWarningMessage(
-        "MCP channel server isn't running. Start Claude with `--dangerously-load-development-channels server:markdown-collab` or run 'Markdown Collab: Install Claude Skill' if mdc-channel.mjs is missing. The payload was still appended to the events log.",
-      );
-    } else {
-      log.error("mcp-channel push failed", { reason: result.reason, detail: result.detail });
-      void vscode.window.showErrorMessage(
-        `MCP channel push failed: ${result.reason}${
-          result.detail ? ` (${result.detail})` : ""
-        }`,
-      );
-    }
+      if (choice === "Switch to clipboard") {
+        await vscode.env.clipboard.writeText(delivered.prompt);
+        void vscode.window.showInformationMessage(
+          "Prompt copied — paste into Claude Code.",
+        );
+      }
+      return null;
+    },
+  });
+  if (!sendResult.ok && sendResult.reason === "no-target") {
+    // The clipboard fallback toast above already fired; nothing more to do.
+    log.warn("send abandoned: no terminal to deliver to");
     return;
   }
+  if (!sendResult.ok) {
+    log.info("send cancelled", { reason: sendResult.reason });
+    return;
+  }
+  log.info("delivered to terminal", {
+    terminal: sendResult.terminalName,
+    mode,
+    chars: delivered.prompt.length,
+  });
+  await markPayloadPending(payload, folder);
+  const msg =
+    intent.kind === "review-request"
+      ? `Claude is reviewing — threads will appear when it's done. (Sent to "${sendResult.terminalName}".)`
+      : `Sent to "${sendResult.terminalName}".`;
+  void vscode.window.showInformationMessage(`${msg}${rememberedSuffix}`);
 }
 
 async function pickSendMode(
   unresolvedCount: number,
   intent: DispatchIntent = { kind: "address" },
-  opts: { mcpAvailable?: boolean } = {},
+  opts: { terminalDetected: boolean },
 ): Promise<SendMode | null> {
-  const items: Array<vscode.QuickPickItem & { mode: SendMode }> = [
-    {
-      label: "Send to active terminal",
-      description: "Type the prompt into a running Claude REPL",
-      mode: "terminal",
-    },
-    // Only offered when the tool server is actually up. Listing a mode that
-    // can't work is worse than not listing it.
-    ...(opts.mcpAvailable
-      ? [
-          {
-            label: "Send to terminal + use the review tools",
-            description: "Claude edits through the editor (undoable, checked before it writes)",
-            mode: "mcp" as SendMode,
-          },
-        ]
-      : []),
-    {
-      label: "Append to event log",
-      description: "For a Claude `tail -f` + Monitor watch loop",
-      mode: "channel",
-    },
-    {
-      label: "Push to MCP channel",
-      description:
-        "Native <channel> event in Claude (requires Claude Code v2.1.80+ + .mcp.json setup)",
-      mode: "mcp-channel",
-    },
-    {
-      label: "Copy to clipboard",
-      description: "Paste manually into Claude",
-      mode: "clipboard",
-    },
-  ];
+  const items: Array<vscode.QuickPickItem & { mode: SendMode }> = buildSendModeItems(opts);
   const placeHolder =
     intent.kind === "review-request"
       ? `How to ask Claude to review${intent.hasFocus ? " (with focus)" : ""}? (Set markdownCollab.sendMode to skip this prompt.)`
@@ -427,7 +347,7 @@ async function pickSendMode(
 
 /** Register the "Send to Claude" family of commands. */
 export function registerSendCommands(deps: CommandDeps): void {
-  const { context, sendLog, terminalTracker, eventLogs } = deps;
+  const { context, sendLog, terminalTracker } = deps;
   context.subscriptions.push(
     vscode.commands.registerCommand("markdownCollab.toggleSuggestMode", async () => {
       const next = !isSuggestMode();
@@ -476,7 +396,6 @@ export function registerSendCommands(deps: CommandDeps): void {
           doc,
           sendLog,
           terminalTracker,
-          eventLogs,
           context.workspaceState,
         );
       },
@@ -511,7 +430,6 @@ export function registerSendCommands(deps: CommandDeps): void {
           payload,
           sendLog,
           terminalTracker,
-          eventLogs,
           context.workspaceState,
           folder,
         );
@@ -539,7 +457,8 @@ export function registerSendCommands(deps: CommandDeps): void {
           );
           return;
         }
-        await vscode.env.clipboard.writeText(payload.prompt);
+        // A clipboard delivery like any other — same unconditional directive.
+        await vscode.env.clipboard.writeText(`${payload.prompt}\n\n${mcpToolsDirective()}`);
         void vscode.window.showInformationMessage(
           "Thread prompt copied — paste into Claude Code.",
         );

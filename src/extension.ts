@@ -15,7 +15,6 @@ import {
 } from "./mcpServer";
 import { parse as parseInline } from "./inlineComments/format";
 import { activateClaudeStatusBar } from "./claudeStatusBar";
-import { EventLog } from "./transports/eventLog";
 import { TerminalTracker } from "./transports/terminalTracker";
 import { dispatchReviewPayload, registerSendCommands } from "./commands/send";
 import { registerReviewCommands } from "./commands/review";
@@ -56,11 +55,6 @@ export function activate(context: vscode.ExtensionContext): void {
       `Markdown Collab: PR review feature failed to initialize — ${err.message}. Other commands still work. See the "Markdown Collab" output channel for the stack trace.`,
     );
   }
-
-  // Per-workspace event logs, materialized lazily on first "channel" send
-  // for each folder. The log is plain append-only newline-delimited JSON;
-  // Claude reads it via `tail -f` + Monitor.
-  const eventLogs = new Map<string, EventLog>();
 
   // Cross-file Markdown Review tree. Constructor does NOT walk the FS — the
   // scan fires on first root-level getChildren when the user expands the view,
@@ -128,7 +122,6 @@ export function activate(context: vscode.ExtensionContext): void {
             payload,
             sendLog,
             terminalTracker,
-            eventLogs,
             context.workspaceState,
             folder,
           );
@@ -176,7 +169,6 @@ export function activate(context: vscode.ExtensionContext): void {
     diagnosticsLog: rootLog.scope("diagnostics"),
     terminalTracker,
     reviewView,
-    eventLogs,
     openInlineView,
     revealThread,
   };

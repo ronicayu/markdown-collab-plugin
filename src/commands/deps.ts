@@ -9,7 +9,6 @@
 import * as vscode from "vscode";
 import type { Logger } from "../logging";
 import type { ReviewView } from "../reviewView";
-import type { EventLog } from "../transports/eventLog";
 import type { TerminalTracker } from "../transports/terminalTracker";
 
 export interface CommandDeps {
@@ -24,7 +23,6 @@ export interface CommandDeps {
   diagnosticsLog: Logger;
   terminalTracker: TerminalTracker;
   reviewView: ReviewView;
-  eventLogs: Map<string, EventLog>;
   /**
    * One way into the review view, used by the command, the explorer menus, and
    * the source-editor affordances (hover link, unread walk). `opts` carries an

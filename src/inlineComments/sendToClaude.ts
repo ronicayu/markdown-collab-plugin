@@ -2,7 +2,7 @@
 //
 // Inline comments live inside the .md file itself, so we build the payload
 // directly from the parser output and shim it into the `ReviewPayload` shape
-// the transports (terminal / channel / mcp-channel / clipboard) expect.
+// the transports (terminal / clipboard) expect.
 //
 // The prompt explicitly documents the on-disk inline format so Claude can
 // parse and update threads in place — replying on the relevant

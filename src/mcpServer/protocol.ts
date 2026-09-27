@@ -1,10 +1,10 @@
 // MCP JSON-RPC, the subset an extension-hosted tool server needs.
 //
-// Hand-rolled rather than pulled from the SDK, for the same reason
-// `mdc-channel.mjs` is: the surface is initialize + tools/list + tools/call +
-// ping, the extension bundle ships as one esbuilt file, and a protocol
-// dependency in the host would be the largest thing in it. Kept pure (no http,
-// no vscode) so every branch is unit-testable without a socket.
+// Hand-rolled rather than pulled from the SDK: the surface is initialize +
+// tools/list + tools/call + ping, the extension bundle ships as one esbuilt
+// file, and a protocol dependency in the host would be the largest thing in
+// it. Kept pure (no http, no vscode) so every branch is unit-testable without
+// a socket.
 //
 // Transport is streamable HTTP with JSON responses (see httpServer.ts). This
 // server never initiates server→client messages, so it does not open an SSE

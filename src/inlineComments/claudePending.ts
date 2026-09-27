@@ -10,21 +10,23 @@
 //
 // There are two grades of knowledge here, and the difference matters:
 //
-//   "inferred"  — a payload went out over a transport with no back channel
-//                 (terminal paste, event log). Resolution is comment-shaped:
-//                 a thread stops waiting when a comment authored by Claude
-//                 appears that wasn't there at dispatch. A timeout exists only
-//                 because a dispatch can go unanswered forever (the user closed
-//                 Claude, the paste never ran) and a permanent "working…" is a
-//                 lie — not because elapsed time means anything.
+//   "inferred"  — every dispatch starts here (10x-plan-4 P0.3 deleted the mode
+//                 that used to mark "protocol" up front). Resolution is
+//                 comment-shaped: a thread stops waiting when a comment
+//                 authored by Claude appears that wasn't there at dispatch. A
+//                 timeout exists only because a dispatch can go unanswered
+//                 forever (the user closed Claude, the paste never ran) and a
+//                 permanent "working…" is a lie — not because elapsed time
+//                 means anything.
 //
-//   "protocol"  — the dispatch asked Claude to work through the extension's MCP
-//                 tools, so the tool calls themselves are evidence. A call says
+//   "protocol"  — Claude actually called one of the extension's MCP tools, so
+//                 the tool calls themselves are evidence — a call upgrades any
+//                 "inferred" wait on that document (`noteActivity`), says
 //                 "active", `mc_status` says what phase, and the pass's final
-//                 `mc_check` says finished. The timeout stops being a guess
-//                 about Claude's lifetime and becomes a silence detector: it
-//                 runs from the last signal, not from dispatch, so a long pass
-//                 that keeps reporting never expires mid-work.
+//                 `mc_check` (`noteComplete`) says finished. The timeout stops
+//                 being a guess about Claude's lifetime and becomes a silence
+//                 detector: it runs from the last signal, not from dispatch, so
+//                 a long pass that keeps reporting never expires mid-work.
 //
 // Pure and vscode-free: the tracker takes an injected clock and scheduler so
 // the expiry path is testable without waiting ten minutes.
@@ -187,6 +189,12 @@ export class ClaudePendingTracker {
    * Claude called a tool against this document. Upgrades the wait from "sent"
    * to "active", records the phase when one came with it, and pushes the
    * silence deadline out — this is the signal the timeout used to stand in for.
+   *
+   * A tool call is itself protocol evidence, whatever the wait started as: since
+   * 10x-plan-4 P0.3 every dispatch is marked "inferred" up front (the `mcp` mode
+   * that used to earn "protocol" at dispatch time is gone), so this is the only
+   * place a wait ever becomes "protocol" — and it upgrades every snapshot for the
+   * document, not just ones that already had it.
    */
   public noteActivity(docKey: string, opts: { phase?: string } = {}): void {
     const snapshots = this.byDoc.get(docKey);
@@ -204,7 +212,7 @@ export class ClaudePendingTracker {
     const now = this.now();
     this.byDoc.set(
       docKey,
-      snapshots.map((s) => (s.evidence === "protocol" ? { ...s, lastSignal: now } : s)),
+      snapshots.map((s) => ({ ...s, evidence: "protocol", lastSignal: now })),
     );
     this.armTimer(docKey);
     this.onChange(docKey);
@@ -222,9 +230,11 @@ export class ClaudePendingTracker {
 
   /**
    * Claude finished its pass on this document — the skill's closing `mc_check`.
-   * Clears the wait outright: with a protocol signal there is nothing left to
-   * infer, and waiting for a reply-shaped file change would keep the indicator
-   * up after a pass that (legitimately) left no reply.
+   * Clears the wait outright, regardless of whether it was still "inferred" or
+   * had already been upgraded to "protocol": `mc_check` is itself a tool call,
+   * so it can be the very first signal a file gets. Waiting for a reply-shaped
+   * file change instead would keep the indicator up after a pass that
+   * (legitimately) left no reply.
    */
   public noteComplete(docKey: string): void {
     const had = (this.byDoc.get(docKey)?.length ?? 0) > 0;

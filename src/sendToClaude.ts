@@ -6,28 +6,25 @@ import { parse as parseInline } from "./inlineComments/format";
 import { deltaScope } from "./inlineComments/deltaReview";
 import { buildDeltaPrompt } from "./inlineComments/deltaPrompt";
 
-export type SendMode =
-  | "terminal"
-  /** Terminal delivery, but Claude acts through the extension's MCP tools. */
-  | "mcp"
-  | "channel"
-  | "mcp-channel"
-  | "clipboard"
-  | "ask";
+// 10x-plan-4 P0.3: `mcp` folded into `terminal`, `channel` / `mcp-channel`
+// were deleted outright — a fourth mode (`headless`) lands in a later
+// initiative, and the picker builder (`transports/sendModePicker.ts`) is
+// shaped so adding it is one more list entry, not a second place to update.
+export type SendMode = "terminal" | "clipboard" | "ask";
 
 /**
- * The line appended to a prompt in `mcp` mode.
+ * The line appended to every terminal and clipboard delivery.
  *
- * The tools can't start a turn — only a delivered prompt does — so `mcp` mode
- * is terminal delivery plus this directive. What it buys is the write path:
- * every change lands as a `WorkspaceEdit` the human can undo, checked before it
- * applies, instead of a disk write the extension learns about afterwards.
+ * There used to be a separate `mcp` mode for this; folding it into `terminal`
+ * only works because the line is harmless when the tools aren't there — the
+ * skill's own CLI fallback covers that case, so the directive can go out
+ * unconditionally instead of being gated on a mode the human had to pick.
  */
 export function mcpToolsDirective(): string {
   return (
-    "Use the `markdown-collab` MCP tools for this pass — mc_list to read, mc_reply / mc_open / mc_rewrite / " +
-    "mc_suggest to act, mc_status to say what you're doing, and mc_check on each file when you're done. " +
-    "They write through the editor, so nothing races an unsaved buffer and the human can undo you."
+    "If the `markdown-collab` MCP tools are in your tool list, use them for this pass — mc_list to read, " +
+    "mc_reply / mc_open / mc_rewrite / mc_suggest to act, mc_status to say what you're doing, and mc_check " +
+    "on each file when you're done; if they aren't, use the `mdc` CLI as the skill describes."
   );
 }
 

@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with Claude Code — inline comments anchored in the file, a live AI co-editor, suggestions you accept or reject, and GitHub/GitLab PR review.",
-  "version": "0.34.97",
+  "version": "0.35.0",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -259,21 +259,15 @@
           "enum": [
             "ask",
             "terminal",
-            "mcp",
-            "channel",
-            "mcp-channel",
             "clipboard"
           ],
           "enumDescriptions": [
-            "Prompt the first time per workspace, then remember the choice. Run 'Markdown Collab: Reset Send Mode' to clear the remembered choice.",
-            "Type the prompt into a running Claude REPL via bracketed paste. Falls back to spawning a 'Claude Review' terminal if none is detected.",
-            "Terminal delivery, plus a directive to act through this extension's MCP review tools — Claude's edits then go through the editor (undoable, checked before they write). Never auto-selected: MCP can be disabled on Claude's side.",
-            "Append one JSON line per click to .markdown-collab/.events.jsonl. Claude reads it via the bundled mdc-tail.mjs in a background bash + Monitor — no polling, no Bash 600s timeout.",
-            "Push the payload to the bundled MCP channel server so Claude receives a native <channel> tag on its next turn. Requires Claude Code v2.1.80+ and a one-time .mcp.json setup (see README).",
-            "Copy the prompt to the clipboard for manual paste into Claude."
+            "Ask which way to send, the first time per workspace, then remember the answer. Run 'Markdown Collab: Reset Send Mode' to be asked again.",
+            "Type the prompt into your running Claude session. Works everywhere — the recommended choice if you're not sure.",
+            "Copy the prompt to your clipboard so you can paste it into Claude yourself."
           ],
           "default": "ask",
-          "markdownDescription": "How the **Send to Claude** button delivers unresolved comments to Claude Code.\n\n- `ask` — quick-pick on first use per workspace; remembers the choice (run **Markdown Collab: Reset Send Mode** to clear).\n- `terminal` — bracketed-paste into a running `claude` REPL. No MCP required.\n- `mcp` — same delivery, plus a directive to use this extension's review tools, so Claude's edits land as editor edits you can undo. Requires the tool server (run **Markdown Collab: Register Review Tools with Claude Code**). Offered in the picker, never chosen for you.\n- `channel` — append to `.markdown-collab/.events.jsonl` for a `tail` + `Monitor` watch loop. No MCP required, but needs a streaming-tool harness.\n- `mcp-channel` — native MCP channel: events arrive as `<channel source=\"markdown-collab\">` tags. Requires Claude Code v2.1.80+, claude.ai login, and a one-time `.mcp.json` setup.\n- `clipboard` — copy the prompt for manual paste."
+          "markdownDescription": "How the **Send to Claude** button gets your comments to Claude.\n\n- `ask` — asks the first time per workspace, then remembers your answer. Run **Markdown Collab: Reset Send Mode** to be asked again.\n- `terminal` — types the prompt into your running Claude session. Works everywhere; the recommended choice when you're not sure.\n- `clipboard` — copies the prompt so you can paste it into Claude yourself.\n\nClaude uses this extension's review tools automatically whenever they're registered — see \"Registering the review tools\" in the README."
         },
         "markdownCollab.collab.userName": {
           "type": "string",

@@ -240,36 +240,6 @@ suite("All extension commands", () => {
   });
 
   // ---------------------------------------------------------------------
-  // sendAllToClaude (channel mode — appends to .events.jsonl)
-  // ---------------------------------------------------------------------
-  test("sendAllToClaude in channel mode appends to .markdown-collab/.events.jsonl", async () => {
-    const fileRel = "cmd-channel-target.md";
-    const body = "# Channel target\n\nAnother anchor target string here.\n";
-    const uri = await writeFixtureWithThread(fileRel, body, "anchor target string here");
-    const eventsPath = path.join(workspaceRoot(), ".markdown-collab", ".events.jsonl");
-    await rmIfExists(eventsPath);
-    try {
-      const config = vscode.workspace.getConfiguration("markdownCollab");
-      const prevMode = config.get<string>("sendMode", "ask");
-      await config.update("sendMode", "channel", vscode.ConfigurationTarget.Workspace);
-
-      await vscode.commands.executeCommand("markdownCollab.sendAllToClaude", uri);
-      await waitFor(() => pathExists(eventsPath), 5000, ".events.jsonl never appeared");
-      const log = await fs.readFile(eventsPath, "utf-8");
-      const lines = log.trim().split("\n").filter(Boolean);
-      assert.ok(lines.length >= 1, `expected at least one line in event log, got ${lines.length}`);
-      const last = JSON.parse(lines[lines.length - 1]!);
-      assert.ok(last.id, "event missing id");
-      assert.ok(last.ts, "event missing ts");
-
-      await config.update("sendMode", prevMode, vscode.ConfigurationTarget.Workspace);
-    } finally {
-      await rmIfExists(uri.fsPath);
-      await rmIfExists(eventsPath);
-    }
-  });
-
-  // ---------------------------------------------------------------------
   // startClaudeTerminal
   // ---------------------------------------------------------------------
   test("startClaudeTerminal opens a vscode.Terminal", async () => {

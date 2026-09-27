@@ -44,8 +44,8 @@ no configuration. Delete the file when you're done.
 2. **Install the Claude skill (one-time per machine).** `Cmd-Shift-P` → **Markdown Collab: Install Claude Skill**. This drops the skill instructions and bundled helpers into `~/.claude/skills/vs-markdown-collab/`.
 3. **Open a Markdown file**, then right-click it → **Markdown Collab: Open Inline Comments View**.
 4. **Select a passage in the rendered view** → **+ Comment on selection** → write your note.
-5. **Click Send to Claude.** The first time you'll pick a delivery mode; the answer is
-   remembered. **For most people that's `terminal`** — see [Choosing a send mode](#choosing-a-send-mode).
+5. **Click Send to Claude.** The first time you'll pick how to send it; the answer is
+   remembered. **For most people that's `terminal`** — see [Sending to Claude](#sending-to-claude).
 
 > What lands in the file: anchored spans wrapped in `<!--mc:a:ID-->…<!--mc:/a:ID-->`, and one
 > `<!--mc:threads:begin-->`…`<!--mc:threads:end-->` block at the end holding the threads. Both
@@ -165,120 +165,29 @@ Run **Markdown Collab: Review PR / MR** to review the Markdown files changed in 
 
 **Requires** the `gh` or `glab` CLI installed and signed in.
 
-## Choosing a send mode
+## Sending to Claude
 
-The **Send to Claude** button delivers the comment payload one of five ways. Pick one once via `markdownCollab.sendMode` and you won't be asked again.
+The **Send to Claude** button gets your comments to Claude one of three ways. Pick one once via `markdownCollab.sendMode` and you won't be asked again.
 
-> **TL;DR:** if MCP isn't available in your environment AND your Claude Code harness doesn't expose a streaming-stdout tool (`Monitor` or `BashOutput`), **use `terminal`**. It works everywhere with zero setup.
-
-| Your situation | Recommended mode | Why |
+| Mode | What it does | When to use it |
 |---|---|---|
-| Just trying it out, or unsure | `terminal` | Zero setup. Bracketed-pastes the prompt into a `claude` REPL in your VS Code terminal. |
-| MCP disabled by your company / org | **`terminal`** | Channel-based modes need MCP; terminal mode doesn't. |
-| You want Claude's edits to be undoable | `mcp` | Same delivery as `terminal`, plus Claude acts through this extension's review tools, so every change lands as an editor edit you can undo. |
-| Harness lacks `Monitor` / `BashOutput` | **`terminal`** | Channel mode's reactivity depends on streaming notifications; without them you'd be polling, which terminal sidesteps entirely. |
-| Harness has `Monitor` / `BashOutput`, MCP allowed | `channel` | File-watcher pattern; supports long-lived watch loops without per-click setup. |
-| Claude Code v2.1.80+, `claude.ai` login, channels enabled by your org | `mcp-channel` | Native `<channel>` events on Claude's next turn — cleanest semantics when supported. |
-| Want to copy/paste manually each time | `clipboard` | Simplest fallback; nothing automatic. |
+| `ask` (default) | Asks once per workspace, then remembers your answer. | You're not sure yet — let the first click decide. |
+| `terminal` | Types the prompt into your running Claude session. | Works everywhere. The recommended choice. |
+| `clipboard` | Copies the prompt so you can paste it into Claude yourself. | You'd rather hand it off by hand, every time. |
 
-**Don't know which to pick? Don't.** Leave `markdownCollab.sendMode` on `ask` (the default) and the first click works it out from what's running (v0.34.58+):
+Whichever mode you pick, Claude uses this extension's review tools automatically whenever they're registered for the workspace: its edits then land as ordinary editor edits you can undo with <kbd>Cmd</kbd>+<kbd>Z</kbd>, and a change that would break marker integrity is refused before it lands rather than repaired after. **Markdown Collab: Reset Send Mode** clears a remembered answer so the next click asks again.
 
-- A `claude` REPL running in a terminal → `terminal`, no prompt. One toast tells you what happened.
-- Otherwise, an MCP channel server that has registered itself for this workspace → `mcp-channel`, no prompt.
-- Neither → the quick-pick, as before. `mcp` appears there when the review tool server is running; it is offered, never auto-selected.
+### Registering the review tools
 
-The detected mode is remembered like a manual choice, and the toast names the escape hatch: **Markdown Collab: Reset Send Mode** clears it if you want to switch later. If the MCP channel turns out to be stale (its endpoint file outlived the server), the send falls back to the event log and un-remembers the choice, so the next click asks you properly instead of failing the same way twice.
+Run **Markdown Collab: Register Review Tools with Claude Code** (or accept the prompt on first activation) to add a `markdown-collab` entry to the workspace's `.mcp.json`. No token is written to that file — the URL and a per-session token travel through the environment of terminals VS Code spawns, so a committed `.mcp.json` leaks nothing and a fresh window mints a fresh token.
 
-## Send mode details
-
-### `terminal` — recommended default
-
-Bracketed-pastes the prompt into a `claude` REPL running in any VS Code terminal.
-
-- **Detection ladder:** terminals the extension spawned → shell-integration evidence of `claude` → name match `/claude/i` → active terminal (with confirmation toast).
-- **No detected terminal?** A quick-pick offers to spawn one (`claude` auto-launches inside it) or fall back to clipboard.
-- **No MCP, no streaming tool, no protocol gates** — just a `paste` keystroke into your REPL.
-
-**Setup:** none. Just have `claude` running in any integrated terminal when you click.
-
-### `mcp` — terminal delivery, tool-driven edits
-
-Delivered exactly like `terminal`, with one extra line asking Claude to work through this
-extension's MCP review tools (`mc_list`, `mc_reply`, `mc_open`, `mc_rewrite`, `mc_suggest`,
-`mc_status`, `mc_check`) instead of editing the file directly.
-
-What that changes is the *write path*, not the delivery:
-
-- **Undoable.** Every change arrives as a `WorkspaceEdit`, so <kbd>Cmd</kbd>+<kbd>Z</kbd> takes back
-  Claude's reply or rewrite like your own typing.
-- **No races with your unsaved work.** The edit is ordered against the live buffer instead of
-  overwriting the file underneath it.
-- **Refused before it lands, not repaired after.** A call that would break marker integrity comes
-  back to Claude as a structured error and the file is untouched.
-
-**Setup:** run **Markdown Collab: Register Review Tools with Claude Code** (or accept the prompt on
-first activation). That adds a `markdown-collab` entry to the workspace's `.mcp.json`. No token is
-written to that file — the URL and a per-session token travel through the environment of terminals
-VS Code spawns, so a committed `.mcp.json` leaks nothing and a fresh window mints a fresh token.
-
-**This mode is never chosen for you.** MCP can be disabled entirely on your side of the
-conversation, so detection never selects it — it appears in the quick-pick only when the tool server
-is actually running, and if it stops running, a send degrades to `terminal` with a toast saying so.
-Claude sessions outside this VS Code window (ssh, another editor) keep using the `mdc` CLI.
-
-### `channel` — events log + tailer
-
-Each click appends one JSON line to `<workspace>/.markdown-collab/.events.jsonl`. Claude runs the bundled `mdc-tail.mjs` in a background bash and subscribes via `Monitor` (or your harness's equivalent stream-stdout tool); each click surfaces as a model notification.
-
-- **Auto-ack:** when every comment in an event has been addressed (last reply is `ai`, or comment is resolved/deleted), the extension appends the event id to `.events.acked.jsonl`. The tailer suppresses acked events on `--from-start` replays.
-- **Per-line flush:** the tailer uses `fs.writeSync(1, …)` to bypass Node's stdout buffering on POSIX pipes — every appended JSON line surfaces immediately, never batched.
-
-**Setup:** run **Markdown Collab: Install Claude Skill** once. Then ask Claude to start the watch loop:
-
-> Run `node ~/.claude/skills/vs-markdown-collab/mdc-tail.mjs --workspace <abs-path>` in background, then subscribe with the Monitor tool on the returned process id.
-
-**Won't work if** your harness only has `TaskOutput` (no streaming primitive). In that case use `terminal`.
-
-### `mcp-channel` — native channel events
-
-Pushes the payload to the bundled MCP server (`mdc-channel.mjs`), which emits `notifications/claude/channel`. Claude receives it as a native `<channel source="markdown-collab" file="…" id="evt_…">` tag on its next turn.
-
-**Requires:**
-- Claude Code v2.1.80+
-- `claude.ai` login (not API key / Console / Bedrock)
-- Channels enabled by your organization (`channelsEnabled`)
-- The one-time `.mcp.json` setup below
-
-**Setup:**
-1. Run **Markdown Collab: Install Claude Skill**.
-2. Register the server in `~/.claude.json` (user-level) or `<workspace>/.mcp.json`:
-   ```json
-   {
-     "mcpServers": {
-       "markdown-collab": {
-         "command": "node",
-         "args": ["~/.claude/skills/vs-markdown-collab/mdc-channel.mjs"]
-       }
-     }
-   }
-   ```
-3. Start Claude with the research-preview flag:
-   ```bash
-   claude --dangerously-load-development-channels server:markdown-collab
-   ```
-4. Set `markdownCollab.sendMode` to `mcp-channel`.
-
-If you see `--channels ignored (server:markdown-collab) — Channels are not currently available`, your environment fails one of the gates above. **Switch to `terminal`** — it doesn't depend on any of them.
-
-### `clipboard` — manual paste
-
-Copies the prompt to the clipboard. Paste into Claude however you like.
+Registering is always your call, and nothing depends on it: the tools can be disabled entirely on Claude's side (enterprise policy, `--strict-mcp-config`), so every prompt asks Claude to use them *if it has them* and otherwise to use the `mdc` helper the skill installs. Either way the file ends up the same; the tools just make Claude's edits undoable and checked before they land.
 
 ## Commands
 
 | Command | Purpose |
 |---|---|
-| `Markdown Collab: Install Claude Skill` | Write `~/.claude/skills/vs-markdown-collab/SKILL.md` and the bundled helpers (`mdc.mjs`, `mdc-tail.mjs`, `mdc-channel.mjs`). |
+| `Markdown Collab: Install Claude Skill` | Write `~/.claude/skills/vs-markdown-collab/SKILL.md` and the bundled `mdc.mjs` helper. |
 | `Markdown Collab: Initialize AGENTS.md` | Append a convention block to `<workspace>/AGENTS.md` (for non–Claude-Code agents). |
 | `Markdown Collab: Open Inline Comments View` | Open the rendered view with an inline-threads sidebar. Comments are stored inside the `.md` file. The right-click action on `.md` files. |
 | `Markdown Collab: Open Live Editor` | Open the WYSIWYG live editor with the comment panel — you and Claude co-edit the same `.md` (single human + Claude, no relay). |
@@ -299,7 +208,7 @@ Copies the prompt to the clipboard. Paste into Claude however you like.
 | Setting | Default | Purpose |
 |---|---|---|
 | `markdownCollab.showLineNumbers` | `false` | Show the source line number beside each block in the inline comments view and the live editor. Numbers are lines in the `.md` file itself — frontmatter and the stored threads block are accounted for, so they match what you'd type into "Go to Line". |
-| `markdownCollab.sendMode` | `ask` | One of `ask`, `terminal`, `mcp`, `channel`, `mcp-channel`, `clipboard`. See [Choosing a send mode](#choosing-a-send-mode). |
+| `markdownCollab.sendMode` | `ask` | One of `ask`, `terminal`, `clipboard`. See [Sending to Claude](#sending-to-claude). |
 
 ## Storage layout
 
@@ -315,14 +224,11 @@ The <!--mc:a:k7q3p-->quick brown fox<!--mc:/a:k7q3p--> jumps…
 
 The markers are invisible in any rendered preview (they're HTML comments). Commit the `.md` file as-is — review state ships with the document.
 
-The only files Markdown Collab writes under `.markdown-collab/` are runtime state for the channel send modes. Add them to `.gitignore`:
+The only other file Markdown Collab writes under `.markdown-collab/` is runtime state for the review tool server. Add it to `.gitignore`:
 
 ```
 <workspace>/
 └── .markdown-collab/
-    ├── .events.jsonl         ← channel-mode event log (gitignore)
-    ├── .events.acked.jsonl   ← addressed-event ids (gitignore)
-    ├── .channel.json         ← mcp-channel endpoint descriptor (gitignore)
     ├── .mcp-server.json      ← review tool server address + session token (gitignore)
     └── conventions.md        ← standing review conventions (COMMIT this one)
 ```
@@ -339,14 +245,7 @@ project prose your team should share — hence the negation above.
 
 **Start here for anything.** Run **Markdown Collab: Report a Problem (collect diagnostics)** — it answers the first six questions of any diagnosis in one paste (versions, send mode, whether the skill is installed and current, whether the tool server is up, whether a Claude terminal is visible, and what review state each open document holds). Then open **Markdown Collab: Show Logs**, set the level to **Trace**, and reproduce: every send, terminal resolution, MCP tool call, tool refusal, and `gh`/`glab` invocation is logged with its outcome. Both are safe to share — the session token and anything else credential-shaped is redacted before it is written.
 
-**Click did nothing, no toast.** Your `markdownCollab.sendMode` is set to a stale value (e.g., `ipc` from before 0.11). v0.12.1+ falls back to `ask` and warns; if you're on something older, change the setting to `terminal`.
-
-**Channel mode: tailer started, but lines don't arrive at Claude.**
-- Make sure you're on v0.13.1+ (uses `fs.writeSync` to flush per line).
-- Make sure Claude actually subscribed via `Monitor` / `BashOutput`. `TaskOutput block=true` waits for completion and will hang forever — wrong tool.
-- If your harness has only `TaskOutput`, switch to `terminal` mode. Channel mode requires a streaming primitive.
-
-**`mcp-channel`: "Channels are not currently available."** One of: Claude Code <v2.1.80, logged in with API key / Bedrock / Vertex (not `claude.ai`), or your org has `channelsEnabled: false`. Diagnose with `claude /status` and `claude --version`. Otherwise, use `terminal`.
+**Click did nothing, no toast.** Your `markdownCollab.sendMode` is set to a value this version doesn't recognize. A retired mode (`mcp`, `channel`, `mcp-channel`, or the ancient `ipc`) falls back to `terminal` with a one-time notice; anything else falls back to `ask` and warns — change the setting to `terminal`, `clipboard`, or `ask`.
 
 **A thread shows up as unanchored.** The anchored passage was deleted or rewritten beyond recognition, so its markers are gone. Re-anchor it by selecting fresh text in the Inline Comments view and leaving the note again.
 

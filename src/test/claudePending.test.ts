@@ -331,15 +331,21 @@ describe("ClaudePendingTracker — protocol evidence", () => {
     expect(tracker.pending(DOC, threads)).toEqual([]);
   });
 
-  it("an inferred wait is not extended by someone else's tool call", () => {
-    // Terminal-mode sends have no back channel; a tool call from an unrelated
-    // pass must not be read as evidence about them.
+  it("a tool call upgrades an inferred wait to protocol and extends it", () => {
+    // Every dispatch starts "inferred" since 10x-plan-4 P0.3 deleted the mode
+    // that used to mark "protocol" up front — a real tool call is now the
+    // only way a wait ever earns it, and it must earn it retroactively for
+    // whatever was already waiting on that document.
     const { tracker, advance } = makeTracker(1000);
     tracker.mark(DOC, threads, ["a1"], "inferred");
     advance(900);
     tracker.noteActivity(DOC);
     advance(200);
-    expect(tracker.pending(DOC, threads)).toEqual([]);
+    // Still pending: the tool call reset the silence clock, and only 200ms
+    // have passed since. Had it not upgraded/refreshed, 1100ms since the
+    // original dispatch would have already expired it.
+    expect(tracker.pending(DOC, threads)).toEqual(["a1"]);
+    expect(tracker.status(DOC, threads).evidence).toBe("protocol");
   });
 
   it("the closing check ends the wait with no reply-shaped change at all", () => {
@@ -347,6 +353,18 @@ describe("ClaudePendingTracker — protocol evidence", () => {
     // for a reply would leave the indicator up forever in that case.
     const { tracker, changes } = makeTracker();
     tracker.mark(DOC, threads, ["a1"], "protocol");
+    changes.length = 0;
+    tracker.noteComplete(DOC);
+    expect(tracker.pending(DOC, threads)).toEqual([]);
+    expect(changes).toEqual([DOC]);
+  });
+
+  it("the closing check also ends a wait that never left 'inferred'", () => {
+    // mc_check is itself a tool call, so it can be the very first signal a
+    // file gets — a pass that only verifies and never otherwise reports must
+    // still clear the indicator, not leave an "inferred" wait stuck forever.
+    const { tracker, changes } = makeTracker();
+    tracker.mark(DOC, threads, ["a1"], "inferred");
     changes.length = 0;
     tracker.noteComplete(DOC);
     expect(tracker.pending(DOC, threads)).toEqual([]);

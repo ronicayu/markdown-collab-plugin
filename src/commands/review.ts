@@ -17,7 +17,6 @@ import { InlineCommentsPanel } from "../inlineComments/inlineCommentsPanel";
 import { CONVENTIONS_REL, CONVENTIONS_TEMPLATE } from "../reviewConventions";
 import { buildReviewDigest, type DigestFile } from "../reviewDigest";
 import type { ReviewView } from "../reviewView";
-import type { EventLog } from "../transports/eventLog";
 import type { TerminalTracker } from "../transports/terminalTracker";
 import { dispatchReviewPayload } from "./send";
 import type { CommandDeps } from "./deps";
@@ -166,7 +165,6 @@ async function invokeAskClaudeToReviewSelection(
   selection: vscode.Uri[],
   log: Logger,
   tracker: TerminalTracker,
-  eventLogs: Map<string, EventLog>,
   workspaceState: vscode.Memento,
   globalState: vscode.Memento,
   delta = false,
@@ -197,7 +195,7 @@ async function invokeAskClaudeToReviewSelection(
       );
       return;
     }
-    await invokeAskClaudeToReview(doc, log, tracker, eventLogs, workspaceState, globalState, delta);
+    await invokeAskClaudeToReview(doc, log, tracker, workspaceState, globalState, delta);
     return;
   }
 
@@ -215,7 +213,6 @@ async function invokeAskClaudeToReviewSelection(
     files,
     log,
     tracker,
-    eventLogs,
     workspaceState,
     globalState,
   );
@@ -230,14 +227,13 @@ async function invokeAskClaudeToReviewMulti(
   uris: vscode.Uri[],
   log: Logger,
   tracker: TerminalTracker,
-  eventLogs: Map<string, EventLog>,
   workspaceState: vscode.Memento,
   globalState: vscode.Memento,
 ): Promise<void> {
   const folder = folderForDocument(uris[0]);
-  // The payload's paths are relative to one folder and the event log lives in
-  // one folder, so a selection spanning several is reviewed one folder at a
-  // time rather than silently mixing incomparable relative paths.
+  // The payload's paths are relative to one folder, so a selection spanning
+  // several is reviewed one folder at a time rather than silently mixing
+  // incomparable relative paths.
   const inFolder = uris.filter(
     (u) => folderForDocument(u).uri.fsPath === folder.uri.fsPath,
   );
@@ -289,7 +285,6 @@ async function invokeAskClaudeToReviewMulti(
     payload,
     log,
     tracker,
-    eventLogs,
     workspaceState,
     folder,
     { kind: "review-request", hasFocus: Boolean(trimmedFocus) },
@@ -358,7 +353,6 @@ async function invokeAskClaudeToReview(
   doc: vscode.TextDocument,
   log: Logger,
   tracker: TerminalTracker,
-  eventLogs: Map<string, EventLog>,
   workspaceState: vscode.Memento,
   globalState: vscode.Memento,
   /** Review only what changed since the last recorded pass (10x-plan-2 P1.1). */
@@ -408,7 +402,6 @@ async function invokeAskClaudeToReview(
     result.payload,
     log,
     tracker,
-    eventLogs,
     workspaceState,
     folder,
     { kind: "review-request", hasFocus: Boolean(trimmedFocus) },
@@ -492,7 +485,7 @@ async function pushRecentFocus(
 /** Register the review-mode family of commands: conventions, summary, "Ask
  * Claude to Review" (single/folder/changes), and the unread walk. */
 export function registerReviewCommands(deps: CommandDeps): void {
-  const { context, reviewLog, reviewView, terminalTracker, eventLogs, revealThread } = deps;
+  const { context, reviewLog, reviewView, terminalTracker, revealThread } = deps;
 
   context.subscriptions.push(
     vscode.commands.registerCommand("markdownCollab.editReviewConventions", async () => {
@@ -517,7 +510,6 @@ export function registerReviewCommands(deps: CommandDeps): void {
       resolveSelection(arg, selected),
       reviewLog,
       terminalTracker,
-      eventLogs,
       context.workspaceState,
       context.globalState,
     );
@@ -532,7 +524,6 @@ export function registerReviewCommands(deps: CommandDeps): void {
           resolveSelection(arg, selected),
           reviewLog,
           terminalTracker,
-          eventLogs,
           context.workspaceState,
           context.globalState,
           true,

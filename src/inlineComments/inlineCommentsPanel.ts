@@ -250,9 +250,9 @@ type ClientMessage =
 export interface InlinePanelDeps {
   /**
    * Route an inline-comments payload through the user's configured send
-   * mode (terminal / channel / mcp-channel / clipboard, with the same
-   * ask-once-and-remember UX as the sidecar path). Wired in
-   * extension.ts so the panel doesn't need to know about transports.
+   * mode (terminal / clipboard, with the same ask-once-and-remember UX as
+   * the sidecar path). Wired in extension.ts so the panel doesn't need to
+   * know about transports.
    */
   dispatchToClaude: (payload: ReviewPayload) => Promise<void>;
 }
@@ -547,10 +547,9 @@ ${inlineCommentsAppBody()}
       return;
     }
     // Route through the shared dispatcher so the inline view honors the
-    // user's `markdownCollab.sendMode` setting (terminal / channel /
-    // mcp-channel / clipboard) the same way the sidecar-based command
-    // does. Terminal is the natural default — drops the prompt straight
-    // into a running Claude REPL via bracketed paste.
+    // user's `markdownCollab.sendMode` setting (terminal / clipboard) the
+    // same way the sidecar-based command does. Terminal is the natural
+    // default — drops the prompt straight into a running Claude session.
     await this.deps.dispatchToClaude(payload);
   }
 

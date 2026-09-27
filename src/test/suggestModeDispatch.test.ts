@@ -161,11 +161,12 @@ describe("dispatch marks its threads pending", () => {
   });
 
   it("marks on every delivery branch that actually reaches Claude", () => {
-    // terminal + channel/mcp-channel. Clipboard is deliberately excluded:
-    // nothing has been delivered until the human pastes it, so claiming
-    // Claude is working would be a guess.
+    // terminal is the only delivery left since 10x-plan-4 P0.3 deleted the
+    // channel transports. Clipboard is deliberately excluded: nothing has
+    // been delivered until the human pastes it, so claiming Claude is
+    // working would be a guess.
     const marks = dispatcherBody().match(/markPayloadPending\(/g) ?? [];
-    expect(marks.length).toBeGreaterThanOrEqual(2);
+    expect(marks.length).toBeGreaterThanOrEqual(1);
   });
 
   it("derives the threads from the payload rather than a caller argument", () => {
