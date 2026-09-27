@@ -208,6 +208,11 @@
         "category": "Markdown Collab"
       },
       {
+        "command": "markdownCollab.connectAgent",
+        "title": "Markdown Collab: Connect an Agent…",
+        "category": "Markdown Collab"
+      },
+      {
         "command": "markdownCollab.editReviewConventions",
         "title": "Markdown Collab: Edit Review Conventions",
         "category": "Markdown Collab"
@@ -592,6 +597,12 @@
             ]
           }
         ]
+      }
+    ],
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "markdownCollab.mcpServerDefinitionProvider",
+        "label": "Markdown Collab review tools"
       }
     ]
   },

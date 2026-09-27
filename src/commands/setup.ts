@@ -13,6 +13,18 @@ import {
   ensureMcpJsonRegistration,
   resetMcpJsonConsent,
 } from "../mcpServer";
+import {
+  activateCopilotProvider,
+  currentCopilotProvider,
+  hasCursorInAppApi,
+  isAgentConnected,
+  markAgentConnected,
+  openGenericSnippetDocument,
+  registerCursorInApp,
+  writeCodexConfig,
+  writeCursorCliConfig,
+} from "../mcpServer/agentConnections";
+import { hasCopilotProviderApi } from "../mcpServer/clients/copilot";
 import type { CommandDeps } from "./deps";
 
 /**
@@ -172,11 +184,191 @@ async function pickWorkspaceFolder(): Promise<vscode.WorkspaceFolder | undefined
   return pick?.folder;
 }
 
+/** One entry in the Connect an Agent quick pick. */
+export interface ConnectAgentItem extends vscode.QuickPickItem {
+  id: "claude" | "cursor-inapp" | "cursor-cli" | "codex" | "copilot" | "other";
+}
+
+/**
+ * Build the Connect an Agent quick-pick list. Pure — no vscode APIs beyond
+ * the plain data shape of `QuickPickItem` — so which entries show up for a
+ * given host is guard-testable without a real extension host: Cursor's
+ * in-app agent and Copilot's agent-mode provider are the two whose API might
+ * not exist (older forks, older VS Code); Claude Code, Cursor CLI, Codex, and
+ * the generic fallback need no runtime capability and are always offered.
+ */
+export function buildConnectAgentItems(caps: { cursorInApp: boolean; copilot: boolean }): ConnectAgentItem[] {
+  const items: ConnectAgentItem[] = [
+    {
+      id: "claude",
+      label: "Claude Code",
+      description: "Adds a markdown-collab entry to .mcp.json — no token written to the file.",
+    },
+  ];
+  if (caps.cursorInApp) {
+    items.push({
+      id: "cursor-inapp",
+      label: "Cursor (in-app agent)",
+      description: "Registers the live URL and token directly with Cursor's agent — nothing on disk.",
+    });
+  }
+  items.push({
+    id: "cursor-cli",
+    label: "Cursor CLI (cursor-agent)",
+    description: "Writes .cursor/mcp.json with ${env:...} references — no port or token on disk.",
+  });
+  items.push({
+    id: "codex",
+    label: "Codex",
+    description: "Writes .codex/config.toml with the loopback URL and bearer_token_env_var — no token on disk.",
+  });
+  if (caps.copilot) {
+    items.push({
+      id: "copilot",
+      label: "GitHub Copilot (agent mode)",
+      description: "Registers an MCP server definition with the live URL and token — nothing on disk.",
+    });
+  }
+  items.push({
+    id: "other",
+    label: "Other agent…",
+    description: "Opens a scratch document with the URL, token, and a generic mcpServers snippet.",
+  });
+  return items;
+}
+
+async function invokeConnectAgent(deps: CommandDeps): Promise<void> {
+  const { context, rootLog } = deps;
+  const handle = currentMcpServer();
+  if (!handle) {
+    void vscode.window.showWarningMessage(
+      "Markdown Collab: the review tool server isn't running — reload the window and try again. See the Markdown Collab output channel.",
+    );
+    return;
+  }
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  const items = buildConnectAgentItems({ cursorInApp: hasCursorInAppApi(), copilot: hasCopilotProviderApi() });
+  const pick = await vscode.window.showQuickPick(items, {
+    placeHolder: "Markdown Collab: connect an agent to the review tools",
+  });
+  if (!pick) return;
+
+  switch (pick.id) {
+    case "claude": {
+      // Exactly today's flow: reset the remembered answer so a previous
+      // "Not now" can't silently swallow an explicit request, then run the
+      // same consent-then-merge path `registerMcpServer` already does —
+      // that command stays as a working alias to this same code.
+      await resetMcpJsonConsent(context);
+      const outcome = await ensureMcpJsonRegistration(context, handle, rootLog.scope("mcp"));
+      if (outcome !== "declined") {
+        void vscode.window.showInformationMessage(
+          "Markdown Collab: Claude Code is connected via `.mcp.json` in this workspace (no token written to the file). " +
+            "If Claude Code is already running, run `/mcp` inside it to reconnect.",
+        );
+      }
+      break;
+    }
+    case "cursor-inapp": {
+      try {
+        registerCursorInApp(handle);
+        await markAgentConnected(context, "cursor-inapp");
+        void vscode.window.showInformationMessage(
+          "Markdown Collab: registered with Cursor's in-app agent for this session — nothing written to disk. " +
+            "The tools are available immediately; no restart needed.",
+        );
+      } catch (e) {
+        void vscode.window.showErrorMessage(
+          `Markdown Collab: could not register with Cursor — ${(e as Error).message}`,
+        );
+      }
+      break;
+    }
+    case "cursor-cli": {
+      if (!folder) {
+        void vscode.window.showWarningMessage("Markdown Collab: open a folder first.");
+        break;
+      }
+      try {
+        const outcome = await writeCursorCliConfig(folder.uri);
+        void vscode.window.showInformationMessage(
+          outcome === "written"
+            ? "Markdown Collab: wrote .cursor/mcp.json (env references only — no port or token on disk). Restart cursor-agent to pick it up."
+            : "Markdown Collab: .cursor/mcp.json already has this entry. Restart cursor-agent to pick it up.",
+        );
+      } catch (e) {
+        void vscode.window.showErrorMessage(
+          `Markdown Collab: could not write .cursor/mcp.json — ${(e as Error).message}`,
+        );
+      }
+      break;
+    }
+    case "codex": {
+      if (!folder) {
+        void vscode.window.showWarningMessage("Markdown Collab: open a folder first.");
+        break;
+      }
+      try {
+        const outcome = await writeCodexConfig(folder.uri, handle.port);
+        void vscode.window.showInformationMessage(
+          `Markdown Collab: ${outcome === "written" ? "wrote" : "confirmed"} the markdown-collab table in ` +
+            ".codex/config.toml (no token on disk — only bearer_token_env_var). Codex loads project config only " +
+            "for trusted projects — run codex in this folder and trust it.",
+        );
+      } catch (e) {
+        void vscode.window.showErrorMessage(
+          `Markdown Collab: could not write .codex/config.toml — ${(e as Error).message}`,
+        );
+      }
+      break;
+    }
+    case "copilot": {
+      const provider = currentCopilotProvider();
+      if (!provider) {
+        void vscode.window.showWarningMessage(
+          "Markdown Collab: this VS Code build doesn't support the Copilot MCP provider API.",
+        );
+        break;
+      }
+      provider.setConnected(true);
+      provider.setLiveServer({ url: handle.url, token: handle.token });
+      await markAgentConnected(context, "copilot");
+      void vscode.window.showInformationMessage(
+        "Markdown Collab: registered with GitHub Copilot — nothing written to disk. In Copilot Chat, enable the " +
+          "Markdown Collab tools in agent mode's tool picker.",
+      );
+      break;
+    }
+    case "other": {
+      await openGenericSnippetDocument(handle);
+      void vscode.window.showInformationMessage(
+        "Markdown Collab: opened a scratch document with the URL and a session token — nothing written to disk.",
+      );
+      break;
+    }
+  }
+}
+
 /** Register the setup family of commands: skill, AGENTS.md, tutorial, MCP re-registration. */
 export function registerSetupCommands(deps: CommandDeps): void {
   const { context, rootLog, skillLog, reviewLog, log } = deps;
 
+  // GitHub Copilot's agent-mode MCP discovery (10x-plan-4 P1.1): registered
+  // once at activation whenever the host supports it — older forks (Cursor,
+  // Windsurf, VSCodium) simply don't have `vscode.lm.registerMcpServerDefinitionProvider`,
+  // which is the feature-detect this goes through rather than raising
+  // `engines.vscode`. `provideMcpServerDefinitions` still answers `[]` until
+  // the human actually runs Connect an Agent → Copilot in this workspace —
+  // registering the provider is not the same as opting in, so the remembered
+  // answer (if any) is restored here too, ahead of the server having a handle
+  // yet (see `reconnectAgents` in extension.ts for the rest of the restart).
+  const copilotProvider = activateCopilotProvider(context);
+  copilotProvider?.setConnected(isAgentConnected(context, "copilot"));
+
   context.subscriptions.push(
+    vscode.commands.registerCommand("markdownCollab.connectAgent", async () => {
+      await invokeConnectAgent(deps);
+    }),
     vscode.commands.registerCommand("markdownCollab.installClaudeSkill", async () => {
       await invokeInstallClaudeSkill(skillLog);
     }),

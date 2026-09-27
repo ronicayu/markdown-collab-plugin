@@ -66,6 +66,18 @@ class ThemeIcon {
   constructor(public id: string) {}
 }
 
+// Minimal stand-in for `vscode.McpHttpServerDefinition` (mcpServer/clients/copilot.ts,
+// 10x-plan-4 P1.1) — just enough shape for the Copilot provider's unit tests
+// to assert on `.uri` / `.headers` / `.label` without a real extension host.
+class McpHttpServerDefinition {
+  constructor(
+    public label: string,
+    public uri: { fsPath: string; toString: () => string },
+    public headers: Record<string, string> = {},
+    public version?: string,
+  ) {}
+}
+
 class RelativePattern {
   constructor(public base: any, public pattern: string) {}
 }
@@ -168,6 +180,7 @@ export {
   Range,
   MarkdownString,
   ThemeIcon,
+  McpHttpServerDefinition,
   RelativePattern,
   CommentMode,
   CommentThreadCollapsibleState,
