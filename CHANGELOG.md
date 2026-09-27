@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.35.3 — 2026-09-27 (GitHub only)
+
+### Added: Connect an Agent (10x-plan-4 P1.1)
+
+The review tool server never cared which agent called it. Now the rest of the
+extension doesn't either. **Markdown Collab: Connect an Agent…** hooks the
+server up to whichever client you use, and each choice writes the smallest
+correct thing:
+
+- **Claude Code**: the same `.mcp.json` entry as before. *Register Review Tools
+  with Claude Code* still works as an alias.
+- **Cursor, in-app agent**: registered directly through Cursor's extension API,
+  with nothing written to disk. Cursor's agent doesn't run in a terminal, so the
+  environment-variable approach can't reach it. Listed only inside Cursor.
+- **Cursor CLI** (`cursor-agent`): `.cursor/mcp.json` with `${env:…}`
+  references, so there is no port and no token in the file.
+- **Codex**: a `[mcp_servers.markdown-collab]` table in `.codex/config.toml`
+  with `bearer_token_env_var`. Codex can't expand variables in a URL, so the
+  file holds the loopback port and is rewritten when the port moves. It never
+  holds the token.
+- **GitHub Copilot, agent mode**: a live MCP server definition through VS Code's
+  own provider API, with nothing on disk. The API is feature-detected, so
+  `engines.vscode` stays at `^1.80.0` and older forks lose nothing.
+- **Other agents**: a scratch document with the URL, the header, and a generic
+  snippet, noting that the token changes every session.
+
+Gemini CLI is under "Other" deliberately. Its settings only expand environment
+variables for servers it launches itself, so connecting it to this server would
+mean writing the token into a project file.
+
+The server's URL and token now also live in the extension host's own
+environment, not only in VS Code terminals. A CLI agent that another extension
+starts after this one, such as Claude Code's or Codex's own VS Code extension,
+inherits them the same way a terminal does, so the `.mcp.json` and
+`bearer_token_env_var` references resolve there too. They're removed when the
+server stops.
+
+Connections that go stale across a restart re-establish themselves on the next
+activation: Cursor's in-app registration and Copilot's provider get the new
+token, and Codex's table gets the new port. Nothing is written that you didn't
+ask for, and no file ever holds a token.
+
+Not yet tried against a real Cursor or Codex install. The writers are
+unit-tested against each client's documented config format, and the Copilot
+provider and the environment export are tested on a real VS Code 1.139 host.
+
 ## 0.35.2 — 2026-09-27 (GitHub only)
 
 ### Added: Run Claude for me (10x-plan-4 P0.1)

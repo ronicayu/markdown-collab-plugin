@@ -13,6 +13,7 @@ import {
   ensureMcpJsonRegistration,
   startMcpServer,
 } from "./mcpServer";
+import { reconnectAgents } from "./mcpServer/agentConnections";
 import { parse as parseInline } from "./inlineComments/format";
 import { activateClaudeStatusBar } from "./claudeStatusBar";
 import { TerminalTracker } from "./transports/terminalTracker";
@@ -96,6 +97,11 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!handle) return;
     context.subscriptions.push({ dispose: () => handle.dispose() });
     await ensureMcpJsonRegistration(context, handle, rootLog.scope("mcp"));
+    // Re-establish every client whose connection can go stale across a
+    // restart — Cursor's in-app agent and Copilot's provider are told the
+    // token fresh every session, and Codex's config carries a literal port —
+    // now that there's a handle to hand them (10x-plan-4 P1.1).
+    await reconnectAgents(context, handle, rootLog.scope("mcp"));
   });
 
   // Live WYSIWYG editor for a single human + Claude on the same machine. There

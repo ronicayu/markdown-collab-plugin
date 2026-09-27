@@ -194,6 +194,21 @@ Run **Markdown Collab: Register Review Tools with Claude Code** (or accept the p
 
 Registering is always your call, and nothing depends on it: the tools can be disabled entirely on Claude's side (enterprise policy, `--strict-mcp-config`), so every prompt asks Claude to use them *if it has them* and otherwise to use the `mdc` helper the skill installs. Either way the file ends up the same; the tools just make Claude's edits undoable and checked before they land.
 
+## Using other agents
+
+The review tool server is agent-neutral — Claude Code just happens to be the first client. Run **Markdown Collab: Connect an Agent…** and pick whichever you use; the command lists only the entries your build of the editor can actually support.
+
+| Client | What it writes | Caveat |
+|---|---|---|
+| Claude Code | A `markdown-collab` entry in `.mcp.json` (same as **Register Review Tools**). No token on disk. | If Claude Code is already running, run `/mcp` inside it to reconnect. |
+| Cursor (in-app agent) | Nothing — registers the live URL and token programmatically for this session. | Available immediately; reconnects itself automatically each time the window reloads. |
+| Cursor CLI (`cursor-agent`) | `.cursor/mcp.json`, referencing `${env:...}` — no port or token on disk. | Restart `cursor-agent` to pick it up. |
+| Codex | A `[mcp_servers.markdown-collab]` table in `.codex/config.toml`, with the loopback URL and `bearer_token_env_var` (never the token). | Codex only loads project config for trusted projects — run `codex` in this folder and trust it. |
+| GitHub Copilot (agent mode) | Nothing — registers an MCP server definition provider with the live URL and token. | In Copilot Chat, enable the Markdown Collab tools in agent mode's tool picker. |
+| Other agent | Nothing — opens a scratch document with the URL, the token, and a generic `mcpServers` snippet to copy from. | The token shown is only valid for the current VS Code session. |
+
+None of these files contain a secret — the token always travels through the environment or a live in-process registration, never a committed file — so there's nothing to add to `.gitignore` on their account. Cursor's in-app agent and Copilot's registration are session-scoped and re-established automatically on the next activation if you connected them before; the file-based ones (Cursor CLI, Codex) just keep working, and Codex's is refreshed automatically if the server's port ever moves.
+
 ## Keyboard
 
 The comment icon in a Markdown file's title bar opens the review view. From the keyboard:
@@ -228,6 +243,7 @@ The single keys do nothing while you're typing in a box. There's no key for acce
 | `Markdown Collab: Remove All Resolved Comments` | Delete every resolved thread from the file at once, markers and all. Open threads and pending suggestions are left alone. Modal confirm; one undo step. Also a **Remove N resolved** button in both comment panels, shown only when there is something to remove. |
 | `Markdown Collab: Show Logs` | Open the **Markdown Collab** output channel. Set its level to **Trace** (gear icon in the Output panel) to see per-send and per-tool-call detail. |
 | `Markdown Collab: Report a Problem (collect diagnostics)` | Build an environment report — versions, send mode, skill and tool-server status, per-document review state — into a scratch document, ready to paste into an issue. Contains no tokens. |
+| `Markdown Collab: Connect an Agent…` | Quick-pick to hook the review tool server up to Claude Code, Cursor, Codex, GitHub Copilot, or another MCP-capable agent. See [Using other agents](#using-other-agents). |
 
 ## Settings
 

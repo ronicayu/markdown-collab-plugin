@@ -224,6 +224,18 @@ export async function startMcpServer(
   context.environmentVariableCollection.description =
     "Markdown Collab: MCP tool server address and per-session token";
 
+  // Also set these directly on the extension host's own process (10x-plan-4
+  // P1.1) — every extension shares this one process, so a CLI agent that
+  // ANOTHER extension spawns after us (Claude Code's own VS Code extension
+  // starting `claude`, the Codex IDE extension starting its app-server)
+  // inherits them exactly like a VS Code terminal does, and `.mcp.json` /
+  // `bearer_token_env_var` references resolve for those sessions too. This is
+  // the same exposure `environmentVariableCollection` already gives every
+  // terminal — same user, same machine, child processes either way — just
+  // extended to a second kind of child process VS Code itself doesn't spawn.
+  process.env[ENV_URL] = server.url;
+  process.env[ENV_TOKEN] = token;
+
   await writeDescriptor(folder.uri, { url: server.url, port: server.port, token, version: extensionVersion(context) });
 
   // The port, not the URL: the URL carries the session token.
@@ -237,6 +249,11 @@ export async function startMcpServer(
     dispose: (): void => {
       running = null;
       context.environmentVariableCollection.clear();
+      // Mirror image of setting them above: leaving a stale URL/token in the
+      // host process after the server that issued them is gone would let a
+      // later-spawned agent believe a dead server is reachable.
+      delete process.env[ENV_URL];
+      delete process.env[ENV_TOKEN];
       void removeDescriptor(folder.uri);
       void server.close();
       deps.log.info("tool server stopped");
@@ -275,6 +292,11 @@ async function removeDescriptor(folder: vscode.Uri): Promise<void> {
 
 const CONSENT_KEY = "markdownCollab.mcpJsonConsent";
 
+/** What `ensureMcpJsonRegistration` actually did, for a caller (the Connect
+ *  an Agent command) that wants to show its own toast only when something
+ *  really happened rather than after a declined consent prompt. */
+export type McpJsonRegistrationOutcome = "declined" | "written" | "unchanged";
+
 /**
  * Offer to register the server in the workspace's `.mcp.json`, once per
  * workspace. `.mcp.json` is a file people commit and review, so it is never
@@ -284,12 +306,12 @@ export async function ensureMcpJsonRegistration(
   context: vscode.ExtensionContext,
   handle: McpServerHandle,
   log: Logger,
-): Promise<void> {
+): Promise<McpJsonRegistrationOutcome> {
   const folder = vscode.workspace.workspaceFolders?.[0];
-  if (!folder) return;
+  if (!folder) return "declined";
   const key = `${CONSENT_KEY}:${folder.uri.toString()}`;
   const answer = context.workspaceState.get<"yes" | "no">(key);
-  if (answer === "no") return;
+  if (answer === "no") return "declined";
 
   const uri = vscode.Uri.joinPath(folder.uri, ".mcp.json");
   let existing: string | null = null;
@@ -311,18 +333,20 @@ export async function ensureMcpJsonRegistration(
       // "Not now" is remembered so this isn't asked on every activation; the
       // command re-offers it when the human wants it.
       await context.workspaceState.update(key, "no");
-      return;
+      return "declined";
     }
     await context.workspaceState.update(key, "yes");
   }
 
   try {
     const merged = mergeMcpJson(existing, handle.port);
-    if (merged.text === null) return;
+    if (merged.text === null) return "unchanged";
     await vscode.workspace.fs.writeFile(uri, Buffer.from(merged.text, "utf8"));
     log.info("registered in .mcp.json", { action: merged.replaced ? "updated" : "added", server: MCP_SERVER_NAME });
+    return "written";
   } catch (e) {
     void vscode.window.showWarningMessage(`Markdown Collab: could not update .mcp.json — ${(e as Error).message}`);
+    return "declined";
   }
 }
 
