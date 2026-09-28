@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.35.10 — 2026-09-28 (GitHub only)
+
+### Changed: the README is written for the marketplace page again
+
+Round 4 landed in eleven versions, and each one patched the README where it
+touched it. The result read like its history: setup explained three times, a
+changelog-voice paragraph about the status bar with raw `$(clock)` icon codes
+the marketplace shows literally, version archaeology ("v0.29 added…"), and
+nothing at all about the text-editor presence, uncommitted-changes review,
+Remove All Review Data, the outline, the session summary, four settings, and
+nine commands.
+
+Rewritten from the top for someone deciding whether to install: what it does,
+three steps to the first review, the loop, then every surface and every mode
+once each. Down from 4,700 words to 3,150 with more of the product covered.
+Every feature claim was checked against the code before it went in; two that
+weren't true were corrected.
+
+Building, testing, and releasing moved to `CONTRIBUTING.md`, where they belong.
+That file also documents `npm run verify:keys` and `npm run record:gifs`.
+
 ## 0.35.9 — 2026-09-28 (GitHub only)
 
 ### Changed: a headless run's token never touches disk
