@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Claude reviews your Markdown in VS Code — inline comments stored in the file, suggestions you accept or reject, and runs that need no terminal. Works with Cursor, Codex, and Copilot agents too.",
-  "version": "0.35.8",
+  "version": "0.35.9",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -650,6 +650,7 @@
     "bundle:skill-cli": "node scripts/build-skill-cli.mjs",
     "build:plugin": "node scripts/build-plugin.mjs",
     "copy:shared-css": "node scripts/copy-shared-css.mjs",
+    "verify:keys": "node scripts/verify-webview-keybinding.mjs",
     "record:gifs": "node scripts/record-gifs.mjs"
   },
   "devDependencies": {

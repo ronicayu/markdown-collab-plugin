@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.35.9 — 2026-09-28 (GitHub only)
+
+### Changed: a headless run's token never touches disk
+
+The `--mcp-config` file a headless run hands to Claude Code used to hold the
+tool server's bearer token, in a 0600 temp directory deleted when the run
+ended. If VS Code quit or crashed mid-run, the directory could outlive it. The
+file now names the token by environment variable, `${MARKDOWN_COLLAB_MCP_TOKEN}`,
+and only that run's child process receives the variable. Claude Code expands it
+when it connects, verified against 2.1.283: the server reported connected and
+the file contained no token. A leftover directory now holds nothing secret, and
+the extension sweeps any older than a run can live on its next activation.
+
+### Added: the keybindings are proven in a real VS Code
+
+`npm run verify:keys` launches the downloaded VS Code build through
+Playwright's Electron support, opens a document with two unread threads, and
+presses the chords for real: `Cmd+K Cmd+Alt+N` from the text editor, then the
+same chord from inside the review view's webview, then again to wrap, then `n`.
+All four were observed on VS Code 1.139. Neither existing suite could reach
+this: the Extension Host suite can't press keys, and the Chromium harness has
+no VS Code keybinding service. It opens a window, so it isn't part of CI; run it
+after touching the keybindings or the webview's key handling.
+
 ## 0.35.8 — 2026-09-27 (GitHub only)
 
 ### Added: a pulse for review requests sent through the terminal or clipboard (10x-plan-4 P2.2)

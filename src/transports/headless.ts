@@ -19,10 +19,15 @@
 // `result` says done, what it cost, and what Claude wants to tell the human.
 //
 // The token never touches argv — `ps` shows every argument to every user on the
-// machine. It lives in a 0600 file inside a fresh `mkdtemp` directory that is
-// deleted when the process exits, however it exits. The prompt goes over stdin
-// for the same reason, and because no quoting rule survives arbitrary Markdown
-// through a Windows `.cmd` shim.
+// machine — and never touches disk either: the `--mcp-config` file references
+// `${MARKDOWN_COLLAB_MCP_TOKEN}`, which Claude Code expands from the child's
+// environment (checked against 2.1.283), and only this run's child gets that
+// variable. The file and the system prompt live in a fresh `mkdtemp` directory
+// that is deleted when the process exits, however it exits; a directory that
+// outlives a crash holds no secret, and `sweepStaleHeadlessDirs` removes it on
+// the next activation anyway. The prompt goes over stdin for the same reason,
+// and because no quoting rule survives arbitrary Markdown through a Windows
+// `.cmd` shim.
 //
 // Split: the argument builder, the stream parser, and the availability
 // decision are pure; `HeadlessRun` owns one process and its temp files; the
@@ -34,7 +39,7 @@ import { promises as fsp } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Logger } from "../logging";
-import { MCP_SERVER_NAME } from "../mcpServer/registration";
+import { ENV_TOKEN, ENV_URL, MCP_SERVER_NAME } from "../mcpServer/registration";
 import {
   PERMISSION_PROMPTS_MIN,
   spawnCommand,
@@ -133,21 +138,65 @@ export function supportsPermissionPrompts(version: ClaudeVersion | null): boolea
  */
 export const HEADLESS_SETTINGS = `${JSON.stringify({ disableAllHooks: true })}\n`;
 
-/** The `--mcp-config` file: our server and nothing else. Holds the token. */
-export function mcpConfigJson(server: { url: string; token: string }): string {
+/**
+ * The `--mcp-config` file: our server and nothing else. It names the address
+ * and the token by environment variable, not by value — `run()` sets both on
+ * the child, and Claude Code expands `${VAR}` in `url` and `headers`. Nothing
+ * secret is ever written to it.
+ */
+export function mcpConfigJson(): string {
   return `${JSON.stringify(
     {
       mcpServers: {
         [MCP_SERVER_NAME]: {
           type: "http",
-          url: server.url,
-          headers: { Authorization: `Bearer ${server.token}` },
+          url: `\${${ENV_URL}}`,
+          headers: { Authorization: `Bearer \${${ENV_TOKEN}}` },
         },
       },
     },
     null,
     2,
   )}\n`;
+}
+
+/** Prefix of every run's temp directory, under the OS temp root. */
+export const TEMP_DIR_PREFIX = "mc-headless-";
+
+/**
+ * Remove temp directories left by runs that never got to clean up (VS Code
+ * quit or crashed mid-run). Only directories older than the longest a run can
+ * live are touched: another window may have a run going right now, and its
+ * directory is younger than that by definition. Returns how many were removed.
+ */
+export async function sweepStaleHeadlessDirs(opts: {
+  tmpRoot?: string;
+  now?: () => number;
+  maxAgeMs?: number;
+} = {}): Promise<number> {
+  const root = opts.tmpRoot ?? os.tmpdir();
+  const now = (opts.now ?? Date.now)();
+  const maxAge = opts.maxAgeMs ?? DEFAULT_BUDGET_MS + 5 * 60 * 1000;
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(root);
+  } catch {
+    return 0;
+  }
+  let removed = 0;
+  for (const name of entries) {
+    if (!name.startsWith(TEMP_DIR_PREFIX)) continue;
+    const full = path.join(root, name);
+    try {
+      const st = await fsp.lstat(full);
+      if (!st.isDirectory() || now - st.mtimeMs < maxAge) continue;
+      await fsp.rm(full, { recursive: true, force: true });
+      removed++;
+    } catch {
+      // Someone else's, or already gone. Not this sweep's problem.
+    }
+  }
+  return removed;
 }
 
 // The system prompt a run carries — the tools-only rendering of the skill plus
@@ -491,12 +540,12 @@ export class HeadlessRun {
     let systemPromptPath: string;
     let settingsPath: string;
     try {
-      this.dir = await fsp.mkdtemp(path.join(this.opts.tmpRoot ?? os.tmpdir(), "mc-headless-"));
+      this.dir = await fsp.mkdtemp(path.join(this.opts.tmpRoot ?? os.tmpdir(), TEMP_DIR_PREFIX));
       mcpConfigPath = path.join(this.dir, "mcp.json");
       systemPromptPath = path.join(this.dir, "system-prompt.md");
       settingsPath = path.join(this.dir, "settings.json");
       // `wx`: a file we didn't create (a planted symlink) is refused, not followed.
-      await fsp.writeFile(mcpConfigPath, mcpConfigJson(this.opts.server), { mode: 0o600, flag: "wx" });
+      await fsp.writeFile(mcpConfigPath, mcpConfigJson(), { mode: 0o600, flag: "wx" });
       await fsp.writeFile(systemPromptPath, this.opts.systemPrompt, { mode: 0o600, flag: "wx" });
       await fsp.writeFile(settingsPath, HEADLESS_SETTINGS, { mode: 0o600, flag: "wx" });
     } catch (e) {
@@ -520,6 +569,10 @@ export class HeadlessRun {
     // Set by Claude Code in the shells it spawns. A VS Code launched from one
     // would pass it on, and the child would take itself for a nested session.
     delete env.CLAUDECODE;
+    // The only place the token goes: this child's environment, which the
+    // `--mcp-config` file references by name.
+    env[ENV_URL] = this.opts.server.url;
+    env[ENV_TOKEN] = this.opts.server.token;
 
     log?.info("starting headless run", {
       binary: this.opts.binaryPath,

@@ -154,7 +154,7 @@ describe.skipIf(process.platform === "win32")("HeadlessRun against a stub claude
     expect(run.initServers).toEqual([{ name: "markdown-collab", status: "connected" }]);
   });
 
-  it("hands the prompt over stdin, the token only in a 0600 file, and cleans up", async () => {
+  it("hands the prompt over stdin, the token only in the child's environment, and cleans up", async () => {
     fs.writeFileSync(path.join(workspace, "notes.md"), DOC, "utf8");
     const trace = path.join(scratch, "trace-invocation.json");
     const run = makeRun("ok", { trace });
@@ -165,6 +165,9 @@ describe.skipIf(process.platform === "win32")("HeadlessRun against a stub claude
     expect(t.argv.join(" ")).not.toContain(TOKEN);
     expect(t.argv).not.toContain(t.prompt);
     expect(t.mcpConfigMode).toBe("600");
+    // The config file names the token by variable; only the child's env has it.
+    expect(t.mcpConfigHasTokenLiteral).toBe(false);
+    expect(t.envToken).toBe(TOKEN);
     expect(t.systemPromptMode).toBe("600");
     expect(t.systemPromptHead).toBe("You are a test.");
     expect(fs.realpathSync(t.cwd)).toBe(fs.realpathSync(workspace));

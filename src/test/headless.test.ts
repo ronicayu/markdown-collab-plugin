@@ -8,6 +8,7 @@
 // tests assume are the shapes the CLI emits.
 
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import { describe, expect, it } from "vitest";
 import {
@@ -17,6 +18,8 @@ import {
   isAuthResultText,
   isAuthRetry,
   mcpConfigJson,
+  sweepStaleHeadlessDirs,
+  TEMP_DIR_PREFIX,
   parseStreamLine,
   shortToolName,
   supportsPermissionPrompts,
@@ -104,14 +107,16 @@ describe("buildHeadlessArgs", () => {
 });
 
 describe("temp-file contents", () => {
-  it("the MCP config names only our server, with the bearer header", () => {
-    const parsed = JSON.parse(mcpConfigJson({ url: "http://127.0.0.1:50123/mcp", token: TOKEN }));
+  it("the MCP config names only our server, by environment variable, with no secret in it", () => {
+    const text = mcpConfigJson();
+    const parsed = JSON.parse(text);
     expect(Object.keys(parsed.mcpServers)).toEqual(["markdown-collab"]);
     expect(parsed.mcpServers["markdown-collab"]).toEqual({
       type: "http",
-      url: "http://127.0.0.1:50123/mcp",
-      headers: { Authorization: `Bearer ${TOKEN}` },
+      url: "${MARKDOWN_COLLAB_MCP_URL}",
+      headers: { Authorization: "Bearer ${MARKDOWN_COLLAB_MCP_TOKEN}" },
     });
+    expect(text).not.toMatch(/127\.0\.0\.1|[0-9a-f]{32,}/);
   });
 
   it("the system prompt is the preamble plus the tools-only skill, no frontmatter", () => {
@@ -325,5 +330,32 @@ describe("headless availability", () => {
 describe("HEADLESS_SETTINGS", () => {
   it("switches the user's hooks off and nothing else", () => {
     expect(JSON.parse(HEADLESS_SETTINGS)).toEqual({ disableAllHooks: true });
+  });
+});
+
+describe("sweepStaleHeadlessDirs", () => {
+  it("removes only our directories, and only ones older than a run can be", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "mc-sweep-test-"));
+    const mk = (name: string, ageMs: number): string => {
+      const dir = path.join(root, name);
+      fs.mkdirSync(dir);
+      fs.writeFileSync(path.join(dir, "mcp.json"), "{}");
+      const t = new Date(1_700_000_000_000 - ageMs);
+      fs.utimesSync(dir, t, t);
+      return dir;
+    };
+    const stale = mk(`${TEMP_DIR_PREFIX}old`, 60 * 60 * 1000);
+    const live = mk(`${TEMP_DIR_PREFIX}live`, 60 * 1000);
+    const foreign = mk("someone-elses-old", 60 * 60 * 1000);
+    const removed = await sweepStaleHeadlessDirs({ tmpRoot: root, now: () => 1_700_000_000_000 });
+    expect(removed).toBe(1);
+    expect(fs.existsSync(stale)).toBe(false);
+    expect(fs.existsSync(live)).toBe(true);
+    expect(fs.existsSync(foreign)).toBe(true);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("is a no-op on a missing root", async () => {
+    expect(await sweepStaleHeadlessDirs({ tmpRoot: path.join(os.tmpdir(), "mc-does-not-exist-" + Date.now()) })).toBe(0);
   });
 });

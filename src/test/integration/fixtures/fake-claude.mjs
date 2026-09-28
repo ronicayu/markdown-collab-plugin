@@ -57,8 +57,16 @@ function modeOf(p) {
 const prompt = await readStdin();
 const mcpConfigPath = flag("--mcp-config");
 const systemPromptPath = flag("--append-system-prompt-file");
-const config = JSON.parse(readFileSync(mcpConfigPath, "utf8"));
-const server = config.mcpServers["markdown-collab"];
+const configText = readFileSync(mcpConfigPath, "utf8");
+const config = JSON.parse(configText);
+// Like the real CLI: `${VAR}` in url/headers expands from the environment.
+const expand = (v) => (typeof v === "string" ? v.replace(/\$\{([A-Z0-9_]+)\}/g, (_, n) => process.env[n] ?? "") : v);
+const raw = config.mcpServers["markdown-collab"];
+const server = {
+  ...raw,
+  url: expand(raw.url),
+  headers: Object.fromEntries(Object.entries(raw.headers ?? {}).map(([k, v]) => [k, expand(v)])),
+};
 
 if (process.env.FAKE_CLAUDE_TRACE) {
   writeFileSync(
@@ -74,6 +82,8 @@ if (process.env.FAKE_CLAUDE_TRACE) {
         systemPromptMode: modeOf(systemPromptPath),
         systemPromptHead: readFileSync(systemPromptPath, "utf8").slice(0, 400),
         claudecodeEnv: process.env.CLAUDECODE ?? null,
+        mcpConfigHasTokenLiteral: /[0-9a-f]{32,}/.test(configText),
+        envToken: process.env.MARKDOWN_COLLAB_MCP_TOKEN ?? null,
       },
       null,
       2,

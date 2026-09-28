@@ -31,6 +31,7 @@ import {
 } from "./claudeBinary";
 import {
   HeadlessRun,
+  sweepStaleHeadlessDirs,
   activeHeadlessRun,
   activeHeadlessRuns,
   decideHeadlessAvailability,
@@ -346,4 +347,17 @@ export async function headlessStatusSnapshot(
     last: last ? snapshot(last) : null,
     lastFallback,
   };
+}
+
+/**
+ * Housekeeping at activation: temp directories from runs that never cleaned up
+ * (VS Code quit or crashed mid-run). They hold no secret — the token only ever
+ * lived in the child's environment — but they shouldn't accumulate either.
+ */
+export function sweepHeadlessTempDirs(log?: Logger): void {
+  void sweepStaleHeadlessDirs()
+    .then((n) => {
+      if (n > 0) log?.info("removed stale headless temp directories", { count: n });
+    })
+    .catch(() => undefined);
 }
