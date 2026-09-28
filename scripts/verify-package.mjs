@@ -61,6 +61,22 @@ const REQUIRED = [
  */
 const FORBIDDEN = ["extension/.claude-plugin/marketplace.json"];
 
+// Whole directories that must not ship: build tooling, scratch output, the
+// marketplace manifest's siblings. A prefix match, because these hold files
+// whose names change.
+const FORBIDDEN_PREFIXES = ["extension/scripts/", "extension/.playwright-mcp/", "extension/out/skill/", "extension/out/test/"];
+
+// The only JavaScript under out/ that the extension loads: the host bundle
+// and the three webview bundles. tsc's per-file output is inlined into the
+// host bundle and must not ship alongside it — it once made up 108 of the
+// package's 158 files.
+const OUT_JS_ALLOWED = new Set([
+  "extension/out/extension.js",
+  "extension/out/webview/client.js",
+  "extension/out/inlineComments/client.js",
+  "extension/out/pr/webview/client.js",
+]);
+
 /**
  * Modules the host bundle is allowed to require at runtime: `vscode` is
  * provided by the editor, and the two `ws` optional native addons are marked
@@ -79,6 +95,13 @@ const entries = new Set(
     .filter(Boolean),
 );
 const missing = REQUIRED.filter((rel) => !entries.has(rel));
+const strayDirs = [...entries].filter((e) => FORBIDDEN_PREFIXES.some((p) => e.startsWith(p)));
+const strayJs = [...entries].filter((e) => e.startsWith("extension/out/") && e.endsWith(".js") && !OUT_JS_ALLOWED.has(e));
+if (strayDirs.length > 0 || strayJs.length > 0) {
+  for (const e of [...strayDirs, ...strayJs].slice(0, 20)) console.error(`::error::${path.basename(vsix)} ships ${e}, which nothing loads at runtime — fix .vscodeignore`);
+  if (strayDirs.length + strayJs.length > 20) console.error(`::error::…and ${strayDirs.length + strayJs.length - 20} more`);
+  process.exit(1);
+}
 if (missing.length > 0) {
   for (const rel of missing) {
     console.error(`::error::missing ${rel} in the vsix — .vscodeignore or the bundle steps are out of sync`);

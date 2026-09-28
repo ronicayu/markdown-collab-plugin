@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.35.11 — 2026-09-28 (GitHub only)
+
+### Changed: the package ships 30 files instead of 158
+
+The host extension has been a single esbuild bundle since 0.34.44, but
+`.vscodeignore` never excluded the per-file JavaScript that `tsc` also emits
+under `out/`, so every one of those 108 files rode along in the `.vsix` with
+nothing loading them. So did the build and release scripts, a build
+intermediate of the `mdc` CLI, and a Playwright scratch directory that
+`.gitignore` hides but the packager reads from the working tree. The packager
+had been warning about it on every release.
+
+What ships now is what runs: the four bundles and their stylesheets, mermaid,
+the icon and walkthrough pages, and the Claude Code plugin. The package is 2.75
+MB, down from 3.1, and the warning is gone. `verify-package` refuses any other
+JavaScript under `out/` and any file under `scripts/`, `.playwright-mcp/`,
+`out/skill/`, or `out/test/`, so the weight can't creep back; run against the
+0.35.10 package, it fails as it should.
+
 ## 0.35.10 — 2026-09-28 (GitHub only)
 
 ### Changed: the README is written for the marketplace page again
