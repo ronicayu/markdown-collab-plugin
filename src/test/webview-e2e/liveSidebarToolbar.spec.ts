@@ -1,8 +1,7 @@
 // The live editor's sidebar toolbar (10x-plan-6 P4, sidebar parity): the
 // review view's toolbar.spec.ts — filter segments, Send named after the agent,
 // the suggest-mode switch, the "…" menu, the keyboard hint — plus the one
-// control only the live editor has, the Edit switch between read-only and
-// editing.
+// control only the live editor has, the Reading/Editing mode control.
 
 import { expect, test } from "@playwright/test";
 import { addThread, replaceThread, type InlineThread } from "../../inlineComments/format";
@@ -88,11 +87,68 @@ test.describe("with the review fixture, read-only", () => {
     await expect(page.locator("#overflow-menu")).toBeHidden();
   });
 
-  test("Collapse all folds every card, then reads Expand all", async ({ page }) => {
+  test("Collapse all folds every card kind, including the pending suggestion, then reads Expand all", async ({
+    page,
+  }) => {
+    const suggestion = page.locator("#threads-list .mc-suggestion");
     await page.locator("#overflow-menu-btn").click();
     await page.locator("#collapse-all").click();
     await expect(page.locator(".thread-card.collapsed")).toHaveCount(2);
+    await expect(suggestion).toHaveClass(/collapsed/);
     await expect(page.locator("#collapse-all")).toHaveText("Expand all");
+
+    await page.locator("#overflow-menu-btn").click();
+    await page.locator("#collapse-all").click();
+    await expect(page.locator(".thread-card.collapsed")).toHaveCount(0);
+    await expect(suggestion).not.toHaveClass(/collapsed/);
+    await expect(page.locator("#collapse-all")).toHaveText("Collapse all");
+  });
+
+  test("after Collapse all, n/p still move the current card, and r expands it before focusing the reply box", async ({
+    page,
+  }) => {
+    await page.locator("#overflow-menu-btn").click();
+    await page.locator("#collapse-all").click();
+    await expect(page.locator(".thread-card.collapsed")).toHaveCount(2);
+
+    const answered = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    const open = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await page.keyboard.press("n");
+    await expect(answered).toHaveClass(/highlighted/);
+    await page.keyboard.press("n");
+    await expect(open).toHaveClass(/highlighted/);
+    await expect(answered).not.toHaveClass(/highlighted/);
+
+    // r acts on the current card by expanding it first — there's no reply box
+    // to focus while it's folded.
+    await page.keyboard.press("r");
+    await expect(open).not.toHaveClass(/collapsed/);
+    expect(await open.locator(".reply-box textarea").evaluate((el) => el === document.activeElement)).toBe(true);
+  });
+
+  test("after Collapse all, e and o still act on the current card without expanding it", async ({ page }) => {
+    await page.locator("#overflow-menu-btn").click();
+    await page.locator("#collapse-all").click();
+    const answered = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    await page.keyboard.press("n");
+    await expect(answered).toHaveClass(/highlighted/);
+    await expect(answered).toHaveClass(/collapsed/);
+
+    await page.keyboard.press("e");
+    expect(await awaitPosted(page, "toggle-resolve")).toEqual({
+      type: "toggle-resolve",
+      threadId: fixture.answeredThreadId,
+    });
+    // e posts the message and leaves the fold alone — resolving is the host's
+    // decision to make (and the default that follows from it), not a reason
+    // for the sidebar to pop the card open on its own.
+    await expect(answered).toHaveClass(/collapsed/);
+
+    await page.keyboard.press("o");
+    expect(await awaitPosted(page, "open-in-editor")).toEqual({
+      type: "open-in-editor",
+      threadId: fixture.answeredThreadId,
+    });
   });
 
   test("Escape closes the overflow menu and returns focus to its trigger", async ({ page }) => {
@@ -155,27 +211,31 @@ test.describe("with the review fixture, read-only", () => {
     });
   });
 
-  test.describe("the Edit switch", () => {
-    test("is off in read-only mode, and asks the host to start editing", async ({ page }) => {
-      const toggle = page.locator("#edit-mode-toggle");
-      await expect(toggle).toHaveAttribute("role", "switch");
-      await expect(page.locator("#edit-mode-label")).toHaveText("Edit");
-      await expect(toggle).toHaveAttribute("aria-checked", "false");
+  test.describe("the mode control", () => {
+    test("is Reading in read-only mode, and asks the host to switch to Editing", async ({ page }) => {
+      const group = page.locator("#edit-mode-toggle");
+      await expect(group).toHaveAttribute("role", "radiogroup");
+      const reading = page.locator('input[name="edit-mode"][value="read"]');
+      const editing = page.locator('input[name="edit-mode"][value="edit"]');
+      await expect(reading).toBeChecked();
+      await expect(group).toHaveAttribute("data-mode", "read");
 
-      await toggle.click();
+      await editing.click();
       expect(await awaitPosted(page, "set-read-only")).toEqual({ type: "set-read-only", readOnly: false });
-      // The mode is the host's to change (it rebuilds the editor); the switch
-      // only shows the mode the editor is actually in.
-      await expect(toggle).toHaveAttribute("aria-checked", "false");
+      // The mode is the host's to change (it rebuilds the editor); the control
+      // only repaints from `readOnly` on the next render — a click doesn't
+      // repaint it by itself.
+      await expect(group).toHaveAttribute("data-mode", "read");
     });
   });
 });
 
-test("in edit mode the Edit switch is on, and asks the host to go read-only", async ({ page }) => {
+test("in edit mode the mode control shows Editing, and asks the host to switch to Reading", async ({ page }) => {
   await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: false });
-  const toggle = page.locator("#edit-mode-toggle");
-  await expect(toggle).toHaveAttribute("aria-checked", "true");
-  await toggle.click();
+  const group = page.locator("#edit-mode-toggle");
+  await expect(group).toHaveAttribute("data-mode", "edit");
+  await expect(page.locator('input[name="edit-mode"][value="edit"]')).toBeChecked();
+  await page.locator('input[name="edit-mode"][value="read"]').click();
   expect(await awaitPosted(page, "set-read-only")).toEqual({ type: "set-read-only", readOnly: true });
   expect((await posted(page)).filter((m) => m.type === "edit" || m.type === "edit-blocks")).toEqual([]);
 });

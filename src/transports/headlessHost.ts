@@ -231,7 +231,7 @@ async function onFinished(
       const choice = await vscode.window.showInformationMessage(
         headlessDoneToast(record.fileLabel, final.text),
         "Show report",
-        "Open review view",
+        "Open in Markdown Collab",
       );
       if (choice === "Show report") {
         const doc = await vscode.workspace.openTextDocument({
@@ -239,7 +239,7 @@ async function onFinished(
           content: headlessReportDocument(final.text, final.numTurns, final.costUsd),
         });
         await vscode.window.showTextDocument(doc, { preview: false });
-      } else if (choice === "Open review view") {
+      } else if (choice === "Open in Markdown Collab") {
         await openReviewView(record);
       }
       return;

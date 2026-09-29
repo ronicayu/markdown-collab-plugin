@@ -265,7 +265,7 @@ async function invokeCommentOnSelection(log: Logger): Promise<void> {
   await saveOrWarn(doc, log, "Comment added");
   log.info("thread opened from the editor selection", { file: doc.uri.fsPath, threadId });
 
-  vscode.window.setStatusBarMessage("Comment added — Cmd+K Cmd+Alt+V opens the review view", 4000);
+  vscode.window.setStatusBarMessage("Comment added — Cmd+K Cmd+Alt+V opens it in Markdown Collab", 4000);
 }
 
 /**

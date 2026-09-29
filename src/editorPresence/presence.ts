@@ -136,7 +136,7 @@ export function presenceLensLabel(parsed: ParsedDocument): string | null {
   }
   if (suggestions > 0) parts.push(`${suggestions} suggestion${suggestions === 1 ? "" : "s"}`);
 
-  return `${parts.join(" · ")} — open review view`;
+  return `${parts.join(" · ")} — open in Markdown Collab`;
 }
 
 /** The thread whose anchored span covers `offset`, innermost first. */
@@ -208,7 +208,7 @@ export function hoverFor(
 
   if (live.length > 1) {
     lines.push("");
-    lines.push(`_+${live.length - 1} earlier — open the review view to read the thread._`);
+    lines.push(`_+${live.length - 1} earlier — open it in Markdown Collab to read the thread._`);
   }
 
   if (opts.commandLinks && opts.file) {
@@ -222,7 +222,7 @@ export function hoverFor(
     const resolveLabel = thread.status === "resolved" ? "Reopen" : "Resolve";
     lines.push("");
     lines.push(
-      `[Open in review view](command:markdownCollab.revealThread?${args}) · ` +
+      `[Open in Markdown Collab](command:markdownCollab.revealThread?${args}) · ` +
         `[Reply](command:markdownCollab.replyToThread?${args}) · ` +
         `[${resolveLabel}](command:markdownCollab.resolveThread?${args})`,
     );

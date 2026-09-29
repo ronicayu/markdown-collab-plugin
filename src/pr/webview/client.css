@@ -240,6 +240,12 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
   gap: 10px;
 }
 
+/*
+ * Shared collapsible-card shell — an existing platform thread and the
+ * user's own draft cards both use it (round-4 collapse/expand). `existing-`
+ * is the older, thread-specific name; it stayed generic enough to cover a
+ * draft too rather than introduce a second near-identical class.
+ */
 .existing-card {
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -247,11 +253,22 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
   background: var(--card-bg);
 }
 .existing-card.resolved { opacity: 0.65; }
+/* Collapsed: only the header row shows (chevron, Line/Resolve buttons, the
+   badge, and the gist line); the full comments/reply area is hidden. */
+.existing-card.collapsed .existing-body-wrap { display: none; }
 .existing-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   margin-bottom: 4px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.existing-card.collapsed .existing-head { margin-bottom: 0; }
+.existing-head:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 2px;
 }
 .existing-head .badge.resolved {
   font-size: 11px;
@@ -260,6 +277,27 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
   padding: 1px 6px;
   border-radius: 8px;
 }
+.existing-chevron {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.existing-head:hover .existing-chevron { color: var(--fg); }
+.existing-resolve { padding: 0; }
+/* Collapsed-only summary line: author + one-line gist + reply count. Full
+   width of its own so it doesn't fight the header's buttons for space. */
+.existing-gist {
+  display: none;
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.existing-gist strong { color: var(--fg); font-weight: 600; }
+.existing-card.collapsed .existing-gist { display: block; }
 
 .existing-comment {
   margin-top: 6px;
@@ -371,6 +409,11 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
 #drafts-header .title-row { display: flex; align-items: baseline; gap: 6px; }
 #drafts-header #draft-count { color: var(--muted); font-size: 12px; }
 #drafts-header .hint { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+/* Global collapse/expand toggle — controls every card on the page (drafts
+   and existing threads alike), so it lives in the header above both lists
+   rather than inside either one. */
+#collapse-all-btn { margin-left: auto; font-size: 12px; padding: 0; }
+#collapse-all-btn[hidden] { display: none; }
 
 .empty { color: var(--muted); font-size: 13px; }
 

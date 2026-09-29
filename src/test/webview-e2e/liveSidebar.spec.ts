@@ -9,7 +9,15 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import { addThread, appendReply, parse, replaceThread } from "../../inlineComments/format";
-import { awaitPosted, bootLiveEditor, bootLiveEditorShell, clearPosted, posted, pushToWebview } from "./harness";
+import {
+  awaitPosted,
+  bootLiveEditor,
+  bootLiveEditorShell,
+  clearPosted,
+  getState,
+  posted,
+  pushToWebview,
+} from "./harness";
 import { editAnchoredText, liveInit, liveSidecar, replyTo, reviewFixture, twoSuggestions } from "./fixtures";
 
 const fixture = reviewFixture();
@@ -282,6 +290,132 @@ test.describe("with the review fixture", () => {
     await expect(card.locator(".thread-actions")).toBeHidden();
     await card.locator(".thread-collapse").click();
     await expect(card).not.toHaveClass(/collapsed/);
+  });
+
+  // --- Collapse (round-8 P1: every card kind collapses) ------------------------
+
+  test("the chevron carries aria-expanded, and Enter / Space toggle it like a click", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    const chevron = card.locator(".thread-collapse");
+    await expect(chevron).toHaveAttribute("aria-expanded", "true");
+
+    await chevron.focus();
+    await page.keyboard.press("Enter");
+    await expect(card).toHaveClass(/collapsed/);
+    await expect(chevron).toHaveAttribute("aria-expanded", "false");
+
+    await page.keyboard.press("Space");
+    await expect(card).not.toHaveClass(/collapsed/);
+    await expect(chevron).toHaveAttribute("aria-expanded", "true");
+  });
+
+  test("clicking anywhere in a collapsed card's header expands it, not just the chevron", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    await card.locator(".thread-collapse").click();
+    await expect(card).toHaveClass(/collapsed/);
+    // The quote, not the chevron — while expanded this same click reveals the
+    // thread in the document instead (see "clicking a card makes it current…"
+    // above); collapsed, the header IS the card, so it expands instead.
+    await card.locator(".thread-quote").click();
+    await expect(card).not.toHaveClass(/collapsed/);
+  });
+
+  test("a resolved thread starts collapsed under the All filter, with a resolved badge and a comment count", async ({
+    page,
+  }) => {
+    const answered = parse(fixture.source).threads.find((t) => t.id === fixture.answeredThreadId)!;
+    const resolvedSrc = replaceThread(fixture.source, answered.id, {
+      ...answered,
+      status: "resolved",
+      resolvedBy: "ronica",
+      resolvedTs: "2026-07-02T09:00:00.000Z",
+    });
+    await pushSidecar(page, resolvedSrc);
+    await page.locator('input[name="filter"][value="all"]').click();
+    const card = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    await expect(card).toHaveClass(/collapsed/);
+    await expect(card.locator(".thread-collapse")).toHaveAttribute("aria-expanded", "false");
+    await expect(card.locator(".badge.resolved")).toHaveText("resolved");
+    // Root comment + Claude's reply.
+    await expect(card.locator(".thread-comment-count")).toHaveText("2 comments");
+  });
+
+  test("resolving a thread collapses it by default; reopening expands it back", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    await expect(card).not.toHaveClass(/collapsed/);
+
+    const answered = parse(fixture.source).threads.find((t) => t.id === fixture.answeredThreadId)!;
+    const resolvedSrc = replaceThread(fixture.source, answered.id, {
+      ...answered,
+      status: "resolved",
+      resolvedBy: "ronica",
+      resolvedTs: "2026-07-02T09:00:00.000Z",
+    });
+    await pushSidecar(page, resolvedSrc);
+    await page.locator('input[name="filter"][value="all"]').click();
+    await expect(card).toHaveClass(/collapsed/);
+
+    // The host round trip a toggle-resolve on it would produce.
+    await pushSidecar(page, fixture.source);
+    await expect(card).not.toHaveClass(/collapsed/);
+  });
+
+  test("a manual toggle overrides the default and survives a host update", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await expect(card).not.toHaveClass(/collapsed/);
+    await card.locator(".thread-collapse").click();
+    await expect(card).toHaveClass(/collapsed/);
+
+    await pushSidecar(page, fixture.source);
+    await expect(card).toHaveClass(/collapsed/);
+
+    const state = (await getState(page)) as { collapseOverrides?: [string, boolean][] } | undefined;
+    expect(state?.collapseOverrides).toContainEqual([`thread:${fixture.openThreadId}`, true]);
+  });
+
+  test("a manual toggle survives a Reading/Editing re-init", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await card.locator(".thread-collapse").click();
+    await expect(card).toHaveClass(/collapsed/);
+
+    await pushToWebview(page, { type: "init", ...liveInit(fixture.source), readOnly: true });
+    await expect(page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`)).toHaveClass(/collapsed/);
+  });
+
+  test("the pending suggestion starts expanded; collapsing it swaps the meta row for a one-line gist", async ({
+    page,
+  }) => {
+    const card = page.locator("#threads-list .mc-suggestion");
+    const chevron = card.locator(".mc-suggestion__collapse");
+    await expect(card).not.toHaveClass(/collapsed/);
+    await expect(chevron).toHaveAttribute("aria-expanded", "true");
+
+    await chevron.click();
+    await expect(card).toHaveClass(/collapsed/);
+    await expect(chevron).toHaveAttribute("aria-expanded", "false");
+    await expect(chevron).toHaveText("▸");
+    await expect(card.locator(".mc-suggestion__summary")).toHaveText('Suggestion · Claude · "notes" → "highlights"');
+    await expect(card.locator(".mc-suggestion__diffwrap")).toBeHidden();
+
+    await chevron.click();
+    await expect(card).not.toHaveClass(/collapsed/);
+    await expect(card.locator(".mc-suggestion__diffwrap")).toBeVisible();
+  });
+
+  test("Accept and Reject stay visible and clickable on a collapsed suggestion", async ({ page }) => {
+    const card = page.locator("#threads-list .mc-suggestion");
+    await card.locator(".mc-suggestion__collapse").click();
+    await expect(card).toHaveClass(/collapsed/);
+    const accept = card.getByRole("button", { name: "Accept", exact: true });
+    const reject = card.getByRole("button", { name: "Reject", exact: true });
+    await expect(accept).toBeVisible();
+    await expect(reject).toBeVisible();
+
+    await accept.click();
+    expect(await awaitPosted(page, "accept-suggestion")).toEqual({
+      type: "accept-suggestion",
+      anchorId: fixture.suggestionId,
+    });
   });
 
   test("clicking a card makes it current and pulses its highlight in the document", async ({ page }) => {

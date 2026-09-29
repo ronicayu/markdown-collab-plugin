@@ -1,6 +1,6 @@
 ### The loop
 
-1. Select a passage in the review view.
+1. Select a passage in the Markdown Collab view.
 2. Click **+ Add comment**.
 3. Write what's wrong with it — specifically. "This claim skips a step" beats
    "unclear".

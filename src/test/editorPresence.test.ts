@@ -241,7 +241,7 @@ describe("hoverFor", () => {
 
   // 3.7: Reply and Resolve exist only inside the webview otherwise — no
   // palette entry, no keybinding. The hover is the one other path in.
-  it("adds Reply and Resolve links next to Open in review view, on an open thread", () => {
+  it("adds Reply and Resolve links next to Open in Markdown Collab, on an open thread", () => {
     const { source, id } = withThread();
     const parsed = parse(source);
     const offset = parsed.anchors.get(id)!.openEnd;
@@ -301,7 +301,7 @@ describe("presenceLensLabel", () => {
       id,
       resolve(parse(second.source).threads.find((t) => t.id === id)!),
     );
-    expect(presenceLensLabel(parse(resolved))).toBe("2 comments · 1 unresolved — open review view");
+    expect(presenceLensLabel(parse(resolved))).toBe("2 comments · 1 unresolved — open in Markdown Collab");
   });
 
   it("says so when everything is resolved", () => {

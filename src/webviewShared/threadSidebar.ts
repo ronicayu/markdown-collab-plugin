@@ -23,11 +23,14 @@ import {
   adjacentThreadId,
   chunkThreads,
   claudeSummary,
+  collapseKey,
   emptyState,
   filterThreads,
+  initialCollapsed,
   nextCollapseAllAction,
   nextUnreadThreadId,
   threadCountLabel,
+  type CollapsibleCard,
   type EmptyState,
   type ThreadFilter,
 } from "./threadListState";
@@ -102,15 +105,17 @@ const SHELL = `<header id="threads-header">
       <button id="suggest-mode-toggle" type="button" class="switch" role="switch" aria-checked="false" aria-labelledby="suggest-mode-label" title="When on, Send to Claude asks Claude to propose edits as suggestions you accept or reject."></button>
     </span>
     <span class="switch-row">
-      <label id="edit-mode-label" for="edit-mode-toggle">Edit</label>
-      <button id="edit-mode-toggle" type="button" class="switch" role="switch" aria-checked="false" aria-labelledby="edit-mode-label" title="When on, you can edit the text in place. Off, the document is read-only and only comments change the file."></button>
+      <div id="edit-mode-toggle" class="mode-toggle" role="radiogroup" aria-label="Editing mode" data-mode="read" title="Reading is read-only — only comments change the file. Editing lets you edit the text in place.">
+        <label class="segment"><input type="radio" name="edit-mode" value="read" checked><span>Reading</span></label>
+        <label class="segment"><input type="radio" name="edit-mode" value="edit"><span>Editing</span></label>
+      </div>
     </span>
     <span class="actions-end">
       <span class="mc-menu-wrap">
         <button id="overflow-menu-btn" type="button" class="btn-ghost" aria-haspopup="menu" aria-expanded="false" aria-controls="overflow-menu" aria-label="More actions" title="More actions">…</button>
         <div id="overflow-menu" class="mc-menu" role="menu" aria-label="More actions" hidden>
           <button id="copy-prompt" type="button" role="menuitem" title="Copy the prompt to your clipboard.">Copy prompt</button>
-          <button id="collapse-all" type="button" role="menuitem" title="Collapse / expand all comment threads">Collapse all</button>
+          <button id="collapse-all" type="button" role="menuitem" title="Collapse / expand every comment thread and suggestion">Collapse all</button>
           <button id="remove-resolved" type="button" role="menuitem" class="danger" hidden title="Delete every resolved comment from this file. Open comments and pending suggestions are kept.">Remove resolved</button>
           <button id="finalize-doc" type="button" role="menuitem" class="danger" hidden title="Remove ALL review data — every comment, marker, and pending suggestion — leaving clean markdown ready to commit.">Remove all review data</button>
         </div>
@@ -145,7 +150,8 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     sendToClaude: byId<HTMLButtonElement>("send-to-claude"),
     copyPrompt: byId<HTMLButtonElement>("copy-prompt"),
     suggestModeToggle: byId<HTMLButtonElement>("suggest-mode-toggle"),
-    editModeToggle: byId<HTMLButtonElement>("edit-mode-toggle"),
+    editModeGroup: byId<HTMLElement>("edit-mode-toggle"),
+    editModeRadios: root.querySelectorAll<HTMLInputElement>('input[name="edit-mode"]'),
     removeResolved: byId<HTMLButtonElement>("remove-resolved"),
     finalizeDoc: byId<HTMLButtonElement>("finalize-doc"),
     skillWarning: byId<HTMLElement>("skill-warning"),
@@ -236,8 +242,8 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
 
   let currentState: SidebarState | null = null;
   let filter: ThreadFilter = ((): ThreadFilter => {
-    // Persisted, unlike the review view: switching Read/Edit reloads the page,
-    // and the list the reviewer was working through shouldn't reset with it.
+    // Persisted, unlike the review view: switching Reading/Editing reloads the
+    // page, and the list the reviewer was working through shouldn't reset with it.
     const f = saved().threadFilter;
     return THREAD_FILTERS.includes(f as ThreadFilter) ? (f as ThreadFilter) : "open";
   })();
@@ -245,7 +251,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   let pendingLabelText = "Claude is working…";
   let agentName = "Claude";
   let headlessAvailable = false;
-  let readOnly = false;
   /** First click on "Accept all" arms it; the second applies. */
   let acceptAllArmed = false;
   // How many thread cards the list is currently allowed to build. Grows by a
@@ -260,10 +265,44 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   const pendingDeleteComment = new Set<string>(); // composite "threadId:commentId"
   let stepChanges: ((delta: 1 | -1) => void) | null = null;
 
-  // Thread IDs the user has collapsed (folded to just the quote). Persisted so
-  // the choice survives a webview reload.
-  const collapsedThreads = new Set<string>((saved().collapsedThreadIds as string[] | undefined) ?? []);
-  const saveCollapsedThreads = (): void => persist({ collapsedThreadIds: Array.from(collapsedThreads) });
+  // Manual collapse/expand overrides, keyed by `collapseKey` (thread or
+  // suggestion id, namespaced by kind) — round-8 P1. A card with no entry
+  // here falls back to its default (`initialCollapsed`): resolved threads
+  // start collapsed, everything else starts expanded. Persisted so a manual
+  // toggle wins for the rest of the session, across both a host `update` and
+  // a Reading/Editing re-init.
+  const manualCollapse = new Map<string, boolean>(
+    (saved().collapseOverrides as [string, boolean][] | undefined) ?? [],
+  );
+  const saveManualCollapse = (): void => persist({ collapseOverrides: Array.from(manualCollapse.entries()) });
+  const isCollapsedCard = (card: CollapsibleCard): boolean => initialCollapsed(card, manualCollapse);
+  /** Every card the "Collapse all" toggle and its label cover. */
+  const collapsibleCards = (state: SidebarState): CollapsibleCard[] => [
+    ...state.threads.map((t): CollapsibleCard => ({ kind: "thread", id: t.id, status: t.status })),
+    ...state.suggestions.map((s): CollapsibleCard => ({ kind: "suggestion", id: s.anchorId })),
+  ];
+
+  /**
+   * Fold or unfold one card in place — no re-render, so an in-progress reply
+   * on another thread card isn't wiped. Updates the same DOM the initial
+   * render read `isCollapsedCard` into, so a second click always sees the
+   * truth this function itself just wrote, not a stale snapshot.
+   */
+  function setCardCollapsed(card: CollapsibleCard, collapsed: boolean): void {
+    manualCollapse.set(collapseKey(card), collapsed);
+    saveManualCollapse();
+    const el =
+      card.kind === "thread"
+        ? cardFor(card.id)
+        : dom.threadsList.querySelector<HTMLElement>(`[data-suggestion-id="${cssEscape(card.id)}"]`);
+    el?.classList.toggle("collapsed", collapsed);
+    const chevron = el?.querySelector<HTMLButtonElement>(".thread-collapse");
+    if (chevron) {
+      chevron.textContent = collapsed ? "▸" : "▾";
+      chevron.setAttribute("aria-expanded", String(!collapsed));
+    }
+    updateCollapseAllLabel();
+  }
 
   // Set when an agent is asked to review this doc: the thread IDs that existed
   // then. On the next render where a new unread thread appears, scroll to the
@@ -284,11 +323,19 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     host.post({ type: "copy-prompt" });
     closeOpenMenu(false);
   });
-  // Neither switch flips itself: the setting is the host's, and the switch
-  // only reflects what comes back — anything else would show "on" after a
-  // write that failed.
+  // The suggest-mode switch doesn't flip itself: the setting is the host's,
+  // and the switch only reflects what comes back — anything else would show
+  // "on" after a write that failed.
   dom.suggestModeToggle.addEventListener("click", () => host.post({ type: "toggle-suggest-mode" }));
-  dom.editModeToggle.addEventListener("click", () => host.post({ type: "set-read-only", readOnly: !readOnly }));
+  // The mode control is a native radiogroup (arrow keys move the selection for
+  // free), so a click or an arrow key checks a radio immediately; the next
+  // render still corrects it to whatever the host actually landed on, the way
+  // updateModeSegments below always repaints from `state.readOnly`.
+  dom.editModeRadios.forEach((r) =>
+    r.addEventListener("change", () => {
+      if (r.checked) host.post({ type: "set-read-only", readOnly: r.value === "read" });
+    }),
+  );
   // The host owns the confirm and the write for both bulk deletes: a webview
   // can't show a modal, and a two-click arm is too quiet for something that
   // removes many threads at once.
@@ -306,13 +353,10 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     host.post({ type: "install-skill" });
   });
   dom.collapseAll.addEventListener("click", () => {
-    const threads = currentState?.threads ?? [];
-    const collapse =
-      nextCollapseAllAction(
-        threads.map((t) => t.id),
-        collapsedThreads,
-      ) === "collapse";
-    for (const t of threads) setThreadCollapsed(t.id, collapse);
+    const cards = currentState ? collapsibleCards(currentState) : [];
+    const collapsedIds = new Set(cards.filter(isCollapsedCard).map(collapseKey));
+    const collapse = nextCollapseAllAction(cards.map(collapseKey), collapsedIds) === "collapse";
+    for (const c of cards) setCardCollapsed(c, collapse);
     closeOpenMenu(false);
   });
   dom.claudeNext.addEventListener("click", () => {
@@ -321,11 +365,25 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     if (nextId) focusThread(nextId);
   });
 
+  /**
+   * Repaint the Reading/Editing control from `readOnly`, the way
+   * `updateFilterSegments` repaints the filter row from `filter`: the radio's
+   * own `checked` and the segment's `.active` background both follow it, so a
+   * render always shows the mode the editor is actually in, even when it
+   * differs from whatever was last clicked.
+   */
+  function updateModeSegments(readOnly: boolean): void {
+    dom.editModeGroup.dataset.mode = readOnly ? "read" : "edit";
+    for (const r of dom.editModeRadios) {
+      r.checked = r.value === (readOnly ? "read" : "edit");
+      r.closest("label")?.classList.toggle("active", r.checked);
+    }
+  }
+
   function updateSwitches(state: SidebarState): void {
     dom.suggestModeToggle.setAttribute("aria-checked", String(state.suggestMode));
     dom.suggestModeToggle.classList.toggle("on", state.suggestMode);
-    dom.editModeToggle.setAttribute("aria-checked", String(!state.readOnly));
-    dom.editModeToggle.classList.toggle("on", !state.readOnly);
+    updateModeSegments(state.readOnly);
   }
 
   /**
@@ -498,7 +556,11 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   /** Focus the highlighted thread's reply box, expanding a collapsed card first. */
   function focusReplyOnHighlighted(): void {
     if (!highlightedThreadId) return;
-    if (collapsedThreads.has(highlightedThreadId)) setThreadCollapsed(highlightedThreadId, false);
+    const thread = currentState?.threads.find((t) => t.id === highlightedThreadId);
+    if (thread) {
+      const card: CollapsibleCard = { kind: "thread", id: thread.id, status: thread.status };
+      if (isCollapsedCard(card)) setCardCollapsed(card, false);
+    }
     setReplyOpen(highlightedThreadId, true, true);
   }
 
@@ -519,25 +581,14 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   }
 
   // --- Collapse --------------------------------------------------------------------
+  // `setCardCollapsed`, `isCollapsedCard`, and `collapsibleCards` are defined
+  // with the other persisted state above, next to `manualCollapse` itself.
 
   function updateCollapseAllLabel(): void {
-    const threads = currentState?.threads ?? [];
-    const allCollapsed = threads.length > 0 && threads.every((t) => collapsedThreads.has(t.id));
+    const cards = currentState ? collapsibleCards(currentState) : [];
+    const allCollapsed = cards.length > 0 && cards.every(isCollapsedCard);
     dom.collapseAll.textContent = allCollapsed ? "Expand all" : "Collapse all";
-    dom.collapseAll.disabled = threads.length === 0;
-  }
-
-  // Fold/unfold one thread in place (no re-render, so an in-progress reply on
-  // another card isn't wiped).
-  function setThreadCollapsed(id: string, collapsed: boolean): void {
-    if (collapsed) collapsedThreads.add(id);
-    else collapsedThreads.delete(id);
-    saveCollapsedThreads();
-    const card = cardFor(id);
-    card?.classList.toggle("collapsed", collapsed);
-    const chevron = card?.querySelector<HTMLButtonElement>(".thread-collapse");
-    if (chevron) chevron.textContent = collapsed ? "▸" : "▾";
-    updateCollapseAllLabel();
+    dom.collapseAll.disabled = cards.length === 0;
   }
 
   // --- Reply composers ---------------------------------------------------------------
@@ -585,7 +636,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     agentName = state.agentName || "Claude";
     pendingLabelText = state.pendingLabel ?? `${agentName} is working…`;
     headlessAvailable = state.headlessAvailable;
-    readOnly = state.readOnly;
     updateSwitches(state);
     updateAgentUi();
     renderThreads(state);
@@ -695,6 +745,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   }
 
   function renderSuggestion(s: SidebarSuggestion): HTMLElement {
+    const suggestionCard: CollapsibleCard = { kind: "suggestion", id: s.anchorId };
     const card = buildSuggestionCard({
       author: s.author,
       timestamp: s.ts,
@@ -705,6 +756,8 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
       onAccept: () => host.post({ type: "accept-suggestion", anchorId: s.anchorId }),
       onReject: () => host.post({ type: "reject-suggestion", anchorId: s.anchorId }),
       onClick: s.anchored ? () => host.revealSuggestionInDocument(s.anchorId) : undefined,
+      collapsed: isCollapsedCard(suggestionCard),
+      onToggleCollapse: () => setCardCollapsed(suggestionCard, !isCollapsedCard(suggestionCard)),
     });
     card.dataset.suggestionId = s.anchorId;
     return card;
@@ -730,12 +783,13 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   }
 
   function renderThreadCard(t: SidebarThread, posinset: number, setsize: number): HTMLElement {
+    const cardKey: CollapsibleCard = { kind: "thread", id: t.id, status: t.status };
     const card = document.createElement("section");
     card.className = "thread-card";
     if (t.status === "resolved") card.classList.add("resolved");
     if (t.id === highlightedThreadId) card.classList.add("highlighted");
     if (isClaudeUnread(t)) card.classList.add("claude-unread");
-    if (collapsedThreads.has(t.id)) card.classList.add("collapsed");
+    if (isCollapsedCard(cardKey)) card.classList.add("collapsed");
     if (!t.anchor) card.classList.add("unanchored");
     card.dataset.thread = t.id;
     // The list is a `role="feed"`: each card is an article with its position
@@ -763,12 +817,13 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     const chevron = document.createElement("button");
     chevron.type = "button";
     chevron.className = "thread-collapse";
-    chevron.textContent = collapsedThreads.has(t.id) ? "▸" : "▾";
+    chevron.textContent = isCollapsedCard(cardKey) ? "▸" : "▾";
     chevron.title = "Collapse / expand this thread";
     chevron.setAttribute("aria-label", "Collapse or expand this comment thread");
+    chevron.setAttribute("aria-expanded", String(!isCollapsedCard(cardKey)));
     chevron.addEventListener("click", (e) => {
       e.stopPropagation();
-      setThreadCollapsed(t.id, !collapsedThreads.has(t.id));
+      setCardCollapsed(cardKey, !isCollapsedCard(cardKey));
     });
     headRow.appendChild(chevron);
     const quote = document.createElement("blockquote");
@@ -792,7 +847,35 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
         "The anchored passage was edited after the last comment on this thread — the comment may be answering text that is no longer there.";
       quote.appendChild(badge);
     }
+    if (t.status === "resolved") {
+      // Shown regardless of collapse state, the same as broken/stale above —
+      // it's the one status badge that matters once "All" mixes open and
+      // resolved threads and a resolved one is folded to just this line.
+      const badge = document.createElement("span");
+      badge.className = "badge resolved";
+      badge.textContent = "resolved";
+      badge.title = "This thread is resolved.";
+      quote.appendChild(badge);
+    }
     headRow.appendChild(quote);
+    // Collapsed, the header's row is the whole visible card — "N comments" is
+    // the one thing the folded quote can't already say for itself.
+    const commentCount = document.createElement("span");
+    commentCount.className = "thread-comment-count";
+    const liveCommentTotal = t.comments.filter((c) => !c.deleted).length;
+    commentCount.textContent = liveCommentTotal === 1 ? "1 comment" : `${liveCommentTotal} comments`;
+    headRow.appendChild(commentCount);
+    // While collapsed, clicking anywhere in the header expands it — a bigger
+    // target than the chevron alone, since the header is effectively the
+    // whole card at that point. Expanded, a click here is left to bubble to
+    // the card's own click handler above (highlight + reveal in the
+    // document) instead: collapsing a card the human is reading out from
+    // under a stray click on its quote would be a bad surprise.
+    headRow.addEventListener("click", (e) => {
+      if (!card.classList.contains("collapsed")) return;
+      e.stopPropagation();
+      setCardCollapsed(cardKey, false);
+    });
     head.appendChild(headRow);
 
     // Visible per-card actions are Reply and Resolve/Reopen; every other

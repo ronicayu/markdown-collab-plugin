@@ -107,3 +107,46 @@ export function isBulkRewrite(original: string, proposed: string): boolean {
   for (const op of ops) if (op.kind === "equal") equalCount += countMeaningful(tokenize(op.text));
   return (longer - equalCount) / longer > MAX_CHANGE_RATIO;
 }
+
+/** Past this length, a quoted span in the gist reads more like a wall of text
+ * than a hint. */
+const GIST_QUOTE_MAX = 40;
+
+function gistQuote(text: string): string {
+  const flat = text.trim().replace(/\s+/g, " ");
+  return flat.length > GIST_QUOTE_MAX ? `${flat.slice(0, GIST_QUOTE_MAX - 1).trimEnd()}…` : flat;
+}
+
+/**
+ * A short one-line gist of a suggestion's change — "'notes' → 'highlights'"
+ * — for a collapsed suggestion card's header (round-8 P1), where there's no
+ * room for the full diff. Built from the same word-level diff the inline
+ * view renders, so the words it quotes are exactly the ones that would show
+ * struck through / inserted if the card were expanded. Past `isBulkRewrite`'s
+ * guard the changed words are most of the passage, so quoting a few would
+ * mislead about how much actually changed — the gist falls back to sizes.
+ */
+export function suggestionGist(original: string, proposed: string): string {
+  if (isBulkRewrite(original, proposed)) {
+    return `rewrites the passage (${original.length} → ${proposed.length} chars)`;
+  }
+  const ops = diffWords(original, proposed);
+  const removed = gistQuote(
+    ops
+      .filter((o) => o.kind === "del")
+      .map((o) => o.text)
+      .join(""),
+  );
+  const added = gistQuote(
+    ops
+      .filter((o) => o.kind === "ins")
+      .map((o) => o.text)
+      .join(""),
+  );
+  if (removed && added) return `"${removed}" → "${added}"`;
+  if (added) return `adds "${added}"`;
+  if (removed) return `removes "${removed}"`;
+  // Defensive: a real suggestion never proposes identical text, but an empty
+  // gist reading as empty space would be worse than saying so plainly.
+  return "no change";
+}

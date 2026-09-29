@@ -52,13 +52,13 @@ export function headlessStatusBar(
           `Last tool: ${state.lastTool} · ${state.toolCount} tool call${state.toolCount === 1 ? "" : "s"}`,
         );
       } else lines.push("Reading — no tool calls yet.");
-      lines.push("Click to cancel, show logs, or open the review view.");
+      lines.push("Click to cancel, show logs, or open it in Markdown Collab.");
       return { text: `$(loading~spin) ${doing} · ${elapsed}`, tooltip: lines.join("\n") };
     }
     case "done":
       return {
         text: `$(check) Claude finished ${fileLabel}`,
-        tooltip: `Claude finished reviewing ${fileLabel}. Click to open the review view.`,
+        tooltip: `Claude finished reviewing ${fileLabel}. Click to open it in Markdown Collab.`,
       };
     case "failed":
       return {

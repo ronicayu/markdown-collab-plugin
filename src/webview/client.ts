@@ -1342,8 +1342,14 @@ function loadMermaid(): Promise<MermaidApi> {
     mermaidPromise = import("mermaid").then((mod) => {
       const candidate = (mod as { default?: unknown }).default ?? mod;
       const api = candidate as MermaidApi;
+      // Follow the editor theme, as the classic panel did: a light diagram on a
+      // dark background reads as a rendering bug.
+      const isDark =
+        document.body.classList.contains("vscode-dark") ||
+        document.body.classList.contains("vscode-high-contrast") ||
+        window.matchMedia("(prefers-color-scheme: dark)").matches;
       try {
-        api.initialize({ startOnLoad: false, securityLevel: "strict", theme: "default" });
+        api.initialize({ startOnLoad: false, securityLevel: "strict", theme: isDark ? "dark" : "default" });
       } catch {
         /* idempotent */
       }

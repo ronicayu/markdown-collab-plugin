@@ -226,8 +226,19 @@ export const githubPlatform: PrPlatform = {
     try {
       const resolvedById = await fetchResolvedById(ctx);
       for (const c of out) {
-        const r = resolvedById.get(c.id);
-        if (r !== undefined) c.resolved = r;
+        const info = resolvedById.get(c.id);
+        if (info === undefined) continue;
+        c.resolved = info.resolved;
+        // Every REST review comment this fetch returns is part of some
+        // PullRequestReviewThread — the thread node id above is that
+        // thread's, so a comment we successfully mapped is always
+        // resolvable. Leave both fields unset if the GraphQL page never
+        // mentioned this comment (shouldn't happen, but no id means no
+        // resolve target).
+        if (info.threadId) {
+          c.resolvable = true;
+          c.resolveId = info.threadId;
+        }
       }
     } catch {
       // Resolved state is an enhancement — the review still works with
@@ -236,28 +247,50 @@ export const githubPlatform: PrPlatform = {
     }
     return out;
   },
+
+  async resolveThread(ctx, resolveId, resolved) {
+    const runner = getCliRunner();
+    const env = ghEnvForHost(ctx.host);
+    const mutation = resolved ? "resolveReviewThread" : "unresolveReviewThread";
+    const query = `mutation($threadId: ID!) {
+  ${mutation}(input: {threadId: $threadId}) {
+    thread { id isResolved }
+  }
+}`;
+    const res = await runner(
+      GH,
+      ["api", "graphql", "-f", `query=${query}`, "-F", `threadId=${resolveId}`],
+      { cwd: ctx.repoRoot, env },
+    );
+    if (res.code !== 0) {
+      throw new Error(`gh api graphql ${mutation} failed: ${res.stderr.trim() || res.stdout.trim()}`);
+    }
+  },
 };
 
 /** One page of the reviewThreads GraphQL response, reduced to what we use. */
 export interface ReviewThreadsPage {
-  nodes: { isResolved: boolean; commentIds: string[] }[];
+  nodes: { id: string; isResolved: boolean; commentIds: string[] }[];
   hasNextPage: boolean;
   endCursor: string | null;
 }
 
 /**
  * Parse a `reviewThreads` GraphQL page. Comment ids come back as REST
- * `databaseId`s, stringified to match `ExistingPrComment.id`.
+ * `databaseId`s, stringified to match `ExistingPrComment.id`. `id` is the
+ * thread's own GraphQL node id — opaque, and the only thing
+ * `resolveReviewThread`/`unresolveReviewThread` accept as `threadId`.
  */
 export function parseReviewThreadsPage(json: string): ReviewThreadsPage {
   const parsed = JSON.parse(json) as {
     data?: { repository?: { pullRequest?: { reviewThreads?: {
       pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
-      nodes?: { isResolved?: boolean; comments?: { nodes?: { databaseId?: number | null }[] } }[];
+      nodes?: { id?: string | null; isResolved?: boolean; comments?: { nodes?: { databaseId?: number | null }[] } }[];
     } } } };
   };
   const rt = parsed.data?.repository?.pullRequest?.reviewThreads;
   const nodes = (rt?.nodes ?? []).map((n) => ({
+    id: typeof n?.id === "string" ? n.id : "",
     isResolved: n?.isResolved === true,
     commentIds: (n?.comments?.nodes ?? [])
       .map((c) => c?.databaseId)
@@ -271,12 +304,20 @@ export function parseReviewThreadsPage(json: string): ReviewThreadsPage {
   };
 }
 
+/** What `fetchResolvedById` knows about the thread a REST comment belongs to. */
+interface ThreadInfo {
+  resolved: boolean;
+  /** GraphQL thread node id, or "" if the page didn't carry one. */
+  threadId: string;
+}
+
 /**
  * The REST comments endpoint carries no resolved state — that lives on
  * GraphQL review threads. Map every thread comment's databaseId to its
- * thread's `isResolved`.
+ * thread's `isResolved` and node id (the latter is what a resolve/unresolve
+ * mutation needs — see `resolveThread`).
  */
-async function fetchResolvedById(ctx: PrContext): Promise<Map<string, boolean>> {
+async function fetchResolvedById(ctx: PrContext): Promise<Map<string, ThreadInfo>> {
   const runner = getCliRunner();
   const env = ghEnvForHost(ctx.host);
   const query = `query($owner: String!, $repo: String!, $pr: Int!, $endCursor: String) {
@@ -284,12 +325,12 @@ async function fetchResolvedById(ctx: PrContext): Promise<Map<string, boolean>> 
     pullRequest(number: $pr) {
       reviewThreads(first: 100, after: $endCursor) {
         pageInfo { hasNextPage endCursor }
-        nodes { isResolved comments(first: 100) { nodes { databaseId } } }
+        nodes { id isResolved comments(first: 100) { nodes { databaseId } } }
       }
     }
   }
 }`;
-  const resolvedById = new Map<string, boolean>();
+  const resolvedById = new Map<string, ThreadInfo>();
   let cursor: string | null = null;
   // Page cap so a misbehaving pageInfo can never loop forever (100 threads/page).
   for (let page = 0; page < 20; page++) {
@@ -307,7 +348,7 @@ async function fetchResolvedById(ctx: PrContext): Promise<Map<string, boolean>> 
     }
     const threads = parseReviewThreadsPage(res.stdout);
     for (const t of threads.nodes) {
-      for (const id of t.commentIds) resolvedById.set(id, t.isResolved);
+      for (const id of t.commentIds) resolvedById.set(id, { resolved: t.isResolved, threadId: t.id });
     }
     if (!threads.hasNextPage || !threads.endCursor) break;
     cursor = threads.endCursor;

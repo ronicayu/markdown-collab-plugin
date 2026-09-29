@@ -24,7 +24,7 @@ function ctx(overrides: Partial<PrContext> = {}): PrContext {
 }
 
 function threadsPage(
-  nodes: { isResolved: boolean; ids: number[] }[],
+  nodes: { id?: string; isResolved: boolean; ids: number[] }[],
   pageInfo: { hasNextPage: boolean; endCursor: string | null } = { hasNextPage: false, endCursor: null },
 ): string {
   return JSON.stringify({
@@ -33,7 +33,8 @@ function threadsPage(
         pullRequest: {
           reviewThreads: {
             pageInfo,
-            nodes: nodes.map((n) => ({
+            nodes: nodes.map((n, i) => ({
+              id: n.id ?? `PRRT_${i}`,
               isResolved: n.isResolved,
               comments: { nodes: n.ids.map((databaseId) => ({ databaseId })) },
             })),
@@ -59,14 +60,14 @@ function restComment(id: number, over: Record<string, unknown> = {}): Record<str
 }
 
 describe("parseReviewThreadsPage", () => {
-  it("extracts isResolved and stringified comment ids", () => {
+  it("extracts the thread id, isResolved, and stringified comment ids", () => {
     const page = parseReviewThreadsPage(threadsPage([
-      { isResolved: true, ids: [11, 12] },
-      { isResolved: false, ids: [20] },
+      { id: "PRRT_kwABC", isResolved: true, ids: [11, 12] },
+      { id: "PRRT_kwXYZ", isResolved: false, ids: [20] },
     ]));
     expect(page.nodes).toEqual([
-      { isResolved: true, commentIds: ["11", "12"] },
-      { isResolved: false, commentIds: ["20"] },
+      { id: "PRRT_kwABC", isResolved: true, commentIds: ["11", "12"] },
+      { id: "PRRT_kwXYZ", isResolved: false, commentIds: ["20"] },
     ]);
     expect(page.hasNextPage).toBe(false);
     expect(page.endCursor).toBeNull();
@@ -88,8 +89,8 @@ describe("parseReviewThreadsPage", () => {
       } } } },
     });
     expect(parseReviewThreadsPage(sparse).nodes).toEqual([
-      { isResolved: false, commentIds: [] },
-      { isResolved: false, commentIds: [] },
+      { id: "", isResolved: false, commentIds: [] },
+      { id: "", isResolved: false, commentIds: [] },
     ]);
   });
 });
@@ -101,8 +102,8 @@ describe("githubPlatform.listExistingComments resolved enrichment", () => {
         return {
           code: 0,
           stdout: threadsPage([
-            { isResolved: true, ids: [11, 12] },
-            { isResolved: false, ids: [20] },
+            { id: "PRRT_thread1", isResolved: true, ids: [11, 12] },
+            { id: "PRRT_thread2", isResolved: false, ids: [20] },
           ]),
           stderr: "",
         } as RunCliResult;
@@ -122,6 +123,14 @@ describe("githubPlatform.listExistingComments resolved enrichment", () => {
       ["11", true],
       ["12", true],
       ["20", false],
+    ]);
+    // Every comment in a thread carries that thread's own GraphQL node id —
+    // the `resolveId` a resolve/unresolve mutation needs — not the REST
+    // comment id already carried in `threadId`.
+    expect(out.map((c) => [c.id, c.resolvable, c.resolveId])).toEqual([
+      ["11", true, "PRRT_thread1"],
+      ["12", true, "PRRT_thread1"],
+      ["20", true, "PRRT_thread2"],
     ]);
   });
 
@@ -160,5 +169,7 @@ describe("githubPlatform.listExistingComments resolved enrichment", () => {
     const out = await githubPlatform.listExistingComments(ctx());
     expect(out).toHaveLength(1);
     expect(out[0].resolved).toBeUndefined();
+    expect(out[0].resolvable).toBeUndefined();
+    expect(out[0].resolveId).toBeUndefined();
   });
 });

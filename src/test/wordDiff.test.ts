@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diffWords, isBulkRewrite, tokenize } from "../webviewShared/wordDiff";
+import { diffWords, isBulkRewrite, suggestionGist, tokenize } from "../webviewShared/wordDiff";
 
 describe("tokenize", () => {
   it("splits into words, whitespace, and single punctuation marks", () => {
@@ -69,5 +69,39 @@ describe("isBulkRewrite", () => {
   it("is true once either side is longer than the length guard, even for a small edit", () => {
     const long = "word ".repeat(150); // 750 chars, well past the 600-char guard
     expect(isBulkRewrite(long, long + "!")).toBe(true);
+  });
+});
+
+describe("suggestionGist", () => {
+  it("quotes the removed and added words for a swap", () => {
+    expect(suggestionGist("Release notes", "Release highlights")).toBe('"notes" → "highlights"');
+  });
+
+  it("reads as a pure addition when nothing was removed", () => {
+    expect(suggestionGist("Release", "Release notes")).toBe('adds "notes"');
+  });
+
+  it("reads as a pure removal when nothing was added", () => {
+    expect(suggestionGist("Release notes", "Release")).toBe('removes "notes"');
+  });
+
+  it("falls back to a size description past the bulk-rewrite guard", () => {
+    const original = "The quick brown fox jumps over the lazy dog";
+    const proposed = "A sleepy turtle crawls beneath a warm blanket softly";
+    expect(isBulkRewrite(original, proposed)).toBe(true);
+    expect(suggestionGist(original, proposed)).toBe(
+      `rewrites the passage (${original.length} → ${proposed.length} chars)`,
+    );
+  });
+
+  it("truncates a long quoted span rather than dumping the whole thing", () => {
+    const addition = "a".repeat(80);
+    const gist = suggestionGist("start", `start ${addition}`);
+    expect(gist).toContain("…");
+    expect(gist.length).toBeLessThan(addition.length);
+  });
+
+  it("says so plainly for identical text", () => {
+    expect(suggestionGist("same", "same")).toBe("no change");
   });
 });

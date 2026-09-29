@@ -14,7 +14,7 @@ Click **Review with Claude**. Claude reads your doc and leaves a comment per con
 - **Comments stored in the file.** Each thread is an HTML comment wrapped around the exact passage it points at, so it's invisible on GitHub and in every preview. The state stays in the file overnight and across sessions — strip it with **Remove All Review Data** before you commit; staging a file that still carries threads reminds you once. No sidecar, no database.
 - **Claude as reviewer or as writer.** Ask Claude to review a document, a folder, or only what changed since its last pass. Or leave comments yourself and send them; Claude edits the document and replies in each thread.
 - **Suggestions you can undo.** In suggest mode, Claude's edits arrive as tracked changes. Accept applies one, Reject keeps your wording, and both are ordinary editor edits, so Cmd+Z takes them back.
-- **A review view, and the text editor too.** A rendered preview with a threads sidebar, plus dimmed markers, hovers, and a CodeLens in the plain text editor, so a reviewed file never looks corrupted.
+- **The Markdown Collab view, and the text editor too.** A rendered preview with a threads sidebar, plus dimmed markers, hovers, and a CodeLens in the plain text editor, so a reviewed file never looks corrupted.
 - **Other agents.** The file format is the contract: copy the prompt and any agent can edit it by following `AGENTS.md`, no integration required. Connect Cursor, Codex, Copilot, or another MCP client as an optional second step, for edits you can undo; comments say which agent wrote them.
 
 ## Get started
@@ -66,11 +66,11 @@ Afterwards, **Review Session Summary** turns the thread state into a digest for 
 
 ## Where it shows up
 
-**The review view.** The rendered document on the left, threads on the right. It opens read-only: select a passage and comment, and the comment's two markers are written into the file's original bytes, so nothing else in the file changes and every highlight sits exactly where its markers are. The **Edit** switch in the sidebar turns on editing in place for that view; a change rewrites only the block you typed in. The agent's edits to the file show up as they land. Comments render as Markdown. There's a find bar, a collapsible outline, optional source line numbers, and buttons to remove every resolved thread or every trace of review data in one undoable step. Mermaid and PlantUML fences and linked draw.io files render in the document. It's also in **Open With… → Markdown Collab review view**. For one release, `markdownCollab.classicReviewView` brings back the previous review view, a rendered preview without editing; the next release removes it.
+**The Markdown Collab view.** The rendered document on the left, threads on the right. It opens read-only: select a passage and comment, and the comment's two markers are written into the file's original bytes, so nothing else in the file changes and every highlight sits exactly where its markers are. Switch to **Editing** in the sidebar to edit in place; a change rewrites only the block you typed in. The agent's edits to the file show up as they land. Comments render as Markdown. There's a find bar, a collapsible outline, optional source line numbers, and buttons to remove every resolved thread or every trace of review data in one undoable step. Mermaid and PlantUML fences and linked draw.io files render in the document. It's also in **Open With… → Markdown Collab**. For one release, `markdownCollab.classicReviewView` brings back the previous Markdown Collab view, a rendered preview without editing; the next release removes it.
 
-**The text editor.** Anchors are dimmed, commented text is tinted, and the threads block at the end of the file folds away. Hovering a commented passage shows its thread, with a link into the review view, and one CodeLens at the top of the file gives the counts and opens the view. Select text and press `Cmd+K Cmd+Alt+M` to comment without leaving the editor.
+**The text editor.** Anchors are dimmed, commented text is tinted, and the threads block at the end of the file folds away. Hovering a commented passage shows its thread, with a link into the view, and one CodeLens at the top of the file gives the counts and opens the view. Select text and press `Cmd+K Cmd+Alt+M` to comment without leaving the editor.
 
-**Uncommitted changes.** An **Uncommitted Markdown** tree in the Explorer lists every Markdown file that differs from HEAD. Each opens in the review view with changed blocks striped, removed text shown struck through where it used to be, arrows to step between changes, and stage and unstage buttons on each row. The diff is prose against prose, so a paragraph that only gained an anchor isn't marked as changed. A file that still carries review threads shows the count in the tree, and staging it reminds you once that **Remove All Review Data** strips them.
+**Uncommitted changes.** An **Uncommitted Markdown** tree in the Explorer lists every Markdown file that differs from HEAD. Each opens in the view with changed blocks striped, removed text shown struck through where it used to be, arrows to step between changes, and stage and unstage buttons on each row. The diff is prose against prose, so a paragraph that only gained an anchor isn't marked as changed. A file that still carries review threads shows the count in the tree, and staging it reminds you once that **Remove All Review Data** strips them.
 
 ## How your comments reach Claude
 
@@ -134,13 +134,13 @@ Connecting is always your call — the three steps above work with no MCP regist
 
 | Keys (mac / win + linux) | Where | Does |
 |---|---|---|
-| `Cmd+K Cmd+Alt+V` / `Ctrl+K Ctrl+Alt+V` | a Markdown editor | Open the review view |
+| `Cmd+K Cmd+Alt+V` / `Ctrl+K Ctrl+Alt+V` | a Markdown editor | Open the file in Markdown Collab |
 | `Cmd+K Cmd+Alt+M` / `Ctrl+K Ctrl+Alt+M` | a Markdown editor, with a selection | Comment on the selection |
-| `Cmd+K Cmd+Alt+N` / `Ctrl+K Ctrl+Alt+N` | a Markdown editor or the review view | Next unread thread from Claude |
-| `n` / `p` | the review view | Next or previous thread; next or previous change when a diff is showing |
-| `r` | the review view | Reply to the highlighted thread |
-| `e` | the review view | Resolve or reopen the highlighted thread |
-| `o` | the review view | Open the highlighted thread's text in the editor |
+| `Cmd+K Cmd+Alt+N` / `Ctrl+K Ctrl+Alt+N` | a Markdown editor or the Markdown Collab view | Next unread thread from Claude |
+| `n` / `p` | the view | Next or previous thread; next or previous change when a diff is showing |
+| `r` | the view | Reply to the highlighted thread |
+| `e` | the view | Resolve or reopen the highlighted thread |
+| `o` | the view | Open the highlighted thread's text in the editor |
 
 The single keys do nothing while you're typing. There's no key for accepting a suggestion on purpose: that stays a click on the card you can see.
 
@@ -148,7 +148,7 @@ The single keys do nothing while you're typing. There's no key for accepting a s
 
 | Command | Does |
 |---|---|
-| Open Review View | Also the title-bar icon and the right-click menu on `.md` files. |
+| Open in Markdown Collab | Also the title-bar icon and the right-click menu on `.md` files. |
 | Comment on Selection | Start a thread from a selection in the text editor. |
 | Send Unresolved Comments to Agent | The Send button, from the palette. |
 | Ask Agent to Review This Doc / These Docs | An agent as reviewer, for one file or a folder. |
@@ -178,10 +178,10 @@ A few commands still exist but are hidden from the palette, now that Connect an 
 | `markdownCollab.proposeEditsAsSuggestions` | `false` | Suggest mode: Claude proposes edits instead of applying them. |
 | `markdownCollab.claudePath` | `""` | Path to `claude` if it isn't on the PATH VS Code sees. |
 | `markdownCollab.headlessModel` | `""` | Model for headless runs, such as `sonnet` or `opus`. Empty uses Claude Code's default. |
-| `markdownCollab.showLineNumbers` | `false` | Source line numbers beside each block in the review view. They're lines of the `.md` file, frontmatter and threads block included, so they match Go to Line. |
+| `markdownCollab.showLineNumbers` | `false` | Source line numbers beside each block in the Markdown Collab view. They're lines of the `.md` file, frontmatter and threads block included, so they match Go to Line. |
 | `markdownCollab.collab.userName` | your OS username | The name on comments you write. |
-| `markdownCollab.liveEditor.readOnly` | `true` | Open the review view read-only. The Edit switch in the sidebar turns editing on for that view; turn this off to open every review view editable. |
-| `markdownCollab.classicReviewView` | `false` | Use the previous review view, a rendered preview without editing. A fallback for one release; the next removes it. |
+| `markdownCollab.liveEditor.readOnly` | `true` | Open the Markdown Collab view read-only. Switch to **Editing** in the sidebar to turn editing on for that view; turn this off to open every view editable. |
+| `markdownCollab.classicReviewView` | `false` | Use the previous Markdown Collab view, a rendered preview without editing. A fallback for one release; the next removes it. |
 | `markdownCollab.plantuml.serverUrl` | `https://www.plantuml.com/plantuml` | The server that renders `plantuml` fences. Diagram source is sent to it, so point it at your own server for private documents. |
 | `markdownCollab.plantuml.format` | `svg` | `svg` or `png`. |
 
@@ -224,4 +224,4 @@ Building, the three test suites, and the release pipeline are described in [CONT
 
 ## Out of scope
 
-Real-time collaboration between people. "Collab" here means one person and an AI agent; the review view is not multi-user.
+Real-time collaboration between people. "Collab" here means one person and an AI agent; the Markdown Collab view is not multi-user.

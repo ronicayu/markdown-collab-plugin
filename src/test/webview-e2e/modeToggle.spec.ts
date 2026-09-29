@@ -1,5 +1,5 @@
-// Edit mode through real keystrokes, and the in-view read-only switch
-// (docs/one-view-design.md, "Phase B").
+// Edit mode through real keystrokes, and the in-view Reading/Editing mode
+// control (docs/one-view-design.md, "Phase B").
 //
 // blockSplice.spec.ts gates every block of 17 documents through the bundle's
 // test seam; this drives the path a person takes — the keyboard, the edit
@@ -8,7 +8,7 @@
 // Backspace at a block's start (a merge). Each message is spliced by the host
 // function, and the file may change only on the lines of the blocks involved.
 //
-// Then the switch: the sidebar posts `set-read-only`; the host (played here)
+// Then the mode control: the sidebar posts `set-read-only`; the host (played here)
 // re-sends `init` in the new mode and the editor is rebuilt in place — read-only
 // with the source-position schema, so a comment goes through
 // `addThreadAtProseRange` and changes no prose line.
@@ -166,22 +166,22 @@ test("an edit still in the debounce is posted before the mode switch", async ({ 
   await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
   await caretIn(page, "lists correctly.");
   await page.keyboard.type("?");
-  await page.locator("#edit-mode-toggle").click();
+  await page.locator('input[name="edit-mode"][value="read"]').click();
   await expect.poll(async () => (await posted(page)).map((m) => m.type)).toEqual(["edit-blocks", "set-read-only"]);
 });
 
-test("the Edit switch rebuilds the editor read-only and back; a read-only comment adds only its markers", async ({ page }) => {
+test("the mode control rebuilds the editor read-only and back; a read-only comment adds only its markers", async ({ page }) => {
   const { source } = fixture();
   await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
   await expect(editable(page)).toHaveAttribute("contenteditable", "true");
 
-  // Edit → read-only. The switch only asks; the host re-sends `init` in the new mode.
-  await page.locator("#edit-mode-toggle").click();
+  // Editing → Reading. The control only asks; the host re-sends `init` in the new mode.
+  await page.locator('input[name="edit-mode"][value="read"]').click();
   expect(await awaitPosted(page, "set-read-only")).toEqual({ type: "set-read-only", readOnly: true });
   await clearPosted(page);
   await pushToWebview(page, { type: "init", ...liveInit(source), readOnly: true, epoch: 2 });
   await expect(editable(page)).toHaveAttribute("contenteditable", "false");
-  await expect(page.locator("#edit-mode-toggle")).toHaveAttribute("aria-checked", "false");
+  await expect(page.locator("#edit-mode-toggle")).toHaveAttribute("data-mode", "read");
   // Highlights are placed by source position now.
   await expect(page.locator(".mdc-anchor-highlight")).toHaveCount(2);
 
@@ -219,8 +219,8 @@ test("the Edit switch rebuilds the editor read-only and back; a read-only commen
   await pushToWebview(page, { type: "add-comment-result", ok: true });
   await clearPosted(page);
 
-  // Read-only → edit, on the file with the new comment.
-  await page.locator("#edit-mode-toggle").click();
+  // Reading → Editing, on the file with the new comment.
+  await page.locator('input[name="edit-mode"][value="edit"]').click();
   expect(await awaitPosted(page, "set-read-only")).toEqual({ type: "set-read-only", readOnly: false });
   await clearPosted(page);
   await pushToWebview(page, { type: "init", ...liveInit(r.source), readOnly: false, epoch: 3 });

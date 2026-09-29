@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.35.17 — 2026-09-29 (GitHub only)
+
+### Changed: the view is called Markdown Collab
+
+"Open Review View" was one "review" too many next to PR review,
+Uncommitted Changes and Review Session Summary, and it named neither of the
+view's two modes. The command is **Open in Markdown Collab** (no category
+prefix, so the palette doesn't say it twice); Open With… shows
+**Markdown Collab**; the Explorer tree is **Comment Threads**; the sidebar's
+mode control is a **Reading · Editing** segmented switch instead of an Edit
+toggle. Every hover link, status-bar action, hint and README sentence that
+said "review view" follows. Command IDs, settings and keybindings are
+unchanged.
+
+### Added: PR review can resolve a thread, and every comment collapses
+
+Resolve / Unresolve on a review thread now goes to the platform: GitHub
+through the `resolveReviewThread` / `unresolveReviewThread` mutations on the
+thread's node id, which the existing GraphQL fetch now returns alongside
+`isResolved`; GitLab through `PUT …/discussions/:id` with `resolved` on a
+resolvable discussion. The button appears only where the platform allows
+it; a failure shows the platform's message and puts the button back. The
+resolved state, badge and collapse change when the platform confirms, not
+optimistically.
+
+Every card on the page — review threads, non-resolvable notes, and your own
+drafts — has a chevron; the header toggles on click, Enter or Space, with
+`aria-expanded`. A collapsed card shows the author, a one-line gist and the
+reply count, and keeps its Resolved badge. Resolved threads start
+collapsed, everything else expanded; resolving collapses, unresolving
+expands; a manual toggle is kept for the session and survives a refresh
+that doesn't change the thread's resolved state. **Collapse all / Expand
+all** in the toolbar covers drafts and threads alike.
+
+### Added: every card in the Markdown Collab view collapses
+
+Suggestion cards fold like thread cards do — the collapsed header names the
+agent and the gist of the change and keeps Accept and Reject one click away.
+A resolved thread starts collapsed under the All and Resolved filters; open
+threads and pending suggestions start expanded; resolving collapses,
+reopening expands; a manual toggle is remembered across updates and across
+a Reading ↔ Editing re-init. Collapse all / Expand all in the overflow menu
+covers every kind, and `n`/`p`/`r`/`e`/`o` keep working on collapsed cards.
+
+### Fixed: mermaid diagrams follow the theme
+
+The Markdown Collab view initialised mermaid with the light theme
+regardless of the editor theme; a dark window got light diagrams. It now
+picks `dark` for dark and high-contrast themes, as the classic panel did.
+
 ## 0.35.16 — 2026-09-29 (GitHub only)
 
 One view. Phase B of `docs/10x-plan-6.md` P4 (design in

@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Claude reviews your Markdown in VS Code — inline comments stored in the file, suggestions you accept or reject, and runs that need no terminal. Works with Cursor, Codex, and Copilot agents too.",
-  "version": "0.35.16",
+  "version": "0.35.17",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -116,13 +116,12 @@
       },
       {
         "command": "markdownCollab.openCollabEditor",
-        "title": "Markdown Collab: Open Review View (Open With)",
+        "title": "Open in Markdown Collab (alias)",
         "category": "Markdown Collab"
       },
       {
         "command": "markdownCollab.openInlineCommentsView",
-        "title": "Markdown Collab: Open Review View",
-        "category": "Markdown Collab",
+        "title": "Open in Markdown Collab",
         "icon": "$(comment-discussion)"
       },
       {
@@ -311,17 +310,17 @@
         "markdownCollab.liveEditor.readOnly": {
           "type": "boolean",
           "default": true,
-          "description": "Open the review view read-only. The Edit switch in the sidebar turns editing on for that panel."
+          "description": "Open the Markdown Collab view read-only. Switch to Editing in the sidebar to turn editing on for that panel."
         },
         "markdownCollab.classicReviewView": {
           "type": "boolean",
           "default": false,
-          "description": "Use the previous review view (rendered preview without editing). This fallback is removed in the next release."
+          "description": "Use the previous Markdown Collab view (rendered preview without editing). This fallback is removed in the next release."
         },
         "markdownCollab.plantuml.serverUrl": {
           "type": "string",
           "default": "https://www.plantuml.com/plantuml",
-          "description": "PlantUML server used to render `plantuml`/`puml` fenced code blocks in the review view and the PR review preview. Defaults to the public instance. Point at a self-hosted server (e.g. http://localhost:8080) to keep your diagrams off the public web."
+          "description": "PlantUML server used to render `plantuml`/`puml` fenced code blocks in the Markdown Collab view and the PR review preview. Defaults to the public instance. Point at a self-hosted server (e.g. http://localhost:8080) to keep your diagrams off the public web."
         },
         "markdownCollab.plantuml.format": {
           "type": "string",
@@ -340,7 +339,7 @@
         "markdownCollab.showLineNumbers": {
           "type": "boolean",
           "default": false,
-          "description": "Show the source line number beside each block in the review view. Numbers are lines in the .md file itself, so frontmatter and the stored threads block are accounted for."
+          "description": "Show the source line number beside each block in the Markdown Collab view. Numbers are lines in the .md file itself, so frontmatter and the stored threads block are accounted for."
         },
         "markdownCollab.claudePath": {
           "type": "string",
@@ -634,7 +633,7 @@
       "explorer": [
         {
           "id": "markdownCollab.review",
-          "name": "Review Threads",
+          "name": "Comment Threads",
           "when": "markdownCollab.hasReview"
         },
         {
@@ -654,7 +653,7 @@
     "customEditors": [
       {
         "viewType": "markdownCollab.collabEditor",
-        "displayName": "Markdown Collab review view",
+        "displayName": "Markdown Collab",
         "selector": [
           {
             "filenamePattern": "*.md"
@@ -691,7 +690,7 @@
           {
             "id": "comment",
             "title": "Comment on your own document",
-            "description": "Open any .md file in the review view, select a passage, and write a note. The thread is stored in the file itself.\n[Open a document](command:markdownCollab.openInlineCommentsView)",
+            "description": "Open any .md file in Markdown Collab, select a passage, and write a note. The thread is stored in the file itself.\n[Open a document](command:markdownCollab.openInlineCommentsView)",
             "media": {
               "markdown": "media/walkthrough/comment.md"
             },

@@ -20,6 +20,7 @@ import { buildComposer, buildCommentBody, buildCommentCard, type ComposerHandle 
 import { resolveImageSrc, type ImageBaseUris } from "../../webviewShared/imageSrc";
 import { createDiffNav, isNavKeyContext } from "../../webviewShared/diffNav";
 import { smoothScrollIntoView } from "../../webviewShared/scrollIntoView";
+import { nextCollapseAllAction } from "../../webviewShared/threadListState";
 
 interface VsCodeApi {
   postMessage(msg: ClientToHost): void;
@@ -70,10 +71,15 @@ interface ExistingPrComment {
   createdAt: string;
   url: string;
   resolved?: boolean;
+  /** Whether this thread can be resolved at all — gates the Resolve/Unresolve button. */
+  resolvable?: boolean;
+  /** Id to send back in a `resolve-thread` message. Present only when `resolvable`. */
+  resolveId?: string;
 }
 interface ExistingMessage { type: "existing-comments"; comments: ExistingPrComment[]; }
 interface ReplyErrorMessage { type: "reply-error"; threadId: string; error: string; }
-type HostMessage = InitMessage | DraftsMessage | ExistingMessage | ReplyErrorMessage;
+interface ResolveThreadErrorMessage { type: "resolve-thread-error"; resolveId: string; error: string; }
+type HostMessage = InitMessage | DraftsMessage | ExistingMessage | ReplyErrorMessage | ResolveThreadErrorMessage;
 
 interface ReadyMessage { type: "ready"; }
 interface AddDraftRequest { type: "add-draft"; startLine: number; endLine: number; body: string; }
@@ -82,7 +88,15 @@ interface DeleteDraftRequest { type: "delete-draft"; id: string; }
 type ReviewVerdict = "comment" | "approve" | "request-changes";
 interface SubmitRequest { type: "submit"; verdict: ReviewVerdict; body?: string; }
 interface ReplyRequest { type: "reply"; threadId: string; body: string; }
-type ClientToHost = ReadyMessage | AddDraftRequest | EditDraftRequest | DeleteDraftRequest | SubmitRequest | ReplyRequest;
+interface ResolveThreadRequest { type: "resolve-thread"; resolveId: string; resolved: boolean; }
+type ClientToHost =
+  | ReadyMessage
+  | AddDraftRequest
+  | EditDraftRequest
+  | DeleteDraftRequest
+  | SubmitRequest
+  | ReplyRequest
+  | ResolveThreadRequest;
 
 const vscode = window.acquireVsCodeApi();
 
@@ -99,6 +113,7 @@ const dom = {
   diffNavCount: document.getElementById("diff-nav-count") as HTMLElement,
   floating: document.getElementById("floating-add") as HTMLButtonElement,
   draftCount: document.getElementById("draft-count") as HTMLElement,
+  collapseAllBtn: document.getElementById("collapse-all-btn") as HTMLButtonElement,
   draftsList: document.getElementById("drafts-list") as HTMLElement,
   composer: document.getElementById("composer") as HTMLElement,
   submitButton: document.getElementById("submit-review") as HTMLButtonElement,
@@ -120,6 +135,159 @@ let existingFilter: ExistingFilter = (() => {
   const saved = (vscode.getState() as { existingFilter?: unknown } | undefined)?.existingFilter;
   return saved === "open" || saved === "resolved" ? saved : "all";
 })();
+
+// --- collapse / expand state -----------------------------------------------
+//
+// One Set covers every collapsible card — a user's own draft and an existing
+// platform thread alike (resolvable or not, GitHub or GitLab) — keyed by a
+// prefixed id so the two card kinds can never collide. Absence from the set
+// means expanded, which is already the right default for a draft and for an
+// open thread; a resolved thread needs to start collapsed instead, which
+// `applyThreadCollapseDefault` below handles by adding it to the set the
+// first time it's seen. Persisted via vscode state so a toggle survives a
+// re-render within the session (tab switch, a draft added elsewhere, a
+// refreshed fetch) — but not across a full reload, same lifetime as
+// `existingFilter` above.
+
+const collapsedCards: Set<string> = (() => {
+  const saved = (vscode.getState() as { collapsedCardIds?: unknown } | undefined)?.collapsedCardIds;
+  return new Set(Array.isArray(saved) ? saved.filter((x): x is string => typeof x === "string") : []);
+})();
+
+function persistCollapsedCards(): void {
+  const prev = (vscode.getState() as Record<string, unknown> | undefined) ?? {};
+  vscode.setState({ ...prev, collapsedCardIds: Array.from(collapsedCards) });
+}
+
+function draftKey(id: string): string {
+  return `d:${id}`;
+}
+function threadKey(c: ExistingPrComment): string {
+  return `t:${c.threadId ?? c.id}`;
+}
+
+/**
+ * The resolved value each thread had the last time it was rendered, so a
+ * fresh render can tell three cases apart: a thread never seen before
+ * (apply the resolved → collapsed / open → expanded default), a resolved
+ * ↔ open transition (re-apply that same default — collapsing on resolve,
+ * expanding on unresolve — regardless of any earlier manual toggle, because
+ * the (un)resolve action itself is the more recent explicit choice), and no
+ * change at all (leave the set exactly as the user last left it, which is
+ * what makes a manual toggle survive an unrelated re-render).
+ */
+const lastResolvedByThread = new Map<string, boolean>();
+function applyThreadCollapseDefault(key: string, resolved: boolean): void {
+  const prev = lastResolvedByThread.get(key);
+  if (prev === undefined || prev !== resolved) {
+    if (resolved) collapsedCards.add(key);
+    else collapsedCards.delete(key);
+  }
+  lastResolvedByThread.set(key, resolved);
+}
+
+/**
+ * A short one-line summary of a comment body for a collapsed card's header:
+ * markdown stripped down to a rough plain-text read, whitespace collapsed,
+ * and capped so a long comment doesn't blow out the collapsed row. No gist
+ * helper is shared in webviewShared yet, so this is local to the PR view.
+ */
+function gistOf(body: string, max = 100): string {
+  const plain = body
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`]*`/g, " ")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/[#>*_~-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (plain.length <= max) return plain;
+  return `${plain.slice(0, max - 1).trimEnd()}…`;
+}
+
+/**
+ * The collapsible header shared by a draft card and an existing-thread card:
+ * a chevron plus whatever the caller appends to it. `aria-expanded` and the
+ * click/keyboard toggle live on the header element itself — the whole row is
+ * the toggle target, not just the chevron — so a caller's own buttons inside
+ * it (Line N, Resolve) must stop propagation or they'd also toggle collapse.
+ */
+function buildCardHeader(opts: { collapsed: boolean; ariaLabel: string; onToggle: () => void }): HTMLElement {
+  const header = document.createElement("header");
+  header.className = "existing-head";
+  header.setAttribute("role", "button");
+  header.tabIndex = 0;
+  header.setAttribute("aria-expanded", String(!opts.collapsed));
+  header.setAttribute("aria-label", opts.ariaLabel);
+  const chevron = document.createElement("span");
+  chevron.className = "existing-chevron";
+  chevron.setAttribute("aria-hidden", "true");
+  chevron.textContent = opts.collapsed ? "▸" : "▾";
+  header.appendChild(chevron);
+  header.addEventListener("click", () => opts.onToggle());
+  header.addEventListener("keydown", (e) => {
+    if (e.target !== header) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      opts.onToggle();
+    }
+  });
+  return header;
+}
+
+/** The collapsed-only summary line: author, a one-line gist, and the reply count. */
+function buildGistLine(author: string, body: string, replyCount: number): HTMLElement {
+  const gist = document.createElement("span");
+  gist.className = "existing-gist";
+  const authorEl = document.createElement("strong");
+  authorEl.textContent = author;
+  gist.appendChild(authorEl);
+  gist.appendChild(document.createTextNode(
+    ` ${gistOf(body)} · ${replyCount} repl${replyCount === 1 ? "y" : "ies"}`,
+  ));
+  return gist;
+}
+
+/** Existing comments grouped into threads, sorted the way `renderExisting` displays them. */
+function threadsFrom(comments: ExistingPrComment[]): ExistingPrComment[][] {
+  const byThread = new Map<string, ExistingPrComment[]>();
+  for (const c of comments) {
+    const list = byThread.get(threadKey(c)) ?? [];
+    list.push(c);
+    byThread.set(threadKey(c), list);
+  }
+  return Array.from(byThread.values())
+    .map((list) => list.slice().sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt)))
+    .sort((a, b) => a[0].line - b[0].line);
+}
+
+/** Every collapsible card's key currently on screen: drafts and existing threads alike. */
+function allCardKeys(): string[] {
+  const keys = drafts.map((d) => draftKey(d.id));
+  if (existingComments) keys.push(...threadsFrom(existingComments).map((t) => threadKey(t[0])));
+  return keys;
+}
+
+/** Sync the toolbar's Collapse all / Expand all button to the current state. */
+function updateCollapseAllButton(): void {
+  const keys = allCardKeys();
+  dom.collapseAllBtn.hidden = keys.length === 0;
+  if (keys.length === 0) return;
+  dom.collapseAllBtn.textContent =
+    nextCollapseAllAction(keys, collapsedCards) === "collapse" ? "Collapse all" : "Expand all";
+}
+
+dom.collapseAllBtn.addEventListener("click", () => {
+  const keys = allCardKeys();
+  if (keys.length === 0) return;
+  const action = nextCollapseAllAction(keys, collapsedCards);
+  for (const key of keys) {
+    if (action === "collapse") collapsedCards.add(key);
+    else collapsedCards.delete(key);
+  }
+  persistCollapsedCards();
+  renderDrafts();
+  renderExisting();
+});
 
 let state: InitMessage | null = null;
 let editingDraftId: string | null = null;
@@ -157,6 +325,8 @@ window.addEventListener("message", (ev) => {
     renderCommentMarkers();
   } else if (msg.type === "reply-error") {
     failPendingReply(msg.threadId, msg.error);
+  } else if (msg.type === "resolve-thread-error") {
+    failPendingResolve(msg.resolveId, msg.error);
   }
 });
 
@@ -665,6 +835,7 @@ function renderDrafts(): void {
     empty.className = "empty";
     empty.textContent = "No drafts yet for this file. Select prose in the preview to add one.";
     dom.draftsList.appendChild(empty);
+    updateCollapseAllButton();
     return;
   }
   // Sort by line ascending.
@@ -672,8 +843,16 @@ function renderDrafts(): void {
   for (const d of sorted) {
     dom.draftsList.appendChild(renderDraftCard(d));
   }
+  updateCollapseAllButton();
 }
 
+/**
+ * A draft has no resolved state, so it needs none of `applyThreadCollapseDefault`'s
+ * transition tracking — absence from `collapsedCards` already means expanded,
+ * which is the only default a draft ever wants. Collapse chrome only applies
+ * to the non-editing view; a draft being edited always shows its composer in
+ * full so an in-progress edit is never hidden.
+ */
 function renderDraftCard(d: PrDraft): HTMLElement {
   const lineLabel = d.startLine && d.startLine !== d.line
     ? `Lines ${d.startLine}–${d.line}`
@@ -699,20 +878,47 @@ function renderDraftCard(d: PrDraft): HTMLElement {
     return editCard;
   }
 
-  const card = buildCommentCard({
+  const key = draftKey(d.id);
+  const collapsed = collapsedCards.has(key);
+  const card = document.createElement("section");
+  card.className = "existing-card";
+  card.dataset.draftId = d.id;
+  if (collapsed) card.classList.add("collapsed");
+
+  const header = buildCardHeader({
+    collapsed,
+    ariaLabel: "Collapse or expand this draft comment",
+    onToggle: () => {
+      if (collapsedCards.has(key)) collapsedCards.delete(key);
+      else collapsedCards.add(key);
+      persistCollapsedCards();
+      renderDrafts();
+    },
+  });
+  const lineBtn = document.createElement("button");
+  lineBtn.className = "draft-line btn-link";
+  lineBtn.textContent = lineLabel;
+  lineBtn.title = "Jump to this line in the preview";
+  lineBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    scrollPreviewToLine(d.startLine ?? d.line);
+  });
+  header.appendChild(lineBtn);
+  header.appendChild(buildGistLine("Your draft", d.body, 0));
+  card.appendChild(header);
+
+  const bodyWrap = document.createElement("div");
+  bodyWrap.className = "existing-body-wrap";
+  bodyWrap.appendChild(buildCommentCard({
     author: "Your draft",
     bodyEl: buildCommentBody(d.body),
     actions: [
-      {
-        label: lineLabel,
-        title: "Jump to this line in the preview",
-        onClick: () => scrollPreviewToLine(d.startLine ?? d.line),
-      },
       { label: "Edit", onClick: () => { editingDraftId = d.id; renderDrafts(); } },
       { label: "Delete", variant: "danger", onClick: () => vscode.postMessage({ type: "delete-draft", id: d.id }) },
     ],
-  });
-  card.dataset.draftId = d.id;
+  }));
+  card.appendChild(bodyWrap);
+
   return card;
 }
 
@@ -720,17 +926,22 @@ function renderDraftCard(d: PrDraft): HTMLElement {
 
 /** Open reply composers, keyed by threadId, so a reply-error can re-enable them. */
 const pendingReplies = new Map<string, ComposerHandle>();
+/** In-flight resolve/unresolve buttons, keyed by resolveId, so a
+ * resolve-thread-error can re-enable the one that failed. */
+const pendingResolves = new Map<string, { btn: HTMLButtonElement; label: string }>();
 
 function renderExisting(): void {
-  // A fresh render replaces every thread card, so any in-flight composer DOM
-  // is gone — drop the stale references.
+  // A fresh render replaces every thread card, so any in-flight composer or
+  // resolve-button DOM is gone — drop the stale references.
   pendingReplies.clear();
+  pendingResolves.clear();
   dom.existingSection.hidden = false;
   if (existingComments === null) {
     dom.existingFilter.hidden = true;
     dom.existingStatus.textContent = "Loading existing comments…";
     dom.existingStatus.hidden = false;
     dom.existingList.innerHTML = "";
+    updateCollapseAllButton();
     return;
   }
   if (existingComments.length === 0) {
@@ -738,21 +949,19 @@ function renderExisting(): void {
     dom.existingStatus.textContent = "No existing PR comments on this file.";
     dom.existingStatus.hidden = false;
     dom.existingList.innerHTML = "";
+    updateCollapseAllButton();
     return;
   }
   dom.existingStatus.hidden = true;
   dom.existingList.innerHTML = "";
-  // Group by threadId so replies nest under their parent.
-  const byThread = new Map<string, ExistingPrComment[]>();
-  for (const c of existingComments) {
-    const key = c.threadId ?? c.id;
-    const list = byThread.get(key) ?? [];
-    list.push(c);
-    byThread.set(key, list);
-  }
-  const threads = Array.from(byThread.values())
-    .map((list) => list.slice().sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt)))
-    .sort((a, b) => a[0].line - b[0].line);
+  const threads = threadsFrom(existingComments);
+
+  // Resolved threads start collapsed, open ones expanded; a resolve ↔
+  // unresolve transition re-applies that same rule. Runs over every thread
+  // (not just what the filter shows), so a thread hidden by the filter today
+  // still has the right collapse state if the filter changes later.
+  for (const t of threads) applyThreadCollapseDefault(threadKey(t[0]), t[0].resolved === true);
+  persistCollapsedCards();
 
   // A thread is resolved when its head comment is — GitLab sets it per note,
   // GitHub per review thread; both surface on the head. Only offer the filter
@@ -769,11 +978,13 @@ function renderExisting(): void {
       ? "No open comments on this file."
       : "No resolved comments on this file.";
     dom.existingStatus.hidden = false;
+    updateCollapseAllButton();
     return;
   }
   for (const thread of filtered) {
     dom.existingList.appendChild(renderExistingThread(thread));
   }
+  updateCollapseAllButton();
 }
 
 function renderExistingFilterChips(total: number, resolved: number): void {
@@ -811,32 +1022,85 @@ function renderExistingFilterChips(total: number, resolved: number): void {
 
 function renderExistingThread(thread: ExistingPrComment[]): HTMLElement {
   const head = thread[0];
+  const key = threadKey(head);
+  const collapsed = collapsedCards.has(key);
   const card = document.createElement("section");
   card.className = "existing-card";
   card.dataset.threadId = head.threadId ?? head.id;
   if (head.resolved) card.classList.add("resolved");
+  if (collapsed) card.classList.add("collapsed");
 
-  const meta = document.createElement("header");
-  meta.className = "existing-head";
+  const meta = buildCardHeader({
+    collapsed,
+    ariaLabel: "Collapse or expand this comment thread",
+    onToggle: () => {
+      if (collapsedCards.has(key)) collapsedCards.delete(key);
+      else collapsedCards.add(key);
+      persistCollapsedCards();
+      renderExisting();
+    },
+  });
   const lineBtn = document.createElement("button");
   lineBtn.className = "draft-line btn-link";
   lineBtn.textContent = `Line ${head.line}`;
   lineBtn.title = "Jump to this line in the preview";
-  lineBtn.addEventListener("click", () => scrollPreviewToLine(head.line));
+  lineBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    scrollPreviewToLine(head.line);
+  });
   meta.appendChild(lineBtn);
+  // The badge lives in the header, not the (collapsible) body, so a
+  // collapsed resolved thread is still recognisable at a glance.
   if (head.resolved) {
     const tag = document.createElement("span");
     tag.className = "badge resolved";
     tag.textContent = "resolved";
     meta.appendChild(tag);
   }
+  // Only when the platform actually lets this thread be resolved — every
+  // GitHub review thread, a GitLab discussion whose `resolvable` came back
+  // true. Never for a plain, non-resolvable note.
+  if (head.resolvable && head.resolveId) {
+    meta.appendChild(buildResolveButton(head));
+  }
+  meta.appendChild(buildGistLine(head.author, head.body, thread.length - 1));
   card.appendChild(meta);
 
+  const bodyWrap = document.createElement("div");
+  bodyWrap.className = "existing-body-wrap";
   for (const c of thread) {
-    card.appendChild(renderExistingComment(c, c === head));
+    bodyWrap.appendChild(renderExistingComment(c, c === head));
   }
-  card.appendChild(renderReplyArea(head.threadId ?? head.id));
+  bodyWrap.appendChild(renderReplyArea(head.threadId ?? head.id));
+  card.appendChild(bodyWrap);
   return card;
+}
+
+/**
+ * The Resolve/Unresolve button for a thread's header. Click posts a
+ * `resolve-thread` message and goes busy immediately (the "optimistic" part
+ * of the flow — the button itself, not the thread's resolved state); the
+ * actual resolved flag, badge, and collapse only change once the host
+ * confirms with a fresh `existing-comments` push, which is also what a
+ * concurrent resolve from someone else on the platform would produce. A
+ * `resolve-thread-error` re-enables the button in place via `pendingResolves`.
+ */
+function buildResolveButton(head: ExistingPrComment): HTMLButtonElement {
+  const resolveId = head.resolveId!;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn-link existing-resolve";
+  btn.textContent = head.resolved ? "Unresolve" : "Resolve";
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const target = !head.resolved;
+    const label = btn.textContent!;
+    btn.disabled = true;
+    btn.textContent = target ? "Resolving…" : "Unresolving…";
+    pendingResolves.set(resolveId, { btn, label });
+    vscode.postMessage({ type: "resolve-thread", resolveId, resolved: target });
+  });
+  return btn;
 }
 
 /**
@@ -884,6 +1148,16 @@ function renderReplyArea(threadId: string): HTMLElement {
 /** A reply POST failed — re-enable the composer and show the error inline. */
 function failPendingReply(threadId: string, error: string): void {
   pendingReplies.get(threadId)?.setError(error);
+}
+
+/** A resolve/unresolve POST failed — revert the button to its clickable label. */
+function failPendingResolve(resolveId: string, error: string): void {
+  const pending = pendingResolves.get(resolveId);
+  if (!pending) return;
+  pending.btn.disabled = false;
+  pending.btn.textContent = pending.label;
+  pending.btn.title = error;
+  pendingResolves.delete(resolveId);
 }
 
 function renderExistingComment(c: ExistingPrComment, isHead: boolean): HTMLElement {

@@ -257,6 +257,32 @@ export const gitlabPlatform: PrPlatform = {
     return { url: parsed.id ? `${ctx.prUrl}#note_${parsed.id}` : ctx.prUrl };
   },
 
+  async resolveThread(ctx, resolveId, resolved) {
+    const runner = getCliRunner();
+    const env = glabEnvForHost(ctx.host);
+    if (!ctx.projectId) throw new Error("GitLab context missing projectId");
+    // Same JSON-body-over-PUT shape as the discussions/notes POSTs above —
+    // GitLab's Grape API accepts `resolved` as a body field here just as
+    // happily as the query-string form the docs lead with.
+    const res = await runner(
+      GLAB,
+      [
+        "api",
+        `projects/${ctx.projectId}/merge_requests/${ctx.prNumber}/discussions/${resolveId}`,
+        "--method",
+        "PUT",
+        "--header",
+        "Content-Type: application/json",
+        "--input",
+        "-",
+      ],
+      { cwd: ctx.repoRoot, env, stdin: JSON.stringify({ resolved }) },
+    );
+    if (res.code !== 0) {
+      throw new Error(`glab api discussion resolve failed: ${res.stderr.trim() || res.stdout.trim()}`);
+    }
+  },
+
   async listExistingComments(ctx) {
     const runner = getCliRunner();
     const env = glabEnvForHost(ctx.host);
@@ -279,6 +305,10 @@ export const gitlabPlatform: PrPlatform = {
       body: string;
       created_at: string;
       resolved?: boolean;
+      /** False (or absent) for a discussion GitLab won't let anyone resolve
+       * — a plain, non-diff note landing here would be one, though today's
+       * `position` filter below already excludes those. */
+      resolvable?: boolean;
       position?: {
         new_path?: string;
         old_path?: string;
@@ -322,6 +352,8 @@ export const gitlabPlatform: PrPlatform = {
           createdAt: n.created_at,
           url: `${ctx.prUrl}#note_${n.id}`,
           resolved: n.resolved,
+          resolvable: n.resolvable === true,
+          resolveId: n.resolvable === true ? d.id : undefined,
         });
       }
     }

@@ -19,6 +19,7 @@ import {
   type LineRange,
 } from "./diff";
 import { stripAllInlineMarkup } from "../inlineComments/format";
+import { prReviewAppBody } from "./prReviewShell";
 import type {
   ExistingPrComment,
   PrContext,
@@ -36,6 +37,7 @@ interface DraftHost {
   submit(verdict: ReviewVerdict, body: string | undefined): Promise<void>;
   getExistingCommentsFor(relPath: string): Promise<ExistingPrComment[]>;
   replyToExisting(threadId: string, body: string): Promise<{ url: string }>;
+  resolveThread(resolveId: string, resolved: boolean): Promise<void>;
 }
 
 interface InitMessage {
@@ -63,6 +65,12 @@ interface ExistingCommentsMessage {
 interface ReplyErrorMessage {
   type: "reply-error";
   threadId: string;
+  error: string;
+}
+
+interface ResolveThreadErrorMessage {
+  type: "resolve-thread-error";
+  resolveId: string;
   error: string;
 }
 
@@ -101,13 +109,20 @@ interface ReplyRequest {
   body: string;
 }
 
+interface ResolveThreadRequest {
+  type: "resolve-thread";
+  resolveId: string;
+  resolved: boolean;
+}
+
 type ClientToHost =
   | ReadyMessage
   | AddDraftRequest
   | EditDraftRequest
   | DeleteDraftRequest
   | SubmitRequest
-  | ReplyRequest;
+  | ReplyRequest
+  | ResolveThreadRequest;
 
 const VIEW_TYPE = "markdownCollab.prReviewView";
 const panels = new Map<string, PrReviewPanel>();
@@ -265,6 +280,8 @@ export class PrReviewPanel {
         return this.host.submit(msg.verdict, msg.body);
       case "reply":
         return this.handleReply(msg.threadId, msg.body);
+      case "resolve-thread":
+        return this.handleResolveThread(msg.resolveId, msg.resolved);
     }
   }
 
@@ -285,6 +302,29 @@ export class PrReviewPanel {
       const m: ReplyErrorMessage = { type: "reply-error", threadId, error };
       await this.panel.webview.postMessage(m);
       void vscode.window.showErrorMessage(`Failed to post reply: ${error}`);
+    }
+  }
+
+  /**
+   * Resolve or unresolve an existing thread, then re-fetch this file's
+   * comments and push them — the confirmed `resolved` value is what drives
+   * the card's collapse in the webview, not an optimistic guess here. On
+   * failure, tell the webview (so it re-enables the button) and surface the
+   * platform's own error message to the user. Mirrors `handleReply` above.
+   */
+  private async handleResolveThread(resolveId: string, resolved: boolean): Promise<void> {
+    try {
+      await this.host.resolveThread(resolveId, resolved);
+      const comments = await this.host.getExistingCommentsFor(this.relPath);
+      const m: ExistingCommentsMessage = { type: "existing-comments", comments };
+      await this.panel.webview.postMessage(m);
+    } catch (e) {
+      const error = (e as Error).message ?? String(e);
+      const m: ResolveThreadErrorMessage = { type: "resolve-thread-error", resolveId, error };
+      await this.panel.webview.postMessage(m);
+      void vscode.window.showErrorMessage(
+        `Failed to ${resolved ? "resolve" : "unresolve"} thread: ${error}`,
+      );
     }
   }
 
@@ -318,46 +358,7 @@ export class PrReviewPanel {
 <title>PR review</title>
 </head>
 <body>
-<div id="app">
-  <div id="preview-pane">
-    <header id="preview-toolbar">
-      <span id="diff-nav" hidden>
-        <button id="diff-prev" class="btn-link" title="Previous change (p)" aria-label="Previous change">↑</button>
-        <span id="diff-nav-count"></span>
-        <button id="diff-next" class="btn-link" title="Next change (n)" aria-label="Next change">↓</button>
-      </span>
-    </header>
-    <article id="preview"></article>
-    <button id="floating-add" hidden>+ Comment on selection</button>
-  </div>
-  <aside id="drafts-pane">
-    <header id="drafts-header">
-      <div class="title-row">
-        <h2>Drafts</h2>
-        <span id="draft-count"></span>
-      </div>
-      <p class="hint">Click a draft to jump to its line.</p>
-    </header>
-    <div id="drafts-list"></div>
-    <div id="composer" hidden></div>
-    <section id="existing-section" hidden>
-      <h3 class="section-title">Existing comments</h3>
-      <div id="existing-filter" role="radiogroup" aria-label="Filter existing comments" hidden></div>
-      <p id="existing-status" class="hint">Loading…</p>
-      <div id="existing-list"></div>
-    </section>
-    <footer id="submit-bar">
-      <div class="verdict-row" role="radiogroup" aria-label="Review verdict">
-        <label><input type="radio" name="verdict" value="comment" checked> Comment</label>
-        <label><input type="radio" name="verdict" value="approve"> Approve</label>
-        <label><input type="radio" name="verdict" value="request-changes"> Request changes</label>
-      </div>
-      <textarea id="review-body" rows="2" placeholder="Optional review summary (posted alongside the inline comments)"></textarea>
-      <button id="submit-review" type="button" disabled>Submit review</button>
-      <p id="submit-hint" class="hint">No drafts yet.</p>
-    </footer>
-  </aside>
-</div>
+${prReviewAppBody()}
 <script src="${mermaidUri}"></script>
 <script src="${scriptUri}"></script>
 </body>

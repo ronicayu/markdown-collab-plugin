@@ -253,12 +253,12 @@ export function activateClaudeStatusBar(): vscode.Disposable {
   const headlessMenu = vscode.commands.registerCommand("markdownCollab.headlessRunMenu", async () => {
     const running = activeHeadlessRuns()[0];
     if (running) {
-      const pick = await vscode.window.showQuickPick(["Cancel run", "Show logs", "Open review view"], {
+      const pick = await vscode.window.showQuickPick(["Cancel run", "Show logs", "Open in Markdown Collab"], {
         placeHolder: `Claude is reviewing ${running.fileLabel}`,
       });
       if (pick === "Cancel run") running.run.cancel("user");
       else if (pick === "Show logs") await vscode.commands.executeCommand("markdownCollab.showOutput");
-      else if (pick === "Open review view") await openFirstFile(running);
+      else if (pick === "Open in Markdown Collab") await openFirstFile(running);
       return;
     }
     const shown = notice;
@@ -284,12 +284,12 @@ export function activateClaudeStatusBar(): vscode.Disposable {
       return;
     }
     if (record.state === "waiting" || record.state === "receiving") {
-      const pick = await vscode.window.showQuickPick(["Open review view", "Dismiss"], {
+      const pick = await vscode.window.showQuickPick(["Open in Markdown Collab", "Dismiss"], {
         placeHolder: `Sent ${record.payload.file} for review`,
       });
       // `firstArrivedFile` falls back to the first file when nothing has
       // landed yet — exactly right for "waiting" too.
-      if (pick === "Open review view") await openReviewPassFile(firstArrivedFile(record));
+      if (pick === "Open in Markdown Collab") await openReviewPassFile(firstArrivedFile(record));
       else if (pick === "Dismiss") reviewPassPending.dismiss(record.folderKey);
       return;
     }

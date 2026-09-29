@@ -11,7 +11,7 @@ import type MarkdownIt from "markdown-it";
 import { createCommentRenderer } from "./markdownPipeline";
 import { formatRelativeTime } from "../collab/relativeTime";
 import { agentDisplayName, isAgentComment } from "../agentIdentity";
-import { diffWords, isBulkRewrite } from "./wordDiff";
+import { diffWords, isBulkRewrite, suggestionGist } from "./wordDiff";
 
 /**
  * What the card shows for an author: the agent's display name for an agent
@@ -327,6 +327,16 @@ export interface SuggestionCardOptions {
   onReject(): void;
   /** Card-level click, e.g. scroll to the anchored text. */
   onClick?(): void;
+  /**
+   * Collapse support (round-8 P1, every card kind folds). Omitted — as the
+   * classic panel always omits it — the card has no collapse chrome at all
+   * and renders exactly as it always has. Given, `collapsed` is the card's
+   * current state and `onToggleCollapse` fires from the chevron or (while
+   * collapsed) the header; the caller owns the actual state, the same way
+   * `onAccept`/`onReject` don't mutate anything themselves.
+   */
+  collapsed?: boolean;
+  onToggleCollapse?(): void;
 }
 
 /**
@@ -336,6 +346,8 @@ export interface SuggestionCardOptions {
 export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
   const card = document.createElement("div");
   card.className = "mc-card mc-suggestion";
+  const collapsible = !!opts.onToggleCollapse;
+  if (collapsible) card.classList.toggle("collapsed", !!opts.collapsed);
 
   const meta = document.createElement("div");
   meta.className = "mc-card__meta";
@@ -357,7 +369,45 @@ export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
   badge.className = "mc-badge mc-badge--suggestion";
   badge.textContent = "suggestion";
   meta.appendChild(badge);
-  card.appendChild(meta);
+
+  if (collapsible) {
+    // A chevron + a one-line gist stand in for the meta row while collapsed
+    // (threadSidebar.css swaps the two on `.mc-suggestion.collapsed`) — same
+    // fold the thread card does, so the two read as one system.
+    const headRow = document.createElement("div");
+    headRow.className = "mc-suggestion__head";
+    const chevron = document.createElement("button");
+    chevron.type = "button";
+    chevron.className = "mc-suggestion__collapse thread-collapse";
+    chevron.title = "Collapse / expand this suggestion";
+    chevron.setAttribute("aria-label", "Collapse or expand this suggestion");
+    chevron.setAttribute("aria-expanded", String(!opts.collapsed));
+    chevron.textContent = opts.collapsed ? "▸" : "▾";
+    chevron.addEventListener("click", (e) => {
+      e.stopPropagation();
+      opts.onToggleCollapse!();
+    });
+    headRow.appendChild(chevron);
+    headRow.appendChild(meta);
+    const summary = document.createElement("div");
+    summary.className = "mc-suggestion__summary";
+    summary.textContent = `Suggestion · ${authorLabel(opts.author)} · ${suggestionGist(opts.original, opts.proposed)}`;
+    headRow.appendChild(summary);
+    // While collapsed the header is effectively the whole card, so clicking
+    // anywhere in it (the chevron handles its own click) expands — a bigger
+    // target than the chevron alone. Expanded, a click here is left to bubble
+    // to the card's own `onClick` (reveal in the document) instead: folding
+    // the card back up from under someone reading it would be a bad surprise
+    // for a plain click.
+    headRow.addEventListener("click", (e) => {
+      if (!card.classList.contains("collapsed")) return;
+      e.stopPropagation();
+      opts.onToggleCollapse!();
+    });
+    card.appendChild(headRow);
+  } else {
+    card.appendChild(meta);
+  }
 
   card.appendChild(buildSuggestionDiff(opts.original, opts.proposed));
 

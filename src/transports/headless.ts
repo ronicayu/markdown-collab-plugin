@@ -864,7 +864,7 @@ export interface HeadlessRunRecord {
   key: string;
   /** The payload's `file`: a path, or "3 files under docs/". */
   fileLabel: string;
-  /** Absolute paths under review; the first is what "Open review view" opens. */
+  /** Absolute paths under review; the first is what "Open in Markdown Collab" opens. */
   files: string[];
   run: HeadlessRun;
 }

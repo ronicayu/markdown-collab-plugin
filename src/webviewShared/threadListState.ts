@@ -242,6 +242,38 @@ export function nextCollapseAllAction(
 }
 
 /**
+ * A card the thread list can fold — a thread or a pending suggestion,
+ * described just enough to pick its default collapse state (round-8 P1,
+ * "every kind of comment collapses").
+ */
+export type CollapsibleCard =
+  | { kind: "thread"; id: string; status: "open" | "resolved" }
+  | { kind: "suggestion"; id: string };
+
+/**
+ * A stable key for a card's persisted collapse override — namespaced by kind
+ * so a thread id and a suggestion anchor id, drawn from different id spaces,
+ * can never collide in the one map the sidebar persists.
+ */
+export function collapseKey(card: CollapsibleCard): string {
+  return `${card.kind}:${card.id}`;
+}
+
+/**
+ * Whether a card should render collapsed. A manual toggle — recorded in
+ * `overrides`, keyed by `collapseKey` — always wins, so it survives whatever
+ * the card's own status does next. Short of one: a resolved thread starts
+ * collapsed (it's settled; the review pass doesn't need it in the way), and
+ * everything else — an open thread, a pending suggestion — starts expanded,
+ * since those are exactly the things a review pass still has to look at.
+ */
+export function initialCollapsed(card: CollapsibleCard, overrides: ReadonlyMap<string, boolean>): boolean {
+  const override = overrides.get(collapseKey(card));
+  if (override !== undefined) return override;
+  return card.kind === "thread" && card.status === "resolved";
+}
+
+/**
  * How many thread cards to build in one pass. Each card is a non-trivial DOM
  * subtree (header, body, replies, an always-on reply box), so a review pass
  * that opened 300 threads used to build 300 of them synchronously before the

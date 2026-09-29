@@ -108,7 +108,7 @@
   flex-wrap: wrap;
 }
 :where(.mc-thread-sidebar) .actions-row #send-to-claude { font-size: 11px; padding: 4px 10px; }
-/* The "…" menu and "?" stay together at the row's end. With the Edit switch
+/* The "…" menu and "?" stay together at the row's end. With the mode control
    the row is wider than the sidebar, and when it wraps they go to the right of
    the second line — so the menu, which opens right-aligned under "…", never
    runs off the sidebar's left edge. */
@@ -157,6 +157,46 @@
 }
 @media (prefers-reduced-motion: reduce) {
   :where(.mc-thread-sidebar) button.switch::before { transition: none; }
+}
+
+/* The Reading/Editing mode control: the same segmented look as the filter row
+   above, duplicated rather than shared so the two can drift independently.
+   Native radios under the hidden inputs give it arrow-key navigation for free. */
+:where(.mc-thread-sidebar) .mode-toggle {
+  display: inline-flex;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+  flex-shrink: 0;
+}
+:where(.mc-thread-sidebar) .mode-toggle .segment {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+:where(.mc-thread-sidebar) .mode-toggle .segment.active {
+  background: var(--vscode-button-secondaryBackground, color-mix(in srgb, var(--accent) 22%, transparent));
+  color: var(--fg);
+}
+:where(.mc-thread-sidebar) .mode-toggle .segment input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+:where(.mc-thread-sidebar) .mode-toggle .segment:has(input:focus-visible) {
+  outline: 2px solid var(--vscode-focusBorder, var(--accent));
+  outline-offset: 1px;
 }
 
 /* --- "…" overflow menus: the toolbar's and each thread card's ---------------- */
@@ -312,6 +352,15 @@
 :where(.mc-thread-sidebar) .thread-card.collapsed > :not(.thread-head) { display: none; }
 :where(.mc-thread-sidebar) .thread-card.collapsed .thread-head { margin-bottom: 0; }
 :where(.mc-thread-sidebar) .thread-card.collapsed .thread-actions { display: none; }
+/* "N comments" only earns its place once the comments themselves are hidden. */
+:where(.mc-thread-sidebar) .thread-comment-count {
+  display: none;
+  flex: 0 0 auto;
+  align-self: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+:where(.mc-thread-sidebar) .thread-card.collapsed .thread-comment-count { display: inline; }
 
 :where(.mc-thread-sidebar) .thread-head {
   display: flex;
@@ -370,6 +419,9 @@
 :where(.mc-thread-sidebar) .badge.broken { background: rgba(255, 80, 80, 0.2); border-color: rgba(255, 80, 80, 0.4); color: var(--mc-danger, #ff9090); }
 /* A caution, not an error: the thread is live, its passage moved. */
 :where(.mc-thread-sidebar) .badge.stale { background: rgba(215, 186, 125, 0.22); border-color: rgba(215, 186, 125, 0.45); color: var(--vscode-foreground); }
+/* Shown whether the card is collapsed or not — the same badge either way,
+   the way broken/stale already work, so it's still visible under "All". */
+:where(.mc-thread-sidebar) .badge.resolved { background: rgba(76, 175, 80, 0.2); border-color: rgba(76, 175, 80, 0.4); color: var(--vscode-foreground); }
 
 /* Collapsed until Reply is clicked or `r` is pressed on the highlighted card. */
 :where(.mc-thread-sidebar) .reply-box {
@@ -436,6 +488,31 @@
   color: var(--vscode-foreground);
 }
 
+/* Suggestion cards fold the same way thread cards do (round-8 P1): a chevron
+   + a one-line gist replace the full meta row, the diff and note hide, and
+   Accept/Reject — appended after them, untouched — stay visible, so a
+   collapsed suggestion is still a one-click Accept. */
+:where(.mc-thread-sidebar) .mc-suggestion__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+:where(.mc-thread-sidebar) .mc-suggestion__head > .mc-card__meta { flex: 1; margin-bottom: 0; }
+:where(.mc-thread-sidebar) .mc-suggestion__summary {
+  display: none;
+  flex: 1;
+  align-self: center;
+  font-size: 12px;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+:where(.mc-thread-sidebar) .mc-suggestion.collapsed .mc-suggestion__head > .mc-card__meta { display: none; }
+:where(.mc-thread-sidebar) .mc-suggestion.collapsed .mc-suggestion__summary { display: block; }
+:where(.mc-thread-sidebar) .mc-suggestion.collapsed > .mc-suggestion__diffwrap,
+:where(.mc-thread-sidebar) .mc-suggestion.collapsed > .mc-suggestion__note {
+  display: none;
+}
+
 /* --- High-contrast themes: states that read by colour alone get an outline. */
 body.vscode-high-contrast :where(.mc-thread-sidebar) .thread-card,
 body.vscode-high-contrast-light :where(.mc-thread-sidebar) .thread-card {
@@ -452,6 +529,14 @@ body.vscode-high-contrast-light :where(.mc-thread-sidebar) .filter-row {
 }
 body.vscode-high-contrast :where(.mc-thread-sidebar) .filter-row .segment.active,
 body.vscode-high-contrast-light :where(.mc-thread-sidebar) .filter-row .segment.active {
+  outline: 1px solid var(--vscode-contrastActiveBorder, currentColor);
+}
+body.vscode-high-contrast :where(.mc-thread-sidebar) .mode-toggle,
+body.vscode-high-contrast-light :where(.mc-thread-sidebar) .mode-toggle {
+  outline: 1px solid var(--vscode-contrastBorder, currentColor);
+}
+body.vscode-high-contrast :where(.mc-thread-sidebar) .mode-toggle .segment.active,
+body.vscode-high-contrast-light :where(.mc-thread-sidebar) .mode-toggle .segment.active {
   outline: 1px solid var(--vscode-contrastActiveBorder, currentColor);
 }
 body.vscode-high-contrast :where(.mc-thread-sidebar) .mc-menu,

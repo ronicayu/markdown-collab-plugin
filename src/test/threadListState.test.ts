@@ -3,15 +3,18 @@ import {
   adjacentThreadId,
   chunkThreads,
   claudeSummary,
+  collapseKey,
   emptyListMessage,
   emptyState,
   filterThreads,
+  initialCollapsed,
   matchesFilter,
   nextCollapseAllAction,
   nextUnreadThreadId,
   sidebarCountLabel,
   threadCountLabel,
   threadSignature,
+  type CollapsibleCard,
   type ListThread,
 } from "../webviewShared/threadListState";
 
@@ -328,6 +331,55 @@ describe("nextCollapseAllAction", () => {
 
   it("collapses on an empty list rather than reporting 'all collapsed'", () => {
     expect(nextCollapseAllAction([], new Set())).toBe("collapse");
+  });
+});
+
+describe("collapseKey", () => {
+  it("namespaces by kind so a thread id and a suggestion id can't collide", () => {
+    expect(collapseKey({ kind: "thread", id: "x1", status: "open" })).toBe("thread:x1");
+    expect(collapseKey({ kind: "suggestion", id: "x1" })).toBe("suggestion:x1");
+    expect(collapseKey({ kind: "thread", id: "x1", status: "open" })).not.toBe(
+      collapseKey({ kind: "suggestion", id: "x1" }),
+    );
+  });
+});
+
+describe("initialCollapsed", () => {
+  const openThread: CollapsibleCard = { kind: "thread", id: "t1", status: "open" };
+  const resolvedThread: CollapsibleCard = { kind: "thread", id: "t2", status: "resolved" };
+  const suggestion: CollapsibleCard = { kind: "suggestion", id: "s1" };
+  const noOverrides = new Map<string, boolean>();
+
+  it("defaults an open thread to expanded", () => {
+    expect(initialCollapsed(openThread, noOverrides)).toBe(false);
+  });
+
+  it("defaults a resolved thread to collapsed", () => {
+    expect(initialCollapsed(resolvedThread, noOverrides)).toBe(true);
+  });
+
+  it("defaults a pending suggestion to expanded", () => {
+    expect(initialCollapsed(suggestion, noOverrides)).toBe(false);
+  });
+
+  it("a manual override wins over a resolved thread's default", () => {
+    const overrides = new Map([[collapseKey(resolvedThread), false]]);
+    expect(initialCollapsed(resolvedThread, overrides)).toBe(false);
+  });
+
+  it("a manual override wins over an open thread's default", () => {
+    const overrides = new Map([[collapseKey(openThread), true]]);
+    expect(initialCollapsed(openThread, overrides)).toBe(true);
+  });
+
+  it("a manual override wins over a suggestion's default", () => {
+    const overrides = new Map([[collapseKey(suggestion), true]]);
+    expect(initialCollapsed(suggestion, overrides)).toBe(true);
+  });
+
+  it("an override on one kind doesn't leak onto the same id under the other kind", () => {
+    const overrides = new Map([[collapseKey({ kind: "suggestion", id: "t1" }), true]]);
+    expect(initialCollapsed(openThread, overrides)).toBe(false);
   });
 });
 
