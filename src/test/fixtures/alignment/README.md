@@ -183,7 +183,6 @@ A few commands still exist but are hidden from the palette, now that Connect an 
 | `markdownCollab.headlessModel` | `""` | Model for headless runs, such as `sonnet` or `opus`. Empty uses Claude Code's default. |
 | `markdownCollab.showLineNumbers` | `false` | Source line numbers beside each block in the review view and the live editor. They're lines of the `.md` file, frontmatter and threads block included, so they match Go to Line. |
 | `markdownCollab.collab.userName` | your OS username | The name on comments you write in the live editor. |
-| `markdownCollab.liveEditor.readOnly` | `false` | Open the live editor read-only: highlights are placed by source position and a new comment is written into the file's original bytes, so nothing else in the file changes. Off until the two views merge. |
 | `markdownCollab.plantuml.serverUrl` | `https://www.plantuml.com/plantuml` | The server that renders `plantuml` fences. Diagram source is sent to it, so point it at your own server for private documents. |
 | `markdownCollab.plantuml.format` | `svg` | `svg` or `png`. |
 

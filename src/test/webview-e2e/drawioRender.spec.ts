@@ -54,10 +54,10 @@ test("a drawio image placeholder resolves to an inline <svg>", async ({ page }) 
   await expect(placeholder).toHaveClass(/ready/);
 });
 
-// The live (Milkdown) editor only promotes a paragraph to the diagram widget
-// for link syntax today (`![](x.drawio)` isn't recognized there yet — a
-// separate, tracked gap, not this bug); a bare link alone in its own
-// paragraph is what actually reaches the same shared `renderDrawioToSvg`.
+// The live (Milkdown) editor promotes a paragraph to the diagram widget for
+// both diagram syntaxes: a bare link alone in its own paragraph
+// (`[text](x.drawio)`) and an image alone in its own paragraph
+// (`![alt](x.drawio)`) — both reach the same shared `renderDrawioToSvg`.
 const LIVE_SOURCE = "# Doc\n\n[Diagram](diagram.drawio)\n";
 
 test("the live editor's link-syntax diagram also resolves to an inline <svg>", async ({ page }) => {
@@ -71,6 +71,32 @@ test("the live editor's link-syntax diagram also resolves to an inline <svg>", a
   const placeholder = page.locator(".mdc-drawio");
   await expect(placeholder).toHaveCount(1);
   await expect(placeholder).toContainText("Loading diagram");
+
+  await pushToWebview(page, {
+    type: "drawio-read-result",
+    requestId: "drawio-1",
+    href: "diagram.drawio",
+    ok: true,
+    content: MXFILE,
+  });
+
+  await expect(placeholder.locator("svg")).toHaveCount(1);
+});
+
+// `![alt](x.drawio)` still parses to a real `image` node (unlike the link
+// form, which is just marked-up text), so the image nodeView would otherwise
+// render a broken <img> for a non-image src alongside the diagram widget —
+// that image is hidden (`.mdc-drawio-image-hidden`) once the paragraph
+// promotes to the widget.
+test("the live editor's image-syntax diagram (![alt](x.drawio)) also resolves to an inline <svg>", async ({
+  page,
+}) => {
+  await bootLiveEditor(page, liveInit(SOURCE));
+
+  const placeholder = page.locator(".mdc-drawio");
+  await expect(placeholder).toHaveCount(1);
+  await expect(placeholder).toContainText("Loading diagram");
+  await expect(page.locator("img.mdc-image")).toBeHidden();
 
   await pushToWebview(page, {
     type: "drawio-read-result",

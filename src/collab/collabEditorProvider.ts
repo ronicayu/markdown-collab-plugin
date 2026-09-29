@@ -4,6 +4,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import {
   addThreadAtOffsets,
+  addThreadAtProseRange,
   addThreadFromAnchor,
   commentsOf,
   deleteThread,
@@ -50,8 +51,28 @@ interface InitPayload {
   frontmatter: string;
   /** Webview URIs for resolving relative image src in the markdown. */
   imageBaseUris: { docDir: string; workspaceFolder: string | null };
+  /** PlantUML server URL + image format — same source the review view reads. */
+  plantuml: { serverUrl: string; format: "svg" | "png" };
   /** Source line per prose line; absent when line numbers are switched off. */
   lineMap?: number[];
+  /**
+   * Read-only mode (`markdownCollab.liveEditor.readOnly`): no editing, and
+   * comments anchor by source position (docs/one-view-design.md).
+   */
+  readOnly: boolean;
+}
+
+/** Whether the live editor opens read-only. Read per webview load; a change reloads it. */
+function readOnlySetting(): boolean {
+  return vscode.workspace.getConfiguration("markdownCollab").get<boolean>("liveEditor.readOnly", false);
+}
+
+function readPlantumlConfig(): { serverUrl: string; format: "svg" | "png" } {
+  const cfg = vscode.workspace.getConfiguration("markdownCollab");
+  return {
+    serverUrl: cfg.get<string>("plantuml.serverUrl") ?? "https://www.plantuml.com/plantuml",
+    format: cfg.get<"svg" | "png">("plantuml.format") ?? "svg",
+  };
 }
 
 /** Pushed when the line-number setting changes, or the document did. */
@@ -131,6 +152,14 @@ interface AddCommentMessage {
    * context matching fails. -1 when unknown.
    */
   anchorOrdinal?: number;
+  /**
+   * Read-only mode only: the selection as a prose span (`proseOf` offsets) and
+   * the prose the editor saw there. Present means "place exactly here or
+   * refuse" — none of the fields above is consulted.
+   */
+  proseStart?: number;
+  proseEnd?: number;
+  proseText?: string;
 }
 
 interface ReplyCommentMessage {
@@ -284,6 +313,10 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     const config = vscode.workspace.getConfiguration("markdownCollab");
     const userName = config.get<string>("collab.userName", "") || os.userInfo().username;
     const user = { name: userName, color: pickColor(userName) };
+
+    // Whether this panel's webview was initialized read-only. Set on each
+    // `ready` (a setting change reloads the webview, which sends `ready` again).
+    let readOnly = readOnlySetting();
 
     // Track our own writes so the workspace.onDidChangeTextDocument handler
     // doesn't bounce them back as "external" updates and overwrite the
@@ -469,6 +502,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         const text = proseOf(source);
         lastWebviewProse = text;
         lastFrontmatter = frontmatterOf(source);
+        readOnly = readOnlySetting();
         const docDirUri = vscode.Uri.file(path.dirname(document.uri.fsPath));
         const wsFolder = vscode.workspace.getWorkspaceFolder(document.uri);
         const waiting = claudePending.status(document.uri.toString(), parseInline(source).threads);
@@ -488,9 +522,14 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
               ? panel.webview.asWebviewUri(wsFolder.uri).toString()
               : null,
           },
+          plantuml: readPlantumlConfig(),
+          readOnly,
         };
         void panel.webview.postMessage(payload);
       } else if (msg.type === "edit") {
+        // A read-only editor never edits; anything claiming to be an edit from
+        // one would rewrite the file from its serialization — refuse it.
+        if (readOnly) return;
         void applyProseEdit(msg.text, msg.anchors);
       } else if (msg.type === "ready-with-content") {
         lastReadyByUri.set(document.uri.toString(), msg);
@@ -621,6 +660,12 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
 
     const configSub = vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("markdownCollab.showLineNumbers")) pushLineMap();
+      // Read-only decides how Milkdown is built (editable, the source-position
+      // schema), so it can't be switched on a live editor — reload the webview,
+      // which re-sends `ready` and gets an `init` in the new mode.
+      if (e.affectsConfiguration("markdownCollab.liveEditor.readOnly") && readOnlySetting() !== readOnly) {
+        panel.webview.html = this.renderHtml(panel.webview);
+      }
     });
 
     panel.onDidDispose(() => {
@@ -661,24 +706,36 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     }
     const author = (msg.author && msg.author.trim()) || resolveAuthorFromConfig();
     const newComment = { author, body: msg.body, ts: new Date().toISOString() };
-    // Preferred path: place the marker at the exact selection offsets the
-    // editor reported, against the editor's own body markdown — no text search,
-    // so a doc that's drifted from the editor's serialization can't cause a
-    // "could not locate the text" failure. Fall back to text-anchoring only
-    // when the editor couldn't resolve offsets (selStart/selEnd === -1).
-    const useOffsets =
-      typeof msg.fullMd === "string" &&
-      Number.isInteger(msg.selStart) &&
-      Number.isInteger(msg.selEnd) &&
-      (msg.selStart as number) >= 0 &&
-      (msg.selEnd as number) >= 0;
-    const ordinal = Number.isInteger(msg.anchorOrdinal) ? (msg.anchorOrdinal as number) : -1;
-    let result = useOffsets
-      ? addThreadAtOffsets(document.getText(), msg.fullMd!, msg.selStart!, msg.selEnd!, newComment)
-      : addThreadFromAnchor(document.getText(), anchor, newComment, ordinal);
-    if (!result.ok && useOffsets) {
-      // Offsets were rejected (out of range) — fall back to the text anchor.
-      result = addThreadFromAnchor(document.getText(), anchor, newComment, ordinal);
+    let result: { ok: true; source: string } | { ok: false; error: string };
+    if (typeof msg.proseStart === "number" || typeof msg.proseEnd === "number") {
+      // Read-only editor: the selection arrives as a span of the file's own
+      // prose. The markers go exactly there or the add is refused — no
+      // fallback, since every fallback below rewrites the body.
+      result = addThreadAtProseRange(
+        document.getText(),
+        { start: msg.proseStart ?? -1, end: msg.proseEnd ?? -1, text: msg.proseText ?? "" },
+        newComment,
+      );
+    } else {
+      // Preferred path: place the marker at the exact selection offsets the
+      // editor reported, against the editor's own body markdown — no text search,
+      // so a doc that's drifted from the editor's serialization can't cause a
+      // "could not locate the text" failure. Fall back to text-anchoring only
+      // when the editor couldn't resolve offsets (selStart/selEnd === -1).
+      const useOffsets =
+        typeof msg.fullMd === "string" &&
+        Number.isInteger(msg.selStart) &&
+        Number.isInteger(msg.selEnd) &&
+        (msg.selStart as number) >= 0 &&
+        (msg.selEnd as number) >= 0;
+      const ordinal = Number.isInteger(msg.anchorOrdinal) ? (msg.anchorOrdinal as number) : -1;
+      result = useOffsets
+        ? addThreadAtOffsets(document.getText(), msg.fullMd!, msg.selStart!, msg.selEnd!, newComment)
+        : addThreadFromAnchor(document.getText(), anchor, newComment, ordinal);
+      if (!result.ok && useOffsets) {
+        // Offsets were rejected (out of range) — fall back to the text anchor.
+        result = addThreadFromAnchor(document.getText(), anchor, newComment, ordinal);
+      }
     }
     if (!result.ok) {
       this.log.warn("addComment refused", { file: document.uri.fsPath, error: result.error });

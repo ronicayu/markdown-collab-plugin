@@ -1,0 +1,94 @@
+/* ===========================================================
+   Styling for src/webview/plugins/* — rendering-parity gaps
+   (10x-plan-6 P4, "one view" spike, section A). Bundled into
+   out/webview/client.css alongside host.css (esbuild follows the
+   `import "./plugins/plugins.css"` in client.ts).
+   =========================================================== */
+
+/* --- PlantUML widget (plantumlWidgetPlugin.ts) --------------------------- */
+
+.mdc-plantuml {
+  margin: 1em 0;
+  display: flex;
+  justify-content: center;
+  background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.06));
+  padding: var(--mdc-space-3, 12px);
+  border-radius: var(--mdc-radius, 4px);
+}
+.mdc-plantuml img {
+  max-width: 100%;
+  height: auto;
+}
+.mdc-plantuml__error {
+  color: var(--vscode-errorForeground, #f48771);
+  font-size: 12px;
+}
+
+/* Fence source hidden once its diagram widget is showing — matches the
+   review view, which replaces the fence outright instead of showing both.
+   `!important`, matching host.css's own convention for beating the nord
+   theme's own rules (e.g. `.milkdown-theme-nord img { display:
+   inline-block }` otherwise outranks a plain single-class selector here). */
+.mdc-plantuml-source-hidden,
+.mdc-mermaid-source-hidden {
+  display: none !important;
+}
+
+/* --- Draw.io image syntax (client.ts, buildDrawioDecorations) ------------ */
+
+/* `![alt](x.drawio)` still parses to a real `image` node, so the image
+   nodeView renders a broken <img> alongside the diagram widget unless it's
+   hidden — the link-syntax form (`[text](x.drawio)`) has no such node to
+   hide, just link text, so it isn't touched. */
+.mdc-drawio-image-hidden {
+  display: none !important;
+}
+
+/* --- Task-list checkboxes (taskListPlugin.ts) ---------------------------- */
+
+.milkdown li[data-item-type="task"] {
+  list-style: none;
+  position: relative;
+  padding-left: 1.4em;
+}
+.milkdown li[data-item-type="task"]::before {
+  content: "";
+  position: absolute;
+  left: 0.05em;
+  top: 0.2em;
+  width: 0.9em;
+  height: 0.9em;
+  box-sizing: border-box;
+  border: 1px solid var(--vscode-checkbox-border, #888);
+  border-radius: 3px;
+  background: var(--vscode-checkbox-background, transparent);
+  cursor: pointer;
+}
+.milkdown li[data-item-type="task"][data-checked="true"]::before {
+  background: var(--vscode-checkbox-selectBackground, var(--vscode-button-background, #0e639c));
+  border-color: var(--vscode-checkbox-selectBorder, var(--vscode-button-background, #0e639c));
+}
+.milkdown li[data-item-type="task"][data-checked="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0.33em;
+  top: 0.37em;
+  width: 0.32em;
+  height: 0.5em;
+  border-right: 2px solid var(--vscode-checkbox-foreground, #fff);
+  border-bottom: 2px solid var(--vscode-checkbox-foreground, #fff);
+  transform: rotate(45deg);
+}
+
+/* --- Suggestion highlight (suggestionHighlightPlugin.ts) ----------------- */
+
+/* Distinct from a comment thread's `.mdc-anchor-highlight` (amber) — a
+   suggestion is a proposed edit, not a discussion, so it gets the same
+   accent family as the suggestion cards' diff view (a cooler, "insert"-ish
+   tone) rather than the "someone is asking about this" yellow. */
+.mdc-anchor-highlight--suggestion {
+  background: color-mix(in srgb, var(--vscode-charts-purple, #b180d7) 18%, transparent);
+  border-bottom: 1px dashed var(--vscode-charts-purple, #b180d7);
+  border-radius: 2px;
+  padding: 0 1px;
+}

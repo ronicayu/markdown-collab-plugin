@@ -1,0 +1,498 @@
+// Source positions for the live editor's read-only mode (10x-plan-6 P4, phase
+// A; design in docs/one-view-design.md).
+//
+// The live editor used to place a comment highlight by searching the rendered
+// text for the quote and counting occurrences — and it counted occurrences in
+// the Markdown source, where image alt text and link targets also contain
+// words. That put 12 of the spike's 164 probe highlights on the wrong
+// occurrence. This module replaces the search with a map: every visible
+// character of a text block knows the exact source bytes it came from, so a
+// highlight is "the characters whose bytes lie inside the anchor" and a new
+// comment is "the bytes under the selected characters". Nothing is searched.
+//
+// Three pieces, all pure so they can be tested without a browser:
+//
+//   - `annotateSourceRuns`: an mdast transform that runs inside the parser,
+//     before anything rewrites text nodes, and records each text container's
+//     text runs (`text` and `inlineCode` leaves) with their source offsets;
+//   - `alignRun`: maps each visible character of one run to its source span,
+//     understanding escapes, character references, code-span fences, and the
+//     line prefixes a paragraph's continuation lines carry;
+//   - `buildSourceIndex` and the two lookups, which walk a ProseMirror-like
+//     document whose text containers carry the annotation as an attr.
+//
+// Offsets are into the string the editor parsed (the live editor's "prose":
+// the file with frontmatter, markers and the threads region removed). The
+// host translates prose ↔ file offsets; this module never sees the file.
+
+/** A run's kind: ordinary text, or the content of an inline code span. */
+export type RunKind = 0 | 1;
+
+/**
+ * One text-producing leaf of a block: its source range, how many characters
+ * it contributes to the editor's text, and its kind.
+ */
+export type SourceRun = [start: number, end: number, visibleLength: number, kind: RunKind];
+
+/** What a text container carries: its own source range and its runs (null: unmappable). */
+export interface BlockSource {
+  start: number;
+  end: number;
+  runs: SourceRun[] | null;
+}
+
+/** The mdast `data` key and ProseMirror attr name the annotation travels under. */
+export const SOURCE_ATTR = "mcSrc";
+
+// --- mdast side --------------------------------------------------------------
+
+interface MdPoint {
+  offset?: number;
+}
+
+/** The slice of an mdast node this module reads — no dependency on `mdast` types. */
+export interface MdNode {
+  type: string;
+  value?: unknown;
+  children?: MdNode[];
+  position?: { start: MdPoint; end: MdPoint };
+  data?: Record<string, unknown>;
+}
+
+// The mdast nodes the editor turns into a block of inline text. List items,
+// blockquotes and footnote definitions hold paragraphs, so they're covered by
+// the paragraphs inside them.
+const TEXT_CONTAINERS = new Set(["paragraph", "heading", "tableCell"]);
+
+// Milkdown's `remarkLineBreak` replaces every `[\t ]*` + line ending inside a
+// text node with a break node, which contributes no text. A run's visible
+// length has to apply the same rule, or the run lengths stop summing to the
+// block's text and the block is (correctly, but needlessly) left unmapped.
+const LINE_BREAK = /[\t ]*(?:\r?\n|\r)/g;
+
+/** The characters a text or code leaf contributes to the editor's text. */
+export function visibleTextOf(value: string, kind: RunKind): string {
+  return kind === 1 ? value : value.replace(LINE_BREAK, "");
+}
+
+/**
+ * Record, on every text container in `tree`, its source range and its text
+ * runs in document order (`data.mcSrc`). Meant to run as an mdast transform
+ * inside the parser, before other transforms split text nodes and drop their
+ * positions; a leaf without a position makes the whole block unmappable
+ * (`runs: null`) rather than guessed at.
+ */
+export function annotateSourceRuns(tree: MdNode): void {
+  const visit = (node: MdNode): void => {
+    if (TEXT_CONTAINERS.has(node.type)) {
+      stamp(node);
+      return; // text containers don't nest
+    }
+    for (const child of node.children ?? []) visit(child);
+  };
+  visit(tree);
+}
+
+function stamp(node: MdNode): void {
+  const start = node.position?.start.offset;
+  const end = node.position?.end.offset;
+  if (start === undefined || end === undefined) return;
+  const runs: SourceRun[] = [];
+  let complete = true;
+  const collect = (children: MdNode[]): void => {
+    for (const child of children) {
+      if (child.type === "text" || child.type === "inlineCode") {
+        const s = child.position?.start.offset;
+        const e = child.position?.end.offset;
+        if (s === undefined || e === undefined) {
+          complete = false;
+          continue;
+        }
+        const kind: RunKind = child.type === "text" ? 0 : 1;
+        const length = visibleTextOf(typeof child.value === "string" ? child.value : "", kind).length;
+        // An empty run adds no text node (ProseMirror has no empty text).
+        if (length > 0) runs.push([s, e, length, kind]);
+      } else if (child.children) {
+        // Emphasis, strong, links, strikethrough: their text is ours. Images,
+        // HTML, breaks and footnote references produce no text and no run.
+        collect(child.children);
+      }
+    }
+  };
+  collect(node.children ?? []);
+  const src: BlockSource = { start, end, runs: complete ? runs : null };
+  node.data = { ...(node.data ?? {}), [SOURCE_ATTR]: src };
+}
+
+// --- aligning one run --------------------------------------------------------
+
+/** Decode a named character reference (`amp` → `&`); undefined when it isn't one. */
+export type DecodeNamed = (name: string) => string | undefined;
+
+const BACKSLASH = 92;
+const AMP = 38;
+const LF = 10;
+const CR = 13;
+const SPACE = 32;
+const TAB = 9;
+const GT = 62;
+const BACKTICK = 96;
+
+// CommonMark's character reference shapes, with micromark's length limits.
+const CHAR_REF = /&(?:#([0-9]{1,7})|#[xX]([0-9a-fA-F]{1,6})|([A-Za-z][A-Za-z0-9]{0,31}));/y;
+
+const isAsciiPunct = (c: number): boolean =>
+  (c >= 33 && c <= 47) || (c >= 58 && c <= 64) || (c >= 91 && c <= 96) || (c >= 123 && c <= 126);
+
+// Source bytes inside a run that produce no text: line endings, the spaces
+// around them, and a continuation line's container prefix (`>`, indentation).
+const isSkippable = (c: number): boolean => c === SPACE || c === TAB || c === LF || c === CR || c === GT;
+
+/** micromark's numeric reference rule: controls, surrogates and out-of-range become U+FFFD. */
+function decodeNumeric(digits: string, base: number): string {
+  const code = Number.parseInt(digits, base);
+  if (
+    code < 9 ||
+    code === 11 ||
+    (code > 13 && code < 32) ||
+    (code > 126 && code < 160) ||
+    (code > 55295 && code < 57344) ||
+    (code > 64975 && code < 65008) ||
+    (code & 65535) === 65535 ||
+    (code & 65535) === 65534 ||
+    code > 1114111
+  ) {
+    return "�";
+  }
+  return String.fromCodePoint(code);
+}
+
+/**
+ * Map each character of `visible` (one run's text as the editor shows it) to
+ * the source span that produced it, writing `[starts[at+i], ends[at+i])`.
+ * Returns false when the text can't be explained by the run's source — the
+ * caller then treats the whole block as unmappable. Never partially guesses:
+ * every character either matches a source byte (or an escape / character
+ * reference) or the run fails.
+ */
+export function alignRun(
+  markdown: string,
+  run: SourceRun,
+  visible: string,
+  decodeNamed: DecodeNamed,
+  starts: Int32Array,
+  ends: Int32Array,
+  at: number,
+): boolean {
+  return run[3] === 1
+    ? alignCode(markdown, run[0], run[1], visible, starts, ends, at)
+    : alignText(markdown, run[0], run[1], visible, decodeNamed, starts, ends, at);
+}
+
+function alignText(
+  md: string,
+  s: number,
+  e: number,
+  vis: string,
+  decodeNamed: DecodeNamed,
+  starts: Int32Array,
+  ends: Int32Array,
+  at: number,
+): boolean {
+  let j = s;
+  let i = 0;
+  while (i < vis.length) {
+    if (j >= e) return false;
+    const c = md.charCodeAt(j);
+    const want = vis.charCodeAt(i);
+    // A backslash escape is one unit: both bytes belong to the character, so
+    // a marker can never land between `\` and `*`. (When the escaped byte
+    // isn't the character we want, the backslash is literal — an autolink.)
+    if (c === BACKSLASH && j + 1 < e && isAsciiPunct(md.charCodeAt(j + 1)) && md.charCodeAt(j + 1) === want) {
+      starts[at + i] = j;
+      ends[at + i] = j + 2;
+      i++;
+      j += 2;
+      continue;
+    }
+    if (c === AMP) {
+      CHAR_REF.lastIndex = j;
+      const m = CHAR_REF.exec(md);
+      if (m && j + m[0].length <= e) {
+        const decoded =
+          m[3] !== undefined
+            ? decodeNamed(m[3])
+            : m[1] !== undefined
+              ? decodeNumeric(m[1], 10)
+              : decodeNumeric(m[2]!, 16);
+        if (decoded && vis.startsWith(decoded, i)) {
+          // Every character the reference decodes to spans the whole reference.
+          for (let k = 0; k < decoded.length; k++) {
+            starts[at + i + k] = j;
+            ends[at + i + k] = j + m[0].length;
+          }
+          i += decoded.length;
+          j += m[0].length;
+          continue;
+        }
+      }
+    }
+    if (c === want) {
+      starts[at + i] = j;
+      ends[at + i] = j + 1;
+      i++;
+      j++;
+      continue;
+    }
+    if (isSkippable(c)) {
+      j++;
+      continue;
+    }
+    return false;
+  }
+  for (; j < e; j++) if (!isSkippable(md.charCodeAt(j))) return false;
+  return true;
+}
+
+function alignCode(
+  md: string,
+  s: number,
+  e: number,
+  vis: string,
+  starts: Int32Array,
+  ends: Int32Array,
+  at: number,
+): boolean {
+  // The fences: the opening backtick run and the matching closing one.
+  let cs = s;
+  while (cs < e && md.charCodeAt(cs) === BACKTICK) cs++;
+  const fence = cs - s;
+  let ce = e - fence;
+  if (fence === 0 || ce < cs) return false;
+  for (let k = ce; k < e; k++) if (md.charCodeAt(k) !== BACKTICK) return false;
+  // CommonMark strips one space (a line ending counts) from each side when
+  // both sides have one and the content isn't all spaces.
+  const isPad = (c: number): boolean => c === SPACE || c === LF || c === CR;
+  if (ce - cs >= 2 && isPad(md.charCodeAt(cs)) && isPad(md.charCodeAt(ce - 1))) {
+    let allPad = true;
+    for (let k = cs; k < ce && allPad; k++) allPad = isPad(md.charCodeAt(k));
+    if (!allPad) {
+      cs++;
+      ce--;
+    }
+  }
+  let j = cs;
+  let i = 0;
+  while (i < vis.length) {
+    if (j >= ce) return false;
+    const c = md.charCodeAt(j);
+    const want = vis.charCodeAt(i);
+    if (c === want) {
+      starts[at + i] = j;
+      ends[at + i] = j + 1;
+      i++;
+      j++;
+    } else if (want === SPACE && (c === LF || c === CR)) {
+      // A line ending inside a code span renders as a space.
+      const width = c === CR && md.charCodeAt(j + 1) === LF ? 2 : 1;
+      starts[at + i] = j;
+      ends[at + i] = j + width;
+      i++;
+      j += width;
+    } else if (c === SPACE || c === TAB || c === GT) {
+      j++; // a continuation line's prefix inside a blockquote or list item
+    } else {
+      return false;
+    }
+  }
+  return j === ce;
+}
+
+// --- the document index ------------------------------------------------------
+
+/** The slice of a ProseMirror node the index reads (so tests can pass plain objects). */
+export interface PmNodeLike {
+  isText: boolean;
+  text?: string | null;
+  nodeSize: number;
+  attrs: Record<string, unknown>;
+  type: { name: string };
+  descendants: (cb: (node: PmNodeLike, pos: number, parent: PmNodeLike | null) => boolean | void) => void;
+}
+
+/** One text container: its characters' editor positions and source spans. */
+interface IndexedBlock {
+  /** Source range of the whole container (prose offsets). */
+  start: number;
+  end: number;
+  /** Every run aligned and the lengths agreed — only then are spans trusted. */
+  mapped: boolean;
+  text: string;
+  /** Editor position of each character. */
+  pos: Int32Array;
+  /** Source span of each character; -1 when the block is unmapped. */
+  srcStart: Int32Array;
+  srcEnd: Int32Array;
+  /** 1 where the character is inline code. */
+  code: Uint8Array;
+}
+
+/** Text the index can't map: outside any annotated container (code blocks, mostly). */
+interface ForeignText {
+  from: number;
+  to: number;
+  text: string;
+  code: boolean;
+}
+
+export interface SourceIndex {
+  markdown: string;
+  blocks: IndexedBlock[];
+  foreign: ForeignText[];
+}
+
+/** Index every text container of `doc` against `markdown`, the string it was parsed from. */
+export function buildSourceIndex(doc: PmNodeLike, markdown: string, decodeNamed: DecodeNamed): SourceIndex {
+  const blocks: IndexedBlock[] = [];
+  const foreign: ForeignText[] = [];
+  doc.descendants((node, pos, parent) => {
+    const src = node.attrs?.[SOURCE_ATTR] as BlockSource | null | undefined;
+    if (src) {
+      blocks.push(indexBlock(node, pos, src, markdown, decodeNamed));
+      return false;
+    }
+    if (node.isText && node.text) {
+      foreign.push({
+        from: pos,
+        to: pos + node.text.length,
+        text: node.text,
+        code: parent?.type.name === "code_block",
+      });
+    }
+    return true;
+  });
+  return { markdown, blocks, foreign };
+}
+
+function indexBlock(
+  node: PmNodeLike,
+  nodePos: number,
+  src: BlockSource,
+  markdown: string,
+  decodeNamed: DecodeNamed,
+): IndexedBlock {
+  let text = "";
+  const positions: number[] = [];
+  node.descendants((child, rel) => {
+    if (child.isText && child.text) {
+      // `rel` is relative to the container's content, which starts one past it.
+      for (let k = 0; k < child.text.length; k++) positions.push(nodePos + 1 + rel + k);
+      text += child.text;
+    }
+    return true;
+  });
+  const n = text.length;
+  const block: IndexedBlock = {
+    start: src.start,
+    end: src.end,
+    mapped: false,
+    text,
+    pos: Int32Array.from(positions),
+    srcStart: new Int32Array(n).fill(-1),
+    srcEnd: new Int32Array(n).fill(-1),
+    code: new Uint8Array(n),
+  };
+  const runs = src.runs;
+  if (!runs) return block;
+  let total = 0;
+  for (const r of runs) total += r[2];
+  if (total !== n) return block;
+  let at = 0;
+  for (const r of runs) {
+    const visible = text.slice(at, at + r[2]);
+    if (!alignRun(markdown, r, visible, decodeNamed, block.srcStart, block.srcEnd, at)) {
+      block.srcStart.fill(-1);
+      block.srcEnd.fill(-1);
+      return block;
+    }
+    if (r[3] === 1) block.code.fill(1, at, at + r[2]);
+    at += r[2];
+  }
+  block.mapped = true;
+  return block;
+}
+
+/**
+ * The editor ranges whose characters came from source `[start, end)`: one per
+ * block the range touches, from its first such character to its last. Empty
+ * when no mapped character lies inside — never an approximation.
+ */
+export function sourceRangeToEditor(index: SourceIndex, start: number, end: number): Array<{ from: number; to: number }> {
+  const out: Array<{ from: number; to: number }> = [];
+  if (!(end > start)) return out;
+  for (const b of index.blocks) {
+    if (!b.mapped || b.end <= start || b.start >= end) continue;
+    let first = -1;
+    let last = -1;
+    for (let i = 0; i < b.text.length; i++) {
+      if (b.srcStart[i]! >= start && b.srcEnd[i]! <= end) {
+        if (first < 0) first = i;
+        last = i;
+      }
+    }
+    if (first >= 0) out.push({ from: b.pos[first]!, to: b.pos[last]! + 1 });
+  }
+  return out;
+}
+
+export type SelectionMapping =
+  | { ok: true; start: number; end: number; text: string }
+  | { ok: false; reason: "empty" | "code" | "unmapped" };
+
+interface SelectedChar {
+  pos: number;
+  ch: string;
+  srcStart: number;
+  srcEnd: number;
+  code: boolean;
+}
+
+/**
+ * Map an editor selection `[from, to)` to the source range under its visible
+ * characters, trimmed of whitespace at both ends. `text` is what the user
+ * sees selected. Refuses rather than guesses: a selection touching code
+ * (the format can't anchor there), or whose first or last character has no
+ * trusted source span.
+ */
+export function editorSelectionToSource(index: SourceIndex, from: number, to: number): SelectionMapping {
+  const chars: SelectedChar[] = [];
+  for (const b of index.blocks) {
+    if (b.pos.length === 0 || b.pos[b.pos.length - 1]! < from || b.pos[0]! >= to) continue;
+    for (let i = 0; i < b.text.length; i++) {
+      const p = b.pos[i]!;
+      if (p < from || p >= to) continue;
+      chars.push({ pos: p, ch: b.text[i]!, srcStart: b.srcStart[i]!, srcEnd: b.srcEnd[i]!, code: b.code[i] === 1 });
+    }
+  }
+  for (const f of index.foreign) {
+    if (f.to <= from || f.from >= to) continue;
+    for (let p = Math.max(f.from, from); p < Math.min(f.to, to); p++) {
+      chars.push({ pos: p, ch: f.text[p - f.from]!, srcStart: -1, srcEnd: -1, code: f.code });
+    }
+  }
+  chars.sort((a, b) => a.pos - b.pos);
+  let lo = 0;
+  let hi = chars.length - 1;
+  while (lo <= hi && /\s/.test(chars[lo]!.ch)) lo++;
+  while (hi >= lo && /\s/.test(chars[hi]!.ch)) hi--;
+  if (lo > hi) return { ok: false, reason: "empty" };
+  for (let i = lo; i <= hi; i++) if (chars[i]!.code) return { ok: false, reason: "code" };
+  const first = chars[lo]!;
+  const last = chars[hi]!;
+  if (first.srcStart < 0 || last.srcEnd < 0 || last.srcEnd <= first.srcStart) {
+    return { ok: false, reason: "unmapped" };
+  }
+  let text = "";
+  for (let i = lo; i <= hi; i++) text += chars[i]!.ch;
+  return { ok: true, start: first.srcStart, end: last.srcEnd, text };
+}

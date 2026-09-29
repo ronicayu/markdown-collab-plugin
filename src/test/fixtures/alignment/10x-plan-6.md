@@ -21,12 +21,6 @@ The lesson for the process is in the ux-review's status section: the
 review inferred "edge" from `frozen` and a separate data model without
 asking. Every plan from here starts with a usage question, not a code sweep.
 
-Added 2026-09-29: most installs come through **Open VSX** (~9.7k downloads —
-Cursor, Windsurf, VSCodium), not the VS Code marketplace. The typical user
-is not on VS Code with Claude Code. That makes P1 the mainstream path, a
-dogfooded Cursor loop (P1.5) the most important unproven thing, and "in VS
-Code" the wrong phrase for any copy.
-
 ## P0 — Correct the story (one version, copy only)
 
 - README: hero path is **terminal**. "Review with Claude" in the empty state
@@ -155,8 +149,7 @@ P0, P1, P2.1–2.3, P3 and P5 shipped in 0.35.13. Deviations:
 - **P2.1** The hook reads only `<cwd>/.vscode/settings.json` and only
   flags files that already have a threads block. A multi-root
   `.code-workspace` isn't read; it stays silent rather than guess.
-- **P2.4** Dropped: suggest mode stays off by default (question 2,
-  answered 2026-09-29).
+- **P2.4** Held for question 2.
 - **P3** Five per file in a multi-file pass, one summary per file.
 - **P4** Spike in `docs/spike-one-view.md`: **go with conditions**.
   Read-only milkdown renders the same content (better on footnotes and
@@ -174,14 +167,6 @@ P0, P1, P2.1–2.3, P3 and P5 shipped in 0.35.13. Deviations:
   suggestions to `withThreads`), and draw.io renders in neither view (the
   mxgraph factory is called without `this` in a strict-mode bundle). Both
   fixed in 0.35.14.
-- **P4 phase A — 0.35.15.** Read-only mode anchored by source position
-  (`docs/one-view-design.md`): 0/164 thread and 0/19 suggestion probes
-  misplaced, 0 prose lines changed per comment on 17 documents; drag bug
-  fixed; all six rendering gaps closed. Behind
-  `markdownCollab.liveEditor.readOnly`, off by default. Remaining before it
-  can be the default surface: an in-view read-only/edit toggle, sidebar
-  parity (filters, suggest switch, keyboard nav, unanchored marking), diff
-  stripes, and the block-splice write-back for edit mode.
 - **P5.2** The "New from Claude" filter chip already derived its name
   per thread; only the Send button, switch and pending text changed.
 - **Not done:** question 5 (marketplace description) — untouched.

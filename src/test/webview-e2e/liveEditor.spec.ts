@@ -51,6 +51,17 @@ test("Reject on a suggestion posts reject-suggestion for that anchor", async ({ 
   });
 });
 
+test("the suggestion's anchored text is highlighted in the document, like a thread's is", async ({ page }) => {
+  // reviewFixture() anchors its one suggestion at the "Release notes" heading.
+  const mark = page.locator(".mdc-anchor-highlight--suggestion");
+  await expect(mark).toHaveCount(1);
+  await expect(mark).toHaveText("Release notes");
+  // A distinct class from a comment thread's highlight, not a variant of it —
+  // the two decoration sets are independent plugins (suggestionHighlightPlugin.ts),
+  // and both thread highlights are still there, unaffected.
+  await expect(page.locator(".mdc-anchor-highlight")).toHaveCount(2);
+});
+
 test("selecting text and adding a comment posts add-comment with the selected anchor", async ({ page }) => {
   // Select "Suggest" from the third paragraph by keyboard — deterministic where
   // a double-click depends on where the word happens to sit. The floating

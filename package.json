@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Claude reviews your Markdown in VS Code — inline comments stored in the file, suggestions you accept or reject, and runs that need no terminal. Works with Cursor, Codex, and Copilot agents too.",
-  "version": "0.35.14",
+  "version": "0.35.15",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -307,6 +307,11 @@
           "type": "string",
           "default": "",
           "description": "Display name attributed to your comments in the live editor. Defaults to your OS username."
+        },
+        "markdownCollab.liveEditor.readOnly": {
+          "type": "boolean",
+          "default": false,
+          "description": "Open the live editor read-only. You can select text and comment, but not edit. A new comment adds only its two invisible markers to the file, and highlights sit exactly where their markers are. Open editors reload when this changes."
         },
         "markdownCollab.plantuml.serverUrl": {
           "type": "string",

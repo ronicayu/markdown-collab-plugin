@@ -30,6 +30,7 @@ import {
   type ParsedDocument,
   type ReviewCheckpoint,
 } from "../inlineComments/format";
+import { opOpenAt } from "../inlineComments/docOps";
 import { isThreadStale } from "../inlineComments/staleness";
 import {
   collapseWs,
@@ -57,6 +58,13 @@ export interface CollabComment {
   anchor: CollabCommentAnchor;
   /** Which occurrence of `anchor.text` the marker wraps, 0-based; -1 if unanchored. */
   anchorOrdinal: number;
+  /**
+   * The anchored span in prose offsets (`proseOf(source)`, the string the
+   * editor parses); -1 when unanchored. The read-only editor highlights by
+   * these instead of searching for `anchor.text` (docs/one-view-design.md).
+   */
+  proseStart: number;
+  proseEnd: number;
   /** The anchored text changed after this thread's last comment (P1.3). */
   stale: boolean;
   replies: Array<{ id: string; author: string; body: string; createdAt: string }>;
@@ -236,6 +244,8 @@ export function commentsOf(source: string): CollabComment[] {
       anchor,
       // Which occurrence of `anchor.text` the marker wraps (-1 when unanchored).
       anchorOrdinal: span ? occurrenceIndex(prose, anchor.text, span.proseStart) : -1,
+      proseStart: span ? span.proseStart : -1,
+      proseEnd: span ? span.proseEnd : -1,
       stale: isThreadStale(parsed, thread.id),
       replies: visible.slice(1).map((r) => ({ id: r.id, author: r.author, body: r.body, createdAt: r.ts })),
     });
@@ -256,6 +266,9 @@ export interface CollabSuggestion {
   anchor: CollabCommentAnchor;
   /** Which occurrence of `anchor.text` the marker wraps, 0-based; -1 if unanchored. */
   anchorOrdinal: number;
+  /** The anchored span in prose offsets, as on `CollabComment`; -1 when unanchored. */
+  proseStart: number;
+  proseEnd: number;
 }
 
 export function suggestionsOf(source: string): CollabSuggestion[] {
@@ -280,6 +293,8 @@ export function suggestionsOf(source: string): CollabSuggestion[] {
       note: s.note,
       anchor,
       anchorOrdinal: span ? occurrenceIndex(prose, anchor.text, span.proseStart) : -1,
+      proseStart: span ? span.proseStart : -1,
+      proseEnd: span ? span.proseEnd : -1,
     });
   }
   return out;
@@ -447,6 +462,47 @@ export function addThreadAtOffsets(
       parsed.checkpoint,
     ),
   };
+}
+
+/**
+ * Add a thread on a prose range the read-only editor mapped from a selection
+ * (docs/one-view-design.md). Unlike `addThreadAtOffsets`, nothing the editor
+ * serialized is adopted: the range is translated to the file's own offsets
+ * through the table `proseOf` builds (the review view's add does the same,
+ * `mutations.ts`), and `opOpenAt` inserts the two markers and the thread
+ * record. Every other byte — prose, other markers, suggestions, the
+ * checkpoint — stays as it was.
+ *
+ * `range.text` is the prose the editor saw under the selection. If the file
+ * has changed since, the offsets would land on other text, so the add is
+ * refused rather than placed.
+ */
+export function addThreadAtProseRange(
+  source: string,
+  range: { start: number; end: number; text: string },
+  comment: { author: string; body: string; ts?: string },
+): { ok: true; source: string } | { ok: false; error: string } {
+  const { prose, proseToSrc } = buildBridge(source);
+  const { start, end } = range;
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > prose.length || end <= start) {
+    return { ok: false, error: "The selection is outside the document." };
+  }
+  if (prose.slice(start, end) !== range.text) {
+    return { ok: false, error: "The document changed since you selected this text. Select it again." };
+  }
+  const srcStart = proseToSrc[start]!;
+  // End boundary: just past the last selected character, so a marker that
+  // follows it in the file stays outside the new span.
+  const srcEnd = proseToSrc[end - 1]! + 1;
+  const ts = comment.ts ?? new Date().toISOString();
+  try {
+    const { next } = opOpenAt(source, srcStart, srcEnd, comment.body, comment.author, () => ts);
+    return { ok: true, source: next };
+  } catch (e) {
+    // addThread refuses code, frontmatter and the threads region; the
+    // integrity gate refuses a write that would break the file.
+    return { ok: false, error: (e as Error).message };
+  }
 }
 
 /** Append a reply to a thread. Returns the rewritten source, or null if the thread is gone. */

@@ -22,6 +22,7 @@ import {
   Editor,
   defaultValueCtx,
   editorViewCtx,
+  editorViewOptionsCtx,
   parserCtx,
   prosePluginsCtx,
   rootCtx,
@@ -34,6 +35,7 @@ import { history } from "@milkdown/plugin-history";
 import { nord } from "@milkdown/theme-nord";
 import "@milkdown/theme-nord/style.css";
 import "./host.css";
+import "./plugins/plugins.css";
 import { Plugin, PluginKey, TextSelection } from "prosemirror-state";
 import { CellSelection } from "@milkdown/prose/tables";
 import { Decoration, DecorationSet } from "prosemirror-view";
@@ -42,6 +44,14 @@ import { buildCommentBody, buildCommentCard, buildComposer, buildSuggestionCard,
 import { sidebarCountLabel, threadSignature } from "../webviewShared/threadListState";
 import { locateAnchorInLiveText, locateNthOccurrence } from "../collab/liveAnchorLocator";
 import { renderedRangeToPmRange, renderedTextOf } from "../collab/pmPositionMapper";
+import {
+  buildSourceIndex,
+  editorSelectionToSource,
+  sourceRangeToEditor,
+  type PmNodeLike,
+  type SourceIndex,
+} from "../collab/sourcePositions";
+import { decodeNamedReference, installSourcePositions } from "./sourcePositionPlugin";
 import { slugifyHeading } from "../inlineComments/linkParse";
 import { resolveImageSrc, type ImageBaseUris } from "../webviewShared/imageSrc";
 import { parseHtmlImage } from "../webviewShared/htmlImage";
@@ -51,6 +61,10 @@ import { smoothScrollIntoView } from "../webviewShared/scrollIntoView";
 // with the same function the outline uses.
 import { buildOutline } from "../webviewShared/outline";
 import { buildOutlinePanel, type OutlinePanelHandle } from "../webviewShared/outlinePanel";
+import { inlineBreakPlugin } from "./plugins/inlineBreakPlugin";
+import { makePlantumlPlugin, setPlantumlConfig, type PlantumlConfig } from "./plugins/plantumlWidgetPlugin";
+import { makeTaskListPlugin } from "./plugins/taskListPlugin";
+import { makeSuggestionHighlightPlugin, SUGGESTION_HIGHLIGHT_KEY } from "./plugins/suggestionHighlightPlugin";
 
 declare function acquireVsCodeApi(): {
   postMessage: (msg: unknown) => void;
@@ -68,6 +82,9 @@ interface CommentSummary {
   anchor: { text: string; contextBefore: string; contextAfter: string };
   /** Which occurrence of `anchor.text` the marker wraps (0-based; -1 if unanchored). */
   anchorOrdinal: number;
+  /** The anchored span in the prose this editor parsed; -1 when unanchored. Read-only mode places by these. */
+  proseStart?: number;
+  proseEnd?: number;
   /** The anchored text changed after this thread's last comment (P1.3). */
   stale?: boolean;
   replies: Array<{ id: string; author: string; body: string; createdAt: string }>;
@@ -84,6 +101,9 @@ interface SuggestionSummary {
   anchor: { text: string; contextBefore: string; contextAfter: string };
   /** Which occurrence of `anchor.text` the marker wraps (0-based; -1 if unanchored). */
   anchorOrdinal: number;
+  /** The anchored span in prose offsets; -1 when unanchored. Read-only mode places by these. */
+  proseStart?: number;
+  proseEnd?: number;
 }
 
 interface InitMessage {
@@ -96,8 +116,12 @@ interface InitMessage {
   pendingLabel?: string;
   frontmatter?: string;
   imageBaseUris?: ImageBaseUris;
+  /** PlantUML server URL + image format, mirroring the review view's own config. */
+  plantuml?: PlantumlConfig;
   /** Source line per prose line; present only when line numbers are on. */
   lineMap?: number[];
+  /** Read-only mode: no editing; comments anchor by source position (docs/one-view-design.md). */
+  readOnly?: boolean;
 }
 
 /** Pushed when the line-number setting or the document's line map changes. */
@@ -240,6 +264,26 @@ let layoutEl: HTMLElement | null = null;
 let collapseToggleEl: HTMLButtonElement | null = null;
 
 let cachedMarkdown = "";
+
+// Read-only mode (docs/one-view-design.md): set once from `init`. The editor
+// never changes its document except by re-parsing a string from the host, so
+// `sourceMarkdown` is always exactly the string the document was parsed from
+// — the string every source position in it indexes. (`cachedMarkdown` is the
+// editor's own serialization in edit mode, which is not that string.)
+let readOnly = false;
+let sourceMarkdown = "";
+let sourceIndexCache: { doc: unknown; index: SourceIndex } | null = null;
+
+/** The character ↔ source map for `doc`, built once per document. */
+function sourceIndexFor(doc: unknown): SourceIndex {
+  if (!sourceIndexCache || sourceIndexCache.doc !== doc || sourceIndexCache.index.markdown !== sourceMarkdown) {
+    sourceIndexCache = {
+      doc,
+      index: buildSourceIndex(doc as PmNodeLike, sourceMarkdown, decodeNamedReference),
+    };
+  }
+  return sourceIndexCache.index;
+}
 
 // Selection-tracking for the Add-Comment buttons. The composer reads
 // from `live → pendingSelection → lastNonEmptySelection` in that order.
@@ -389,6 +433,7 @@ function setOutlineVisible(visible: boolean): void {
 async function init(msg: InitMessage): Promise<void> {
   userName = msg.user.name || "user";
   if (msg.imageBaseUris) imageBaseUris = msg.imageBaseUris;
+  setPlantumlConfig(msg.plantuml);
   lineMap = Array.isArray(msg.lineMap) ? msg.lineMap : null;
 
   buildLayout();
@@ -400,6 +445,8 @@ async function init(msg: InitMessage): Promise<void> {
   sidebarState.pending = new Set(msg.pendingThreadIds ?? []);
   if (msg.pendingLabel) sidebarState.pendingLabel = msg.pendingLabel;
   cachedMarkdown = msg.text;
+  readOnly = msg.readOnly === true;
+  sourceMarkdown = msg.text;
   renderFrontmatter(msg.frontmatter ?? "");
   renderSidebar();
 
@@ -407,13 +454,24 @@ async function init(msg: InitMessage): Promise<void> {
     .config((ctx) => {
       ctx.set(rootCtx, editorContainer!);
       ctx.set(defaultValueCtx, msg.text);
+      if (readOnly) {
+        ctx.update(editorViewOptionsCtx, (prev) => ({ ...prev, editable: () => false }));
+        installSourcePositions(ctx);
+      }
       ctx.update(prosePluginsCtx, (prev) =>
         prev.concat([
           makeFlattenCellSelectionPlugin(),
           makeMermaidPlugin(),
+          makePlantumlPlugin(),
           makeDrawioPlugin(),
           makeImageResolvePlugin(),
           makeAnchorHighlightPlugin(),
+          makeSuggestionHighlightPlugin(
+            () => sidebarState.suggestions,
+            // Read-only: by source position, like threads; edit mode keeps the text search.
+            readOnly ? (doc, s) => sourceRangesFor(doc, s.proseStart, s.proseEnd, s.anchor.text) : undefined,
+          ),
+          makeTaskListPlugin(),
           makeLineNumberPlugin(),
           makeClaudeEditPlugin(),
         ]),
@@ -422,6 +480,9 @@ async function init(msg: InitMessage): Promise<void> {
         // The outline is derived from the markdown, so it follows every edit —
         // including Claude's, which arrive as external changes.
         if (markdown !== prevMarkdown) queueMicrotask(refreshOutline);
+        // Read-only: the document only ever changes by re-parsing the host's
+        // text, so there is never an edit to report.
+        if (readOnly) return;
         if (suppressNextPost) {
           suppressNextPost = false;
           return;
@@ -451,6 +512,7 @@ async function init(msg: InitMessage): Promise<void> {
       });
     })
     .config(nord)
+    .use(inlineBreakPlugin)
     .use(commonmark)
     .use(gfm)
     .use(history)
@@ -462,6 +524,7 @@ async function init(msg: InitMessage): Promise<void> {
   // Claude edits the .md on disk; the two converge through the file, applied
   // via `applyExternalChange`. Undo is prosemirror-history (`.use(history)`).
   forceHighlightRefresh();
+  forceSuggestionHighlightRefresh();
   reportReady(true);
 
   installAddCommentAffordance();
@@ -1164,6 +1227,7 @@ function buildAnchorDecorations(
   _markdownSource: string,
 ): DecorationSet {
   if (comments.length === 0) return DecorationSet.empty;
+  if (readOnly) return buildSourceAnchorDecorations(doc, comments);
   const decos: Decoration[] = [];
   // Resolve every anchor against the LIVE PM doc's textContent (the
   // text the user actually sees). No more mapping through a
@@ -1205,6 +1269,46 @@ function buildAnchorDecorations(
   // Report which anchors actually got highlighted (only when it changes) so an
   // integration test in a real VS Code + Milkdown can assert the outcome — the
   // test host can't read the webview DOM directly.
+  reportHighlights(decoratedIds);
+  return DecorationSet.create(doc as never, decos);
+}
+
+/**
+ * Read-only placement (docs/one-view-design.md): the editor ranges holding
+ * exactly the characters whose source bytes lie inside an anchored span. No
+ * text search, so no wrong occurrence. An anchor without markers has no span
+ * and gets no range — guessing it from its quote is what misplaced them.
+ */
+function sourceRangesFor(
+  doc: unknown,
+  start: number | undefined,
+  end: number | undefined,
+  text: string,
+): Array<{ from: number; to: number }> {
+  // The host derived the span and the text from one version of the file. If
+  // the text isn't at the span in the string this document was parsed from,
+  // the list describes another version — place nothing until the next push.
+  if (start === undefined || end === undefined || start < 0 || end <= start) return [];
+  if (sourceMarkdown.slice(start, end) !== text) return [];
+  return sourceRangeToEditor(sourceIndexFor(doc), start, end);
+}
+
+function buildSourceAnchorDecorations(doc: DocLike, comments: CommentSummary[]): DecorationSet {
+  const decos: Decoration[] = [];
+  const decoratedIds: string[] = [];
+  for (const c of comments) {
+    const ranges = sourceRangesFor(doc, c.proseStart, c.proseEnd, c.anchor.text);
+    if (ranges.length === 0) continue;
+    const attrs: Record<string, string> = c.resolved
+      ? { class: "mdc-anchor-tracked", "data-comment-id": c.id }
+      : {
+          class: "mdc-anchor-highlight",
+          "data-comment-id": c.id,
+          title: `Comment by ${c.author}: ${truncate(c.body, 100)}`,
+        };
+    if (!c.resolved) decoratedIds.push(c.id);
+    for (const r of ranges) decos.push(Decoration.inline(r.from, r.to, attrs, { id: c.id }));
+  }
   reportHighlights(decoratedIds);
   return DecorationSet.create(doc as never, decos);
 }
@@ -1273,6 +1377,15 @@ function forceHighlightRefresh(): void {
   });
 }
 
+/** Same idea as forceHighlightRefresh, for the suggestion-highlight plugin's own decoration set. */
+function forceSuggestionHighlightRefresh(): void {
+  if (!editor) return;
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.setMeta(SUGGESTION_HIGHLIGHT_KEY, { refresh: true }));
+  });
+}
+
 function revealCommentInSidebar(commentId: string): void {
   if (!sidebarEl) return;
   if (sidebarState.collapsed) {
@@ -1320,20 +1433,33 @@ function jumpToAnchor(comment: CommentSummary): void {
   if (!editor) return;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
-    const haystack = renderedTextOf(view.state.doc);
-    const rendered =
-      comment.anchorOrdinal >= 0
-        ? locateNthOccurrence(haystack, comment.anchor.text, comment.anchorOrdinal)
-        : locateAnchorInLiveText(haystack, comment.anchor);
-    if (!rendered) {
-      showToast("Couldn't locate this comment's anchor in the document. The text may have changed.");
-      return;
+    let pmRange: { from: number; to: number } | null = null;
+    if (readOnly) {
+      // Read-only: the highlight already sits at the thread's source position;
+      // jump to it rather than re-finding the text.
+      const set = HIGHLIGHT_PLUGIN_KEY.getState(view.state) as DecorationSet | undefined;
+      const deco = set?.find(undefined, undefined, (spec) => (spec as { id?: string }).id === comment.id)[0];
+      if (!deco) {
+        showToast("Couldn't locate this comment's anchor in the document. The text may have changed.");
+        return;
+      }
+      pmRange = { from: deco.from, to: deco.to };
+    } else {
+      const haystack = renderedTextOf(view.state.doc);
+      const rendered =
+        comment.anchorOrdinal >= 0
+          ? locateNthOccurrence(haystack, comment.anchor.text, comment.anchorOrdinal)
+          : locateAnchorInLiveText(haystack, comment.anchor);
+      if (!rendered) {
+        showToast("Couldn't locate this comment's anchor in the document. The text may have changed.");
+        return;
+      }
+      pmRange = renderedRangeToPmRange(
+        view.state.doc as unknown as Parameters<typeof renderedRangeToPmRange>[0],
+        rendered.start,
+        rendered.end,
+      );
     }
-    const pmRange = renderedRangeToPmRange(
-      view.state.doc as unknown as Parameters<typeof renderedRangeToPmRange>[0],
-      rendered.start,
-      rendered.end,
-    );
     if (!pmRange) return;
     try {
       const dom = view.domAtPos(pmRange.from).node as Element | null;
@@ -1393,13 +1519,27 @@ function makeMermaidPlugin(): Plugin {
     key: mermaidPluginKey,
     state: {
       init: (_cfg, state) => buildMermaidDecorations(state.doc),
-      apply: (tr, oldDecos) => (tr.docChanged ? buildMermaidDecorations(tr.doc) : oldDecos.map(tr.mapping, tr.doc)),
+      apply: (tr, oldDecos) => {
+        if (tr.docChanged) return buildMermaidDecorations(tr.doc);
+        // The async render in makeMermaidWidget dispatches this meta once it
+        // settles, so a diagram that just finished rendering (or just failed)
+        // gets its source hidden/revealed without waiting for the next edit.
+        if (tr.getMeta(mermaidPluginKey) === "refresh") return buildMermaidDecorations(tr.doc);
+        return oldDecos.map(tr.mapping, tr.doc);
+      },
     },
     props: {
       decorations(state) {
         return mermaidPluginKey.getState(state) as DecorationSet | undefined;
       },
     },
+  });
+}
+
+function refreshMermaidDecorations(): void {
+  editor?.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.setMeta(mermaidPluginKey, "refresh"));
   });
 }
 
@@ -1456,39 +1596,66 @@ interface PmNode {
   marks?: Array<{ type: { name: string }; attrs: Record<string, unknown> }>;
   text?: string;
   textContent?: string;
+  attrs?: Record<string, unknown>;
 }
 
-// Returns the drawio href if the paragraph node is "diagram-only" — a
-// single link mark on a single text node, whitespace-padding allowed.
-function paragraphDrawioHref(paragraph: PmNode): string | null {
+interface DrawioParagraphMatch {
+  href: string;
+  /**
+   * Set only for the `![alt](x.drawio)` form: the image node's size, so
+   * `buildDrawioDecorations` can hide the (otherwise broken) `<img>` the
+   * image nodeView would render for a non-image src. The `[text](x.drawio)`
+   * link form has nothing to hide — the link text stays, same as before.
+   */
+  hideChildSize?: number;
+}
+
+// Matches a paragraph that is a diagram reference and nothing else — either
+// `[text](x.drawio)` (a single text node under a link mark) or
+// `![alt](x.drawio)` (a single image node), whitespace-padding allowed. Both
+// forms promote the paragraph to the same inline diagram widget; only the
+// image form also needs its own (would-be-broken) rendering hidden.
+function paragraphDrawioMatch(paragraph: PmNode): DrawioParagraphMatch | null {
   if (paragraph.type.name !== "paragraph") return null;
   const childCount = paragraph.childCount ?? 0;
-  // A diagram-only paragraph is a single text node carrying a link
-  // mark. PM may split text into multiple nodes if marks change, but a
-  // single-link paragraph has exactly one child.
+  // PM may split text into multiple nodes if marks change, but a
+  // single-link (or single-image) paragraph has exactly one child.
   if (childCount !== 1) return null;
   const child = paragraph.child?.(0);
-  if (!child || !child.isText) return null;
-  const linkMark = (child.marks ?? []).find((m) => m.type.name === "link");
-  if (!linkMark) return null;
-  const href = String(linkMark.attrs.href ?? "");
-  if (!isDrawioHrefForWidget(href)) return null;
-  // The visible text can be any caption — we don't constrain it. But
-  // if the user wrote `[label] (file.drawio)` (extra space after `]`),
-  // PM still parses it as a link; we accept that too.
-  return href;
+  if (!child) return null;
+  if (child.isText) {
+    const linkMark = (child.marks ?? []).find((m) => m.type.name === "link");
+    if (!linkMark) return null;
+    const href = String(linkMark.attrs.href ?? "");
+    // The visible text can be any caption — we don't constrain it. But if the
+    // user wrote `[label] (file.drawio)` (extra space after `]`), PM still
+    // parses it as a link; we accept that too.
+    return isDrawioHrefForWidget(href) ? { href } : null;
+  }
+  if (child.type.name === "image") {
+    const src = String(child.attrs?.src ?? "");
+    if (!isDrawioHrefForWidget(src)) return null;
+    return { href: src, hideChildSize: 1 };
+  }
+  return null;
 }
 
 function buildDrawioDecorations(doc: DocLike): DecorationSet {
   const decos: Decoration[] = [];
   doc.descendants((node, pos) => {
-    const href = paragraphDrawioHref(node as unknown as PmNode);
-    if (!href) return true;
+    const match = paragraphDrawioMatch(node as unknown as PmNode);
+    if (!match) return true;
+    if (match.hideChildSize) {
+      const from = pos + 1; // past the paragraph's own opening token
+      decos.push(
+        Decoration.node(from, from + match.hideChildSize, { class: "mdc-drawio-image-hidden" }),
+      );
+    }
     decos.push(
-      Decoration.widget(pos, () => makeDrawioWidget(href), {
+      Decoration.widget(pos, () => makeDrawioWidget(match.href), {
         side: 1,
         ignoreSelection: true,
-        key: `drawio-${pos}-${href}`,
+        key: `drawio-${pos}-${match.href}`,
       }),
     );
     return false;
@@ -1727,6 +1894,15 @@ function buildMermaidDecorations(doc: DocLike): DecorationSet {
     const lang = ((node as unknown as { attrs?: { language?: string } }).attrs ?? {}).language;
     if (lang !== "mermaid") return true;
     const src = (node as unknown as { textContent: string }).textContent;
+    // Hide the fence source once its diagram has rendered — both showing at
+    // once was the bug. Left visible while pending (so there isn't a blank
+    // gap before the first render) and on error (so the source is there to
+    // fix), same as the review view shows nothing but keeps the option to
+    // fall back to source-on-error implicit in "both show" being the bug,
+    // not "source is unreachable".
+    if (mermaidCache.get(src)?.status === "ready") {
+      decos.push(Decoration.node(pos, pos + node.nodeSize, { class: "mdc-mermaid-source-hidden" }));
+    }
     decos.push(
       Decoration.widget(pos, () => makeMermaidWidget(src), {
         side: -1,
@@ -1769,11 +1945,15 @@ function makeMermaidWidget(src: string): HTMLElement {
           mermaidCache.set(src, { src, status: "error", error: message });
           target.innerHTML = `<div class="mdc-mermaid__error">Mermaid render failed: ${escapeHtml(message)}</div>`;
         }
+        // Either branch changed this src's cache status, which decides
+        // whether the fence source is hidden — repaint the decoration set.
+        refreshMermaidDecorations();
       })
       .catch((e) => {
         const message = (e as Error).message;
         mermaidCache.set(src, { src, status: "error", error: message });
         target.innerHTML = `<div class="mdc-mermaid__error">Failed to load mermaid: ${escapeHtml(message)}</div>`;
+        refreshMermaidDecorations();
       });
   }
   return wrap;
@@ -1791,8 +1971,35 @@ function installAddCommentAffordance(): void {
   button.style.display = "none";
   document.body.appendChild(button);
 
+  // A mouse drag-selection in the editor is in progress. The button sits just
+  // right of the selection's end — mid-drag, under the pointer. In a read-only
+  // view nothing clamps the native selection to the editor (there is no
+  // contenteditable host), so dragging over the button extended the selection
+  // to the button's place in the DOM, after the sidebar; ProseMirror ignores a
+  // selection that leaves the editor and kept the prefix it last saw ("Su" for
+  // "Suggest"). So the button waits for the release.
+  let dragging = false;
+  document.addEventListener(
+    "mousedown",
+    (e) => {
+      if (e.button !== 0 || !editorContainer?.contains(e.target as Node)) return;
+      dragging = true;
+      button.style.display = "none";
+    },
+    true,
+  );
+  const endDrag = (): void => {
+    dragging = false;
+  };
+  document.addEventListener("mouseup", endDrag, true);
+  window.addEventListener("blur", endDrag);
+
   const updateButton = (): void => {
     if (!editor || !editorContainer) return;
+    if (dragging) {
+      button.style.display = "none";
+      return;
+    }
     interface ButtonCoords { top: number; left: number }
     let coords: ButtonCoords | null = null;
     editor.action((ctx) => {
@@ -1851,6 +2058,14 @@ function installAddCommentAffordance(): void {
   });
 }
 
+// Why a read-only selection can't take a comment, keyed by the mapper's reason.
+const READ_ONLY_REFUSALS = {
+  empty: "Select some non-whitespace text to comment on.",
+  code: "Comments can't be anchored inside code. Select text outside the code block or code span.",
+  unmapped:
+    "This selection doesn't map exactly to the Markdown source, so the comment could land in the wrong place. Select different text.",
+} as const;
+
 function openComposerForCurrentSelection(): void {
   if (!editor || !composerEl) return;
   let anchor: import("../types").Anchor | null = null;
@@ -1865,6 +2080,9 @@ function openComposerForCurrentSelection(): void {
   // editor text). Sent so the host can place the marker on the right occurrence
   // when offsets are unavailable and the anchor text repeats (table cells).
   let anchorOrdinal = -1;
+  // Read-only mode: the prose span under the selection and the bytes there,
+  // taken now — if the file changes before Save, the host sees they differ.
+  let proseRange: { start: number; end: number; text: string } | null = null;
   let displayText = "";
   let failureReason = "";
   // Three-layer selection lookup — see the comment block on
@@ -1899,6 +2117,23 @@ function openComposerForCurrentSelection(): void {
     }
     if (selFrom === selTo) {
       failureReason = "No text is selected. Highlight some text in the editor first.";
+      return;
+    }
+    if (readOnly) {
+      // Each selected character knows its source bytes, so the comment goes
+      // exactly there — or, when a boundary has no trusted bytes, nowhere.
+      const mapped = editorSelectionToSource(sourceIndexFor(view.state.doc), selFrom, selTo);
+      if (!mapped.ok) {
+        failureReason = READ_ONLY_REFUSALS[mapped.reason];
+        return;
+      }
+      displayText = mapped.text;
+      proseRange = { start: mapped.start, end: mapped.end, text: sourceMarkdown.slice(mapped.start, mapped.end) };
+      anchor = {
+        text: mapped.text,
+        contextBefore: sourceMarkdown.slice(Math.max(0, mapped.start - 24), mapped.start),
+        contextAfter: sourceMarkdown.slice(mapped.end, mapped.end + 24),
+      };
       return;
     }
     // Phase-3 write side: use Milkdown's own serializer to compute
@@ -2002,6 +2237,7 @@ function openComposerForCurrentSelection(): void {
     return;
   }
   const finalAnchor: import("../types").Anchor = anchor;
+  const finalRange = proseRange as { start: number; end: number; text: string } | null;
 
   const preview = displayText.slice(0, 120) + (displayText.length > 120 ? "…" : "");
   composerEl.innerHTML = "";
@@ -2014,6 +2250,20 @@ function openComposerForCurrentSelection(): void {
     onSubmit: (body) => {
       composer.setBusy("Saving…");
       addComposer = composer;
+      if (finalRange) {
+        // Read-only: the host maps this prose span to the file's own bytes and
+        // inserts the two markers there — nothing else is rewritten.
+        vscode.postMessage({
+          type: "add-comment",
+          anchor: finalAnchor,
+          body,
+          author: userName,
+          proseStart: finalRange.start,
+          proseEnd: finalRange.end,
+          proseText: finalRange.text,
+        });
+        return;
+      }
       vscode.postMessage({
         type: "add-comment",
         anchor: finalAnchor,
@@ -2091,6 +2341,8 @@ function applyExternalChange(text: string, changed?: ChangeSummary | null): void
 
   suppressNextPost = true;
   cachedMarkdown = text;
+  // The source positions in the re-parsed document index this string.
+  sourceMarkdown = text;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     const parser = ctx.get(parserCtx);
@@ -2126,6 +2378,7 @@ function applyExternalChange(text: string, changed?: ChangeSummary | null): void
     });
   }
   forceHighlightRefresh();
+  forceSuggestionHighlightRefresh();
 
   // Presence: flash the span Claude edited and name the nearest heading in a
   // clickable notice. Falls back to a plain notice when there's no locatable
@@ -2293,6 +2546,7 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     reconcileComments();
     renderSuggestions();
     forceHighlightRefresh();
+    forceSuggestionHighlightRefresh();
   } else if (msg.type === "add-comment-result") {
     if (msg.ok) {
       addComposer = null;

@@ -136,6 +136,7 @@ export function liveInit(
     ...liveSidecar(source, opts),
     frontmatter: frontmatterOf(source),
     imageBaseUris: { docDir: "", workspaceFolder: null },
+    plantuml: { serverUrl: "https://www.plantuml.com/plantuml", format: "svg" },
   };
 }
 

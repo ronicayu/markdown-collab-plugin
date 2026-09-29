@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.35.15 — 2026-09-29 (GitHub only)
+
+Phase A of the one-view merge (`docs/10x-plan-6.md` P4, design in
+`docs/one-view-design.md`): the live editor gains a read-only mode that is
+as exact as the review view, and renders everything the review view
+renders.
+
+### Added: read-only mode anchored by source position
+
+`markdownCollab.liveEditor.readOnly` (off by default until the views
+merge) opens the live editor without editing. In this mode a remark plugin
+records, for every paragraph, heading and table cell, the source range and
+the text runs it came from; the schema carries that as an attribute, and
+each rendered character is aligned to the source bytes it came from, with
+escapes and character references kept whole so a marker can never split
+them. Nothing is searched, so the wrong-occurrence bug is gone: the host
+sends each comment's and suggestion's source range, and the webview
+decorates exactly those characters. A new comment maps the selection back
+through the same table and is written into the original bytes with
+`opOpenAt`; nothing is re-serialized. A selection that has no text, touches
+code, or starts or ends in a block the table couldn't map is refused with a
+toast rather than guessed; a thread without markers gets no highlight
+rather than a guessed one.
+
+Two gates, both tests against the review view as oracle: 0 of 164 thread
+probes and 0 of 19 suggestion probes misplaced (the old locator: 12 and 1);
+0 prose lines changed by adding a comment on all 17 corpus documents (the
+old path: 3 to 624). The probes and the three fixture documents live under
+`src/test/fixtures/alignment/`. Edit mode is unchanged and still has both
+problems; the block-splice write-back is the next phase.
+
+### Fixed: a drag in the live editor selected only part of the text
+
+The floating "+ Add comment" button appeared under the pointer mid-drag,
+and with `editable: false` nothing kept the browser's selection inside the
+editor, so "Suggest" came back as "Su". The button stays hidden while a
+mouse button is held, in both modes.
+
+### Added: the live editor renders what the review view renders
+
+PlantUML fences render through the same server and format settings, with
+the fence hidden once the image loads. `![alt](diagram.drawio)` renders the
+diagram, not a broken image. A mermaid diagram hides its source once
+rendered and keeps it visible on error. Task-list items show a checkbox,
+clickable in edit mode only. An inline `<br>` renders as a line break — the
+commonmark preset's empty-line plugin was deleting every `<br>` node in the
+tree, not only its own placeholder; a remark plugin registered ahead of it
+reclassifies a `<br>` embedded in a line of text as a real break. A
+suggestion's anchored text is highlighted with its own style, by source
+position in read-only mode.
+
 ## 0.35.14 — 2026-09-29 (GitHub only)
 
 Two bugs the one-view spike (`docs/spike-one-view.md`) found in shipping
