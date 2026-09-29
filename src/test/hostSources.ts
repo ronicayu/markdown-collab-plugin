@@ -8,7 +8,7 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
-/** `extension.ts` plus every command family it wires up. */
+/** `extension.ts`, every command family it wires up, and the review view's router. */
 export const HOST_FILES = [
   "extension.ts",
   "commands/deps.ts",
@@ -17,6 +17,7 @@ export const HOST_FILES = [
   "commands/comments.ts",
   "commands/setup.ts",
   "commands/diagnostics.ts",
+  "commands/reviewViewRouter.ts",
 ];
 
 /** Read one host-side source file, given a path relative to `src/`. */

@@ -14,12 +14,14 @@ import {
 } from "../multiFileReview";
 import { parse as parseInline } from "../inlineComments/format";
 import { InlineCommentsPanel } from "../inlineComments/inlineCommentsPanel";
+import { CollabEditorProvider } from "../collab/collabEditorProvider";
 import { CONVENTIONS_REL, CONVENTIONS_TEMPLATE } from "../reviewConventions";
 import { buildReviewDigest, type DigestFile } from "../reviewDigest";
 import type { ReviewView } from "../reviewView";
 import type { TerminalTracker } from "../transports/terminalTracker";
 import { dispatchReviewPayload } from "./send";
 import type { CommandDeps } from "./deps";
+import type { OpenReviewView } from "./reviewViewRouter";
 
 /**
  * Open the conventions file, creating it from the template first time. The
@@ -280,7 +282,10 @@ async function invokeAskClaudeToReviewMulti(
 
   // Snapshot thread state in every open panel for the selection, so each one
   // scrolls to Claude's first new thread when the pass lands.
-  for (const uri of inFolder) InlineCommentsPanel.notifyReviewPending(uri);
+  for (const uri of inFolder) {
+    InlineCommentsPanel.notifyReviewPending(uri);
+    CollabEditorProvider.notifyReviewPending(uri);
+  }
 
   if (skipped > 0) {
     log.warn("review: files outside the folder were skipped", { skipped, folder: folder.name });
@@ -317,7 +322,7 @@ let unreadWalkCursor: { docPath: string; threadId: string } | null = null;
 async function invokeNextUnreadFromClaude(
   reviewView: ReviewView,
   log: Logger,
-  revealThread: (uri: vscode.Uri, threadId: string) => Promise<void>,
+  openReviewView: OpenReviewView,
 ): Promise<void> {
   await reviewView.ensureScanned();
   const unread = reviewView.listClaudeUnread();
@@ -343,7 +348,7 @@ async function invokeNextUnreadFromClaude(
     // walked is a thread, and a thread's home is the panel that can show its
     // replies and let you answer. This walk used to end on the raw text
     // editor, i.e. on the marker soup the thread is stored in.
-    await revealThread(vscode.Uri.file(next.docPath), next.thread.id);
+    await openReviewView(vscode.Uri.file(next.docPath), { revealThreadId: next.thread.id });
   } catch (e) {
     log.error(`next-unread failed for ${next.docPath}`, e);
     void vscode.window.showErrorMessage(
@@ -405,10 +410,11 @@ async function invokeAskClaudeToReview(
 
   if (trimmedFocus) await pushRecentFocus(globalState, trimmedFocus);
 
-  // Snapshot current thread state in any open InlineCommentsPanel for this
-  // doc BEFORE dispatching. The panel will auto-scroll to the first newly
+  // Snapshot current thread state in any open review view or live editor for
+  // this doc BEFORE dispatching. The panel will auto-scroll to the first newly
   // arrived claude-initiated thread once Claude finishes its pass.
   InlineCommentsPanel.notifyReviewPending(doc.uri);
+  CollabEditorProvider.notifyReviewPending(doc.uri);
 
   await dispatchReviewPayload(
     result.payload,
@@ -520,7 +526,7 @@ function forceModeFrom(opts: { forceMode?: unknown } | undefined): SendMode | un
 /** Register the review-mode family of commands: conventions, summary, "Ask
  * Claude to Review" (single/folder/changes), and the unread walk. */
 export function registerReviewCommands(deps: CommandDeps): void {
-  const { context, reviewLog, reviewView, terminalTracker, revealThread } = deps;
+  const { context, reviewLog, reviewView, terminalTracker, openReviewView } = deps;
 
   context.subscriptions.push(
     vscode.commands.registerCommand("markdownCollab.editReviewConventions", async () => {
@@ -570,7 +576,7 @@ export function registerReviewCommands(deps: CommandDeps): void {
       },
     ),
     vscode.commands.registerCommand("markdownCollab.nextUnreadFromClaude", async () => {
-      await invokeNextUnreadFromClaude(reviewView, reviewLog, revealThread);
+      await invokeNextUnreadFromClaude(reviewView, reviewLog, openReviewView);
     }),
   );
 }

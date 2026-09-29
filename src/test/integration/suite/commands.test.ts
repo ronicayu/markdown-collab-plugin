@@ -14,7 +14,7 @@ import * as crypto from "crypto";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
-import { addThread } from "../../../inlineComments/format";
+import { addThread, parse } from "../../../inlineComments/format";
 
 // Every command the extension registers. The sidecar-era commands
 // (reloadComments, validate, openPreview, createThread, addReply,
@@ -193,20 +193,82 @@ suite("All extension commands", () => {
   });
 
   // ---------------------------------------------------------------------
-  // openInlineCommentsView — the right-click action on .md files
+  // openInlineCommentsView — the review view: the title-bar icon, the
+  // right-click action on .md files, the key. It opens the live editor
+  // (custom editor `markdownCollab.collabEditor`); the previous view, a
+  // webview panel, while `markdownCollab.classicReviewView` is on.
   // ---------------------------------------------------------------------
-  test("openInlineCommentsView opens a webview tab for a .md file", async () => {
+  const LIVE_VIEW_TYPE = "markdownCollab.collabEditor";
+
+  /** Tabs showing the live editor on `uri`, in every group. */
+  const liveTabsFor = (uri: vscode.Uri): vscode.Tab[] =>
+    vscode.window.tabGroups.all
+      .flatMap((g) => g.tabs)
+      .filter(
+        (t) =>
+          t.input instanceof vscode.TabInputCustom &&
+          t.input.viewType === LIVE_VIEW_TYPE &&
+          t.input.uri.toString() === uri.toString(),
+      );
+
+  const activeTabIsLiveEditorOn = (uri: vscode.Uri): boolean => {
+    const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+    return (
+      input instanceof vscode.TabInputCustom &&
+      input.viewType === LIVE_VIEW_TYPE &&
+      input.uri.toString() === uri.toString()
+    );
+  };
+
+  test("openInlineCommentsView opens the review view — the live editor — for a .md file", async () => {
     const uri = await writeFixtureMd("preview-target.md", "# Preview test\n\nHello world.\n");
     try {
-      const countTabs = () =>
-        (vscode.window as unknown as { tabGroups: { all: { tabs: unknown[] }[] } }).tabGroups.all.reduce(
-          (sum, g) => sum + g.tabs.length,
-          0,
-        );
-      const before = countTabs();
       await vscode.commands.executeCommand("markdownCollab.openInlineCommentsView", uri);
-      await waitFor(() => countTabs() > before, 5000, "no tab appeared for the inline comments view");
+      await waitFor(() => activeTabIsLiveEditorOn(uri), 5000, "the active tab isn't the live editor on the file");
+      // A second open brings the same panel forward rather than adding one.
+      const doc = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(doc);
+      await vscode.commands.executeCommand("markdownCollab.openInlineCommentsView", uri);
+      await waitFor(() => activeTabIsLiveEditorOn(uri), 5000, "the second open didn't land on the live editor");
+      assert.strictEqual(liveTabsFor(uri).length, 1, "a second open added another live editor tab");
     } finally {
+      await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+      await rmIfExists(uri.fsPath);
+    }
+  });
+
+  test("revealThread opens the review view on the thread's file", async () => {
+    const body = "# Reveal\n\nThe anchored passage is here.\n";
+    const uri = await writeFixtureWithThread("reveal-target.md", body, "anchored passage");
+    try {
+      const doc = await vscode.workspace.openTextDocument(uri);
+      const threadId = parse(doc.getText()).threads[0].id;
+      await vscode.commands.executeCommand("markdownCollab.revealThread", uri.toString(), threadId);
+      await waitFor(() => activeTabIsLiveEditorOn(uri), 5000, "revealThread didn't open the live editor");
+    } finally {
+      await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+      await rmIfExists(uri.fsPath);
+    }
+  });
+
+  test("with classicReviewView on, openInlineCommentsView opens the previous review view", async () => {
+    const uri = await writeFixtureMd("classic-target.md", "# Classic\n\nHello world.\n");
+    const config = vscode.workspace.getConfiguration("markdownCollab");
+    await config.update("classicReviewView", true, vscode.ConfigurationTarget.Workspace);
+    try {
+      await vscode.commands.executeCommand("markdownCollab.openInlineCommentsView", uri);
+      await waitFor(
+        () => {
+          const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+          // A webview panel's viewType carries a host prefix.
+          return input instanceof vscode.TabInputWebview && input.viewType.endsWith("markdownCollab.inlineCommentsView");
+        },
+        5000,
+        "the active tab isn't the previous review view",
+      );
+      assert.strictEqual(liveTabsFor(uri).length, 0, "the live editor opened although classicReviewView is on");
+    } finally {
+      await config.update("classicReviewView", undefined, vscode.ConfigurationTarget.Workspace);
       await vscode.commands.executeCommand("workbench.action.closeAllEditors");
       await rmIfExists(uri.fsPath);
     }
@@ -270,17 +332,17 @@ suite("All extension commands", () => {
   });
 
   // ---------------------------------------------------------------------
-  // openCollabEditor
+  // openCollabEditor — hidden from the palette, an alias of the review view
   // ---------------------------------------------------------------------
-  test("openCollabEditor opens the live editor for the active .md", async () => {
+  test("openCollabEditor opens the review view for the active .md", async () => {
     const uri = await writeFixtureMd("cmd-collab-target.md", "# Hi\n\nbody\n");
     try {
       const doc = await vscode.workspace.openTextDocument(uri);
       await vscode.window.showTextDocument(doc);
       await vscode.commands.executeCommand("markdownCollab.openCollabEditor", uri);
-      // Single-human + AI editor (no relay); here we just confirm the command
-      // resolves the custom editor without throwing.
+      await waitFor(() => activeTabIsLiveEditorOn(uri), 5000, "openCollabEditor didn't open the live editor");
     } finally {
+      await vscode.commands.executeCommand("workbench.action.closeAllEditors");
       await rmIfExists(uri.fsPath);
     }
   });

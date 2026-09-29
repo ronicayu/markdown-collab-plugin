@@ -201,5 +201,5 @@ test("typing in the read-only editor changes nothing and posts no edit", async (
   await expect(page.locator(".milkdown")).not.toContainText("XYZ");
   // The edit debounce is 250 ms; give it time to (not) fire.
   await page.waitForTimeout(400);
-  expect((await posted(page)).filter((m) => m.type === "edit")).toEqual([]);
+  expect((await posted(page)).filter((m) => m.type === "edit" || m.type === "edit-blocks")).toEqual([]);
 });

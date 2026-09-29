@@ -1,0 +1,464 @@
+/* The comment sidebar (threadSidebar.ts) — 10x-plan-6 P4, sidebar parity.
+ *
+ * The review view's threads-pane rules (src/inlineComments/webview/client.css),
+ * scoped to `.mc-thread-sidebar` so they can sit in a page they don't own: the
+ * live editor's own buttons, Milkdown's DOM, and the shared comment cards all
+ * live alongside. Every selector is wrapped in `:where(.mc-thread-sidebar)`,
+ * which adds no specificity — the rules keep exactly the weight they had in
+ * the review view, so the shared `.mc-btn` classes still win over the bare
+ * `button` rule here the way they always have. */
+
+.mc-thread-sidebar {
+  --bg: var(--vscode-editor-background, #1e1e1e);
+  --fg: var(--vscode-editor-foreground, #d4d4d4);
+  --border: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  --accent: var(--vscode-textLink-foreground, #569cd6);
+  --hl-open: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 209, 102, 0.35));
+  --card-bg: var(--vscode-editorWidget-background, rgba(255, 255, 255, 0.04));
+  --muted: var(--vscode-descriptionForeground, #888);
+  /* Header stays put, the list scrolls — as in the review view. */
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--card-bg);
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.55;
+}
+:where(.mc-thread-sidebar) * { box-sizing: border-box; }
+
+:where(.mc-thread-sidebar) #threads-header {
+  padding: 12px 16px 8px;
+  border-bottom: 1px solid var(--border);
+}
+:where(.mc-thread-sidebar) #threads-header .title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+:where(.mc-thread-sidebar) #threads-header .title-row #thread-count { margin-left: auto; }
+:where(.mc-thread-sidebar) #threads-header h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+:where(.mc-thread-sidebar) #thread-count {
+  font-size: 11px;
+  color: var(--muted);
+}
+/* The host's own title-row buttons (the live editor's outline and add-comment). */
+:where(.mc-thread-sidebar) .mc-title-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+:where(.mc-thread-sidebar) .mc-title-actions:empty { display: none; }
+
+/* --- Toolbar row 1: filter segmented control --------------------------------- */
+:where(.mc-thread-sidebar) .filter-row {
+  margin-top: 8px;
+  display: flex;
+  gap: 2px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+  width: fit-content;
+  max-width: 100%;
+}
+:where(.mc-thread-sidebar) .filter-row .segment {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+:where(.mc-thread-sidebar) .filter-row .segment.active {
+  background: var(--vscode-button-secondaryBackground, color-mix(in srgb, var(--accent) 22%, transparent));
+  color: var(--fg);
+}
+/* The radio stays in the DOM (native radiogroup semantics and arrow keys),
+   invisible but covering the segment and stacked above its text, so it takes
+   the click directly. */
+:where(.mc-thread-sidebar) .filter-row .segment input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+:where(.mc-thread-sidebar) .filter-row .segment:has(input:focus-visible) {
+  outline: 2px solid var(--vscode-focusBorder, var(--accent));
+  outline-offset: 1px;
+}
+:where(.mc-thread-sidebar) .filter-row .segment[hidden] { display: none; }
+
+/* --- Toolbar row 2: Send + switches + overflow menu -------------------------- */
+:where(.mc-thread-sidebar) .actions-row {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+:where(.mc-thread-sidebar) .actions-row #send-to-claude { font-size: 11px; padding: 4px 10px; }
+/* The "…" menu and "?" stay together at the row's end. With the Edit switch
+   the row is wider than the sidebar, and when it wraps they go to the right of
+   the second line — so the menu, which opens right-aligned under "…", never
+   runs off the sidebar's left edge. */
+:where(.mc-thread-sidebar) .actions-row .actions-end {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+:where(.mc-thread-sidebar) .switch-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+:where(.mc-thread-sidebar) button.switch {
+  position: relative;
+  width: 30px;
+  height: 17px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  flex-shrink: 0;
+}
+:where(.mc-thread-sidebar) button.switch::before {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 150ms ease, background 150ms ease;
+}
+:where(.mc-thread-sidebar) button.switch[aria-checked="true"] {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  border-color: var(--accent);
+}
+:where(.mc-thread-sidebar) button.switch[aria-checked="true"]::before {
+  transform: translateX(13px);
+  background: var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  :where(.mc-thread-sidebar) button.switch::before { transition: none; }
+}
+
+/* --- "…" overflow menus: the toolbar's and each thread card's ---------------- */
+:where(.mc-thread-sidebar) .mc-menu-wrap { position: relative; display: inline-flex; }
+:where(.mc-thread-sidebar) .mc-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  padding: 4px;
+  gap: 1px;
+  /* Opaque even without a theme: the menu opens over the thread cards. */
+  background: var(--vscode-menu-background, var(--vscode-editorWidget-background, #252526));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+:where(.mc-thread-sidebar) .mc-menu[hidden] { display: none; }
+:where(.mc-thread-sidebar) .mc-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 6px 8px;
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: 12px;
+  white-space: nowrap;
+}
+:where(.mc-thread-sidebar) .mc-menu button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15)); filter: none; }
+:where(.mc-thread-sidebar) .mc-menu button.danger { color: var(--mc-danger, #e08080); }
+:where(.mc-thread-sidebar) .mc-menu button[hidden] { display: none; }
+
+/* One muted line naming the keys: shown until one of n/p/r/e/o is used, then
+   hidden; "?" brings it back. */
+:where(.mc-thread-sidebar) #keys-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+:where(.mc-thread-sidebar) #keys-hint[hidden] { display: none; }
+:where(.mc-thread-sidebar) #hint-toggle[aria-pressed="true"] { color: var(--fg); }
+
+:where(.mc-thread-sidebar) .skill-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  border-radius: 3px;
+  background: var(--vscode-inputValidation-warningBackground, rgba(255, 196, 0, 0.12));
+  border: 1px solid var(--vscode-inputValidation-warningBorder, rgba(255, 196, 0, 0.45));
+  color: var(--vscode-inputValidation-warningForeground, var(--fg));
+}
+/* `display: flex` outranks the UA `[hidden]` rule. */
+:where(.mc-thread-sidebar) .skill-warning[hidden] { display: none; }
+:where(.mc-thread-sidebar) .skill-warning #skill-warning-text { flex: 1; }
+:where(.mc-thread-sidebar) .skill-warning #skill-install { white-space: nowrap; }
+:where(.mc-thread-sidebar) .skill-warning #skill-install:disabled { opacity: 0.6; cursor: default; }
+
+:where(.mc-thread-sidebar) #claude-summary {
+  margin-top: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent, #6c8eef);
+  border-radius: 4px;
+}
+:where(.mc-thread-sidebar) #claude-summary[hidden] { display: none; }
+:where(.mc-thread-sidebar) #claude-summary #claude-summary-text { color: var(--muted); flex: 1; }
+:where(.mc-thread-sidebar) #claude-summary button { font-size: 11px; }
+
+/* --- Thread list ------------------------------------------------------------- */
+:where(.mc-thread-sidebar) #threads-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+}
+:where(.mc-thread-sidebar) #threads-list .empty {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 16px;
+  text-align: center;
+}
+
+/* Pre-init placeholder: a muted line, gone the instant the first render runs.
+   Unscoped — the page shell shows it before the sidebar exists. */
+.mc-loading {
+  color: var(--vscode-descriptionForeground, #888);
+  font-size: 12px;
+  padding: 16px;
+  margin: 0;
+}
+
+/* First-run empty state: a small card that teaches how to start a thread. */
+:where(.mc-thread-sidebar) .mc-empty-state {
+  margin: 16px 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+:where(.mc-thread-sidebar) .mc-empty-state__headline {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+:where(.mc-thread-sidebar) .mc-empty-state__hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+:where(.mc-thread-sidebar) .thread-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: border-color 150ms, box-shadow 150ms;
+}
+:where(.mc-thread-sidebar) .thread-card:hover { border-color: var(--accent); }
+:where(.mc-thread-sidebar) .thread-card.highlighted {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+:where(.mc-thread-sidebar) .thread-card.resolved { opacity: 0.7; }
+:where(.mc-thread-sidebar) .thread-card.resolved .thread-quote { text-decoration: line-through; }
+:where(.mc-thread-sidebar) .thread-card:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, #0090f1);
+  outline-offset: 2px;
+}
+:where(.mc-thread-sidebar) .thread-card.claude-unread {
+  border-left: 3px solid var(--accent, #6c8eef);
+}
+:where(.mc-thread-sidebar) .thread-card.claude-unread .thread-quote::before {
+  content: "● ";
+  color: var(--accent, #6c8eef);
+  font-weight: bold;
+}
+/* A collapsed thread shows only its quote header. */
+:where(.mc-thread-sidebar) .thread-card.collapsed > :not(.thread-head) { display: none; }
+:where(.mc-thread-sidebar) .thread-card.collapsed .thread-head { margin-bottom: 0; }
+:where(.mc-thread-sidebar) .thread-card.collapsed .thread-actions { display: none; }
+
+:where(.mc-thread-sidebar) .thread-head {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+:where(.mc-thread-sidebar) .thread-head-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+:where(.mc-thread-sidebar) .thread-head-row .thread-quote {
+  flex: 1;
+  min-width: 0;
+}
+:where(.mc-thread-sidebar) .thread-collapse {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 2px;
+  margin-top: 1px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+:where(.mc-thread-sidebar) .thread-collapse:hover { color: var(--fg); }
+:where(.mc-thread-sidebar) .thread-quote {
+  margin: 0;
+  padding: 0 0 0 8px;
+  border-left: 2px solid var(--hl-open);
+  font-size: 12px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+:where(.mc-thread-sidebar) .thread-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-left: 8px;
+}
+
+:where(.mc-thread-sidebar) .badge {
+  display: inline-block;
+  font-size: 10px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-left: 6px;
+  text-transform: uppercase;
+}
+:where(.mc-thread-sidebar) .badge.broken { background: rgba(255, 80, 80, 0.2); border-color: rgba(255, 80, 80, 0.4); color: var(--mc-danger, #ff9090); }
+/* A caution, not an error: the thread is live, its passage moved. */
+:where(.mc-thread-sidebar) .badge.stale { background: rgba(215, 186, 125, 0.22); border-color: rgba(215, 186, 125, 0.45); color: var(--vscode-foreground); }
+
+/* Collapsed until Reply is clicked or `r` is pressed on the highlighted card. */
+:where(.mc-thread-sidebar) .reply-box {
+  display: none;
+  gap: 6px;
+  margin-top: 8px;
+  align-items: flex-start;
+}
+:where(.mc-thread-sidebar) .reply-box.open { display: flex; }
+:where(.mc-thread-sidebar) .thread-card.collapsed .reply-box.open { display: none; }
+:where(.mc-thread-sidebar) .reply-box > .mc-composer { flex: 1; }
+
+/* The add-comment composer the host slots in under the header. */
+:where(.mc-thread-sidebar) .mdc-composer-slot {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+:where(.mc-thread-sidebar) .mdc-composer-slot:empty { display: none; }
+
+:where(.mc-thread-sidebar) button {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #fff);
+  border-radius: 3px;
+  cursor: pointer;
+}
+:where(.mc-thread-sidebar) button:hover:not(:disabled) { filter: brightness(1.1); }
+:where(.mc-thread-sidebar) button:disabled { opacity: 0.45; cursor: not-allowed; }
+:where(.mc-thread-sidebar) button.btn-ghost {
+  background: transparent;
+  color: var(--fg);
+}
+:where(.mc-thread-sidebar) button.btn-ghost.danger { color: var(--mc-danger, #e08080); }
+:where(.mc-thread-sidebar) button.mc-show-more {
+  display: block;
+  width: 100%;
+  margin: 8px 0 4px;
+  padding: 8px;
+  border: 1px dashed var(--border, rgba(128, 128, 128, 0.4));
+  border-radius: 4px;
+}
+:where(.mc-thread-sidebar) button.btn-link {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  color: var(--accent);
+  cursor: pointer;
+}
+:where(.mc-thread-sidebar) button.btn-link.danger { color: var(--mc-danger, #e08080); }
+
+/* "Accept all N" sits above the suggestion cards, deliberately quiet. */
+:where(.mc-thread-sidebar) .accept-all-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 6px;
+}
+:where(.mc-thread-sidebar) .accept-all-row .armed {
+  background: color-mix(in srgb, var(--vscode-charts-yellow, #d7ba7d) 25%, transparent);
+  color: var(--vscode-foreground);
+}
+
+/* --- High-contrast themes: states that read by colour alone get an outline. */
+body.vscode-high-contrast :where(.mc-thread-sidebar) .thread-card,
+body.vscode-high-contrast-light :where(.mc-thread-sidebar) .thread-card {
+  outline: 1px solid var(--vscode-contrastBorder, currentColor);
+  outline-offset: -1px;
+}
+body.vscode-high-contrast :where(.mc-thread-sidebar) .thread-card.highlighted,
+body.vscode-high-contrast-light :where(.mc-thread-sidebar) .thread-card.highlighted {
+  outline: 2px solid var(--vscode-contrastActiveBorder, currentColor);
+}
+body.vscode-high-contrast :where(.mc-thread-sidebar) .filter-row,
+body.vscode-high-contrast-light :where(.mc-thread-sidebar) .filter-row {
+  outline: 1px solid var(--vscode-contrastBorder, currentColor);
+}
+body.vscode-high-contrast :where(.mc-thread-sidebar) .filter-row .segment.active,
+body.vscode-high-contrast-light :where(.mc-thread-sidebar) .filter-row .segment.active {
+  outline: 1px solid var(--vscode-contrastActiveBorder, currentColor);
+}
+body.vscode-high-contrast :where(.mc-thread-sidebar) .mc-menu,
+body.vscode-high-contrast-light :where(.mc-thread-sidebar) .mc-menu {
+  outline: 1px solid var(--vscode-contrastBorder, currentColor);
+}
+body.vscode-high-contrast :where(.mc-thread-sidebar) button.switch,
+body.vscode-high-contrast-light :where(.mc-thread-sidebar) button.switch {
+  outline: 1px solid var(--vscode-contrastBorder, currentColor);
+}

@@ -8,7 +8,7 @@
 import { expect, test } from "@playwright/test";
 import { addThread, parse, replaceThread, type InlineThread } from "../../inlineComments/format";
 import { serialize } from "../../inlineComments/serializeState";
-import { awaitPosted, bootInlineView, bootLiveEditor, posted } from "./harness";
+import { awaitPosted, bootInlineView, bootLiveEditor } from "./harness";
 import { liveSidecar } from "./fixtures";
 
 const TS = "2026-01-01T00:00:00.000Z";
@@ -85,10 +85,10 @@ test.describe("inline comments view", () => {
 });
 
 test.describe("live editor", () => {
-  // The bug: updates take an incremental path that refreshes the counts
-  // without re-rendering the toolbar, so the button kept its old label and
-  // stayed visible after the removal had already happened. The original spec
-  // only checked the first render, which is why it passed throughout.
+  // The same sidebar as the review view now (10x-plan-6 P4): the button lives
+  // in the "…" menu and posts the review view's message. Updates re-render the
+  // list, and the button has to follow them — the old live sidebar once kept a
+  // stale "Remove N resolved" after the removal had already happened.
   test("the button follows an incremental update, not just the first render", async ({ page }) => {
     const src = fixture(2, 1);
     await bootLiveEditor(page, {
@@ -98,8 +98,8 @@ test.describe("live editor", () => {
       frontmatter: "",
       imageBaseUris: { docDir: "", workspaceFolder: null },
     });
-    const btn = page.locator("[data-action='remove-resolved']");
-    await expect(btn).toContainText("Remove 2 resolved");
+    const btn = page.locator("#remove-resolved");
+    await expect(btn).toHaveText("Remove 2 resolved");
 
     // Exactly what the host pushes after the removal lands: the same message
     // shape, with the resolved threads gone.
@@ -108,6 +108,7 @@ test.describe("live editor", () => {
       (payload) => window.postMessage({ type: "sidecar-changed", ...payload }, "*"),
       liveSidecar(after) as unknown as Record<string, unknown>,
     );
+    await page.locator("#overflow-menu-btn").click();
     await expect(btn).toBeHidden();
   });
 
@@ -120,13 +121,13 @@ test.describe("live editor", () => {
       frontmatter: "",
       imageBaseUris: { docDir: "", workspaceFolder: null },
     });
-    await expect(page.locator("[data-action='remove-resolved']")).toContainText("Remove 3 resolved");
+    await expect(page.locator("#remove-resolved")).toHaveText("Remove 3 resolved");
     const after = fixture(1, 1);
     await page.evaluate(
       (payload) => window.postMessage({ type: "sidecar-changed", ...payload }, "*"),
       liveSidecar(after) as unknown as Record<string, unknown>,
     );
-    await expect(page.locator("[data-action='remove-resolved']")).toContainText("Remove 1 resolved");
+    await expect(page.locator("#remove-resolved")).toHaveText("Remove 1 resolved");
   });
 
   test("offers the button only when something is resolved", async ({ page }) => {
@@ -138,10 +139,8 @@ test.describe("live editor", () => {
       frontmatter: "",
       imageBaseUris: { docDir: "", workspaceFolder: null },
     });
-    // Present but hidden, rather than absent: the incremental update path
-    // finds elements by selector, so a button that only exists when it is
-    // needed can never be told that it no longer is.
-    await expect(page.locator("[data-action='remove-resolved']")).toBeHidden();
+    await page.locator("#overflow-menu-btn").click();
+    await expect(page.locator("#remove-resolved")).toBeHidden();
   });
 
   test("asks the host to run the command", async ({ page }) => {
@@ -153,11 +152,11 @@ test.describe("live editor", () => {
       frontmatter: "",
       imageBaseUris: { docDir: "", workspaceFolder: null },
     });
-    const btn = page.locator("[data-action='remove-resolved']");
-    await expect(btn).toContainText("Remove 2 resolved");
+    await page.locator("#overflow-menu-btn").click();
+    const btn = page.locator("#remove-resolved");
+    await expect(btn).toHaveText("Remove 2 resolved");
     await btn.click();
-
-    const invoked = (await posted(page)).filter((m) => m.type === "invoke-command");
-    expect(invoked.pop()).toEqual({ type: "invoke-command", command: "remove-resolved" });
+    // The host owns the confirm and the write; the webview only asks.
+    expect(await awaitPosted(page, "remove-resolved")).toEqual({ type: "remove-resolved" });
   });
 });

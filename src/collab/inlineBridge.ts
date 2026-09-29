@@ -20,6 +20,7 @@
 import {
   addThread,
   appendReply,
+  isInCode,
   mintThreadId,
   parse,
   replaceThread,
@@ -38,6 +39,14 @@ import {
   locateNthOccurrence,
   normalizeWs,
 } from "./liveAnchorLocator";
+import type { BlockEdit } from "./blockEdits";
+import {
+  editorBlockCount,
+  markdownBlocks,
+  spliceMarkdownBlocks,
+  type BlockSplice,
+  type MarkdownBlock,
+} from "./sourcePositions";
 
 /** Anchor shape exchanged with the webview (markdown-source space). */
 export interface CollabCommentAnchor {
@@ -128,7 +137,18 @@ interface Bridge {
  * (the collab editor shows and edits frontmatter as ordinary content).
  * Produces the prose plus the offset map needed to translate back.
  */
+// The last bridge built. A push to the webview runs `proseOf`, `commentsOf`
+// and `suggestionsOf` on the same source in a row, and edit mode splices
+// against it once per keystroke; nothing mutates a bridge once built.
+let lastBridge: Bridge | null = null;
+
 function buildBridge(source: string): Bridge {
+  if (lastBridge && lastBridge.parsed.source === source) return lastBridge;
+  lastBridge = computeBridge(source);
+  return lastBridge;
+}
+
+function computeBridge(source: string): Bridge {
   const parsed = parse(source);
 
   // Skip intervals: every anchor marker, plus the whole threads region
@@ -901,4 +921,421 @@ export function placeAnchorsInProse(
     if (loc) placements.push({ id: s.anchorId, start: loc.start, end: loc.end });
   }
   return assembleMarkedSource(oldSource, newProse, parsed.threads, parsed.suggestions, parsed.checkpoint, placements);
+}
+
+// --- edit mode: block-splice write-back --------------------------------------
+//
+// docs/one-view-design.md, "Phase B: edit mode". The webview reports which
+// top-level blocks an edit changed and their new Markdown (`BlockEdit`); this
+// splices each into the file's own bytes at that block's range. Every other
+// byte — frontmatter, the threads region, every other block and its markers —
+// stays as it was. Nothing here ever adopts a whole-document serialization.
+
+export type BlockEditResult =
+  | {
+      ok: true;
+      source: string;
+      /** The span of the old source that changed and its new text: the smallest write. */
+      range: { start: number; end: number; text: string };
+      /** The new prose and its block table, the base for the next edit. */
+      prose: string;
+      blocks: MarkdownBlock[];
+      /** The new text parses into other blocks than the editor shows: re-render it from the file. */
+      restructured: boolean;
+      /** Anchors inside a changed block whose text couldn't be found again; their markers are gone. */
+      unanchored: string[];
+    }
+  | { ok: false; error: string };
+
+const lineStartOf = (text: string, at: number): number => text.lastIndexOf("\n", at - 1) + 1;
+
+/** `at`, moved past trailing blanks when only blanks follow it on its line. */
+function lineEndOf(text: string, at: number): number {
+  let j = at;
+  while (text[j] === " " || text[j] === "\t") j++;
+  return j === text.length || text[j] === "\n" || text[j] === "\r" ? j : at;
+}
+
+/** Index of the first difference between two lists, or null when equal. */
+function firstDifference(a: readonly string[], b: readonly string[]): number | null {
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) if (a[i] !== b[i]) return i;
+  return null;
+}
+
+/**
+ * Keep a re-serialized list's own marker. The serializer writes every bullet
+ * as `*` and every ordered delimiter as `.`; beside a list that uses that
+ * marker, the edited list would merge into it (CommonMark only separates two
+ * adjacent lists by a change of marker), and elsewhere it's churn on every
+ * item line. Only lines at column 0 are item markers of the list itself — the
+ * serializer indents everything inside an item.
+ */
+function keepListMarker(prose: string, block: MarkdownBlock, text: string): string {
+  const ordered = block.type === "ordered_list";
+  const head = prose.slice(block.start, block.start + 11);
+  const want = ordered ? /^\d{1,9}([.)])/.exec(head)?.[1] : /^[-+*]/.exec(head)?.[0];
+  if (!want) return text;
+  const item = ordered ? /^(\d{1,9})([.)])(?=[ \t]|$)/ : /^([-+*])(?=[ \t]|$)/;
+  let changed = false;
+  const lines = text.split("\n").map((line) => {
+    const m = item.exec(line);
+    const have = m ? (ordered ? m[2] : m[1]) : undefined;
+    if (!m || have === want) return line;
+    changed = true;
+    return ordered ? m[1] + want + line.slice(m[0].length) : want + line.slice(1);
+  });
+  if (!changed) return text;
+  const rewritten = lines.join("\n");
+  // Only if it still parses as the one list it was.
+  const check = markdownBlocks(rewritten);
+  return check.length === 1 && check[0]!.type === block.type ? rewritten : text;
+}
+
+/**
+ * Where a marker whose partner lies outside the changed block goes in the new
+ * text: through the edit envelope, and when the edit straddles it, to the edge
+ * that keeps the edited text inside the span.
+ */
+function mapMarker(edit: EditEnvelope, at: number, isOpen: boolean, length: number): number {
+  const mapped =
+    at <= edit.prefix
+      ? at
+      : at >= edit.oldSuffixStart
+        ? at + edit.delta
+        : isOpen
+          ? edit.prefix
+          : edit.oldSuffixStart + edit.delta;
+  return Math.max(0, Math.min(length, mapped));
+}
+
+/** Whether `text` has `<!--mc:` outside code, where the format would read it as a marker. */
+function carriesMarker(text: string): boolean {
+  for (let at = text.indexOf("<!--mc:"); at >= 0; at = text.indexOf("<!--mc:", at + 1)) {
+    if (!isInCode(text, at, at + 7)) return true;
+  }
+  return false;
+}
+
+// Words, runs of whitespace, and single other characters: re-padding a table
+// or splitting `**a `b`**` into `**a** **`b`**` changes only the tokens of
+// the markup and the padding, never a word.
+const TOKEN = /[\p{L}\p{N}]+|\s+|[^\p{L}\p{N}\s]/gu;
+
+/**
+ * Where each character of `a` is in `b`: `map[i]` is its offset there, or -1
+ * when the token holding it changed. The common prefix and suffix map
+ * directly; the rest is a shortest token diff (Myers). Null when the texts
+ * differ in more tokens than are worth aligning.
+ */
+function alignTexts(a: string, b: string): Int32Array | null {
+  const map = new Int32Array(a.length).fill(-1);
+  const env = diffEnvelope(a, b);
+  for (let i = 0; i < env.prefix; i++) map[i] = i;
+  for (let i = env.oldSuffixStart; i < a.length; i++) map[i] = i + env.delta;
+  const tokens = (text: string, from: number, to: number): Array<{ at: number; text: string }> =>
+    [...text.slice(from, to).matchAll(TOKEN)].map((m) => ({ at: from + m.index!, text: m[0] }));
+  const x = tokens(a, env.prefix, env.oldSuffixStart);
+  const y = tokens(b, env.prefix, env.oldSuffixStart + env.delta);
+  const pairs = matchTokens(x.map((t) => t.text), y.map((t) => t.text), 1000);
+  if (!pairs) return null;
+  for (const [i, j] of pairs) {
+    for (let c = 0; c < x[i]!.text.length; c++) map[x[i]!.at + c] = y[j]!.at + c;
+  }
+  return map;
+}
+
+/** Matched index pairs of a shortest edit script between `x` and `y`, or null past `maxEdits`. */
+function matchTokens(x: readonly string[], y: readonly string[], maxEdits: number): Array<[number, number]> | null {
+  const n = x.length;
+  const m = y.length;
+  const limit = Math.min(n + m, maxEdits);
+  const off = limit + 1;
+  const v = new Int32Array(2 * off + 1);
+  // trace[d] holds v[-(d+1) .. d+1] as it was before step d.
+  const trace: Int32Array[] = [];
+  const at = (t: Int32Array, d: number, k: number): number => t[k + d + 1]!;
+  for (let d = 0; d <= limit; d++) {
+    trace.push(v.slice(off - d - 1, off + d + 2));
+    for (let k = -d; k <= d; k += 2) {
+      let i = k === -d || (k !== d && v[off + k - 1]! < v[off + k + 1]!) ? v[off + k + 1]! : v[off + k - 1]! + 1;
+      let j = i - k;
+      while (i < n && j < m && x[i] === y[j]) {
+        i++;
+        j++;
+      }
+      v[off + k] = i;
+      if (i >= n && j >= m) {
+        const pairs: Array<[number, number]> = [];
+        let xi = n;
+        let yi = m;
+        for (let e = d; e > 0; e--) {
+          const t = trace[e]!;
+          const kk = xi - yi;
+          const prevK = kk === -e || (kk !== e && at(t, e, kk - 1) < at(t, e, kk + 1)) ? kk + 1 : kk - 1;
+          const prevX = at(t, e, prevK);
+          const prevY = prevX - prevK;
+          while (xi > prevX && yi > prevY) pairs.push([--xi, --yi]);
+          xi = prevX;
+          yi = prevY;
+        }
+        while (xi > 0 && yi > 0) pairs.push([--xi, --yi]);
+        return pairs;
+      }
+    }
+  }
+  return null;
+}
+
+interface PlannedSplice {
+  edit: BlockEdit;
+  /** Replaced prose range and the text replacing it (separators included). */
+  ps: number;
+  pe: number;
+  text: string;
+  /** Replaced source range: the prose range widened over markers glued to its edges. */
+  ss: number;
+  se: number;
+}
+
+/**
+ * Apply the live editor's block edits to `source`. `blocks` is the table of
+ * `proseOf(source)` (`markdownBlocks`), passed in when the caller has it.
+ *
+ * Refuses — changing nothing — when the editor's blocks aren't the table's
+ * (`baseTypes`), when an edit is malformed, when a range reaches frontmatter
+ * or the threads region, or when new text carries a review marker.
+ *
+ * Markers: an anchor with both markers in a changed block is re-placed in the
+ * new text by the same tiered text matching `mergeProseEdit` uses, on that
+ * block's text only — or loses its markers when the text is gone. An anchor
+ * with one marker outside keeps that one and maps the other. A thread with no
+ * markers whose quote is unique in the new prose and falls inside the block
+ * gets them back (the text returned by undo).
+ */
+export function applyBlockEdits(
+  source: string,
+  request: { baseTypes: readonly string[]; edits: readonly BlockEdit[] },
+  blocks: readonly MarkdownBlock[] = markdownBlocks(proseOf(source)),
+): BlockEditResult {
+  const { prose, proseToSrc, parsed, anchorsInProse } = buildBridge(source);
+  const count = editorBlockCount(blocks);
+  const fileTypes = blocks.slice(0, count).map((b) => b.type);
+  const differ = firstDifference(fileTypes, request.baseTypes);
+  if (differ !== null) {
+    return {
+      ok: false,
+      error:
+        `the editor shows ${request.baseTypes.length} blocks and the file has ${count}; ` +
+        `block ${differ + 1} is ${request.baseTypes[differ] ?? "missing"} in the editor ` +
+        `and ${fileTypes[differ] ?? "missing"} in the file`,
+    };
+  }
+  if (request.edits.length === 0) return { ok: false, error: "no edits" };
+  let prevTo = -1;
+  for (const e of request.edits) {
+    const valid =
+      Number.isInteger(e.from) &&
+      Number.isInteger(e.to) &&
+      e.from > prevTo &&
+      e.to >= e.from &&
+      e.to <= count &&
+      typeof e.markdown === "string" &&
+      Array.isArray(e.types) &&
+      (e.markdown === "") === (e.types.length === 0) &&
+      !(e.from === e.to && e.markdown === "");
+    if (!valid) return { ok: false, error: "the edit doesn't describe blocks of this document" };
+    if (carriesMarker(e.markdown)) return { ok: false, error: "the new text contains a review marker" };
+    prevTo = e.to;
+  }
+
+  // Markers glued to a range's edges belong to the block inside it.
+  const markerFrom = new Map<number, number>();
+  const markerTo = new Map<number, number>();
+  for (const r of parsed.anchors.values()) {
+    markerFrom.set(r.openStart, r.openEnd);
+    markerFrom.set(r.closeStart, r.closeEnd);
+    markerTo.set(r.openEnd, r.openStart);
+    markerTo.set(r.closeEnd, r.closeStart);
+  }
+  const gluedAfter = (p: number): number => {
+    for (let e = markerFrom.get(p); e !== undefined; e = markerFrom.get(p)) p = e;
+    return p;
+  };
+  const gluedBefore = (p: number): number => {
+    for (let s = markerTo.get(p); s !== undefined; s = markerTo.get(p)) p = s;
+    return p;
+  };
+  const bodyStart = parsed.frontmatter?.end ?? 0;
+  const fenced = [parsed.frontmatter, parsed.threadsRegion].filter((r): r is { start: number; end: number } => !!r);
+
+  const planned: PlannedSplice[] = [];
+  for (const e of request.edits) {
+    let ps: number;
+    let pe: number;
+    let text = e.markdown;
+    let after = false;
+    if (e.from < e.to) {
+      ps = lineStartOf(prose, blocks[e.from]!.start);
+      pe = lineEndOf(prose, blocks[e.to - 1]!.end);
+      if (text === "") {
+        // A deletion takes one separator with it, or the blank lines around
+        // the gap would pile up.
+        if (e.from > 0) ps = lineEndOf(prose, blocks[e.from - 1]!.end);
+        else if (e.to < blocks.length) pe = lineStartOf(prose, blocks[e.to]!.start);
+      } else if (e.to === e.from + 1 && e.types.length === 1 && e.types[0] === blocks[e.from]!.type) {
+        if (e.types[0] === "bullet_list" || e.types[0] === "ordered_list") text = keepListMarker(prose, blocks[e.from]!, text);
+      }
+    } else if (e.from < blocks.length) {
+      ps = pe = lineStartOf(prose, blocks[e.from]!.start);
+      text = `${text}\n\n`;
+    } else if (e.from > 0) {
+      ps = pe = lineEndOf(prose, blocks[e.from - 1]!.end);
+      text = `\n\n${text}`;
+      after = true;
+    } else {
+      ps = pe = 0; // an empty document
+    }
+    let ss: number;
+    let se: number;
+    if (ps < pe) {
+      ss = gluedBefore(proseToSrc[ps]!);
+      se = gluedAfter(proseToSrc[pe - 1]! + 1);
+    } else {
+      // An insertion goes between the previous block's markers and the next one's.
+      ss = se = ps > 0 ? proseToSrc[ps - 1]! + 1 : bodyStart;
+      if (after) ss = se = gluedAfter(ss);
+    }
+    const reaches = fenced.some((r) => (ss < se ? ss < r.end && se > r.start : ss > r.start && ss < r.end));
+    if (reaches) return { ok: false, error: "the edit reaches the frontmatter or the comment threads" };
+    planned.push({ edit: e, ps, pe, text, ss, se });
+  }
+
+  let newProse = prose;
+  for (let i = planned.length - 1; i >= 0; i--) {
+    const p = planned[i]!;
+    newProse = newProse.slice(0, p.ps) + p.text + newProse.slice(p.pe);
+  }
+
+  // Threads and suggestions without markers, for recovery by quote.
+  const loose: Array<{ id: string; quote: string }> = [
+    ...parsed.threads.filter((t) => !parsed.anchors.has(t.id)).map((t) => ({ id: t.id, quote: t.quote })),
+    ...parsed.suggestions.filter((s) => !parsed.anchors.has(s.anchorId)).map((s) => ({ id: s.anchorId, quote: s.original })),
+  ];
+  const recovered = new Set<string>();
+
+  const unanchored: string[] = [];
+  const marked: string[] = [];
+  let shift = 0;
+  for (const p of planned) {
+    const oldText = prose.slice(p.ps, p.pe);
+    const edit = diffEnvelope(oldText, p.text);
+    // Where each old character went, when a token diff can tell: exact for
+    // every word the edit and the serializer's normalization left alone.
+    const aligned = oldText.length > 0 ? alignTexts(oldText, p.text) : null;
+    let collapsedNew: { normalized: string; map: number[] } | null = null;
+    const collapsed = (): { normalized: string; map: number[] } => (collapsedNew ??= collapseWs(p.text));
+    const spans: Array<{ id: string; start: number; end: number }> = [];
+    // Every marker to write. `outer` orders markers at one position: an
+    // opening by its span's end, a closing by its span's start, so the
+    // enclosing span opens first and closes last. A marker whose partner lies
+    // outside the block encloses everything in it.
+    const points: Array<{ at: number; close: boolean; outer: number; marker: string }> = [];
+    for (const [id, r] of parsed.anchors) {
+      const openIn = r.openStart >= p.ss && r.openEnd <= p.se;
+      const closeIn = r.closeStart >= p.ss && r.closeEnd <= p.se;
+      if (!openIn && !closeIn) continue;
+      const span = anchorsInProse.get(id) ?? { proseStart: p.ps, proseEnd: p.ps };
+      const local = { proseStart: span.proseStart - p.ps, proseEnd: span.proseEnd - p.ps };
+      if (openIn && closeIn) {
+        let loc: { start: number; end: number } | null = null;
+        if (local.proseEnd > local.proseStart) {
+          const s0 = aligned?.[local.proseStart] ?? -1;
+          const e0 = aligned?.[local.proseEnd - 1] ?? -1;
+          loc = s0 >= 0 && e0 >= s0 ? { start: s0, end: e0 + 1 } : reanchorThreadByText(oldText, p.text, collapsed, edit, local);
+        }
+        if (loc) spans.push({ id, start: startPastHeadingPrefix(p.text, loc.start, loc.end), end: loc.end });
+        else unanchored.push(id);
+      } else if (openIn) {
+        const s0 = aligned?.[local.proseStart] ?? -1;
+        const at = s0 >= 0 ? s0 : mapMarker(edit, local.proseStart, true, p.text.length);
+        points.push({ at, close: false, outer: Infinity, marker: openMarker(id) });
+      } else {
+        const e0 = local.proseEnd > 0 ? (aligned?.[local.proseEnd - 1] ?? -1) : -1;
+        const at = e0 >= 0 ? e0 + 1 : mapMarker(edit, local.proseEnd, false, p.text.length);
+        points.push({ at, close: true, outer: -Infinity, marker: closeMarker(id) });
+      }
+    }
+    const blockStart = p.ps + shift;
+    for (const l of loose) {
+      if (recovered.has(l.id)) continue;
+      const hit = recoverUnanchoredByQuote(newProse, l.quote);
+      if (!hit || hit.start < blockStart || hit.end > blockStart + p.text.length) continue;
+      spans.push({ id: l.id, start: hit.start - blockStart, end: hit.end - blockStart });
+      recovered.add(l.id);
+    }
+    // Markers must nest: a span may sit inside another (the file had it so),
+    // but one that crosses a kept span's edge loses its markers.
+    spans.sort((a, b) => a.start - b.start || b.end - a.end);
+    const open: number[] = [];
+    for (const s of spans) {
+      while (open.length > 0 && open[open.length - 1]! <= s.start) open.pop();
+      if (s.end <= s.start || (open.length > 0 && s.end > open[open.length - 1]!)) {
+        unanchored.push(s.id);
+        continue;
+      }
+      open.push(s.end);
+      points.push(
+        { at: s.start, close: false, outer: s.end, marker: openMarker(s.id) },
+        { at: s.end, close: true, outer: s.start, marker: closeMarker(s.id) },
+      );
+    }
+    // At one position: closing markers first (adjacent spans don't swallow
+    // each other); among openings the enclosing span first, among closings
+    // the enclosed one first.
+    points.sort((a, b) => a.at - b.at || Number(b.close) - Number(a.close) || b.outer - a.outer);
+    let out = "";
+    let cursor = 0;
+    for (const m of points) {
+      out += p.text.slice(cursor, m.at) + m.marker;
+      cursor = m.at;
+    }
+    marked.push(out + p.text.slice(cursor));
+    shift += p.text.length - (p.pe - p.ps);
+  }
+
+  let next = source;
+  for (let i = planned.length - 1; i >= 0; i--) {
+    next = next.slice(0, planned[i]!.ss) + marked[i]! + next.slice(planned[i]!.se);
+  }
+  const first = planned[0]!;
+  const last = planned[planned.length - 1]!;
+  const range = {
+    start: first.ss,
+    end: last.se,
+    text: next.slice(first.ss, last.se + next.length - source.length),
+  };
+
+  // The rest of the table is unchanged when each splice's window re-parses to
+  // its neighbours and its new blocks; otherwise parse it all and compare.
+  const splices: BlockSplice[] = planned.map((p) => ({
+    from: p.edit.from,
+    to: p.edit.to,
+    start: p.ps,
+    end: p.pe,
+    length: p.text.length,
+    types: p.edit.types,
+  }));
+  let table = spliceMarkdownBlocks(blocks, newProse, splices);
+  let restructured = false;
+  if (!table) {
+    table = markdownBlocks(newProse);
+    const expected = [...request.baseTypes];
+    for (let i = request.edits.length - 1; i >= 0; i--) {
+      const e = request.edits[i]!;
+      expected.splice(e.from, e.to - e.from, ...e.types);
+    }
+    restructured = firstDifference(table.slice(0, editorBlockCount(table)).map((b) => b.type), expected) !== null;
+  }
+  return { ok: true, source: next, range, prose: newProse, blocks: table, restructured, unanchored };
 }

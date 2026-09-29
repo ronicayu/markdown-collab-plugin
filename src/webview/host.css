@@ -668,6 +668,13 @@ body { overflow: hidden; }
 .mdc-anchor-highlight:hover {
   background: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 220, 0, 0.45));
 }
+/* A resolved thread, highlighted when the sidebar's filter lists resolved
+   threads — the review view's resolved tint. */
+.mdc-anchor-highlight--resolved,
+.mdc-anchor-highlight--resolved:hover {
+  background: var(--vscode-diffEditor-insertedTextBackground, rgba(120, 120, 120, 0.22));
+  border-bottom-color: transparent;
+}
 .mdc-anchor-highlight--pulse {
   animation: mdc-anchor-pulse 1s ease;
 }

@@ -182,6 +182,16 @@ P0, P1, P2.1–2.3, P3 and P5 shipped in 0.35.13. Deviations:
   can be the default surface: an in-view read-only/edit toggle, sidebar
   parity (filters, suggest switch, keyboard nav, unanchored marking), diff
   stripes, and the block-splice write-back for edit mode.
+- **P4 phase B — 0.35.16. One view.** Edit/read-only switch per panel;
+  sidebar parity via `src/webviewShared/threadSidebar.ts` +
+  `src/collab/sidebarHost.ts`; uncommitted-diff stripes and change nav;
+  block-splice write-back (gate: 1,596 blocks, 0 failures); one router
+  (`src/commands/reviewViewRouter.ts`) sends every entry point to the live
+  editor, read-only by default (`liveEditor.readOnly` now `true`). The
+  markdown-it panel stays one release behind `classicReviewView`. Freeze
+  retired. Open: edit-mode add-comment still adopts the editor's
+  serialization; the classic panel's removal; hand testing of reveal in a
+  real window.
 - **P5.2** The "New from Claude" filter chip already derived its name
   per thread; only the Send button, switch and pending text changed.
 - **Not done:** question 5 (marketplace description) — untouched.

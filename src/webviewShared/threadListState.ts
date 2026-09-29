@@ -147,11 +147,11 @@ export interface FirstRunEmptyState {
 export type EmptyState = FilteredEmptyState | FirstRunEmptyState;
 
 const HINT_BOTH_FORMS =
-  "Select text in the preview and click Comment — or, in the text editor, select it and press Cmd+K Cmd+Alt+M (Ctrl+K Ctrl+Alt+M).";
+  "Select text in the document and click + Add comment — or, in the text editor, select it and press Cmd+K Cmd+Alt+M (Ctrl+K Ctrl+Alt+M).";
 const HINT_MAC =
-  "Select text in the preview and click Comment — or, in the text editor, select it and press Cmd+K Cmd+Alt+M.";
+  "Select text in the document and click + Add comment — or, in the text editor, select it and press Cmd+K Cmd+Alt+M.";
 const HINT_OTHER =
-  "Select text in the preview and click Comment — or, in the text editor, select it and press Ctrl+K Ctrl+Alt+M.";
+  "Select text in the document and click + Add comment — or, in the text editor, select it and press Ctrl+K Ctrl+Alt+M.";
 
 /**
  * What the empty state should show. Two branches, not one message with a

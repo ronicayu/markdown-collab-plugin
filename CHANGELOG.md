@@ -1,5 +1,85 @@
 # Changelog
 
+## 0.35.16 — 2026-09-29 (GitHub only)
+
+One view. Phase B of `docs/10x-plan-6.md` P4 (design in
+`docs/one-view-design.md`): the live editor is now the review view, and
+every way into a review view opens it. The rendered preview with the
+markdown-it renderer is a one-release fallback behind
+`markdownCollab.classicReviewView`.
+
+### Changed: the review view is the live editor, read-only by default
+
+**Open Review View**, the title-bar icon, the `.md` menus, `Cmd+K Cmd+Alt+V`,
+the CodeLens, the hover's "Open in review view", the Review Threads tree, the
+Uncommitted Markdown tree, **Next Unread from Agent**, the status bar's
+"Open review view", the headless "done" toast, and the walkthrough all go
+through one router (`src/commands/reviewViewRouter.ts`) to the custom
+editor. It opens read-only: highlights are placed by source position, and a
+comment is written into the file's original bytes. An **Edit** switch in the
+sidebar turns editing on for that panel; `markdownCollab.liveEditor.readOnly`
+(now `true`) only sets the mode a new panel opens in. A `.md` link clicked
+inside the review view opens the review view, as the old panel did. A
+revealed thread arriving behind the first render still lands.
+**Open Live Editor (experimental)** is a hidden alias; the custom editor is
+called "Markdown Collab review view" in Open With….
+
+### Added: sidebar parity
+
+The live editor's threads pane is the review view's, extracted into
+`src/webviewShared/threadSidebar.ts` and rendered from a state object:
+segmented filters (Open / All / Resolved / New from *agent*), **Send to
+*agent***, the suggest-mode switch, the overflow menu (Copy prompt, Collapse
+all, Remove resolved, Remove all review data), the "?" hint toggle, the
+unread banner with **Next**, Reply collapsed until asked, Resolve / Reopen,
+per-card menus with the two-click Delete, comment cards with the *via*
+marker, suggestion cards with the word diff and **Accept all**, the "broken
+anchor" and "text changed" badges, `n`/`p`/`r`/`e`/`o`, the loading
+placeholder, the empty state, pending "*agent* is working…" rows, the skill
+banner, and the scroll to the first new thread after a review. Highlights
+follow the filter: a filtered-out thread's highlight hides, a resolved one
+shown under All or Resolved is grey. The host side is one shared module
+(`src/collab/sidebarHost.ts`); every mutation from the sidebar goes through
+the document ops on the original source, never through the editor's
+serialization. The thread filter is remembered across a read/edit reload.
+
+### Added: uncommitted-changes review in the live editor
+
+Opening a file from the Uncommitted Markdown tree stripes the changed
+blocks, shows removed text struck through where it used to be, and steps
+between changes with arrows or `n`/`p`, mapped through the same source
+positions. A block the table can't map is never striped by guess. Open
+panels refresh when the tree does.
+
+### Changed: an edit rewrites only the block you typed in
+
+Edit mode used to serialize the whole document on every change, rewriting
+3 to 624 untouched lines per keystroke on the corpus. The webview now
+reports which top-level blocks changed and their Markdown; the host splices
+each into the block's source range, taken from a table of the file as last
+written, and re-anchors only the threads inside that block. Splits and
+merges are one splice over the union. If the block mapping is inconsistent
+the write is refused, the editor re-renders from the file, and a toast says
+why — whole-document serialization is never the fallback. The gate is a test
+over all 1,596 top-level blocks of the 17 corpus documents: one character
+typed in each, every byte outside the block identical. A comment added in
+edit mode still adopts the editor's serialization of the document; add
+comments read-only (the default) for a byte-exact result.
+
+### Removed: the live-editor freeze
+
+The bundle-size budget that froze the live editor is retired; a bound with
+headroom replaces it in `src/test/liveEditorBundle.test.ts` and
+`scripts/verify-package.mjs`. The host now declares
+`mdast-util-from-markdown`, `mdast-util-gfm` and `micromark-extension-gfm`,
+which the block table uses to parse exactly as the editor does.
+
+### Known
+
+`markdownCollab.classicReviewView` and the inline panel go away in the next
+release. A comment operation's full-document write can still land on top of
+an in-flight block edit; the window is the edit debounce.
+
 ## 0.35.15 — 2026-09-29 (GitHub only)
 
 Phase A of the one-view merge (`docs/10x-plan-6.md` P4, design in

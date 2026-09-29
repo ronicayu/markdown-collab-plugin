@@ -231,7 +231,10 @@ export function activateClaudeStatusBar(): vscode.Disposable {
     render();
   };
 
-  /** Open the review view on one of a pass's files, by doc key (`uri.toString()`). */
+  /**
+   * Open the review view on one of a pass's files, by doc key (`uri.toString()`),
+   * on the first thread the agent opened that you haven't answered.
+   */
   const openReviewPassFile = async (docKey: string | undefined): Promise<void> => {
     if (!docKey) return;
     let uri: vscode.Uri;
@@ -240,7 +243,7 @@ export function activateClaudeStatusBar(): vscode.Disposable {
     } catch {
       return;
     }
-    await vscode.commands.executeCommand("markdownCollab.openInlineCommentsView", uri);
+    await vscode.commands.executeCommand("markdownCollab.openInlineCommentsView", uri, { focusNewFromAgent: true });
   };
 
   /**
@@ -319,8 +322,11 @@ export function activateClaudeStatusBar(): vscode.Disposable {
   };
 }
 
+/** The run's first file in the review view, on the first thread the agent opened that you haven't answered. */
 async function openFirstFile(record: HeadlessRunRecord): Promise<void> {
   const first = record.files[0];
   if (!first) return;
-  await vscode.commands.executeCommand("markdownCollab.openInlineCommentsView", vscode.Uri.file(first));
+  await vscode.commands.executeCommand("markdownCollab.openInlineCommentsView", vscode.Uri.file(first), {
+    focusNewFromAgent: true,
+  });
 }

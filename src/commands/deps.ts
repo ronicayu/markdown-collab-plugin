@@ -10,6 +10,7 @@ import * as vscode from "vscode";
 import type { Logger } from "../logging";
 import type { ReviewView } from "../reviewView";
 import type { TerminalTracker } from "../transports/terminalTracker";
+import type { OpenReviewView } from "./reviewViewRouter";
 
 export interface CommandDeps {
   context: vscode.ExtensionContext;
@@ -24,18 +25,10 @@ export interface CommandDeps {
   terminalTracker: TerminalTracker;
   reviewView: ReviewView;
   /**
-   * One way into the review view, used by the command, the explorer menus, and
-   * the source-editor affordances (hover link, unread walk). `opts` carries an
-   * optional scroll target so a caller can land on a specific thread.
+   * The one way into the review view, used by the commands, the explorer
+   * menus, and the source-editor affordances (hover link, unread walk). `opts`
+   * can land it on a thread, overlay the diff, or pick the first thread an
+   * agent opened — see src/commands/reviewViewRouter.ts.
    */
-  openInlineView: (
-    uri: vscode.Uri,
-    opts?: { line?: number; showDiff?: boolean },
-  ) => Promise<void>;
-  /**
-   * Open the review view scrolled to one thread. The source line of the
-   * thread's anchor is the scroll target, so this reuses the panel's existing
-   * line-based reveal rather than adding a second addressing scheme.
-   */
-  revealThread: (uri: vscode.Uri, threadId: string) => Promise<void>;
+  openReviewView: OpenReviewView;
 }

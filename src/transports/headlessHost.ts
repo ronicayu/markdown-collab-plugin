@@ -297,10 +297,13 @@ async function onFinished(
   if (choice === "Show logs") await showLogs();
 }
 
+/** The run's first file in the review view, on the first thread the agent opened that you haven't answered. */
 export async function openReviewView(record: HeadlessRunRecord): Promise<void> {
   const first = record.files[0];
   if (!first) return;
-  await vscode.commands.executeCommand("markdownCollab.openInlineCommentsView", vscode.Uri.file(first));
+  await vscode.commands.executeCommand("markdownCollab.openInlineCommentsView", vscode.Uri.file(first), {
+    focusNewFromAgent: true,
+  });
 }
 
 export async function showLogs(): Promise<void> {

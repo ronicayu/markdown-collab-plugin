@@ -44,7 +44,7 @@ import { hasCopilotProviderApi } from "../mcpServer/clients/copilot";
 import type { CommandDeps } from "./deps";
 
 /**
- * Write the playground document and open it in the inline comments view
+ * Write the playground document and open it in the review view
  * (10x-plan-2 P3.1). The point is that the accept/reject loop is clickable in
  * the first minute, with no skill install, no send mode, and no Claude session.
  */

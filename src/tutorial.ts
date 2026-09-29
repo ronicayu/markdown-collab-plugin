@@ -34,7 +34,7 @@ Delete the file when you're done — nothing else depends on it.
    Accept applies it; Reject keeps the current wording. Both are undoable with
    Cmd+Z, like any edit you make yourself.
 4. **Resolve a thread** when you're satisfied with it.
-5. **Add your own.** Select any sentence in the preview and click Comment.
+5. **Add your own.** Select any sentence in the rendered document and click **+ Add comment**.
 
 ## How this works
 

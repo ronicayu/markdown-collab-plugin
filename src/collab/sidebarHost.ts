@@ -1,0 +1,239 @@
+// The live editor's sidebar, host half (10x-plan-6 P4, sidebar parity).
+//
+// Handles every message the sidebar posts (`webviewShared/sidebarProtocol.ts`)
+// the way the review view's panel does: document operations run through the
+// same pure `applyClientMutation` on the file's own source, sends go through
+// the same commands and dispatcher, and the few bits of logic that lived only
+// inside inlineCommentsPanel.ts (copy-all, open-in-editor, author, the
+// headless probe for the empty state) are here, so the live editor stops
+// depending on a panel that is about to be removed. That panel keeps its own
+// copies until then.
+//
+// Nothing here reads the editor's serialization: a mutation parses
+// `document.getText()`, rewrites it, and hands the whole new source back to the
+// provider to write — in read-only mode and in edit mode alike.
+
+import * as os from "os";
+import * as vscode from "vscode";
+import { parse } from "../inlineComments/format";
+import { applyClientMutation } from "../inlineComments/mutations";
+import { buildInlinePayload } from "../inlineComments/sendToClaude";
+import { mcpToolsDirective } from "../sendToClaude";
+import { checkClaudeSkill, type SkillStatus } from "../skill";
+import { headlessAvailability, headlessAvailableNow } from "../transports/headlessHost";
+import type { SidebarMessage, SidebarMutation } from "../webviewShared/sidebarProtocol";
+
+export interface SidebarHostContext {
+  document: vscode.TextDocument;
+  /**
+   * Write a whole new source for the document and save it, then bring the
+   * editor up to date if the prose moved (an accepted suggestion). The
+   * provider owns this because it owns the echo guard.
+   */
+  applySource(next: string): Promise<boolean>;
+  /** Flush the editor's unsaved edits, so an agent reads the latest text. */
+  flush(): Promise<void>;
+  /** Re-push the sidebar's state (after a setting the webview shows changed). */
+  refresh(): void;
+  post(msg: unknown): void;
+}
+
+// `accept-suggestion` / `reject-suggestion` aren't admitted: the provider has
+// always handled exactly these two messages, on the source, with the same
+// result, so they stay on that path. `handleSidebarMessage` still takes them.
+const MUTATIONS: ReadonlySet<string> = new Set<SidebarMutation["type"]>([
+  "reply",
+  "edit-comment",
+  "toggle-resolve",
+  "delete-thread",
+  "delete-comment",
+  "accept-all-suggestions",
+]);
+
+const REQUESTS: ReadonlySet<string> = new Set<SidebarMessage["type"]>([
+  "send-to-claude",
+  "copy-prompt",
+  "toggle-suggest-mode",
+  "remove-resolved",
+  "finalize",
+  "install-skill",
+  "empty-state-review",
+  "send-to-claude-comment",
+  "copy-claude-comment",
+  "open-in-editor",
+]);
+
+/**
+ * Whether `raw` is a sidebar message this module handles. `set-read-only` is
+ * the provider's (it decides how the editor is built), and the live editor's
+ * older messages share one name with this set — `delete-comment` there carries
+ * only a `commentId` and deletes the whole thread — so that one counts here
+ * only with its `threadId`.
+ */
+export function isSidebarMessage(raw: unknown): raw is SidebarMessage {
+  if (!raw || typeof raw !== "object") return false;
+  const msg = raw as { type?: unknown; threadId?: unknown };
+  if (typeof msg.type !== "string") return false;
+  if (msg.type === "delete-comment") return typeof msg.threadId === "string";
+  return MUTATIONS.has(msg.type) || REQUESTS.has(msg.type);
+}
+
+export async function handleSidebarMessage(msg: SidebarMessage, ctx: SidebarHostContext): Promise<void> {
+  const uri = ctx.document.uri;
+  switch (msg.type) {
+    case "reply":
+    case "edit-comment":
+    case "toggle-resolve":
+    case "delete-thread":
+    case "delete-comment":
+    case "accept-suggestion":
+    case "reject-suggestion":
+    case "accept-all-suggestions":
+      return applySidebarMutation(msg, ctx);
+    case "send-to-claude":
+      // The agent reads the file from disk, so the editor's latest goes first.
+      await ctx.flush();
+      await vscode.commands.executeCommand("markdownCollab.sendAllToClaude", uri);
+      return;
+    case "send-to-claude-comment":
+      await ctx.flush();
+      await vscode.commands.executeCommand("markdownCollab.sendThreadToClaude", uri, msg.threadId);
+      return;
+    case "copy-prompt":
+      await ctx.flush();
+      return copyAllPrompt(ctx.document);
+    case "copy-claude-comment":
+      await ctx.flush();
+      await vscode.commands.executeCommand("markdownCollab.copyThreadToClaude", uri, msg.threadId);
+      return;
+    case "toggle-suggest-mode":
+      // The command flips the per-workspace setting and says so; re-push so
+      // the switch shows what it landed on.
+      await vscode.commands.executeCommand("markdownCollab.toggleSuggestMode");
+      ctx.refresh();
+      return;
+    case "remove-resolved":
+      // Straight to the command, so the modal confirm and the undoable write
+      // are defined once. The document change re-pushes on its own.
+      await ctx.flush();
+      await vscode.commands.executeCommand("markdownCollab.removeResolvedComments", uri);
+      return;
+    case "finalize":
+      await ctx.flush();
+      await vscode.commands.executeCommand("markdownCollab.finalizeDocument", uri);
+      return;
+    case "open-in-editor":
+      return openThreadInEditor(ctx.document, msg.threadId);
+    case "empty-state-review":
+      // The same ask-review flow as the title-bar entry point: the remembered
+      // send mode, or the picker when there isn't one yet.
+      await ctx.flush();
+      await vscode.commands.executeCommand("markdownCollab.askClaudeToReview", uri);
+      return;
+    case "install-skill":
+      await vscode.commands.executeCommand("markdownCollab.installClaudeSkill");
+      ctx.post({ type: "skill-status", status: await checkSkill() });
+      return;
+    case "set-read-only":
+      // The provider's to handle; `isSidebarMessage` never admits it here.
+      return;
+  }
+}
+
+async function applySidebarMutation(msg: SidebarMutation, ctx: SidebarHostContext): Promise<void> {
+  const parsed = parse(ctx.document.getText());
+  const result = applyClientMutation(parsed, msg, {
+    author: sidebarAuthor(),
+    now: () => new Date().toISOString(),
+  });
+  if (result.source !== parsed.source) {
+    const ok = await ctx.applySource(result.source);
+    if (!ok) void vscode.window.showErrorMessage("Markdown Collab: the change couldn't be written to the file.");
+  }
+  if (result.warning) void vscode.window.showWarningMessage(result.warning);
+}
+
+/** Copy the prompt for every open thread, as the agent would receive it. */
+async function copyAllPrompt(doc: vscode.TextDocument): Promise<void> {
+  const payload = buildInlinePayload(doc, { suggestMode: readSuggestMode() });
+  if (!payload) {
+    void vscode.window.showInformationMessage("No open threads to copy.");
+    return;
+  }
+  // A clipboard delivery like any other — the same directive every send carries.
+  await vscode.env.clipboard.writeText(`${payload.prompt}\n\n${mcpToolsDirective()}`);
+  void vscode.window.showInformationMessage(
+    `Prompt for ${payload.unresolvedCount} open thread${payload.unresolvedCount === 1 ? "" : "s"} copied — paste into your agent.`,
+  );
+}
+
+/**
+ * Open one thread's anchored text in a text editor, selected: the raw markdown
+ * between its markers, excluding the markers themselves.
+ */
+export async function openThreadInEditor(doc: vscode.TextDocument, threadId: string): Promise<void> {
+  const anchor = parse(doc.getText()).anchors.get(threadId);
+  if (!anchor) {
+    void vscode.window.showInformationMessage("This comment's text was removed, so there's nothing to jump to.");
+    return;
+  }
+  const range = new vscode.Range(doc.positionAt(anchor.openEnd), doc.positionAt(anchor.closeStart));
+  const editor = await vscode.window.showTextDocument(doc, {
+    viewColumn: vscode.ViewColumn.Active,
+    preserveFocus: false,
+    selection: range,
+  });
+  editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+}
+
+/** Who a reply, an edit, or a resolve is attributed to — the review view's rule. */
+function sidebarAuthor(): string {
+  const cfg = vscode.workspace.getConfiguration("markdownCollab");
+  return cfg.get<string>("collab.userName", "") || os.userInfo().username || "anonymous";
+}
+
+/** Whether Send asks the agent for suggestions instead of edits. */
+export function readSuggestMode(): boolean {
+  return vscode.workspace.getConfiguration("markdownCollab").get<boolean>("proposeEditsAsSuggestions", false);
+}
+
+function checkSkill(): Promise<SkillStatus> {
+  return checkClaudeSkill(os.homedir());
+}
+
+/** The skill banner's state, posted after `init` so the first paint doesn't wait on the disk. */
+export async function postSkillStatus(post: (msg: unknown) => void): Promise<void> {
+  post({ type: "skill-status", status: await checkSkill() });
+}
+
+// One binary lookup at a time, however many editors are waiting on it.
+let headlessLookup: Promise<void> | null = null;
+const headlessWaiters = new Set<() => void>();
+
+/**
+ * Whether the empty state may offer "Review with Claude", without holding the
+ * render on the binary lookup: a cold lookup renders as unavailable and starts
+ * one, and `onSettled` re-pushes with the real answer when it lands.
+ */
+export function headlessAvailableForRender(
+  workspaceState: vscode.Memento | undefined,
+  onSettled: () => void,
+): boolean {
+  if (!workspaceState) return false;
+  const now = headlessAvailableNow(workspaceState);
+  if (now !== null) return now;
+  headlessWaiters.add(onSettled);
+  if (!headlessLookup) {
+    headlessLookup = headlessAvailability(workspaceState)
+      .then((a) => {
+        if (!a.ok) return;
+        for (const waiter of headlessWaiters) waiter();
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        headlessWaiters.clear();
+        headlessLookup = null;
+      });
+  }
+  return false;
+}

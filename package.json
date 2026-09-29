@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Claude reviews your Markdown in VS Code — inline comments stored in the file, suggestions you accept or reject, and runs that need no terminal. Works with Cursor, Codex, and Copilot agents too.",
-  "version": "0.35.15",
+  "version": "0.35.16",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -116,7 +116,7 @@
       },
       {
         "command": "markdownCollab.openCollabEditor",
-        "title": "Markdown Collab: Open Live Editor (experimental)",
+        "title": "Markdown Collab: Open Review View (Open With)",
         "category": "Markdown Collab"
       },
       {
@@ -306,17 +306,22 @@
         "markdownCollab.collab.userName": {
           "type": "string",
           "default": "",
-          "description": "Display name attributed to your comments in the live editor. Defaults to your OS username."
+          "description": "Display name attributed to your comments. Defaults to your OS username."
         },
         "markdownCollab.liveEditor.readOnly": {
           "type": "boolean",
+          "default": true,
+          "description": "Open the review view read-only. The Edit switch in the sidebar turns editing on for that panel."
+        },
+        "markdownCollab.classicReviewView": {
+          "type": "boolean",
           "default": false,
-          "description": "Open the live editor read-only. You can select text and comment, but not edit. A new comment adds only its two invisible markers to the file, and highlights sit exactly where their markers are. Open editors reload when this changes."
+          "description": "Use the previous review view (rendered preview without editing). This fallback is removed in the next release."
         },
         "markdownCollab.plantuml.serverUrl": {
           "type": "string",
           "default": "https://www.plantuml.com/plantuml",
-          "description": "PlantUML server used to render `plantuml`/`puml` fenced code blocks in every preview surface (legacy preview, inline-comments view, PR review preview). Defaults to the public instance. Point at a self-hosted server (e.g. http://localhost:8080) to keep your diagrams off the public web."
+          "description": "PlantUML server used to render `plantuml`/`puml` fenced code blocks in the review view and the PR review preview. Defaults to the public instance. Point at a self-hosted server (e.g. http://localhost:8080) to keep your diagrams off the public web."
         },
         "markdownCollab.plantuml.format": {
           "type": "string",
@@ -335,7 +340,7 @@
         "markdownCollab.showLineNumbers": {
           "type": "boolean",
           "default": false,
-          "description": "Show the source line number beside each block in the inline comments view and the live editor. Numbers are lines in the .md file itself, so frontmatter and the stored threads block are accounted for."
+          "description": "Show the source line number beside each block in the review view. Numbers are lines in the .md file itself, so frontmatter and the stored threads block are accounted for."
         },
         "markdownCollab.claudePath": {
           "type": "string",
@@ -367,7 +372,7 @@
         "command": "markdownCollab.nextUnreadFromClaude",
         "key": "ctrl+k ctrl+alt+n",
         "mac": "cmd+k cmd+alt+n",
-        "when": "editorLangId == markdown || activeWebviewPanelId == 'markdownCollab.inlineCommentsView'"
+        "when": "editorLangId == markdown || activeCustomEditorId == 'markdownCollab.collabEditor' || activeWebviewPanelId == 'markdownCollab.inlineCommentsView'"
       }
     ],
     "submenus": [
@@ -384,6 +389,10 @@
       "commandPalette": [
         {
           "command": "markdownCollab.revealComment",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.openCollabEditor",
           "when": "false"
         },
         {
@@ -575,7 +584,7 @@
       "editor/title": [
         {
           "command": "markdownCollab.openInlineCommentsView",
-          "when": "resourceLangId == markdown",
+          "when": "resourceLangId == markdown && activeCustomEditorId != 'markdownCollab.collabEditor'",
           "group": "navigation"
         }
       ],
@@ -645,7 +654,7 @@
     "customEditors": [
       {
         "viewType": "markdownCollab.collabEditor",
-        "displayName": "Markdown Collab (live editor, experimental)",
+        "displayName": "Markdown Collab review view",
         "selector": [
           {
             "filenamePattern": "*.md"
@@ -682,7 +691,7 @@
           {
             "id": "comment",
             "title": "Comment on your own document",
-            "description": "Open any .md file in the inline comments view, select a passage in the preview, and write a note. The thread is stored in the file itself.\n[Open a document](command:markdownCollab.openInlineCommentsView)",
+            "description": "Open any .md file in the review view, select a passage, and write a note. The thread is stored in the file itself.\n[Open a document](command:markdownCollab.openInlineCommentsView)",
             "media": {
               "markdown": "media/walkthrough/comment.md"
             },
@@ -782,7 +791,10 @@
   },
   "dependencies": {
     "markdown-it": "^14.1.1",
+    "mdast-util-from-markdown": "^2.0.3",
+    "mdast-util-gfm": "^3.1.0",
     "mermaid": "^11.14.0",
+    "micromark-extension-gfm": "^3.0.0",
     "mxgraph": "^4.2.2",
     "pako": "^2.1.0"
   }

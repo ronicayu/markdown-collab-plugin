@@ -92,3 +92,148 @@
   border-radius: 2px;
   padding: 0 1px;
 }
+
+/* --- Uncommitted-diff overlay (diffStripesPlugin.ts, changeNav.ts) ------- */
+/* Same green-added / red-removed language as the review view's
+   #diff-mode-badge / .mc-diff-changed / .mc-diff-removed
+   (src/inlineComments/webview/client.css), reusing the same gitDecoration
+   theme tokens so the two surfaces read as the same feature. */
+
+:root {
+  --mdc-diff-add-stripe: var(--vscode-gitDecoration-addedResourceForeground, #4caf50);
+  --mdc-diff-add-bg: color-mix(in srgb, var(--mdc-diff-add-stripe) 14%, transparent);
+  --mdc-diff-add-bg-strong: color-mix(in srgb, var(--mdc-diff-add-stripe) 24%, transparent);
+  --mdc-diff-del-stripe: var(--vscode-gitDecoration-deletedResourceForeground, #f44336);
+  --mdc-diff-del-bg: color-mix(in srgb, var(--mdc-diff-del-stripe) 10%, transparent);
+}
+
+/* Sticky strip above the editor body, same trick as the review view's
+   #preview-toolbar: a negative margin cancels the pane's own padding so the
+   toolbar spans the full pane width and sticks flush at the top on scroll. */
+.mdc-diff-toolbar {
+  position: sticky;
+  top: calc(-1 * var(--mdc-space-4));
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--mdc-space-2);
+  padding: var(--mdc-space-1) var(--mdc-space-3);
+  /* .mdc-sidebar-toggle (host.css) is `position: fixed` in this same top-right
+     corner at a higher z-index — the extra right padding keeps this
+     toolbar's own right-aligned arrows from sitting underneath it. */
+  padding-right: calc(var(--mdc-space-3) + 40px);
+  min-height: 22px;
+  margin: calc(-1 * var(--mdc-space-4)) calc(-1 * var(--mdc-space-5)) var(--mdc-space-3);
+  background: var(--vscode-editorWidget-background, #252526);
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
+}
+.mdc-diff-toolbar[hidden] { display: none; }
+
+.mdc-diff-badge {
+  padding: 1px 8px;
+  border-radius: 9px;
+  font-size: 0.78em;
+  white-space: nowrap;
+  color: var(--mdc-diff-add-stripe);
+  border: 1px solid color-mix(in srgb, var(--mdc-diff-add-stripe) 55%, transparent);
+  background: var(--mdc-diff-add-bg);
+}
+.mdc-diff-badge[hidden] { display: none; }
+
+.mdc-diff-nav {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+.mdc-diff-nav[hidden] { display: none; }
+.mdc-diff-nav .mdc-icon-btn { padding: 0 4px; }
+.mdc-diff-nav-count {
+  font-size: 0.78em;
+  opacity: 0.8;
+  min-width: 4ch;
+  text-align: center;
+}
+
+/* Stripe + tint on any rendered block whose prose changed since HEAD —
+   applied as a ProseMirror node decoration, so it rides on the block's own
+   element (a <p>, <h#> or <tr>) instead of a wrapper. */
+.milkdown .mdc-diff-changed {
+  position: relative;
+  background: var(--mdc-diff-add-bg);
+  border-radius: 3px;
+}
+.milkdown p.mdc-diff-changed,
+.milkdown h1.mdc-diff-changed, .milkdown h2.mdc-diff-changed, .milkdown h3.mdc-diff-changed,
+.milkdown h4.mdc-diff-changed, .milkdown h5.mdc-diff-changed, .milkdown h6.mdc-diff-changed {
+  padding: 4px 8px 4px 14px;
+  margin: 2px -8px 2px -14px;
+}
+.milkdown tr.mdc-diff-changed td:first-child,
+.milkdown tr.mdc-diff-changed th:first-child {
+  position: relative;
+}
+.milkdown .mdc-diff-changed::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  background: var(--mdc-diff-add-stripe);
+  border-radius: 2px 0 0 2px;
+}
+.milkdown tr.mdc-diff-changed::before { border-radius: 0; }
+.milkdown .mdc-diff-changed:hover { background: var(--mdc-diff-add-bg-strong); }
+
+/* The "before" side: deleted HEAD text shown where it used to sit, struck
+   through, scrolling instead of swallowing the page for a tall removal. */
+.milkdown .mdc-diff-removed {
+  position: relative;
+  padding: 4px 8px 4px 14px;
+  margin: 4px 0;
+  background: var(--mdc-diff-del-bg);
+  border-radius: 3px;
+}
+.milkdown .mdc-diff-removed::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  background: var(--mdc-diff-del-stripe);
+  border-radius: 2px 0 0 2px;
+}
+.milkdown .mdc-diff-removed-label {
+  font-size: 0.72em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--mdc-diff-del-stripe);
+  margin-bottom: 2px;
+  user-select: none;
+}
+.milkdown .mdc-diff-removed-text {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.85em;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow-y: auto;
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--mdc-diff-del-stripe) 55%, transparent);
+  opacity: 0.85;
+}
+
+/* The change the arrows landed on. Outline, not background — it must read
+   over both the green added tint and the red removed tint. */
+.milkdown .mdc-diff-current {
+  outline: 2px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 2px;
+}

@@ -1,7 +1,7 @@
 ### The loop
 
-1. Select a passage in the rendered preview.
-2. Click **+ Comment on selection**.
+1. Select a passage in the review view.
+2. Click **+ Add comment**.
 3. Write what's wrong with it — specifically. "This claim skips a step" beats
    "unclear".
 

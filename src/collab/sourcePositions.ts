@@ -24,6 +24,13 @@
 // Offsets are into the string the editor parsed (the live editor's "prose":
 // the file with frontmatter, markers and the threads region removed). The
 // host translates prose ↔ file offsets; this module never sees the file.
+//
+// Edit mode (phase B) adds a fourth piece at the end: `markdownBlocks`, the
+// host's table of top-level blocks that a keystroke's write is confined to.
+
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfmFromMarkdown } from "mdast-util-gfm";
+import { gfm } from "micromark-extension-gfm";
 
 /** A run's kind: ordinary text, or the content of an inline code span. */
 export type RunKind = 0 | 1;
@@ -495,4 +502,153 @@ export function editorSelectionToSource(index: SourceIndex, from: number, to: nu
   let text = "";
   for (let i = lo; i <= hi; i++) text += chars[i]!.ch;
   return { ok: true, start: first.srcStart, end: last.srcEnd, text };
+}
+
+// --- top-level blocks (edit mode) --------------------------------------------
+//
+// Edit mode writes back one top-level block at a time (docs/one-view-design.md,
+// "Phase B"). The webview names blocks by their index among the editor's
+// top-level nodes; the host finds their bytes in this table. The index only
+// means the same thing on both sides because the table is built with the
+// parser milkdown runs and lists exactly the root children milkdown turns into
+// top-level nodes — `editorTypeOf` is that correspondence.
+
+/** One top-level block of the prose, as the editor sees it. */
+export interface MarkdownBlock {
+  /** Source range (prose offsets), from mdast. */
+  start: number;
+  end: number;
+  /** The top-level ProseMirror node milkdown makes of it (`paragraph`, `bullet_list`, …). */
+  type: string;
+  /** A lone `<br />`: milkdown's empty-paragraph placeholder. */
+  placeholder?: boolean;
+}
+
+// `remarkPreserveEmptyLine` deletes an html node with exactly these values,
+// which leaves the paragraph `remarkHtmlTransformer` wrapped it in empty.
+const EMPTY_LINE_HTML = new Set(["<br />", "<br>", "<br >", "<br/>"]);
+
+/**
+ * The top-level node milkdown builds from a root child, or null for none.
+ * `remarkHtmlTransformer` wraps a root `html` node in a paragraph;
+ * remark-inline-links deletes every `definition`. A type this doesn't know
+ * keeps its mdast name, which no ProseMirror node has — so it can only ever
+ * show up as a mismatch, never as a wrong match.
+ */
+function editorTypeOf(node: MdNode & { ordered?: boolean | null }): string | null {
+  switch (node.type) {
+    case "definition":
+      return null;
+    case "html":
+      return "paragraph";
+    case "code":
+      return "code_block";
+    case "thematicBreak":
+      return "hr";
+    case "list":
+      return node.ordered ? "ordered_list" : "bullet_list";
+    case "footnoteDefinition":
+      return "footnote_definition";
+    default:
+      return node.type; // paragraph, heading, blockquote, table
+  }
+}
+
+let gfmSyntax: ReturnType<typeof gfm> | null = null;
+let gfmTree: ReturnType<typeof gfmFromMarkdown> | null = null;
+
+/** Every top-level block of `markdown`, in order, with the ProseMirror type each becomes. */
+export function markdownBlocks(markdown: string): MarkdownBlock[] {
+  const tree = fromMarkdown(markdown, {
+    extensions: [(gfmSyntax ??= gfm())],
+    mdastExtensions: [(gfmTree ??= gfmFromMarkdown())],
+  }) as unknown as MdNode;
+  const out: MarkdownBlock[] = [];
+  for (const child of tree.children ?? []) {
+    const type = editorTypeOf(child);
+    if (type === null) continue;
+    const start = child.position?.start.offset ?? -1;
+    const end = child.position?.end.offset ?? -1;
+    const placeholder = child.type === "html" && EMPTY_LINE_HTML.has(String(child.value ?? "").trim());
+    out.push(placeholder ? { start, end, type, placeholder } : { start, end, type });
+  }
+  return out;
+}
+
+/**
+ * How many of `blocks` the editor counts. The serializer writes an empty
+ * paragraph as `<br />` except the document's last, which it writes as
+ * nothing — so the editor never counts a trailing empty paragraph, and a
+ * trailing placeholder here is left out to match.
+ */
+export function editorBlockCount(blocks: readonly MarkdownBlock[]): number {
+  return blocks.length > 0 && blocks[blocks.length - 1]!.placeholder ? blocks.length - 1 : blocks.length;
+}
+
+/** One replacement in `spliceMarkdownBlocks`: blocks `[from, to)` became `types`. */
+export interface BlockSplice {
+  from: number;
+  to: number;
+  /** The replaced prose range, in the old prose. */
+  start: number;
+  end: number;
+  /** Length of the text that replaced it. */
+  length: number;
+  types: readonly string[];
+}
+
+const lineStartOf = (text: string, at: number): number => text.lastIndexOf("\n", at - 1) + 1;
+
+/**
+ * The table of `next` — the prose `blocks` describes with `splices` applied,
+ * in order and not overlapping — or null when a splice changed more than its
+ * own blocks.
+ *
+ * Only the window from the block before a splice to the block after it is
+ * re-parsed. Block structure is parsed a line at a time, left to right, and
+ * everything before the window is unchanged, so the window's first line starts
+ * a top-level block exactly as it does in the whole document. If the window
+ * reproduces both neighbours unchanged and the new blocks have the expected
+ * types, the rest of the document parses as it did; otherwise (the new text
+ * merged into a neighbour, an unclosed fence swallowed the rest) this returns
+ * null and the caller parses the whole prose.
+ */
+export function spliceMarkdownBlocks(
+  blocks: readonly MarkdownBlock[],
+  next: string,
+  splices: readonly BlockSplice[],
+): MarkdownBlock[] | null {
+  const out: MarkdownBlock[] = [];
+  let shift = 0;
+  let copied = 0;
+  const moved = (b: MarkdownBlock): MarkdownBlock => ({ ...b, start: b.start + shift, end: b.end + shift });
+  for (const s of splices) {
+    // Blocks up to (not including) the one before the splice are untouched.
+    const prevIndex = s.from - 1;
+    for (; copied < Math.max(0, prevIndex); copied++) out.push(moved(blocks[copied]!));
+    const prev = prevIndex >= 0 ? moved(blocks[prevIndex]!) : null;
+    const delta = s.length - (s.end - s.start);
+    const nextBlock = s.to < blocks.length ? { ...blocks[s.to]!, start: blocks[s.to]!.start + shift + delta, end: blocks[s.to]!.end + shift + delta } : null;
+    const windowStart = prev ? lineStartOf(next, prev.start) : 0;
+    const windowEnd = nextBlock ? nextBlock.end : next.length;
+    const parsed = markdownBlocks(next.slice(windowStart, windowEnd)).map((b) => ({
+      ...b,
+      start: b.start + windowStart,
+      end: b.end + windowStart,
+    }));
+    const expected = (prev ? 1 : 0) + s.types.length + (nextBlock ? 1 : 0);
+    if (parsed.length !== expected) return null;
+    const same = (a: MarkdownBlock, b: MarkdownBlock): boolean =>
+      a.start === b.start && a.end === b.end && a.type === b.type && !!a.placeholder === !!b.placeholder;
+    if (prev && !same(parsed[0]!, prev)) return null;
+    if (nextBlock && !same(parsed[parsed.length - 1]!, nextBlock)) return null;
+    const middle = parsed.slice(prev ? 1 : 0, prev ? 1 + s.types.length : s.types.length);
+    if (middle.some((b, i) => b.type !== s.types[i])) return null;
+    if (prev) out.push(prev);
+    out.push(...middle);
+    copied = s.to;
+    shift += delta;
+  }
+  for (; copied < blocks.length; copied++) out.push(moved(blocks[copied]!));
+  return out;
 }

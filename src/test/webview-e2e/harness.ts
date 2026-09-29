@@ -23,6 +23,7 @@ import { expect, type Page } from "@playwright/test";
 // resolution left to disagree about. `webviewShell` imports nothing, so there
 // was never a host build to be lazy about.
 import { inlineCommentsAppBody } from "../../inlineComments/webviewShell";
+import { liveEditorShellBody } from "../../collab/liveEditorShell";
 
 export const REPO_ROOT = path.resolve(__dirname, "../../..");
 const outFile = (...parts: string[]): string => path.join(REPO_ROOT, "out", ...parts);
@@ -124,19 +125,27 @@ export async function bootInlineView(page: Page, init: Record<string, unknown>):
 }
 
 /**
- * Boot the live (Milkdown) editor and push an `init`. Resolves once Milkdown
- * has mounted and reported its post-init content back to the host — the same
- * signal the integration suite waits on.
+ * Boot the live editor's page (the provider's pre-init shell + client bundle)
+ * without pushing an `init` yet, so a spec can assert the "Loading…" state.
  */
-export async function bootLiveEditor(page: Page, init: Record<string, unknown>): Promise<void> {
+export async function bootLiveEditorShell(page: Page): Promise<void> {
   await bootPage(
     page,
-    "",
+    liveEditorShellBody(),
     [outFile("webview", "comments-shared.css"), outFile("webview", "client.css")],
     outFile("webview", "client.js"),
   );
   await awaitPosted(page, "ready");
   await clearPosted(page);
+}
+
+/**
+ * Boot the live (Milkdown) editor and push an `init`. Resolves once Milkdown
+ * has mounted and reported its post-init content back to the host — the same
+ * signal the integration suite waits on.
+ */
+export async function bootLiveEditor(page: Page, init: Record<string, unknown>): Promise<void> {
+  await bootLiveEditorShell(page);
   await pushToWebview(page, { type: "init", ...init });
   await awaitPosted(page, "ready-with-content");
   await expect(page.locator(".mdc-editor-root .milkdown")).toBeVisible();

@@ -1,8 +1,8 @@
 /**
  * "Uncommitted changes" review view — the local counterpart of the PR/MR
  * review feature. Lists markdown files in the workspace that differ from
- * HEAD (staged, unstaged, or untracked) and opens each one in the inline
- * comments panel with diff stripes overlaid, so review comments land as
+ * HEAD (staged, unstaged, or untracked) and opens each one in the review
+ * view with diff stripes overlaid, so review comments land as
  * `<!--mc:…-->` threads in the file itself instead of on a platform PR.
  *
  * No platform CLI, no remote — plain `git` against the working tree.
@@ -13,6 +13,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import type { ChangedFile } from "../pr/diff";
 import { InlineCommentsPanel } from "../inlineComments/inlineCommentsPanel";
+import { CollabEditorProvider } from "../collab/collabEditorProvider";
 import type { Logger } from "../logging";
 import {
   countReviewThreads,
@@ -62,8 +63,17 @@ export class UncommittedChangesController implements vscode.Disposable {
   private readonly threadReminders = new SessionThreadReminderGate();
 
   constructor(
+    /** Open a file in the review view — whichever one `markdownCollab.classicReviewView` picks. */
     private readonly openFile: (uri: vscode.Uri, opts: { showDiff: boolean }) => Promise<void>,
     private readonly log: Logger,
+    /**
+     * Open a file in the live editor with the diff overlay (10x-plan-6 P4
+     * phase B), whatever `markdownCollab.classicReviewView` says. Optional so
+     * every existing caller (and every existing test) is unaffected; when
+     * absent, `openInLiveEditor` below silently does nothing rather than
+     * throw.
+     */
+    private readonly openLiveFile?: (uri: vscode.Uri) => Promise<void>,
   ) {
     this.tree = new UncommittedTreeProvider();
     this.view = vscode.window.createTreeView(VIEW_ID, {
@@ -80,6 +90,14 @@ export class UncommittedChangesController implements vscode.Disposable {
       vscode.commands.registerCommand(
         "markdownCollab.openUncommittedFile",
         (file: ChangedFile) => this.open(file),
+      ),
+      // The command above goes through the review view's router, which picks
+      // the previous view while `markdownCollab.classicReviewView` is on; this
+      // one always opens the live editor (10x-plan-6 P4 phase B). No tree item
+      // or menu uses it — it's for direct invocation.
+      vscode.commands.registerCommand(
+        "markdownCollab.openUncommittedFileInLiveEditor",
+        (file: ChangedFile) => this.openInLiveEditor(file),
       ),
       vscode.commands.registerCommand(
         "markdownCollab.stageUncommittedFile",
@@ -147,6 +165,7 @@ export class UncommittedChangesController implements vscode.Disposable {
       const threadCounts = await this.readThreadCounts(files);
       this.setTreeState({ kind: "files", repoRoot: this.repoRoot, files, stages, threadCounts });
       InlineCommentsPanel.refreshDiffPanels();
+      CollabEditorProvider.refreshDiffPanels();
     } catch (e) {
       this.log.warn(`uncommitted refresh failed: ${(e as Error).message}`);
       this.setTreeState({ kind: "error", message: (e as Error).message });
@@ -199,6 +218,20 @@ export class UncommittedChangesController implements vscode.Disposable {
     if (!this.repoRoot) return;
     const abs = path.join(this.repoRoot, ...file.path.split("/"));
     await this.openFile(vscode.Uri.file(abs), { showDiff: true });
+  }
+
+  /**
+   * Open a file in the live editor with the uncommitted-diff overlay, even
+   * while `markdownCollab.classicReviewView` is on (10x-plan-6 P4 phase B).
+   * Next to `open()` above on purpose: same shape, same guard, a fixed
+   * destination. `openLiveFile` is optional (see the constructor), so this
+   * degrades to a no-op rather than throwing where the caller hasn't wired
+   * the live editor in.
+   */
+  private async openInLiveEditor(file: ChangedFile): Promise<void> {
+    if (!this.repoRoot || !this.openLiveFile) return;
+    const abs = path.join(this.repoRoot, ...file.path.split("/"));
+    await this.openLiveFile(vscode.Uri.file(abs));
   }
 
   /** Stage/unstage one file from its tree row, then re-query so the badge follows. */

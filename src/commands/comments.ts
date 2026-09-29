@@ -1,5 +1,5 @@
 // Comment mutations on a document: remove-resolved, finalize, comment-on-
-// selection, repair, and the review-view/live-editor entry points
+// selection, repair, and the review-view entry points
 // (10x-plan-4 P3.2 split of extension.ts).
 
 import * as os from "os";
@@ -17,9 +17,9 @@ import {
   opReply,
   opResolve,
 } from "../inlineComments/docOps";
-import { CollabEditorProvider } from "../collab/collabEditorProvider";
 import type { ReviewNode } from "../reviewView";
 import type { CommandDeps } from "./deps";
+import { reviewViewOptsFrom } from "./reviewViewRouter";
 
 /**
  * Delete every resolved thread in a document.
@@ -456,7 +456,7 @@ async function invokeReplyToThread(
 
 /** Register the comment-mutation and review-view-entry family of commands. */
 export function registerCommentsCommands(deps: CommandDeps): void {
-  const { context, log, reviewLog, formatLog, openInlineView, revealThread } = deps;
+  const { context, log, reviewLog, formatLog, openReviewView } = deps;
 
   context.subscriptions.push(
     vscode.commands.registerCommand(
@@ -501,7 +501,7 @@ export function registerCommentsCommands(deps: CommandDeps): void {
           // Into the review view, scrolled to the thread. This used to open
           // the raw source and not even scroll ("opening the doc is enough"),
           // which left the reader looking at markers.
-          await revealThread(vscode.Uri.file(node.docPath), node.thread.id);
+          await openReviewView(vscode.Uri.file(node.docPath), { revealThreadId: node.thread.id });
         } catch (e) {
           log.error(`revealComment failed for ${node.docPath}`, e);
         }
@@ -509,46 +509,28 @@ export function registerCommentsCommands(deps: CommandDeps): void {
     ),
   );
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      "markdownCollab.openCollabEditor",
-      async (arg?: vscode.Uri) => {
-        const uri =
-          arg instanceof vscode.Uri
-            ? arg
-            : vscode.window.activeTextEditor?.document.uri;
-        if (!uri) {
-          void vscode.window.showWarningMessage(
-            "Open a Markdown file first, then run this command.",
-          );
-          return;
-        }
-        await vscode.commands.executeCommand(
-          "vscode.openWith",
-          uri,
-          CollabEditorProvider.viewType,
-        );
-      },
-    ),
-  );
+  // The review view. `openCollabEditor` was the live editor's own command
+  // before the live editor became the review view; it stays, hidden from the
+  // palette, as an alias for anything that still calls it. A caller can pass
+  // `ReviewViewOpts` as the second argument; a menu's own second argument
+  // (the editor group, the explorer selection) is ignored.
+  const openReviewViewCommand = async (arg?: vscode.Uri, opts?: unknown): Promise<void> => {
+    const uri =
+      arg instanceof vscode.Uri
+        ? arg
+        : vscode.window.activeTextEditor?.document.uri;
+    if (!uri) {
+      void vscode.window.showWarningMessage(
+        "Open a Markdown file first, then run this command.",
+      );
+      return;
+    }
+    await openReviewView(uri, reviewViewOptsFrom(opts));
+  };
 
   context.subscriptions.push(
-    vscode.commands.registerCommand(
-      "markdownCollab.openInlineCommentsView",
-      async (arg?: vscode.Uri) => {
-        const uri =
-          arg instanceof vscode.Uri
-            ? arg
-            : vscode.window.activeTextEditor?.document.uri;
-        if (!uri) {
-          void vscode.window.showWarningMessage(
-            "Open a Markdown file first, then run this command.",
-          );
-          return;
-        }
-        await openInlineView(uri);
-      },
-    ),
+    vscode.commands.registerCommand("markdownCollab.openCollabEditor", openReviewViewCommand),
+    vscode.commands.registerCommand("markdownCollab.openInlineCommentsView", openReviewViewCommand),
     // Invoked from the source editor's hover. Internal: not in the palette.
     vscode.commands.registerCommand(
       "markdownCollab.revealThread",
@@ -556,7 +538,7 @@ export function registerCommentsCommands(deps: CommandDeps): void {
         if (!uriArg || !threadId) return;
         const uri = uriArg instanceof vscode.Uri ? uriArg : vscode.Uri.parse(uriArg);
         try {
-          await revealThread(uri, threadId);
+          await openReviewView(uri, { revealThreadId: threadId });
         } catch (e) {
           reviewLog.error(`revealThread failed for ${uri.fsPath}`, e);
         }

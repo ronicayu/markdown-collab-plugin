@@ -15,7 +15,6 @@ import {
 } from "./mcpServer";
 import { reconnectAgents } from "./mcpServer/agentConnections";
 import { lookupClaude, sweepHeadlessTempDirs } from "./transports/headlessHost";
-import { parse as parseInline } from "./inlineComments/format";
 import { activateClaudeStatusBar } from "./claudeStatusBar";
 import { TerminalTracker } from "./transports/terminalTracker";
 import { dispatchReviewPayload, registerSendCommands } from "./commands/send";
@@ -23,6 +22,7 @@ import { registerReviewCommands } from "./commands/review";
 import { registerCommentsCommands } from "./commands/comments";
 import { registerSetupCommands, maybePromptSkillUpdate } from "./commands/setup";
 import { registerDiagnosticsCommands } from "./commands/diagnostics";
+import { createReviewViewRouter } from "./commands/reviewViewRouter";
 import type { CommandDeps } from "./commands/deps";
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -111,15 +111,17 @@ export function activate(context: vscode.ExtensionContext): void {
     sweepHeadlessTempDirs(rootLog.scope("headless"));
   });
 
-  // Live WYSIWYG editor for a single human + Claude on the same machine. There
-  // is no multi-human relay: the human edits here, Claude edits the .md on
-  // disk, and the two converge through the file (the provider pushes external
-  // file changes into the editor, and writes the editor's edits back to disk).
+  // The review view (10x-plan-6 P4): the rendered document with the threads
+  // sidebar, read-only until its Edit switch is on, for a single human +
+  // Claude on the same machine. There is no multi-human relay: the human
+  // edits here, Claude edits the .md on disk, and the two converge through the
+  // file (the provider pushes external file changes into the editor, and
+  // writes the editor's edits back to disk).
   context.subscriptions.push(CollabEditorProvider.register(context, rootLog.scope("live-editor")));
 
-  // One way into the review view, used by the command, the explorer menus, and
-  // the source-editor affordances (hover link, unread walk). `opts` carries an
-  // optional scroll target so a caller can land on a specific thread.
+  // The previous review view (the markdown-it panel), kept for one release
+  // behind `markdownCollab.classicReviewView`. Only the router below opens it.
+  // `opts` carries an optional scroll target (the line of a thread's anchor).
   const openInlineView = async (
     uri: vscode.Uri,
     opts?: { line?: number; showDiff?: boolean },
@@ -144,30 +146,32 @@ export function activate(context: vscode.ExtensionContext): void {
     );
   };
 
+  // The one way into the review view (10x-plan-6 P4): the live editor, or the
+  // previous panel while `markdownCollab.classicReviewView` is on. The
+  // commands, menus, key, hover link, tree rows, unread walk and status bar
+  // all come through here — see src/commands/reviewViewRouter.ts.
+  const openReviewView = createReviewViewRouter({
+    classic: openInlineView,
+    live: (uri, opts) => CollabEditorProvider.open(uri, opts),
+    readSource: async (uri) => (await vscode.workspace.openTextDocument(uri)).getText(),
+    classicEnabled: () =>
+      vscode.workspace.getConfiguration("markdownCollab").get<boolean>("classicReviewView", false),
+  });
+
   // Uncommitted-changes review: the tree of locally changed markdown files,
-  // each opening in the inline view with diff stripes. Wrapped like the PR
+  // each opening in the review view with diff stripes. Wrapped like the PR
   // controller — a git failure here must not take down activation.
   try {
     context.subscriptions.push(
       new UncommittedChangesController(
-        (uri, opts) => openInlineView(uri, opts),
+        (uri, opts) => openReviewView(uri, { diff: opts.showDiff }),
         rootLog.scope("uncommitted"),
+        (uri) => CollabEditorProvider.open(uri, { diff: true }),
       ),
     );
   } catch (e) {
     log.error("uncommitted-changes init failed", e as Error);
   }
-
-  /**
-   * Open the review view scrolled to one thread. The source line of the
-   * thread's anchor is the scroll target, so this reuses the panel's existing
-   * line-based reveal rather than adding a second addressing scheme.
-   */
-  const revealThread = async (uri: vscode.Uri, threadId: string): Promise<void> => {
-    const doc = await vscode.workspace.openTextDocument(uri);
-    const anchor = parseInline(doc.getText()).anchors.get(threadId);
-    await openInlineView(uri, anchor ? { line: doc.positionAt(anchor.openEnd).line + 1 } : undefined);
-  };
 
   // Every command family gets the same wiring rather than reaching back into
   // this function's locals — see src/commands/deps.ts.
@@ -182,8 +186,7 @@ export function activate(context: vscode.ExtensionContext): void {
     diagnosticsLog: rootLog.scope("diagnostics"),
     terminalTracker,
     reviewView,
-    openInlineView,
-    revealThread,
+    openReviewView,
   };
 
   registerDiagnosticsCommands(deps);

@@ -36,12 +36,14 @@ import { nord } from "@milkdown/theme-nord";
 import "@milkdown/theme-nord/style.css";
 import "./host.css";
 import "./plugins/plugins.css";
-import { Plugin, PluginKey, TextSelection } from "prosemirror-state";
+import { NodeSelection, Plugin, PluginKey, TextSelection } from "prosemirror-state";
 import { CellSelection } from "@milkdown/prose/tables";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import type { Node as PmDocNode } from "prosemirror-model";
-import { buildCommentBody, buildCommentCard, buildComposer, buildSuggestionCard, type ComposerHandle } from "../webviewShared/commentUi";
-import { sidebarCountLabel, threadSignature } from "../webviewShared/threadListState";
+import { buildComposer, type ComposerHandle } from "../webviewShared/commentUi";
+import { createThreadSidebar } from "../webviewShared/threadSidebar";
+import type { SidebarState, SidebarThread, SkillStatus } from "../webviewShared/sidebarProtocol";
+import { matchesFilter, type ThreadFilter } from "../webviewShared/threadListState";
 import { locateAnchorInLiveText, locateNthOccurrence } from "../collab/liveAnchorLocator";
 import { renderedRangeToPmRange, renderedTextOf } from "../collab/pmPositionMapper";
 import {
@@ -51,6 +53,7 @@ import {
   type PmNodeLike,
   type SourceIndex,
 } from "../collab/sourcePositions";
+import { diffBlocks, markdownBlockNodes, type BlockEditsMessage } from "../collab/blockEdits";
 import { decodeNamedReference, installSourcePositions } from "./sourcePositionPlugin";
 import { slugifyHeading } from "../inlineComments/linkParse";
 import { resolveImageSrc, type ImageBaseUris } from "../webviewShared/imageSrc";
@@ -65,6 +68,8 @@ import { inlineBreakPlugin } from "./plugins/inlineBreakPlugin";
 import { makePlantumlPlugin, setPlantumlConfig, type PlantumlConfig } from "./plugins/plantumlWidgetPlugin";
 import { makeTaskListPlugin } from "./plugins/taskListPlugin";
 import { makeSuggestionHighlightPlugin, SUGGESTION_HIGHLIGHT_KEY } from "./plugins/suggestionHighlightPlugin";
+import { makeDiffStripesPlugin, DIFF_STRIPES_KEY, type DiffState } from "./plugins/diffStripesPlugin";
+import { buildChangeNav, type ChangeNavHandle } from "./plugins/changeNav";
 
 declare function acquireVsCodeApi(): {
   postMessage: (msg: unknown) => void;
@@ -106,7 +111,19 @@ interface SuggestionSummary {
   proseEnd?: number;
 }
 
-interface InitMessage {
+/**
+ * The sidebar's fields on `init` and `sidecar-changed` (10x-plan-6 P4) — what
+ * the review view's panel sends; see collab/sidebarHost.ts.
+ */
+interface SidebarPush {
+  /** Every thread with its full comment list; absent, the cards are built from `comments`. */
+  threads?: SidebarThread[];
+  suggestMode?: boolean;
+  headlessAvailable?: boolean;
+  agentName?: string;
+}
+
+interface InitMessage extends SidebarPush {
   type: "init";
   text: string;
   user: { name: string; color: string };
@@ -122,6 +139,15 @@ interface InitMessage {
   lineMap?: number[];
   /** Read-only mode: no editing; comments anchor by source position (docs/one-view-design.md). */
   readOnly?: boolean;
+  /**
+   * Uncommitted-vs-HEAD diff overlay (10x-plan-6 P4 phase B) — the host's
+   * `DiffState` (src/inlineComments/inlineCommentsPanel.ts), copied here the
+   * same way the review view's client.ts copies it: the webview bundle can't
+   * import a vscode-touching module. Absent/null = plain live editor.
+   */
+  diff?: DiffState | null;
+  /** The host's document epoch; edit mode's reports carry it (docs/one-view-design.md, "Phase B"). */
+  epoch?: number;
 }
 
 /** Pushed when the line-number setting or the document's line map changes. */
@@ -142,6 +168,10 @@ interface ExternalChangeMessage {
   text: string;
   /** Where the disk-side (Claude) edit landed, for the presence affordances. */
   changed?: ChangeSummary | null;
+  /** The host's document epoch after this re-render; edit mode's next report carries it. */
+  epoch?: number;
+  /** Set when the host re-rendered because it couldn't take an edit: says why, instead of the external-edit notice. */
+  toast?: string;
 }
 
 interface FrontmatterMessage {
@@ -149,13 +179,15 @@ interface FrontmatterMessage {
   frontmatter: string;
 }
 
-interface SidecarChangedMessage {
+interface SidecarChangedMessage extends SidebarPush {
   type: "sidecar-changed";
   comments: CommentSummary[];
   suggestions?: SuggestionSummary[];
   pendingThreadIds?: string[];
   /** Host-decided wording for the waiting row (10x-plan-2 P0.2). */
   pendingLabel?: string;
+  /** Same contract as `InitMessage.diff`. */
+  diff?: DiffState | null;
 }
 
 interface AddCommentResultMessage {
@@ -202,6 +234,24 @@ interface DrawioReadResultMessage {
   error?: string;
 }
 
+/** The skill banner's state, posted after `init` and after an install. */
+interface SkillStatusMessage {
+  type: "skill-status";
+  status: SkillStatus;
+}
+
+/** An agent was just asked to review: the thread ids that existed then. */
+interface ReviewPendingMessage {
+  type: "review-pending";
+  existingIds: string[];
+}
+
+/** Land on a thread: a hover link, a tree row or the unread walk opened this view on it. */
+interface RevealThreadMessage {
+  type: "reveal-thread";
+  threadId: string;
+}
+
 type IncomingMessage =
   | InitMessage
   | ExternalChangeMessage
@@ -213,48 +263,89 @@ type IncomingMessage =
   | DeleteCommentResultMessage
   | OpenLinkResultMessage
   | LineMapMessage
-  | DrawioReadResultMessage;
+  | DrawioReadResultMessage
+  | SkillStatusMessage
+  | ReviewPendingMessage
+  | RevealThreadMessage;
 
 const vscode = acquireVsCodeApi();
 
 let editor: Editor | null = null;
-let suppressNextPost = false;
+// `init` messages run one at a time: a second one (a mode switch) waits for
+// the first editor to finish building before replacing it.
+let initQueue: Promise<void> = Promise.resolve();
 let userName: string = "user";
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 // Debounces the human's edits before posting them to the host. Module-scoped so
 // an incoming external (Claude) change can cancel a still-pending stale post —
 // otherwise that post would fire after the external change and overwrite it.
 let editDebounce: ReturnType<typeof setTimeout> | null = null;
-// In-progress reply text per thread, so an always-on reply box keeps what the
-// user typed across sidebar re-renders.
-const pendingReplies = new Map<string, string>();
-/** Live reply composers by thread id, so a failed reply POST can re-enable them. */
-const replyComposers = new Map<string, ComposerHandle>();
+// Edit mode (docs/one-view-design.md, "Phase B"): the document as last parsed
+// from the host or last posted to it, and the host epoch it belongs to. An
+// edit is reported as the top-level blocks the current document doesn't
+// share with this one; the host drops a report from an epoch it has left.
+let editBaseDoc: PmDocNode | null = null;
+let editEpoch = 0;
 /** The open add-comment composer, so a failed add can re-enable it. */
 let addComposer: ComposerHandle | null = null;
 
 const sidebarState: {
   comments: CommentSummary[];
   suggestions: SuggestionSummary[];
-  hideResolved: boolean;
   collapsed: boolean;
   // Transient one-line status (e.g. "Updated from disk" when Claude edits the
   // file). null when nothing to show.
   notice: string | null;
-  /** Threads dispatched to Claude and not yet answered — owned by the host. */
-  pending: ReadonlySet<string>;
-  /** What the waiting row says. The host owns the wording because only it
-   *  knows whether the wait is inferred or protocol-backed. */
-  pendingLabel: string;
 } = {
   comments: [],
   suggestions: [],
-  pending: new Set<string>(),
-  pendingLabel: "Claude is working\u2026",
-  hideResolved: false,
   collapsed: false,
   notice: null,
 };
+
+// The thread sidebar (10x-plan-6 P4): the review view's threads pane, shared
+// with it through webviewShared/threadSidebar.ts. It renders the latest push
+// (`sidebarPush`) with this editor's own mode, and everything it asks of the
+// document comes back through these callbacks.
+const sidebarPush: Omit<SidebarState, "readOnly"> = {
+  threads: [],
+  suggestions: [],
+  suggestMode: false,
+  pendingThreadIds: [],
+  headlessAvailable: false,
+};
+
+const threadSidebar = createThreadSidebar({
+  post: (msg) => {
+    // Edits still in the debounce go first: the mode switch re-reads the
+    // file, and the agent reads it from disk.
+    if (msg.type === "set-read-only" || msg.type === "send-to-claude" || msg.type === "send-to-claude-comment") {
+      flushBlockEdits();
+    }
+    vscode.postMessage(msg);
+    if (msg.type === "send-to-claude" || msg.type === "send-to-claude-comment") {
+      const agent = sidebarPush.agentName || "Claude";
+      showNotice(readOnly ? `Sent to ${agent}` : `Sent to ${agent} — your edits are saved to disk`);
+    }
+  },
+  getState: () => vscode.getState(),
+  setState: (state) => {
+    const before = threadFilter();
+    vscode.setState(state);
+    // Highlights follow the list's filter, as in the review view.
+    if (threadFilter() !== before) forceHighlightRefresh();
+  },
+  revealInDocument: (threadId) => {
+    const comment = sidebarState.comments.find((c) => c.id === threadId);
+    if (comment) jumpToAnchor(comment);
+  },
+  revealSuggestionInDocument: (anchorId) => {
+    const mark = editorContainer?.querySelector<HTMLElement>(
+      `.mdc-anchor-highlight--suggestion[data-suggestion-id="${cssEscape(anchorId)}"]`,
+    );
+    if (mark) smoothScrollIntoView(mark, "center");
+  },
+});
 
 let sidebarEl: HTMLElement | null = null;
 let composerEl: HTMLElement | null = null;
@@ -391,6 +482,12 @@ let imageBaseUris: ImageBaseUris = { docDir: "", workspaceFolder: null };
 // the gutter off entirely.
 let lineMap: number[] | null = null;
 
+// Uncommitted-diff overlay (10x-plan-6 P4 phase B): the latest `diff` a
+// push carried, and the toolbar (badge + prev/next arrows) that shows it.
+// `changeNav` is built once, in `buildLayout()`.
+let currentDiff: DiffState | null = null;
+let changeNav: ChangeNavHandle | null = null;
+
 // --- Document outline -----------------------------------------------------
 let outlinePaneEl: HTMLElement | null = null;
 let outlineVisible = false;
@@ -442,18 +539,39 @@ async function init(msg: InitMessage): Promise<void> {
   applyLineNumberLayout();
   sidebarState.comments = msg.comments ?? [];
   sidebarState.suggestions = msg.suggestions ?? [];
-  sidebarState.pending = new Set(msg.pendingThreadIds ?? []);
-  if (msg.pendingLabel) sidebarState.pendingLabel = msg.pendingLabel;
+  takeSidebarPush(msg);
   cachedMarkdown = msg.text;
   readOnly = msg.readOnly === true;
   sourceMarkdown = msg.text;
+  currentDiff = msg.diff ?? null;
   renderFrontmatter(msg.frontmatter ?? "");
   renderSidebar();
 
-  editor = await Editor.make()
+  editor = await createEditor(msg.text);
+  resetEditBase(msg.epoch);
+
+  // The editor seeds its document from `defaultValueCtx` (set to msg.text
+  // above) — there is no Yjs doc and no collab plugin. The human edits here;
+  // Claude edits the .md on disk; the two converge through the file, applied
+  // via `applyExternalChange`. Undo is prosemirror-history (`.use(history)`).
+  forceHighlightRefresh();
+  forceSuggestionHighlightRefresh();
+  forceDiffRefresh();
+  reportReady(true);
+
+  installAddCommentAffordance();
+}
+
+/**
+ * Build the milkdown editor on `text`, in the current mode, into the editor
+ * pane. Read-only installs the source-position schema and never edits; edit
+ * mode reports each edit as the blocks it changed (`flushBlockEdits`).
+ */
+function createEditor(text: string): Promise<Editor> {
+  return Editor.make()
     .config((ctx) => {
       ctx.set(rootCtx, editorContainer!);
-      ctx.set(defaultValueCtx, msg.text);
+      ctx.set(defaultValueCtx, text);
       if (readOnly) {
         ctx.update(editorViewOptionsCtx, (prev) => ({ ...prev, editable: () => false }));
         installSourcePositions(ctx);
@@ -474,6 +592,7 @@ async function init(msg: InitMessage): Promise<void> {
           makeTaskListPlugin(),
           makeLineNumberPlugin(),
           makeClaudeEditPlugin(),
+          makeDiffStripesPlugin(() => currentDiff, () => sourceMarkdown),
         ]),
       );
       ctx.get(listenerCtx).markdownUpdated((_ctx, markdown, prevMarkdown) => {
@@ -483,26 +602,10 @@ async function init(msg: InitMessage): Promise<void> {
         // Read-only: the document only ever changes by re-parsing the host's
         // text, so there is never an edit to report.
         if (readOnly) return;
-        if (suppressNextPost) {
-          suppressNextPost = false;
-          return;
-        }
-        if (markdown === prevMarkdown) return;
         cachedMarkdown = markdown;
-        if (editDebounce) clearTimeout(editDebounce);
-        editDebounce = setTimeout(() => {
-          editDebounce = null;
-          // Report each anchor's live position (read off the mapped decoration
-          // set) so the host places markers exactly where comments now sit,
-          // instead of re-deriving positions from the old quote text.
-          let anchors: AnchorReport[] = [];
-          editor?.action((ictx) => {
-            const view = ictx.get(editorViewCtx);
-            const set = HIGHLIGHT_PLUGIN_KEY.getState(view.state) as DecorationSet | undefined;
-            anchors = collectAnchors(view.state.doc, set);
-          });
-          vscode.postMessage({ type: "edit", text: markdown, anchors });
-        }, 250);
+        // Which blocks changed is read off the base when the debounce fires; an
+        // external change resets the base, so it never reports itself.
+        scheduleBlockEdits();
         // Don't rebuild highlights here: the plugin's apply() already maps the
         // existing decorations through this edit (so a highlight tracks text
         // changed inside it). Rebuilding from the not-yet-re-anchored
@@ -518,16 +621,109 @@ async function init(msg: InitMessage): Promise<void> {
     .use(history)
     .use(listener)
     .create();
+}
 
-  // The editor seeds its document from `defaultValueCtx` (set to msg.text
-  // above) — there is no Yjs doc and no collab plugin. The human edits here;
-  // Claude edits the .md on disk; the two converge through the file, applied
-  // via `applyExternalChange`. Undo is prosemirror-history (`.use(history)`).
+/**
+ * A second `init`: the host switched this panel's mode (`set-read-only`) and
+ * re-sent the file. Only the editor is rebuilt — read-only with the
+ * source-position schema, edit mode without it — on the file's current text;
+ * the layout and the sidebar stay.
+ */
+async function reinitEditor(msg: InitMessage): Promise<void> {
+  if (editDebounce) {
+    clearTimeout(editDebounce);
+    editDebounce = null;
+  }
+  const previous = editor;
+  editor = null;
+  editBaseDoc = null;
+  await previous?.destroy();
+  if (editorContainer) editorContainer.innerHTML = "";
+  readOnly = msg.readOnly === true;
+  cachedMarkdown = msg.text;
+  sourceMarkdown = msg.text;
+  sourceIndexCache = null;
+  pendingSelection = null;
+  lastNonEmptySelection = null;
+  lastHighlightSig = " ";
+  lineMap = Array.isArray(msg.lineMap) ? msg.lineMap : null;
+  currentDiff = msg.diff ?? null;
+  sidebarState.comments = msg.comments ?? [];
+  sidebarState.suggestions = msg.suggestions ?? [];
+  takeSidebarPush(msg);
+  renderFrontmatter(msg.frontmatter ?? "");
+  renderSidebar();
+  editor = await createEditor(msg.text);
+  applyLineNumberLayout();
+  resetEditBase(msg.epoch);
   forceHighlightRefresh();
   forceSuggestionHighlightRefresh();
+  forceDiffRefresh();
+  refreshOutline();
   reportReady(true);
+}
 
-  installAddCommentAffordance();
+/** The document the host just sent is the base the next edit is diffed against. */
+function resetEditBase(epoch: number | undefined): void {
+  if (typeof epoch === "number") editEpoch = epoch;
+  editor?.action((ctx) => {
+    editBaseDoc = ctx.get(editorViewCtx).state.doc;
+  });
+}
+
+function scheduleBlockEdits(): void {
+  if (editDebounce) clearTimeout(editDebounce);
+  editDebounce = setTimeout(flushBlockEdits, 250);
+}
+
+/**
+ * Post the top-level blocks the document changed since `editBaseDoc` and make
+ * the current document the base. Posts nothing when no block's Markdown
+ * changed — a heading id or list label a plugin rewrote, a character typed and
+ * deleted again.
+ */
+function flushBlockEdits(): void {
+  if (editDebounce) {
+    clearTimeout(editDebounce);
+    editDebounce = null;
+  }
+  const base = editBaseDoc;
+  if (!editor || readOnly || !base) return;
+  let message: BlockEditsMessage | null = null;
+  editor.action((ctx) => {
+    const doc = ctx.get(editorViewCtx).state.doc;
+    message = blockEditsBetween(base, doc, ctx.get(serializerCtx));
+    editBaseDoc = doc;
+  });
+  if (message) vscode.postMessage(message);
+}
+
+/** The `edit-blocks` message that takes `base` to `doc`, or null when no block's Markdown changed. */
+function blockEditsBetween(
+  base: PmDocNode,
+  doc: PmDocNode,
+  serializer: (content: PmDocNode) => string,
+): BlockEditsMessage | null {
+  // Blocks are serialized together so the serializer sees their neighbours
+  // (two adjacent lists get different markers), and without the final newline:
+  // a block's source range ends at its last character.
+  const serialize = (nodes: readonly PmDocNode[]): string =>
+    serializer(doc.type.create(null, nodes as PmDocNode[])).replace(/\n+$/, "");
+  const same = (a: PmDocNode, b: PmDocNode): boolean => a.eq(b) || serialize([a]) === serialize([b]);
+  const baseBlocks = markdownBlockNodes(base);
+  const changes = diffBlocks(baseBlocks, markdownBlockNodes(doc), same);
+  if (changes.length === 0) return null;
+  return {
+    type: "edit-blocks",
+    epoch: editEpoch,
+    baseTypes: baseBlocks.map((n) => n.type.name),
+    edits: changes.map((c) => ({
+      from: c.from,
+      to: c.to,
+      markdown: c.nodes.length > 0 ? serialize(c.nodes) : "",
+      types: c.nodes.map((n) => n.type.name),
+    })),
+  };
 }
 
 function buildLayout(): void {
@@ -548,6 +744,12 @@ function buildLayout(): void {
   const editorPane = document.createElement("div");
   editorPane.className = "mdc-editor-pane";
   layoutEl.appendChild(editorPane);
+
+  // Uncommitted-diff toolbar (10x-plan-6 P4 phase B): badge + prev/next
+  // arrows, sticky above everything else in the pane. Hidden by
+  // `buildChangeNav` until a diff actually shows something.
+  changeNav = buildChangeNav();
+  editorPane.appendChild(changeNav.el);
 
   // Frontmatter panel sits above the Milkdown body. The body editor mounts
   // into its own element so ProseMirror never touches the frontmatter DOM.
@@ -593,114 +795,112 @@ function syncCollapsedClass(): void {
   }
 }
 
+/**
+ * Render the thread sidebar from the latest push. The first call mounts it:
+ * the notice banner above it, the add-comment composer under its header, and
+ * this editor's own buttons (outline, add comment) in its title row.
+ */
 function renderSidebar(): void {
   if (!sidebarEl) return;
   syncCollapsedClass();
-
-  const total = sidebarState.comments.length;
-  const open = sidebarState.comments.filter((c) => !c.resolved).length;
-  const resolvedCount = total - open;
-  const visibleComments = sidebarState.comments.filter((c) =>
-    sidebarState.hideResolved ? !c.resolved : true,
-  );
-
-  // Transient notice — e.g. "Updated from disk" when Claude (or another tool)
-  // edits the .md while the editor is open and the change lands here.
-  const banner = sidebarState.notice
-    ? `<div class="mdc-banner mdc-banner--info" role="status">${escapeHtml(sidebarState.notice)}</div>`
-    : "";
-
-  const filterClass = sidebarState.hideResolved ? "mdc-filter-chip mdc-filter-chip--active" : "mdc-filter-chip";
-  const filterLabel = sidebarState.hideResolved
-    ? `Showing open · ${open}`
-    : `${open} open · ${total} total`;
-
-  const header = `
-    <div class="mdc-banner-slot">${banner}</div>
-    <div class="mdc-sidebar-header">
-      <div class="mdc-sidebar-header-row">
-        <div class="mdc-sidebar-titles">
-          <div class="mdc-sidebar-title">Comments</div>
-          <button type="button" class="${filterClass}" data-action="toggle-filter" title="${
-            sidebarState.hideResolved ? "Show all" : "Hide resolved"
-          }">
-            ${escapeHtml(filterLabel)}
-          </button>
-        </div>
-        <div class="mdc-sidebar-toolbar">
-          <button type="button" class="mdc-icon-btn${outlineVisible ? " active" : ""}" data-action="toggle-outline" title="Show or hide the document outline" aria-pressed="${outlineVisible}">
-            <span>☰</span>
-            <span>Outline</span>
-          </button>
-          <button type="button" class="mdc-icon-btn mdc-icon-btn--danger" data-action="remove-resolved" ${
-            resolvedCount === 0 ? "hidden" : ""
-          } title="Delete every resolved comment from this file. Open comments and pending suggestions are kept.">
-            <span data-role="remove-resolved-label">Remove ${resolvedCount} resolved</span>
-          </button>
-          <button type="button" class="mdc-icon-btn mdc-icon-btn--danger" data-action="finalize" ${
-            total === 0 ? "hidden" : ""
-          } title="Remove ALL review data — every comment, marker, and pending suggestion — leaving clean markdown ready to commit.">
-            <span>Remove all</span>
-          </button>
-          <button type="button" class="mdc-icon-btn mdc-icon-btn--primary" data-action="add-comment" title="Add a comment on the current selection (Cmd/Ctrl+Shift+M)">
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 1.5v5h5v1H8v5H7v-5H2v-1h5v-5h1z"/></svg>
-            <span>Add comment</span>
-          </button>
-        </div>
-      </div>
-      <div class="mdc-sidebar-actions">
-        <button type="button" class="mdc-icon-btn mdc-sidebar-action mdc-sidebar-action--primary" data-action="send-to-claude" ${open === 0 ? "disabled" : ""} title="${
-          open === 0 ? "No unresolved comments to send" : "Send unresolved comments to Claude Code"
-        }">
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M1.7 14.3 14.4 8 1.7 1.7v4.7L10 8l-8.3 1.6v4.7z"/></svg>
-          <span>Send to Claude</span>
-        </button>
-        <button type="button" class="mdc-icon-btn mdc-sidebar-action" data-action="copy-prompt" title="Copy the prompt to your clipboard.">
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M4 1.5h7a1 1 0 0 1 1 1V12h-1V2.5H4v-1zM2 4.5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4.5zm1 0V14h7V4.5H3z"/></svg>
-          <span>Copy</span>
-        </button>
-      </div>
-    </div>
-  `;
-
-  const composerSlot = '<div class="mdc-composer-slot"></div>';
-
-  sidebarEl.innerHTML =
-    header + composerSlot + `<div class="mdc-suggestions"></div>` + `<div class="mdc-comment-list"></div>`;
-  composerEl = sidebarEl.querySelector(".mdc-composer-slot");
-  renderSuggestions();
-  const list = sidebarEl.querySelector<HTMLElement>(".mdc-comment-list")!;
-  if (total === 0) {
-    list.innerHTML = emptyNoCommentsHtml();
-  } else if (visibleComments.length === 0) {
-    list.innerHTML = emptyAllResolvedHtml(resolvedCount);
-  } else {
-    for (const c of visibleComments.slice().sort((a, b) => Number(a.resolved) - Number(b.resolved))) {
-      list.appendChild(renderCommentCard(c));
-    }
-  }
-  attachToolbarHandlers();
+  if (threadSidebar.el.parentElement !== sidebarEl) mountSidebar(sidebarEl);
+  threadSidebar.render({ ...sidebarPush, readOnly });
 }
 
-function emptyNoCommentsHtml(): string {
-  return `
-    <div class="mdc-sidebar-empty">
-      <div class="mdc-sidebar-empty-title">No comments yet</div>
-      <div class="mdc-sidebar-empty-body">
-        Select text in the editor, then:
-        <ul>
-          <li>Press <span class="mdc-kbd">${isMac() ? "⌘" : "Ctrl"}+Shift+M</span></li>
-          <li>Or click <strong>+ Add comment</strong> at the top of this panel</li>
-          <li>Or use the floating button that appears next to your selection</li>
-        </ul>
-        Comments are saved inside the Markdown file itself, so they travel with it and show up in the Inline Comments view.
-      </div>
-    </div>
-  `;
+function mountSidebar(host: HTMLElement): void {
+  const banner = document.createElement("div");
+  banner.className = "mdc-banner-slot";
+  const composerSlot = document.createElement("div");
+  composerSlot.className = "mdc-composer-slot";
+  threadSidebar.headerEl.after(composerSlot);
+  threadSidebar.titleActionsEl.replaceChildren(buildOutlineToggle(), buildAddCommentButton());
+  host.replaceChildren(banner, threadSidebar.el);
+  composerEl = composerSlot;
 }
 
-function emptyAllResolvedHtml(resolvedCount: number): string {
-  return `<div class="mdc-sidebar-empty"><div class="mdc-sidebar-empty-title">All comments resolved</div><div class="mdc-sidebar-empty-body">${resolvedCount} resolved · 0 open. Click "Showing open" above to see resolved threads.</div></div>`;
+function buildOutlineToggle(): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "mdc-icon-btn";
+  btn.dataset.action = "toggle-outline";
+  btn.title = "Show or hide the document outline";
+  btn.setAttribute("aria-label", "Outline");
+  btn.textContent = "☰";
+  const sync = (): void => {
+    btn.classList.toggle("active", outlineVisible);
+    btn.setAttribute("aria-pressed", String(outlineVisible));
+  };
+  sync();
+  btn.addEventListener("click", () => {
+    setOutlineVisible(!outlineVisible);
+    sync();
+  });
+  return btn;
+}
+
+/** A comment on the current selection — the same composer as Cmd/Ctrl+Shift+M. */
+function buildAddCommentButton(): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "mdc-icon-btn mdc-icon-btn--primary";
+  btn.dataset.action = "add-comment";
+  btn.title = "Add a comment on the current selection (Cmd/Ctrl+Shift+M)";
+  btn.setAttribute("aria-label", "Add comment");
+  btn.innerHTML =
+    '<svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M8 1.5v5h5v1H8v5H7v-5H2v-1h5v-5h1z"/></svg>';
+  // preventDefault on mousedown keeps the click from blurring the editor, which
+  // would clear the ProseMirror selection before the click handler runs; the
+  // snapshot covers the plugin paths that slip past it.
+  btn.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    captureCurrentSelection();
+  });
+  btn.addEventListener("click", () => openComposerForCurrentSelection());
+  return btn;
+}
+
+/** Keep what a push says for the sidebar; the next `renderSidebar` shows it. */
+function takeSidebarPush(
+  msg: SidebarPush & {
+    comments?: CommentSummary[];
+    suggestions?: SuggestionSummary[];
+    pendingThreadIds?: string[];
+    pendingLabel?: string;
+  },
+): void {
+  sidebarPush.threads = msg.threads ?? threadsFromSummaries(msg.comments ?? []);
+  sidebarPush.suggestions = (msg.suggestions ?? []).map((s) => ({
+    anchorId: s.anchorId,
+    author: s.author,
+    ts: s.ts,
+    original: s.original,
+    proposed: s.proposed,
+    note: s.note,
+    anchored: s.anchorOrdinal >= 0,
+  }));
+  sidebarPush.suggestMode = msg.suggestMode ?? false;
+  sidebarPush.headlessAvailable = msg.headlessAvailable ?? false;
+  sidebarPush.agentName = msg.agentName;
+  sidebarPush.pendingThreadIds = msg.pendingThreadIds ?? [];
+  sidebarPush.pendingLabel = msg.pendingLabel;
+}
+
+/**
+ * Cards for a push that carries only the flat comment list: every comment, in
+ * order, without the agent/via/edited details only `threads` has.
+ */
+function threadsFromSummaries(comments: CommentSummary[]): SidebarThread[] {
+  return comments.map((c) => ({
+    id: c.id,
+    quote: c.anchor.text,
+    status: c.resolved ? "resolved" : "open",
+    comments: [
+      { id: c.rootCommentId, author: c.author, ts: c.createdAt, body: c.body },
+      ...c.replies.map((r) => ({ id: r.id, author: r.author, ts: r.createdAt, body: r.body })),
+    ],
+    anchor: c.anchorOrdinal >= 0 ? { proseStart: c.proseStart ?? 0, proseEnd: c.proseEnd ?? 0 } : null,
+    stale: c.stale,
+  }));
 }
 
 // Update only the transient notice banner — used by showNotice so a "Updated
@@ -726,369 +926,6 @@ function renderNotice(): void {
   } else {
     slot.innerHTML = `<div class="mdc-banner mdc-banner--info" role="status">${escapeHtml(sidebarState.notice)}</div>`;
   }
-}
-
-// Refresh the header's count + Send-to-Claude enabled state in place.
-function updateSidebarCounts(): void {
-  if (!sidebarEl) return;
-  const total = sidebarState.comments.length;
-  const open = sidebarState.comments.filter((c) => !c.resolved).length;
-  const filterBtn = sidebarEl.querySelector<HTMLButtonElement>("[data-action='toggle-filter']");
-  if (filterBtn) {
-    filterBtn.textContent = sidebarCountLabel({
-      open,
-      total,
-      hideResolved: sidebarState.hideResolved,
-    });
-  }
-  const sendBtn = sidebarEl.querySelector<HTMLButtonElement>("[data-action='send-to-claude']");
-  if (sendBtn) sendBtn.disabled = open === 0;
-
-  // Updates take this path rather than re-rendering the toolbar, so the
-  // remove button has to be refreshed here too — omitting it left a stale
-  // "Remove N resolved" on screen after the removal had already happened.
-  const removeBtn = sidebarEl.querySelector<HTMLButtonElement>("[data-action='remove-resolved']");
-  if (removeBtn) {
-    const resolved = total - open;
-    removeBtn.hidden = resolved === 0;
-    const label = removeBtn.querySelector<HTMLElement>("[data-role='remove-resolved-label']");
-    if (label) label.textContent = `Remove ${resolved} resolved`;
-  }
-  const finalizeBtn = sidebarEl.querySelector<HTMLButtonElement>("[data-action='finalize']");
-  if (finalizeBtn) finalizeBtn.hidden = total === 0;
-}
-
-
-
-/**
- * The waiting state as the card renders it: false when not waiting, otherwise
- * the row's text — so a phase change repaints the card even though nothing
- * about the thread's content moved.
- */
-function pendingSignature(threadId: string): boolean | string {
-  return sidebarState.pending.has(threadId) ? sidebarState.pendingLabel : false;
-}
-
-// Patch the comment list in place: keep unchanged thread cards (so a reply
-// you're typing isn't interrupted), rebuild only the threads whose content
-// changed, insert new ones, and drop removed ones.
-function reconcileComments(): void {
-  if (!sidebarEl) return;
-  const list = sidebarEl.querySelector<HTMLElement>(".mdc-comment-list");
-  if (!list) {
-    renderSidebar();
-    return;
-  }
-  updateSidebarCounts();
-  const total = sidebarState.comments.length;
-  const visible = sidebarState.comments
-    .filter((c) => (sidebarState.hideResolved ? !c.resolved : true))
-    .slice()
-    .sort((a, b) => Number(a.resolved) - Number(b.resolved));
-  if (visible.length === 0) {
-    list.innerHTML = total === 0 ? emptyNoCommentsHtml() : emptyAllResolvedHtml(total);
-    return;
-  }
-  if (list.querySelector(".mdc-sidebar-empty")) list.innerHTML = "";
-
-  const seen = new Set<string>();
-  let prev: HTMLElement | null = null;
-  for (const c of visible) {
-    seen.add(c.id);
-    const existing = list.querySelector<HTMLElement>(
-      `.mdc-comment[data-id="${cssEscape(c.id)}"]`,
-    );
-    let card: HTMLElement;
-    if (existing && existing.dataset.sig === threadSignature(c, pendingSignature(c.id))) {
-      card = existing; // unchanged — leave the DOM (and any focused reply) alone
-    } else {
-      card = renderCommentCard(c);
-      if (existing) existing.replaceWith(card);
-    }
-    const desired: Element | null = prev ? prev.nextElementSibling : list.firstElementChild;
-    if (desired !== card) {
-      if (prev) prev.after(card);
-      else list.prepend(card);
-    }
-    prev = card;
-  }
-  for (const card of Array.from(list.querySelectorAll<HTMLElement>(".mdc-comment"))) {
-    if (!seen.has(card.dataset.id ?? "")) card.remove();
-  }
-}
-
-// Render pending suggestions into their container above the comment list.
-// Full rebuild (suggestion cards hold no in-progress input to preserve, unlike
-// reply boxes), so this can run on every sidecar update.
-function renderSuggestions(): void {
-  if (!sidebarEl) return;
-  const container = sidebarEl.querySelector<HTMLElement>(".mdc-suggestions");
-  if (!container) return;
-  container.innerHTML = "";
-  for (const s of sidebarState.suggestions) {
-    container.appendChild(
-      buildSuggestionCard({
-        author: s.author,
-        timestamp: s.ts,
-        note: s.note,
-        original: s.original,
-        proposed: s.proposed,
-        anchored: s.anchorOrdinal >= 0,
-        onAccept: () => vscode.postMessage({ type: "accept-suggestion", anchorId: s.anchorId }),
-        onReject: () => vscode.postMessage({ type: "reject-suggestion", anchorId: s.anchorId }),
-      }),
-    );
-  }
-}
-
-// Build a thread card as a detached DOM node. The `.mdc-comment` frame,
-// quote header, and thread-action row are view-specific; the inner comment
-// cards and the reply box are the shared `commentUi` builders, so all three
-// surfaces render identical comment chrome from one implementation.
-function renderCommentCard(c: CommentSummary): HTMLElement {
-  const article = document.createElement("article");
-  article.className = c.resolved ? "mdc-comment mdc-comment--resolved" : "mdc-comment";
-  article.dataset.id = c.id;
-  article.dataset.sig = threadSignature(c, pendingSignature(c.id));
-
-  const head = document.createElement("div");
-  head.className = "mdc-thread-head";
-  const quote = document.createElement("button");
-  quote.type = "button";
-  quote.className = "mdc-thread-quote";
-  quote.title = "Click to scroll to the highlighted passage";
-  quote.textContent = c.anchor.text.length > 80 ? c.anchor.text.slice(0, 77) + "…" : c.anchor.text;
-  quote.addEventListener("click", (e) => {
-    e.stopPropagation();
-    jumpToAnchor(c);
-  });
-  head.appendChild(quote);
-
-  if (c.stale && c.anchorOrdinal >= 0) {
-    // Same rule as the inline view: only when the anchor still exists (P1.3).
-    const badge = document.createElement("span");
-    badge.className = "mc-badge mc-badge--stale";
-    badge.textContent = "text changed";
-    badge.title =
-      "The anchored passage was edited after the last comment on this thread — the comment may be answering text that is no longer there.";
-    head.appendChild(badge);
-  }
-
-  const actions = document.createElement("div");
-  actions.className = "mdc-thread-actions";
-  actions.appendChild(
-    threadActionButton("→ Claude", "Send this thread to Claude", () => {
-      vscode.postMessage({ type: "invoke-command", command: "send-thread-claude", commentId: c.id });
-      showNotice("Sent this thread to Claude — your edits are saved");
-    }),
-  );
-  actions.appendChild(
-    threadActionButton("Copy", "Copy this thread's prompt to the clipboard", () => {
-      vscode.postMessage({ type: "invoke-command", command: "copy-thread-claude", commentId: c.id });
-    }),
-  );
-  actions.appendChild(
-    threadActionButton(c.resolved ? "Reopen" : "Resolve", "", () => {
-      vscode.postMessage({ type: "toggle-resolve-comment", commentId: c.id });
-    }),
-  );
-  const delThread = threadActionButton("Delete thread", "Delete the whole thread", null, "danger");
-  delThread.addEventListener("click", (e) => {
-    e.stopPropagation();
-    armDelete(delThread, () => vscode.postMessage({ type: "delete-comment", commentId: c.id }));
-  });
-  actions.appendChild(delThread);
-  head.appendChild(actions);
-  article.appendChild(head);
-
-  // Root comment, then replies — each a shared card carrying its own Delete
-  // (a single comment), separate from the thread-level "Delete thread".
-  // "Claude is working…" hangs off the last one, where the reply will land.
-  const awaiting = sidebarState.pending.has(c.id);
-  if (awaiting) article.classList.add("mdc-comment--awaiting");
-  article.appendChild(
-    renderInnerCard(c.id, c.rootCommentId, c.author, c.createdAt, c.body, false, awaiting && c.replies.length === 0),
-  );
-  c.replies.forEach((r, i) => {
-    article.appendChild(
-      renderInnerCard(c.id, r.id, r.author, r.createdAt, r.body, true, awaiting && i === c.replies.length - 1),
-    );
-  });
-
-  article.appendChild(renderReplyBox(c.id));
-  return article;
-}
-
-// A single comment/reply, built from the shared card. `threadId` is the root
-// comment id (the key the host uses for per-comment deletes and replies).
-function renderInnerCard(
-  threadId: string,
-  commentId: string,
-  author: string,
-  ts: string,
-  body: string,
-  reply: boolean,
-  pending = false,
-): HTMLElement {
-  return buildCommentCard({
-    author,
-    timestamp: ts,
-    bodyEl: buildLinkifiedBody(body),
-    reply,
-    pending,
-    pendingLabel: sidebarState.pendingLabel,
-    actions: [
-      {
-        label: "Delete",
-        variant: "danger",
-        title: "Delete this comment",
-        confirm: { confirmLabel: "Confirm?", busyLabel: "Deleting…" },
-        onClick: () =>
-          vscode.postMessage({ type: "delete-single-comment", threadId, commentId }),
-      },
-    ],
-  });
-}
-
-function threadActionButton(
-  label: string,
-  title: string,
-  onClick: (() => void) | null,
-  variant?: "danger",
-): HTMLButtonElement {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = variant === "danger" ? "mc-btn mc-btn--link mc-btn--danger" : "mc-btn mc-btn--link";
-  btn.textContent = label;
-  if (title) btn.title = title;
-  if (onClick) {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      onClick();
-    });
-  }
-  return btn;
-}
-
-// Always-on reply box at the bottom of a thread, built from the shared
-// composer. In-progress text is kept in `pendingReplies` so the reconciler
-// (which preserves unchanged cards) and a failed POST don't lose it.
-function renderReplyBox(threadId: string): HTMLElement {
-  const wrap = document.createElement("div");
-  wrap.className = "mdc-reply-box";
-  const composer = buildComposer({
-    placeholder: "Reply…",
-    submitLabel: "Reply",
-    rows: 2,
-    autofocus: false,
-    initialValue: pendingReplies.get(threadId) ?? "",
-    onSubmit: (body) => {
-      composer.setBusy("Sending…");
-      replyComposers.set(threadId, composer);
-      vscode.postMessage({ type: "reply-comment", commentId: threadId, body, author: userName });
-    },
-  });
-  composer.textarea.addEventListener("input", () => {
-    pendingReplies.set(threadId, composer.textarea.value);
-  });
-  // Keep clicks inside the composer from bubbling to card-level handlers.
-  composer.textarea.addEventListener("click", (e) => e.stopPropagation());
-  composer.textarea.addEventListener("mousedown", (e) => e.stopPropagation());
-  wrap.appendChild(composer.el);
-  return wrap;
-}
-
-// Escape + linkify http(s)/mailto into anchors the link interceptor handles.
-/**
- * A comment body, rendered as markdown by the shared builder.
- *
- * This used to escape the text and autolink bare URLs by regex, which meant a
- * reply from Claude containing a list or a code fence appeared verbatim,
- * hyphens and backticks included. `linkify` in the shared renderer covers the
- * bare-URL case the regex existed for, and the document-level click handler
- * below routes every resulting link through the host.
- */
-function buildLinkifiedBody(body: string): HTMLElement {
-  return buildCommentBody(body);
-}
-
-function attachToolbarHandlers(): void {
-  if (!sidebarEl) return;
-  // Filter chip
-  const removeResolvedBtn = sidebarEl.querySelector<HTMLButtonElement>(
-    "[data-action='remove-resolved']",
-  );
-  removeResolvedBtn?.addEventListener("click", () => {
-    // The host shows the modal and does the write — a webview can't show a
-    // modal, and this deletes review history in bulk.
-    vscode.postMessage({ type: "invoke-command", command: "remove-resolved" });
-  });
-  const finalizeBtn = sidebarEl.querySelector<HTMLButtonElement>("[data-action='finalize']");
-  finalizeBtn?.addEventListener("click", () => {
-    vscode.postMessage({ type: "invoke-command", command: "finalize" });
-  });
-  const outlineChip = sidebarEl.querySelector<HTMLButtonElement>("[data-action='toggle-outline']");
-  outlineChip?.addEventListener("click", () => {
-    setOutlineVisible(!outlineVisible);
-    renderSidebar();
-  });
-  const filterChip = sidebarEl.querySelector<HTMLButtonElement>("[data-action='toggle-filter']");
-  filterChip?.addEventListener("click", () => {
-    sidebarState.hideResolved = !sidebarState.hideResolved;
-    renderSidebar();
-  });
-  // Toolbar + action-row buttons (Add comment, Send to Claude, Copy).
-  for (const btn of Array.from(
-    sidebarEl.querySelectorAll<HTMLButtonElement>(
-      ".mdc-sidebar-toolbar [data-action], .mdc-sidebar-actions [data-action]",
-    ),
-  )) {
-    const action = btn.dataset.action;
-    btn.addEventListener("mousedown", (e) => {
-      // preventDefault on mousedown stops the click from blurring the
-      // editor (which would clear the PM selection before our click
-      // handler runs). We ALSO snapshot the selection here as a
-      // belt-and-suspenders measure — some Milkdown plugin paths slip
-      // past the preventDefault and cause the SECOND click symptom
-      // (first click sees an empty selection and toasts; user clicks
-      // again with the still-collapsed selection and… still nothing).
-      e.preventDefault();
-      if (action === "add-comment") captureCurrentSelection();
-    });
-    btn.addEventListener("click", () => {
-      if (btn.disabled) return;
-      if (action === "send-to-claude") {
-        vscode.postMessage({ type: "invoke-command", command: "send-to-claude" });
-        showNotice("Sent to Claude — your edits are saved to disk");
-      } else if (action === "copy-prompt") {
-        vscode.postMessage({ type: "invoke-command", command: "copy-prompt" });
-      } else if (action === "add-comment") {
-        openComposerForCurrentSelection();
-      }
-    });
-  }
-}
-
-// Inline two-step delete for the view-specific thread-head "Delete thread"
-// button. The per-comment deletes inside shared cards use commentUi's own
-// `confirm` action option, which mirrors this. The first click arms the
-// button ("Confirm?"), a second click within 3s confirms.
-function armDelete(btn: HTMLButtonElement, confirm: () => void): void {
-  if (btn.dataset.armed === "1") {
-    confirm();
-    btn.textContent = "Deleting…";
-    btn.disabled = true;
-    return;
-  }
-  const original = btn.textContent;
-  btn.dataset.armed = "1";
-  btn.textContent = "Confirm?";
-  setTimeout(() => {
-    if (btn.isConnected && btn.dataset.armed === "1") {
-      btn.dataset.armed = "";
-      btn.textContent = original;
-    }
-  }, 3000);
 }
 
 // ---------------------------------------------------------------------------
@@ -1239,6 +1076,7 @@ function buildAnchorDecorations(
   // text-node walk, not `doc.textContent` — see `renderedTextOf`.
   const haystack = renderedTextOf(doc);
   const decoratedIds: string[] = [];
+  const shows = filterShows();
   for (const c of comments) {
     // Anchored threads: the marker already tells us which occurrence of the
     // text is anchored (anchorOrdinal), so find that occurrence directly — no
@@ -1251,19 +1089,10 @@ function buildAnchorDecorations(
     if (!rendered) continue;
     const pmRange = renderedRangeToPmRange(doc, rendered.start, rendered.end);
     if (!pmRange) continue;
-    // Resolved threads aren't highlighted (too noisy) but we still decorate them
-    // invisibly so their position is tracked through edits and reported to the
-    // host — otherwise editing near a resolved comment would orphan its marker.
-    const attrs: Record<string, string> = c.resolved
-      ? { class: "mdc-anchor-tracked", "data-comment-id": c.id }
-      : {
-          class: "mdc-anchor-highlight",
-          "data-comment-id": c.id,
-          title: `Comment by ${c.author}: ${truncate(c.body, 100)}`,
-        };
-    if (!c.resolved) decoratedIds.push(c.id);
-    // The 4th arg (spec) carries the id so collectAnchors can read it back off
-    // the mapped decoration without parsing DOM attributes.
+    const attrs = anchorAttrs(c, shows(c));
+    if (shows(c)) decoratedIds.push(c.id);
+    // The 4th arg (spec) carries the id so a lookup can read it back off the
+    // mapped decoration without parsing DOM attributes.
     decos.push(Decoration.inline(pmRange.from, pmRange.to, attrs, { id: c.id }));
   }
   // Report which anchors actually got highlighted (only when it changes) so an
@@ -1296,21 +1125,46 @@ function sourceRangesFor(
 function buildSourceAnchorDecorations(doc: DocLike, comments: CommentSummary[]): DecorationSet {
   const decos: Decoration[] = [];
   const decoratedIds: string[] = [];
+  const shows = filterShows();
   for (const c of comments) {
     const ranges = sourceRangesFor(doc, c.proseStart, c.proseEnd, c.anchor.text);
     if (ranges.length === 0) continue;
-    const attrs: Record<string, string> = c.resolved
-      ? { class: "mdc-anchor-tracked", "data-comment-id": c.id }
-      : {
-          class: "mdc-anchor-highlight",
-          "data-comment-id": c.id,
-          title: `Comment by ${c.author}: ${truncate(c.body, 100)}`,
-        };
-    if (!c.resolved) decoratedIds.push(c.id);
+    const attrs = anchorAttrs(c, shows(c));
+    if (shows(c)) decoratedIds.push(c.id);
     for (const r of ranges) decos.push(Decoration.inline(r.from, r.to, attrs, { id: c.id }));
   }
   reportHighlights(decoratedIds);
   return DecorationSet.create(doc as never, decos);
+}
+
+/** The sidebar's thread filter, which it keeps in the webview state; Open when unset. */
+function threadFilter(): ThreadFilter {
+  const f = (vscode.getState() as { threadFilter?: unknown } | undefined)?.threadFilter;
+  return f === "all" || f === "resolved" || f === "claude-unread" ? f : "open";
+}
+
+/** Whether the sidebar's current filter lists a thread — only those are highlighted, as in the review view. */
+function filterShows(): (c: CommentSummary) => boolean {
+  const filter = threadFilter();
+  const threads = new Map(sidebarPush.threads.map((t) => [t.id, t]));
+  return (c) =>
+    matchesFilter(
+      threads.get(c.id) ?? { id: c.id, status: c.resolved ? "resolved" : "open", comments: [{ author: c.author }] },
+      filter,
+    );
+}
+
+/**
+ * A thread's decoration. One the filter hides is still decorated, invisibly,
+ * so the jump to it keeps working; a resolved one it shows is greyed.
+ */
+function anchorAttrs(c: CommentSummary, shown: boolean): Record<string, string> {
+  if (!shown) return { class: "mdc-anchor-tracked", "data-comment-id": c.id };
+  return {
+    class: c.resolved ? "mdc-anchor-highlight mdc-anchor-highlight--resolved" : "mdc-anchor-highlight",
+    "data-comment-id": c.id,
+    title: `Comment by ${c.author}: ${truncate(c.body, 100)}`,
+  };
 }
 
 let lastHighlightSig = " ";
@@ -1319,51 +1173,6 @@ function reportHighlights(ids: string[]): void {
   if (sig === lastHighlightSig) return;
   lastHighlightSig = sig;
   vscode.postMessage({ type: "highlight-report", ids });
-}
-
-interface AnchorReport {
-  id: string;
-  text: string;
-  ordinal: number;
-}
-
-// Read each tracked anchor's CURRENT position straight off the mapped decoration
-// set and describe it as (live text, occurrence ordinal). Because the decoration
-// moved with every edit, these describe exactly where the comment now sits — so
-// the host can place the marker there without re-deriving it from the old quote.
-function collectAnchors(
-  doc: {
-    textBetween: (from: number, to: number, blockSeparator?: string, leafText?: string) => string;
-    descendants: (cb: (n: { isText: boolean; nodeSize: number; text?: string }, p: number) => boolean | void) => void;
-  },
-  set: DecorationSet | undefined,
-): AnchorReport[] {
-  if (!set) return [];
-  const haystack = renderedTextOf(doc);
-  const out: AnchorReport[] = [];
-  const seen = new Set<string>();
-  for (const deco of set.find()) {
-    const id = (deco.spec as { id?: string } | undefined)?.id;
-    if (!id || seen.has(id)) continue;
-    const from = (deco as unknown as { from: number }).from;
-    const to = (deco as unknown as { to: number }).to;
-    // Empty `leafText` for the same reason the haystack skips leaves: a
-    // hardbreak's "\n" is not part of the text anchors are matched against.
-    const text = doc.textBetween(from, to, "", "");
-    if (text.trim().length === 0) continue; // span collapsed (text deleted) → leave unanchored
-    const renderedStart = renderedOffsetForPm(doc, from);
-    let ordinal = 0;
-    let idx = 0;
-    while (true) {
-      const hit = haystack.indexOf(text, idx);
-      if (hit < 0 || hit >= renderedStart) break;
-      ordinal++;
-      idx = hit + 1;
-    }
-    seen.add(id);
-    out.push({ id, text, ordinal });
-  }
-  return out;
 }
 
 // locateAnchorInLiveText now lives in ../collab/liveAnchorLocator for
@@ -1386,24 +1195,59 @@ function forceSuggestionHighlightRefresh(): void {
   });
 }
 
+/**
+ * Rebuild the diff-stripes decoration set from `currentDiff`, then refresh
+ * everything downstream of it: the toolbar's badge text, its navigable
+ * stops (queried back off the editor's own DOM — same technique the review
+ * view uses to collect `.mc-diff-changed`/`.mc-diff-removed`, since
+ * ProseMirror updates the DOM synchronously inside `dispatch`), and the
+ * sidebar's n/p dispatch (steps changes while a diff is showing, threads
+ * otherwise — `ThreadSidebarHandle.setChangeNavigation`).
+ */
+function forceDiffRefresh(): void {
+  if (!editor || !changeNav) return;
+  const nav = changeNav;
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.setMeta(DIFF_STRIPES_KEY, { refresh: true }));
+  });
+  const diff = currentDiff;
+  nav.setBadge(
+    !diff
+      ? null
+      : diff.isNew
+        ? "new file — uncommitted"
+        : diff.addedRanges.length === 0 && (diff.removed ?? []).length === 0
+          ? "no uncommitted prose changes"
+          : "uncommitted changes",
+  );
+  const stops = editorContainer
+    ? Array.from(editorContainer.querySelectorAll<HTMLElement>(".mdc-diff-changed, .mdc-diff-removed"))
+    : [];
+  nav.setStops(stops);
+  threadSidebar.setChangeNavigation(diff && stops.length > 0 ? (delta) => nav.step(delta) : null);
+}
+
+/**
+ * The host opened this view on a thread: make its card the current one and
+ * scroll the document to its highlight. An unanchored thread has only its card.
+ */
+function revealThreadFromHost(threadId: string): void {
+  revealCommentInSidebar(threadId);
+  const anchored = sidebarPush.threads.find((t) => t.id === threadId)?.anchor;
+  const comment = sidebarState.comments.find((c) => c.id === threadId);
+  if (anchored && comment) jumpToAnchor(comment);
+}
+
 function revealCommentInSidebar(commentId: string): void {
   if (!sidebarEl) return;
   if (sidebarState.collapsed) {
     sidebarState.collapsed = false;
     syncCollapsedClass();
   }
-  // If filtered out (e.g. resolved + hideResolved), temporarily show all.
-  const target = sidebarState.comments.find((c) => c.id === commentId);
-  if (target?.resolved && sidebarState.hideResolved) {
-    sidebarState.hideResolved = false;
-    renderSidebar();
-  }
-  const card = sidebarEl.querySelector<HTMLElement>(`.mdc-comment[data-id="${cssEscape(commentId)}"]`);
-  if (!card) return;
-  smoothScrollIntoView(card, "center");
-  card.classList.remove("mdc-comment--flash");
-  void card.offsetWidth;
-  card.classList.add("mdc-comment--flash");
+  // The sidebar makes it the current card, widening its filter if that one
+  // hides the thread.
+  threadSidebar.revealThread(commentId);
 }
 
 // Compute the rendered-text offset (offset into doc.textContent) that
@@ -2319,7 +2163,7 @@ function reportReady(synced: boolean): void {
   vscode.postMessage({ type: "ready-with-content", length, synced, error });
 }
 
-function applyExternalChange(text: string, changed?: ChangeSummary | null): void {
+function applyExternalChange(text: string, changed?: ChangeSummary | null, epoch?: number, toast?: string): void {
   if (!editor) return;
   // Cancel a still-pending local edit post. The keystroke that scheduled it
   // predates this external (Claude) change, so letting it fire would overwrite
@@ -2339,7 +2183,6 @@ function applyExternalChange(text: string, changed?: ChangeSummary | null): void
     prevFrom = ctx.get(editorViewCtx).state.selection.from;
   });
 
-  suppressNextPost = true;
   cachedMarkdown = text;
   // The source positions in the re-parsed document index this string.
   sourceMarkdown = text;
@@ -2358,6 +2201,8 @@ function applyExternalChange(text: string, changed?: ChangeSummary | null): void
     tr.setMeta("external", true);
     view.dispatch(tr);
   });
+  // Edit mode diffs the next edit against the file's text, not what was typed before it.
+  resetEditBase(epoch);
 
   // Restore the cursor near its old position (clamped to the new doc),
   // without auto-scrolling — we restore the scroll offset ourselves.
@@ -2379,6 +2224,13 @@ function applyExternalChange(text: string, changed?: ChangeSummary | null): void
   }
   forceHighlightRefresh();
   forceSuggestionHighlightRefresh();
+  forceDiffRefresh();
+
+  // The host re-read the file because it couldn't take an edit: say that, not "edited on disk".
+  if (toast) {
+    showToast(toast, 8000);
+    return;
+  }
 
   // Presence: flash the span Claude edited and name the nearest heading in a
   // clickable notice. Falls back to a plain notice when there's no locatable
@@ -2446,10 +2298,6 @@ function truncate(text: string, max: number): string {
   return text.slice(0, max - 1) + "…";
 }
 
-function isMac(): boolean {
-  return typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
-}
-
 function cssEscape(value: string): string {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
     return CSS.escape(value);
@@ -2473,6 +2321,14 @@ document.addEventListener("keydown", (e) => {
     e.stopPropagation();
     openComposerForCurrentSelection();
   }
+});
+
+// A suggestion's highlight scrolls the sidebar to its card, as a thread's does
+// (that one goes through the highlight plugin's click handler).
+document.addEventListener("click", (e) => {
+  const mark = (e.target as HTMLElement | null)?.closest<HTMLElement>(".mdc-anchor-highlight--suggestion");
+  const anchorId = mark?.getAttribute("data-suggestion-id");
+  if (anchorId) threadSidebar.revealSuggestion(anchorId);
 });
 
 // Link click interceptor — route to extension's openExternal/vscode.open.
@@ -2524,11 +2380,11 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
   const msg = e.data;
   if (!msg || typeof msg !== "object") return;
   if (msg.type === "init") {
-    if (editor) return;
-    init(msg).catch((err) => postError("init", err));
+    // A second `init` is a mode switch: rebuild the editor, after the first if it's still building.
+    initQueue = initQueue.then(() => (editor ? reinitEditor(msg) : init(msg))).catch((err) => postError("init", err));
   } else if (msg.type === "externalChange") {
     try {
-      applyExternalChange(msg.text, msg.changed);
+      applyExternalChange(msg.text, msg.changed, msg.epoch, msg.toast);
     } catch (err) {
       postError("externalChange", err);
     }
@@ -2541,12 +2397,12 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
   } else if (msg.type === "sidecar-changed") {
     sidebarState.comments = msg.comments ?? [];
     sidebarState.suggestions = msg.suggestions ?? [];
-    sidebarState.pending = new Set(msg.pendingThreadIds ?? []);
-    if (msg.pendingLabel) sidebarState.pendingLabel = msg.pendingLabel;
-    reconcileComments();
-    renderSuggestions();
+    takeSidebarPush(msg);
+    renderSidebar();
     forceHighlightRefresh();
     forceSuggestionHighlightRefresh();
+    currentDiff = msg.diff ?? null;
+    forceDiffRefresh();
   } else if (msg.type === "add-comment-result") {
     if (msg.ok) {
       addComposer = null;
@@ -2561,16 +2417,10 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
       showToast(`Could not save comment: ${msg.error ?? "unknown error"}`);
     }
   } else if (msg.type === "reply-comment-result") {
-    if (msg.ok) {
-      // The reply landed; drop the in-progress text so the upcoming re-render
-      // shows an empty reply box for this thread.
-      pendingReplies.delete(msg.commentId);
-      replyComposers.delete(msg.commentId);
-      showToast("Reply sent.");
-    } else {
-      replyComposers.get(msg.commentId)?.setError(`Reply failed: ${msg.error ?? "unknown error"}`);
-      showToast(`Reply failed: ${msg.error ?? "unknown error"}`);
-    }
+    // Only the older reply message gets a result; the sidebar's `reply` shows
+    // up in the next push instead.
+    if (msg.ok) showToast("Reply sent.");
+    else showToast(`Reply failed: ${msg.error ?? "unknown error"}`);
   } else if (msg.type === "toggle-resolve-result") {
     if (!msg.ok) showToast(`Resolve failed: ${msg.error ?? "unknown error"}`);
   } else if (msg.type === "delete-comment-result") {
@@ -2579,6 +2429,15 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     if (!msg.ok) showToast(`Could not open link: ${msg.reason ?? msg.href}`);
   } else if (msg.type === "drawio-read-result") {
     handleDrawioReadResult(msg);
+  } else if (msg.type === "skill-status") {
+    threadSidebar.setSkillStatus(msg.status);
+  } else if (msg.type === "review-pending") {
+    threadSidebar.notifyReviewPending(msg.existingIds);
+  } else if (msg.type === "reveal-thread") {
+    // After any `init` still building: the thread has to be in the list, and
+    // its highlight in the document.
+    const threadId = msg.threadId;
+    initQueue = initQueue.then(() => revealThreadFromHost(threadId)).catch((err) => postError("reveal-thread", err));
   }
 });
 
@@ -2603,5 +2462,43 @@ window.addEventListener(
   },
   true,
 );
+
+// Test seam for the edit-mode gate (webview-e2e/blockSplice.spec.ts). The
+// harness defines `__mcTestHooks` before this bundle loads; VS Code never
+// does, so in the product none of this exists.
+const testHooks = (window as unknown as { __mcTestHooks?: Record<string, unknown> }).__mcTestHooks;
+if (testHooks) {
+  /**
+   * For every top-level block, the `edit-blocks` message typing `ch` at the end
+   * of its last text would post: the transaction a keystroke dispatches,
+   * applied to a copy of the state (plugins' appended transactions included)
+   * and diffed and serialized by the live path. A block with no text (a rule)
+   * is selected and typed over, as a keystroke would.
+   */
+  testHooks.typeAtEveryBlockEnd = (ch: string) => {
+    const out: Array<{ index: number; type: string; how: "end" | "selected"; message: BlockEditsMessage | null }> = [];
+    editor?.action((ctx) => {
+      const state = ctx.get(editorViewCtx).state;
+      const serializer = ctx.get(serializerCtx);
+      const base = editBaseDoc ?? state.doc;
+      let offset = 0;
+      markdownBlockNodes(state.doc).forEach((node, index) => {
+        let end = node.isTextblock ? offset + 1 + node.content.size : -1;
+        node.descendants((child, rel) => {
+          if (child.isTextblock) end = offset + 1 + rel + 1 + child.content.size;
+          return true;
+        });
+        const tr =
+          end >= 0
+            ? state.tr.insertText(ch, end)
+            : state.tr.setSelection(NodeSelection.create(state.doc, offset)).insertText(ch);
+        const message = blockEditsBetween(base, state.apply(tr).doc, serializer);
+        out.push({ index, type: node.type.name, how: end >= 0 ? "end" : "selected", message });
+        offset += node.nodeSize;
+      });
+    });
+    return out;
+  };
+}
 
 vscode.postMessage({ type: "ready" });
