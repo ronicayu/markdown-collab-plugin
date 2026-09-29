@@ -61,7 +61,9 @@ async function invokeCopyClaudePrompt(): Promise<void> {
   const doc = editor.document;
   const folder = folderForDocument(doc.uri);
   const rel = path.relative(folder.uri.fsPath, doc.uri.fsPath);
-  const prompt = `${workflowOpener()} to address the unresolved review comments on ${rel}.`;
+  // This command is Claude-branded by its own title ("Copy Claude Prompt") —
+  // unlike the generic clipboard send mode below, it says so explicitly.
+  const prompt = `${workflowOpener("installed")} to address the unresolved review comments on ${rel}.`;
   await vscode.env.clipboard.writeText(prompt);
   void vscode.window.showInformationMessage(
     "Prompt copied — paste into Claude Code.",
@@ -339,7 +341,7 @@ export async function dispatchReviewPayload(
         if (choice === "Switch to clipboard") {
           await vscode.env.clipboard.writeText(delivered.prompt);
           void vscode.window.showInformationMessage(
-            "Prompt copied — paste into Claude Code.",
+            "Prompt copied — paste into your agent.",
           );
         }
         return null;
@@ -421,10 +423,10 @@ export async function dispatchReviewPayload(
     }
     const msg =
       intent.kind === "review-request"
-        ? `Review-request prompt for \`${payload.file}\` copied — paste into Claude Code.`
+        ? `Review-request prompt for \`${payload.file}\` copied — paste into your agent.`
         : `Prompt for ${payload.unresolvedCount} comment${
             payload.unresolvedCount === 1 ? "" : "s"
-          } copied — paste into Claude Code.`;
+          } copied — paste into your agent.`;
     void vscode.window.showInformationMessage(`${msg}${rememberedSuffix}`);
     return;
   }
@@ -439,12 +441,15 @@ async function pickSendMode(
   opts: { terminalDetected: boolean; headlessAvailable: boolean },
 ): Promise<SendMode | null> {
   const items: Array<vscode.QuickPickItem & { mode: SendMode }> = buildSendModeItems(opts);
+  // The picker's own items already say "Claude" where a mode really is
+  // Claude-specific (headless, the Claude terminal) — this placeholder covers
+  // every mode at once, so it stays agent-neutral (1.3).
   const placeHolder =
     intent.kind === "review-request"
-      ? `How to ask Claude to review${intent.hasFocus ? " (with focus)" : ""}? (Set markdownCollab.sendMode to skip this prompt.)`
+      ? `How to ask your agent to review${intent.hasFocus ? " (with focus)" : ""}? (Set markdownCollab.sendMode to skip this prompt.)`
       : `How to send ${unresolvedCount} unresolved comment${
           unresolvedCount === 1 ? "" : "s"
-        } to Claude? (Set markdownCollab.sendMode to skip this prompt.)`;
+        } to your agent? (Set markdownCollab.sendMode to skip this prompt.)`;
   const pick = await vscode.window.showQuickPick(items, { placeHolder });
   return pick?.mode ?? null;
 }
@@ -461,8 +466,8 @@ export function registerSendCommands(deps: CommandDeps): void {
         .update("proposeEditsAsSuggestions", next, vscode.ConfigurationTarget.Workspace);
       void vscode.window.showInformationMessage(
         next
-          ? "Suggest mode ON — Send to Claude will propose edits for you to accept/reject."
-          : "Suggest mode OFF — Claude applies edits directly.",
+          ? "Suggest mode ON — your agent will propose edits for you to accept/reject."
+          : "Suggest mode OFF — your agent applies edits directly.",
       );
     }),
     vscode.commands.registerCommand("markdownCollab.copyClaudePrompt", async () => {
@@ -564,7 +569,7 @@ export function registerSendCommands(deps: CommandDeps): void {
         // A clipboard delivery like any other — same unconditional directive.
         await vscode.env.clipboard.writeText(`${payload.prompt}\n\n${mcpToolsDirective()}`);
         void vscode.window.showInformationMessage(
-          "Thread prompt copied — paste into Claude Code.",
+          "Thread prompt copied — paste into your agent.",
         );
       },
     ),

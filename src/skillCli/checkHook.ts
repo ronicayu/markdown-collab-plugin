@@ -11,10 +11,11 @@
 // deliberately silent everywhere else, including its own bugs.
 //
 // `warning`-severity issues (unanchored-thread, orphan-anchor,
-// unanchored-suggestion) are NOT reported here. An unanchored thread is the
-// correct, by-design result of deliberately deleting an anchored passage —
-// nagging about it on every subsequent edit of the file would just push
-// Claude to re-anchor it to unrelated text to make the noise stop.
+// unanchored-suggestion, empty-quote) are NOT reported here. An unanchored
+// thread is the correct, by-design result of deliberately deleting an
+// anchored passage — nagging about it on every subsequent edit of the file
+// would just push Claude to re-anchor it to unrelated text to make the noise
+// stop.
 //
 // I/O is injected (see `HookIo`) so every branch — including "the file can't
 // be read" and "the caller's own readFile blew up" — is unit-testable

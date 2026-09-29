@@ -145,7 +145,7 @@ ${toolTable(t)}
 
 ${PASS_SIGNALS}
 
-Ordinary prose edits — text outside an anchored span — may use \`mc_edit\` (CLI: \`mdc edit\`), which refuses anything that would break a marker or touch the threads region; the Edit tool remains fine too in interactive sessions. Every \`mdc\` command prints JSON to stdout with exit codes \`0\` ok, \`1\` usage error, \`2\` integrity violation; mutating commands validate before writing and refuse a change that would introduce a new integrity problem, so a failed command leaves the file untouched rather than half-edited.
+Ordinary prose edits — text outside an anchored span — may use \`mc_edit\` (CLI: \`mdc edit\`), which refuses anything that would break a marker or touch the threads region; the Edit tool remains fine too in interactive sessions. Every \`mdc\` command prints JSON to stdout — a failure is \`{"ok":false,"code":…,"message":…}\` — with exit codes \`0\` ok, \`1\` usage error or refusal, \`2\` integrity violation; mutating commands validate before writing and refuse a change that would introduce a new integrity problem, so a failed command leaves the file untouched rather than half-edited.
 
 **Both paths refuse rather than guess.** Ambiguous passage (appears more than once)? Pass the occurrence. Inside a code span? Choose a different anchor. Never work around a refusal by hand-editing — it's telling you the edit was unsafe, and the hand-edit would perform it anyway.
 
@@ -295,7 +295,7 @@ The mechanical invariants — \`c<N>\` id sequence, thread ids/quotes staying pu
     id: "review-mode",
     render: (t) => `### Review Mode (inline) — Claude as the reviewer
 
-When the human's request matches **Review Mode** trigger phrases — "review this doc", "leave your thoughts on X", "do a review pass on Y", "second pair of eyes on README", "what would you flag in this file", or the Markdown Collab extension's "Ask Claude to Review This Doc" / "Ask Claude to Review These Docs" commands — you switch from addressing existing comments to **initiating** new review threads. The human will triage them in the sidebar. When the prompt names more than one file, read the *Multi-file review passes* section below before starting.
+When the human's request matches **Review Mode** trigger phrases — "review this doc", "leave your thoughts on X", "do a review pass on Y", "second pair of eyes on README", "what would you flag in this file", or the Markdown Collab extension's "Ask Agent to Review This Doc" / "Ask Agent to Review These Docs" commands — you switch from addressing existing comments to **initiating** new review threads. The human will triage them in the sidebar. When the prompt names more than one file, read the *Multi-file review passes* section below before starting.
 
 The mechanics are the same as Phase 5: pick a passage, allocate an id, insert paired markers, append a \`<!--mc:t {…}-->\` line with a single \`c1\` comment authored by \`"claude"\`, verify. Read Phase 5 first if you have not — it carries the invariants you must respect when wrapping passages.
 
@@ -377,7 +377,7 @@ Do not review unchanged prose — it was reviewed already, and re-raising it is 
 
 #### Multi-file review passes
 
-A Review Mode prompt may name **several files** instead of one — the extension's "Ask Claude to Review These Docs" command builds one pass over a folder or a multi-select. The prompt lists the files; treat that list as the work order.
+A Review Mode prompt may name **several files** instead of one — the extension's "Ask Agent to Review These Docs" command builds one pass over a folder or a multi-select. The prompt lists the files; treat that list as the work order.
 
 1. **Read every listed file end to end before opening any thread** — you can't judge cross-file consistency otherwise, and a thread opened in file 1 may be answered by file 3. Then open threads file by file, in the order listed (same Phase 5 mechanics; ids unique only within their own file).
 2. **Cross-document consistency is part of the pass**, not an optional extra: terminology drift, a claim in one file contradicted by another, duplicated guidance that's diverged, cross-references that no longer resolve. Anchor such a thread in the file that's wrong (or the more prominent one), quoting the other file's conflicting text — the human is reading without it open.
@@ -395,7 +395,7 @@ Read the doc end to end first. Initiate threads one at a time, in document order
     id: "verify",
     render: (t) => `### Phase 7 — Verify, and end the pass
 
-Finish every file you touched with \`mc_check(file)\`${cliOnly(t, " (CLI: `check <file>`)")}. \`"ok": true\` means every marker is paired, every thread is anchored, and every thread line is valid JSON; otherwise you get the list — unpaired markers, orphaned anchors, unanchored threads, malformed thread JSON, duplicate ids — each saying whether it's \`repairable\`${cliOnly(t, " (the CLI also exits `2`)")}.
+Finish every file you touched with \`mc_check(file)\`${cliOnly(t, " (CLI: `check <file>`)")}. \`"ok": true\` means every marker is paired, every thread is anchored, and every thread line is valid JSON; otherwise you get the list — unpaired markers, orphaned anchors, unanchored threads, empty quotes, malformed thread JSON, duplicate ids — each saying whether it's \`repairable\`${cliOnly(t, " (the CLI also exits `2`)")}.
 
 This call does double duty: it's your correctness check, **and** it's how the extension learns your pass on that file is over — clearing the "Claude is working…" row the human is watching. Skip it and they're left watching a spinner for work you already finished.
 
@@ -437,7 +437,7 @@ After your Edit, run \`mc_check\` (or \`mdc check <file>\`) — it reports every
   // A headless run is handed the tools; there is nothing to go and get.
   { id: "getting-tools", render: (t) => (t === "headless" ? null : `## Getting the MCP tools (if you don't have them)
 
-If \`mc_list\` and friends aren't in your tool list, add them with **Markdown Collab: Register Review Tools with Claude Code**, then restart. They only exist while that VS Code window stays open; elsewhere, or with MCP disabled by policy, use the \`mdc\` CLI instead — not degraded, just different.`) },
+If \`mc_list\` and friends aren't in your tool list, add them with **Markdown Collab: Connect an Agent…** → Claude Code, then restart. They only exist while that VS Code window stays open; elsewhere, or with MCP disabled by policy, use the \`mdc\` CLI instead — not degraded, just different.`) },
   { id: "reporting", render: () => `## Reporting
 
 Tell the user, per file, using each thread's id (1–12 char base36) so they can find it in VS Code: threads addressed (+ one-line summary of each change), threads initiated on explicit request (+ anchored passage + the note you left), threads deleted on explicit request, threads left unanchored/orphaned because their target was removed (+ why), threads answered without a prose change (+ the question you replied with), and anything you skipped and why.` },

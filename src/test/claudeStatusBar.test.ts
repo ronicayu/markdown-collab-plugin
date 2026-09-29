@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chooseStatusBarView, statusBarText } from "../claudeStatusBar";
+import { chooseStatusBarView, protocolTooltip, statusBarText } from "../claudeStatusBar";
 import { ClaudePendingTracker, type PendingInputThread } from "../inlineComments/claudePending";
 
 const FILE = "docs/guide.md";
@@ -34,6 +34,25 @@ describe("statusBarText", () => {
   it("spins while it is up", () => {
     expect(statusBarText({ threadIds: ["a1"], evidence: "protocol", active: true }, FILE)).toContain(
       "$(loading~spin)",
+    );
+  });
+});
+
+// 1.3: the tooltip used to hardcode "Claude" regardless of which agent's
+// tool calls actually earned the wait — now it's built from the same
+// `status.agent` value `statusBarText` already resolves.
+describe("protocolTooltip", () => {
+  it("names the agent the evidence came from", () => {
+    expect(protocolTooltip("codex")).toBe("Markdown Collab: Codex is working through the review tools");
+  });
+
+  it("defaults to Claude when no agent is recorded", () => {
+    expect(protocolTooltip(undefined)).toBe("Markdown Collab: Claude is working through the review tools");
+  });
+
+  it("title-cases an unrecognized slug rather than showing it raw", () => {
+    expect(protocolTooltip("some-other-tool")).toBe(
+      "Markdown Collab: Some-other-tool is working through the review tools",
     );
   });
 });
@@ -83,7 +102,7 @@ describe("peek", () => {
 describe("chooseStatusBarView — priority order", () => {
   const headless = { text: "$(loading~spin) Claude is reviewing a.md · 3s", tooltip: "headless" };
   const reviewPass = { text: "$(clock) Sent for review · 1m 20s", tooltip: "review pass" };
-  const pending = "$(loading~spin) Claude: reading";
+  const pending = { text: "$(loading~spin) Claude: reading", tooltip: protocolTooltip("claude") };
   const notice = { text: "$(check) Claude finished a.md", tooltip: "notice" };
 
   it("nothing wants the item: hidden", () => {
@@ -102,7 +121,7 @@ describe("chooseStatusBarView — priority order", () => {
 
   it("a per-thread protocol wait wins over a finished/failed headless notice", () => {
     const choice = chooseStatusBarView({ headless: null, reviewPass: null, pending, notice });
-    expect(choice).toMatchObject({ source: "pending", text: pending });
+    expect(choice).toMatchObject({ source: "pending", text: pending.text, tooltip: pending.tooltip });
     expect(choice?.command).toBeUndefined();
   });
 

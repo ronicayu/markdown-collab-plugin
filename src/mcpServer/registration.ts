@@ -102,12 +102,60 @@ export function mergeMcpServersJson(
   return { text: `${JSON.stringify(next, null, 2)}\n`, replaced: previous !== undefined };
 }
 
+export interface RemovalResult {
+  /** The file text to write, or null when there was nothing to remove (already absent, or the file couldn't be read as ours to touch). */
+  text: string | null;
+  /** True when an entry under our name existed and was removed. */
+  removed: boolean;
+}
+
+/**
+ * The inverse of `mergeMcpServersJson` (4.4: Disconnect Agent) — drop
+ * `serverName`'s entry from an existing `{"mcpServers": {...}}`-shaped file,
+ * leaving every other server and the file's own formatting alone. Idempotent:
+ * `text: null` when the entry was never there, so running Disconnect on a
+ * workspace that was never connected is a no-op, not a rewrite. Refuses (same
+ * "leave it alone" rule the merge side follows) rather than guess at a file
+ * that isn't valid JSON or doesn't have the shape it expects.
+ */
+export function removeMcpServersJsonEntry(existing: string | null, serverName: string): RemovalResult {
+  if (!existing || existing.trim() === "") return { text: null, removed: false };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(existing);
+  } catch {
+    return { text: null, removed: false };
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { text: null, removed: false };
+  }
+  const root = parsed as Record<string, unknown>;
+  const servers = root.mcpServers;
+  if (
+    typeof servers !== "object" ||
+    servers === null ||
+    Array.isArray(servers) ||
+    !(serverName in (servers as Record<string, unknown>))
+  ) {
+    return { text: null, removed: false };
+  }
+  const nextServers = { ...(servers as Record<string, unknown>) };
+  delete nextServers[serverName];
+  const next = { ...root, mcpServers: nextServers };
+  return { text: `${JSON.stringify(next, null, 2)}\n`, removed: true };
+}
+
 /**
  * Merge our entry into an existing `.mcp.json`. See `mergeMcpServersJson` for
  * the shared mechanics; this just supplies Claude Code's entry shape and name.
  */
 export function mergeMcpJson(existing: string | null, port: number): MergeResult {
   return mergeMcpServersJson(existing, MCP_SERVER_NAME, mcpJsonEntry(port));
+}
+
+/** The inverse of `mergeMcpJson` (4.4: Disconnect Agent → Claude Code). */
+export function removeMcpJsonEntry(existing: string | null): RemovalResult {
+  return removeMcpServersJsonEntry(existing, MCP_SERVER_NAME);
 }
 
 export interface ServerDescriptor {

@@ -184,7 +184,7 @@ async function invokeAskClaudeToReviewSelection(
     void vscode.window.showWarningMessage(
       selection.length === 1 && isMarkdownFsPath(selection[0].fsPath)
         ? `Could not read ${path.basename(selection[0].fsPath)}.`
-        : "Ask Claude to Review only supports .md files — the selection contains none.",
+        : "Ask Agent to Review only supports .md files — the selection contains none.",
     );
     return;
   }
@@ -324,7 +324,7 @@ async function invokeNextUnreadFromClaude(
   if (unread.length === 0) {
     unreadWalkCursor = null;
     void vscode.window.showInformationMessage(
-      "No unread threads from Claude. Run 'Ask Claude to Review' to start a pass.",
+      "No unread threads from an agent. Run 'Ask Agent to Review This Doc' to start a pass.",
     );
     return;
   }

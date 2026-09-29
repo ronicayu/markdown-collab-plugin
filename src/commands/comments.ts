@@ -8,7 +8,15 @@ import * as vscode from "vscode";
 import type { Logger } from "../logging";
 import { repairIntegrity } from "../inlineComments/integrity";
 import { parse as parseInline } from "../inlineComments/format";
-import { DocOpError, opFinalize, opOpenAt, opPurgeResolved } from "../inlineComments/docOps";
+import {
+  DocOpError,
+  opFinalize,
+  opOpenAt,
+  opPurgeResolved,
+  opReopen,
+  opReply,
+  opResolve,
+} from "../inlineComments/docOps";
 import { CollabEditorProvider } from "../collab/collabEditorProvider";
 import type { ReviewNode } from "../reviewView";
 import type { CommandDeps } from "./deps";
@@ -213,7 +221,7 @@ async function invokeCommentOnSelection(log: Logger): Promise<void> {
 
   const body = await vscode.window.showInputBox({
     prompt: `Comment on “${quote.length > 60 ? `${quote.slice(0, 59)}…` : quote}”`,
-    placeHolder: "What should Claude know about this passage?",
+    placeHolder: "What should your agent know about this passage?",
     ignoreFocusOut: true,
     validateInput: (v) => (v.trim().length === 0 ? "A comment needs a body." : null),
   });
@@ -251,15 +259,13 @@ async function invokeCommentOnSelection(log: Logger): Promise<void> {
     void vscode.window.showErrorMessage("Could not write the comment into the document.");
     return;
   }
+  // Same reasoning as the panel's own mutations (inlineCommentsPanel.ts): the
+  // .md file is the source of truth, and a comment sitting in an unsaved
+  // buffer is invisible to an agent reading it from disk.
+  await saveOrWarn(doc, log, "Comment added");
   log.info("thread opened from the editor selection", { file: doc.uri.fsPath, threadId });
 
-  const action = await vscode.window.showInformationMessage(
-    "Comment added to the file.",
-    "Open review view",
-  );
-  if (action === "Open review view") {
-    await vscode.commands.executeCommand("markdownCollab.revealThread", doc.uri, threadId);
-  }
+  vscode.window.setStatusBarMessage("Comment added — Cmd+K Cmd+Alt+V opens the review view", 4000);
 }
 
 /**
@@ -315,6 +321,139 @@ async function invokeRepairInlineComments(
   );
 }
 
+/** Resolve a `fileArg` command argument the way `revealThread` already does — a URI or its string form, whichever the caller has on hand. */
+function uriFromArg(fileArg: string | vscode.Uri): vscode.Uri {
+  return fileArg instanceof vscode.Uri ? fileArg : vscode.Uri.parse(fileArg);
+}
+
+/**
+ * Resolve a thread from outside the review view (3.7) — today, the source
+ * editor's hover link; the same command works from a future keybinding or the
+ * palette. Internal: not in package.json, invoked as
+ * `(fileArg, threadId)` from a `command:` URI.
+ *
+ * A toggle: an open thread is resolved, a resolved one reopened — the hover
+ * shows whichever label applies, and the same command serves both.
+ */
+async function invokeResolveThread(
+  fileArg: string | vscode.Uri | undefined,
+  threadId: string | undefined,
+  log: Logger,
+): Promise<void> {
+  if (!fileArg || !threadId) return;
+  const uri = uriFromArg(fileArg);
+  let doc: vscode.TextDocument;
+  try {
+    doc = await vscode.workspace.openTextDocument(uri);
+  } catch (e) {
+    log.error(`could not open ${uri.fsPath}`, e);
+    void vscode.window.showErrorMessage(`Could not open ${path.basename(uri.fsPath)}.`);
+    return;
+  }
+
+  const source = doc.getText();
+  const thread = parseInline(source).threads.find((t) => t.id === threadId);
+  if (!thread) {
+    void vscode.window.showWarningMessage("That thread no longer exists in this file.");
+    return;
+  }
+  const reopening = thread.status === "resolved";
+  const verb = reopening ? "reopen" : "resolve";
+  // The resolver's name is the human's, same as the review view records —
+  // `opResolve` defaults to "claude" because the agent tools are its usual
+  // caller.
+  const author = vscode.workspace
+    .getConfiguration("markdownCollab")
+    .get<string>("collab.userName", "") || os.userInfo().username || "anonymous";
+
+  let next: string;
+  try {
+    const outcome = reopening
+      ? opReopen(source, threadId)
+      : opResolve(source, threadId, () => new Date().toISOString(), author);
+    next = outcome.next;
+  } catch (e) {
+    const err = e as DocOpError;
+    log.warn(`${verb} thread refused`, { code: err.code, message: err.message });
+    void vscode.window.showWarningMessage(`Could not ${verb} the thread: ${err.message}`);
+    return;
+  }
+
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(doc.uri, new vscode.Range(doc.positionAt(0), doc.positionAt(source.length)), next);
+  if (!(await vscode.workspace.applyEdit(edit))) {
+    log.error(`${verb} thread: applyEdit was rejected`);
+    void vscode.window.showErrorMessage("Could not write the change into the document.");
+    return;
+  }
+  await saveOrWarn(doc, log, reopening ? "Reopened the thread" : "Resolved the thread");
+}
+
+/**
+ * Reply to a thread from outside the review view (3.7) — the source editor's
+ * hover link. Internal: not in package.json, invoked as
+ * `(fileArg, threadId)` from a `command:` URI.
+ */
+async function invokeReplyToThread(
+  fileArg: string | vscode.Uri | undefined,
+  threadId: string | undefined,
+  log: Logger,
+): Promise<void> {
+  if (!fileArg || !threadId) return;
+  const uri = uriFromArg(fileArg);
+  let doc: vscode.TextDocument;
+  try {
+    doc = await vscode.workspace.openTextDocument(uri);
+  } catch (e) {
+    log.error(`could not open ${uri.fsPath}`, e);
+    void vscode.window.showErrorMessage(`Could not open ${path.basename(uri.fsPath)}.`);
+    return;
+  }
+
+  const source = doc.getText();
+  const thread = parseInline(source).threads.find((t) => t.id === threadId);
+  if (!thread) {
+    void vscode.window.showWarningMessage("That thread no longer exists in this file.");
+    return;
+  }
+  const quote = thread.quote;
+  const body = await vscode.window.showInputBox({
+    prompt: `Reply to "${quote.length > 60 ? `${quote.slice(0, 59)}…` : quote}"`,
+    placeHolder: "Your reply",
+    ignoreFocusOut: true,
+    validateInput: (v) => (v.trim().length === 0 ? "A reply needs a body." : null),
+  });
+  if (body === undefined) return; // cancelled
+
+  const author = vscode.workspace
+    .getConfiguration("markdownCollab")
+    .get<string>("collab.userName", "") || os.userInfo().username || "anonymous";
+
+  let next: string;
+  try {
+    // `agent: false` — this is the human replying from the hover, not an
+    // agent through mc_reply/mdc reply, so it neither stamps the comment as
+    // an agent's nor reopens a resolved thread the way an agent's reply does
+    // (ux-review-2026-09 0.6's rule, `opReply`'s own doc comment).
+    const outcome = opReply(source, threadId, body.trim(), () => new Date().toISOString(), author, false);
+    next = outcome.next;
+  } catch (e) {
+    const err = e as DocOpError;
+    log.warn("reply to thread refused", { code: err.code, message: err.message });
+    void vscode.window.showWarningMessage(`Could not add the reply: ${err.message}`);
+    return;
+  }
+
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(doc.uri, new vscode.Range(doc.positionAt(0), doc.positionAt(source.length)), next);
+  if (!(await vscode.workspace.applyEdit(edit))) {
+    log.error("reply to thread: applyEdit was rejected");
+    void vscode.window.showErrorMessage("Could not write the reply into the document.");
+    return;
+  }
+  await saveOrWarn(doc, log, "Reply added");
+}
+
 /** Register the comment-mutation and review-view-entry family of commands. */
 export function registerCommentsCommands(deps: CommandDeps): void {
   const { context, log, reviewLog, formatLog, openInlineView, revealThread } = deps;
@@ -335,6 +474,19 @@ export function registerCommentsCommands(deps: CommandDeps): void {
     vscode.commands.registerCommand("markdownCollab.commentOnSelection", async () => {
       await invokeCommentOnSelection(reviewLog);
     }),
+    // Invoked from the source editor's hover (3.7). Internal: not in the palette.
+    vscode.commands.registerCommand(
+      "markdownCollab.resolveThread",
+      async (fileArg?: string | vscode.Uri, threadId?: string) => {
+        await invokeResolveThread(fileArg, threadId, reviewLog);
+      },
+    ),
+    vscode.commands.registerCommand(
+      "markdownCollab.replyToThread",
+      async (fileArg?: string | vscode.Uri, threadId?: string) => {
+        await invokeReplyToThread(fileArg, threadId, reviewLog);
+      },
+    ),
     vscode.commands.registerCommand(
       "markdownCollab.repairInlineComments",
       async (fsPathArg?: string) => {

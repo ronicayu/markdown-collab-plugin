@@ -1,3 +1,6 @@
+// Test support: reference anchor locator with no production importers.
+// Retained for alignment tests that verify the anchor/rendering pipeline.
+
 // Locate a comment's anchor inside the rendered editor (rendered text +
 // position maps).
 //
@@ -18,8 +21,8 @@
 // supplies the markdown source and rendered text; we return the
 // rendered range.
 
-import { resolve as resolveAnchor } from "../anchor";
-import type { Anchor } from "../types";
+import { resolve as resolveAnchor } from "./anchor";
+import type { Anchor } from "../../types";
 
 export interface RenderedRange {
   // Inclusive start / exclusive end in the *rendered* text (what

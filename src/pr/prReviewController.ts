@@ -136,6 +136,7 @@ export class PrReviewController implements vscode.Disposable {
       treeDataProvider: this.treeProvider,
       showCollapseAll: true,
     });
+    this.updateEmptyMessage();
     subs.push(
       this.treeView,
       vscode.commands.registerCommand("markdownCollab.openPrReviewFile", (file: ChangedFile) => {
@@ -170,6 +171,7 @@ export class PrReviewController implements vscode.Disposable {
       const folder = vscode.workspace.workspaceFolders?.[0];
       if (!folder) {
         void vscode.window.showWarningMessage("Open a workspace folder first.");
+        this.updateEmptyMessage();
         return;
       }
       const repoRoot = folder.uri.fsPath;
@@ -179,17 +181,20 @@ export class PrReviewController implements vscode.Disposable {
         void vscode.window.showWarningMessage(
           "Could not read the `origin` remote. Is this folder a git repo with an `origin`?",
         );
+        this.updateEmptyMessage();
         return;
       }
       const platform = detectPlatform(remoteUrl);
       const parsed = parseRemoteUrl(remoteUrl);
       if (!parsed) {
         void vscode.window.showWarningMessage(`Could not parse remote URL: ${remoteUrl}`);
+        this.updateEmptyMessage();
         return;
       }
       const ready = await platform.ensureReady(parsed.host);
       if (!ready.ok) {
         void vscode.window.showWarningMessage(ready.reason);
+        this.updateEmptyMessage();
         return;
       }
       const ctx = await vscode.window.withProgress(
@@ -218,6 +223,7 @@ export class PrReviewController implements vscode.Disposable {
         void vscode.window.showInformationMessage(
           `No .md / .markdown changes in this PR vs origin/${ctx.baseRef}. Nothing to review.`,
         );
+        this.updateEmptyMessage();
         return;
       }
       // Retire any review left over from a previously checked-out branch so
@@ -234,6 +240,7 @@ export class PrReviewController implements vscode.Disposable {
       };
       await this.rehydrateDrafts();
       this.treeProvider.setFiles(changed);
+      this.updateEmptyMessage();
       // Reveal the tree view in the sidebar — focus brings it into view.
       try {
         await vscode.commands.executeCommand("markdownCollab.prReviewFiles.focus");
@@ -247,7 +254,26 @@ export class PrReviewController implements vscode.Disposable {
       const msg = (e as Error).message ?? String(e);
       void vscode.window.showErrorMessage(`PR review failed: ${msg}`);
       this.log.error("startPrReview failed", e);
+      this.updateEmptyMessage();
     }
+  }
+
+  /**
+   * Set (or clear) the tree's empty-state message — same pattern as
+   * `UncommittedChangesController.setTreeState`. Shown whenever there's no
+   * active PR/MR session to display, with a distinct hint for "no folder
+   * open" vs. "nothing loaded yet".
+   */
+  private updateEmptyMessage(): void {
+    if (!this.treeView) return;
+    if (this.session) {
+      this.treeView.message = undefined;
+      return;
+    }
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    this.treeView.message = folder
+      ? "Run Open PR Review to load a GitHub PR or GitLab MR."
+      : "Open a folder to review a PR or MR.";
   }
 
   private openFile(relPath: string): void {
@@ -266,6 +292,7 @@ export class PrReviewController implements vscode.Disposable {
     const folder = vscode.workspace.workspaceFolders?.[0];
     if (!folder) {
       void vscode.window.showWarningMessage("Open a workspace folder first.");
+      this.updateEmptyMessage();
       return;
     }
     const repoRoot = folder.uri.fsPath;
@@ -279,6 +306,7 @@ export class PrReviewController implements vscode.Disposable {
           this.disposeSession();
           this.treeProvider.clear();
         }
+        this.updateEmptyMessage();
         const where = branch && branch !== "HEAD" ? `"${branch}"` : "a detached HEAD";
         void vscode.window.showInformationMessage(
           `You're on ${where}. Check out a PR/MR branch, then refresh to start a review.`,
@@ -290,6 +318,7 @@ export class PrReviewController implements vscode.Disposable {
     }
 
     await this.refreshActiveSession(this.session!);
+    this.updateEmptyMessage();
   }
 
   /**

@@ -236,6 +236,11 @@ const dom = {
   claudeNext: document.getElementById("claude-next") as HTMLButtonElement,
   collapseAll: document.getElementById("collapse-all") as HTMLButtonElement,
   claudeFilterLabel: document.getElementById("filter-claude-label") as HTMLLabelElement,
+  claudeFilterLabelText: document.getElementById("filter-claude-label-text") as HTMLElement,
+  overflowMenuBtn: document.getElementById("overflow-menu-btn") as HTMLButtonElement,
+  overflowMenu: document.getElementById("overflow-menu") as HTMLElement,
+  hintToggle: document.getElementById("hint-toggle") as HTMLButtonElement,
+  keysHint: document.getElementById("keys-hint") as HTMLElement,
   findBar: document.getElementById("find-bar") as HTMLElement,
   findInput: document.getElementById("find-input") as HTMLInputElement,
   findCount: document.getElementById("find-count") as HTMLElement,
@@ -248,6 +253,70 @@ const dom = {
   previewPane: document.getElementById("preview-pane") as HTMLElement,
   outlineToggle: document.getElementById("outline-toggle") as HTMLButtonElement,
 };
+
+// --- "…" overflow menus (round-4 P3.1/3.2) ---------------------------------
+// One trigger/panel pair at a time is open — the toolbar's or a single
+// thread card's — tracked here rather than per-menu, so a click anywhere
+// else (another trigger, the document) closes whatever was open first. Escape
+// closes and returns focus to the trigger; an outside click closes without
+// stealing focus back from wherever the user clicked next.
+let openMenu: { trigger: HTMLButtonElement; panel: HTMLElement } | null = null;
+
+function closeOpenMenu(returnFocus: boolean): void {
+  if (!openMenu) return;
+  const { trigger, panel } = openMenu;
+  panel.hidden = true;
+  trigger.setAttribute("aria-expanded", "false");
+  openMenu = null;
+  if (returnFocus && trigger.isConnected) trigger.focus();
+}
+
+function openMenuAt(trigger: HTMLButtonElement, panel: HTMLElement): void {
+  closeOpenMenu(false);
+  panel.hidden = false;
+  trigger.setAttribute("aria-expanded", "true");
+  openMenu = { trigger, panel };
+  panel.querySelector<HTMLElement>('[role="menuitem"]:not([hidden])')?.focus();
+}
+
+function toggleMenuAt(trigger: HTMLButtonElement, panel: HTMLElement): void {
+  if (openMenu?.panel === panel) closeOpenMenu(false);
+  else openMenuAt(trigger, panel);
+}
+
+document.addEventListener("click", (e) => {
+  if (!openMenu) return;
+  const target = e.target as Node;
+  if (openMenu.panel.contains(target) || openMenu.trigger.contains(target)) return;
+  closeOpenMenu(false);
+});
+document.addEventListener("keydown", (e) => {
+  if (!openMenu) return;
+  if (e.key === "Escape") {
+    e.preventDefault();
+    e.stopPropagation();
+    closeOpenMenu(true);
+  }
+});
+
+dom.overflowMenuBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleMenuAt(dom.overflowMenuBtn, dom.overflowMenu);
+});
+
+/** One `role="menuitem"` button for a "…" menu — the toolbar's or a card's. */
+function buildMenuItem(label: string, onClick: () => void, opts: { danger?: boolean } = {}): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.setAttribute("role", "menuitem");
+  if (opts.danger) btn.classList.add("danger");
+  btn.textContent = label;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onClick();
+  });
+  return btn;
+}
 
 // --- Document outline -----------------------------------------------------
 // Built from the prose the preview renders, so its line numbers index the same
@@ -334,7 +403,7 @@ function saveCollapsedThreads(): void {
 }
 
 /**
- * Set when the user fires "Ask Claude to Review This Doc". Holds the
+ * Set when the user fires "Ask Agent to Review This Doc". Holds the
  * thread IDs that existed at the time of the dispatch. On the next
  * render where new claude-unread threads appear (i.e. Claude's reply
  * has landed and the file was reloaded), we auto-scroll to the first
@@ -515,8 +584,11 @@ document.addEventListener("keydown", (e) => {
 dom.sendToClaude.addEventListener("click", () => {
   vscode.postMessage({ type: "send-to-claude" });
 });
+// The rest of the overflow menu's items — closing after each click, since
+// every one of them is a one-shot action, not a toggle.
 dom.copyPrompt.addEventListener("click", () => {
   vscode.postMessage({ type: "copy-prompt" });
+  closeOpenMenu(false);
 });
 dom.suggestModeToggle.addEventListener("click", () => {
   vscode.postMessage({ type: "toggle-suggest-mode" });
@@ -528,18 +600,26 @@ dom.suggestModeToggle.addEventListener("click", () => {
 // two-click arm is too quiet for something that removes many threads at once.
 dom.removeResolved.addEventListener("click", () => {
   vscode.postMessage({ type: "remove-resolved" });
+  closeOpenMenu(false);
 });
 
 // Same host-owned confirm as remove-resolved, and even more deserved: this one
 // deletes open conversations too. The button only asks; the modal decides.
 dom.finalizeDoc.addEventListener("click", () => {
   vscode.postMessage({ type: "finalize" });
+  closeOpenMenu(false);
 });
 
+/**
+ * A real switch now (round-4 P3.1), not a chip whose own label read as
+ * status text. "Suggest mode" is a fixed label element beside it; this only
+ * ever sets the state a screen reader and CSS read from — the webview still
+ * doesn't flip it on click (below): the setting is the host's, and the switch
+ * only reflects what comes back, same as the old chip did.
+ */
 function updateSuggestModeToggle(on: boolean): void {
-  dom.suggestModeToggle.textContent = on ? "Suggest: on" : "Suggest: off";
   dom.suggestModeToggle.setAttribute("aria-checked", String(on));
-  dom.suggestModeToggle.classList.toggle("active", on);
+  dom.suggestModeToggle.classList.toggle("on", on);
 }
 
 dom.skillInstall.addEventListener("click", () => {
@@ -645,6 +725,7 @@ dom.collapseAll.addEventListener("click", () => {
       collapsedThreads,
     ) === "collapse";
   for (const t of threads) setThreadCollapsed(t.id, collapse);
+  closeOpenMenu(false);
 });
 
 dom.claudeNext.addEventListener("click", () => {
@@ -766,10 +847,7 @@ function moveThreadHighlight(delta: 1 | -1): void {
 function focusReplyOnHighlighted(): void {
   if (!highlightedThreadId) return;
   if (collapsedThreads.has(highlightedThreadId)) setThreadCollapsed(highlightedThreadId, false);
-  const card = dom.threadsList.querySelector<HTMLElement>(
-    `.thread-card[data-thread="${cssEscape(highlightedThreadId)}"]`,
-  );
-  card?.querySelector<HTMLTextAreaElement>(".reply-box textarea")?.focus();
+  setReplyOpen(highlightedThreadId, true, true);
 }
 
 /**
@@ -790,6 +868,17 @@ function resolveOrReopenHighlighted(): void {
 function openHighlightedInEditor(): void {
   if (!highlightedThreadId) return;
   vscode.postMessage({ type: "open-in-editor", threadId: highlightedThreadId });
+}
+
+/**
+ * The segmented-control look (round-4 P3.1) is CSS driven off which radio is
+ * `:checked`, but a couple of call sites flip `.checked` on the input
+ * directly (rather than through a user click, which fires `change` on its
+ * own) — a background thread landing while "New from Claude" is selected, for
+ * instance. Those call this so the active segment repaints too.
+ */
+function updateFilterSegments(): void {
+  for (const r of dom.filterRadios) r.closest("label")?.classList.toggle("active", r.checked);
 }
 
 function render(state: SerializedState): void {
@@ -924,11 +1013,45 @@ function paintDiffStripes(prose: string, diff: DiffState | null): void {
  * has no arrows, and there n/p walk threads.
  */
 function updateKeysHint(): void {
-  const hint = document.getElementById("keys-hint");
-  if (!hint) return;
   const target = dom.diffNav.hidden ? "threads" : "changes";
-  hint.textContent = `n / p to move between ${target} · r reply · e resolve · o open in editor`;
+  dom.keysHint.textContent = `n / p to move between ${target} · r reply · e resolve · o open in editor`;
 }
+
+// --- Keyboard hint visibility (round-4 P3.5) --------------------------------
+// The line is only worth showing to someone who hasn't discovered the keys
+// yet. It's on by default, hides itself the first time n/p/r/e/o is actually
+// used, and the "?" button in the toolbar brings it back (and can hide it
+// again) — a manual override on top of the automatic first-use dismissal, not
+// a replacement for it. Persisted like the other panel preferences so it
+// doesn't reappear on every webview reload once it's been dismissed.
+let hintDismissed: boolean = ((): boolean => {
+  const saved = vscode.getState() as { hintDismissed?: boolean } | undefined;
+  return saved?.hintDismissed ?? false;
+})();
+
+function saveHintDismissed(): void {
+  vscode.setState({ ...(vscode.getState() as Record<string, unknown> | undefined), hintDismissed });
+}
+
+function applyHintVisibility(): void {
+  dom.keysHint.hidden = hintDismissed;
+  dom.hintToggle.setAttribute("aria-pressed", String(!hintDismissed));
+}
+applyHintVisibility();
+
+/** Called once from the n/p/r/e/o handler below — the first use dismisses it. */
+function dismissHintOnFirstUse(): void {
+  if (hintDismissed) return;
+  hintDismissed = true;
+  saveHintDismissed();
+  applyHintVisibility();
+}
+
+dom.hintToggle.addEventListener("click", () => {
+  hintDismissed = !hintDismissed;
+  saveHintDismissed();
+  applyHintVisibility();
+});
 
 const diffNav = createDiffNav({
   container: dom.diffNav,
@@ -959,7 +1082,10 @@ document.addEventListener("keydown", (e) => {
     resolveOrReopenHighlighted();
   } else if (e.key === "o") {
     openHighlightedInEditor();
+  } else {
+    return;
   }
+  dismissHintOnFirstUse();
 });
 
 /** The block that sits directly under #preview — never inside a list or table. */
@@ -1340,6 +1466,40 @@ function buildHighlightMark(
 const pendingReplyText = new Map<string, string>();
 let focusedReplyThreadId: string | null = null;
 
+/**
+ * Threads whose reply composer is expanded (round-4 P3.2) — via the card's
+ * Reply button or the `r` key. Collapsed by default: a review with thirty
+ * threads used to render thirty always-open textareas, which is thirty
+ * fields of chrome for the one or two the reviewer is about to use.
+ */
+const openReplyThreadIds = new Set<string>();
+
+/** A thread with an unsent draft stays open across a re-render even if the
+ * user never explicitly opened it this pass — losing sight of typed text
+ * behind a collapsed composer would be worse than the composer being open. */
+function replyShouldBeOpen(id: string): boolean {
+  return openReplyThreadIds.has(id) || (pendingReplyText.get(id)?.length ?? 0) > 0;
+}
+
+/**
+ * Expand or collapse a thread's reply composer in place (no re-render, so an
+ * in-progress edit elsewhere in the list survives). Mirrors `setThreadCollapsed`.
+ */
+function setReplyOpen(id: string, open: boolean, focus: boolean): void {
+  if (open) openReplyThreadIds.add(id);
+  else openReplyThreadIds.delete(id);
+  const card = dom.threadsList.querySelector<HTMLElement>(`.thread-card[data-thread="${cssEscape(id)}"]`);
+  const box = card?.querySelector<HTMLElement>(".reply-box");
+  const shown = replyShouldBeOpen(id);
+  box?.classList.toggle("open", shown);
+  card?.querySelector(".thread-reply-toggle")?.setAttribute("aria-expanded", String(shown));
+  // Synchronous, not deferred to a frame: the `display` flip above already
+  // took effect by the time this line runs, and a caller (the `r` key
+  // handler) expects the textarea focused by the time its own handler
+  // returns, same as the always-open composer did before this.
+  if (shown && focus) box?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+}
+
 function captureReplyState(): void {
   for (const card of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
     const id = card.dataset.thread;
@@ -1354,6 +1514,11 @@ function captureReplyState(): void {
 function renderThreads(state: SerializedState): void {
   captureReplyState();
   const list = dom.threadsList;
+  // A per-card "…" menu is about to be torn down with the rest of the list —
+  // an external update (a reply landing, a filter change) mid-open would
+  // otherwise leave `openMenu` pointing at a detached panel. The toolbar's
+  // menu lives outside `list` and is untouched.
+  if (openMenu && list.contains(openMenu.panel)) closeOpenMenu(false);
   list.innerHTML = "";
 
   // Pending suggestions render above the comment threads, regardless of the
@@ -1496,13 +1661,19 @@ function renderSuggestion(s: SuggestionState): HTMLElement {
 function renderClaudeSummary(state: SerializedState): void {
   const summary = claudeSummary(state.threads);
   dom.claudeSummary.hidden = !summary.hasAny;
-  // The "New from Claude" filter chip is only relevant when there are
-  // Claude threads to look at. Hide it (and snap filter back to "open")
-  // when none exist so the chip doesn't sit there in dead state.
+  // The "New from <agent>" filter chip is only relevant when there are
+  // agent threads to look at. Hide it (and snap filter back to "open") when
+  // none exist so the chip doesn't sit there in dead state. Its wording
+  // follows the same agent-naming rule as the summary text above it
+  // (`claudeSummary`'s `agentNoun`) — "Claude" when that's the only agent
+  // involved, the real name for a single other agent, "Agents" for a mix.
   dom.claudeFilterLabel.hidden = !summary.hasAny;
+  dom.claudeFilterLabelText.textContent = `New from ${summary.agentNoun}`;
+  dom.claudeNext.title = `Jump to the next unread thread from ${summary.agentNoun}. (Cmd/Ctrl+K, Cmd/Ctrl+Alt+N)`;
   if (!summary.hasAny && filter === "claude-unread") {
     filter = "open";
     for (const r of dom.filterRadios) r.checked = r.value === "open";
+    updateFilterSegments();
   }
   if (!summary.hasAny) return;
   dom.claudeSummaryText.textContent = summary.text;
@@ -1577,17 +1748,23 @@ function renderThreadCard(t: ThreadState, posinset: number, setsize: number): HT
   headRow.appendChild(quote);
   head.appendChild(headRow);
 
+  // Visible per-card actions: Reply and Resolve/Reopen (round-4 P3.2). Every
+  // other per-thread action moves into the "…" menu below — a thirty-thread
+  // review used to put five equal-weight buttons on every one of them.
   const actions = document.createElement("div");
   actions.className = "thread-actions";
-  const openInEditorBtn = document.createElement("button");
-  openInEditorBtn.className = "btn-ghost thread-open-in-editor";
-  openInEditorBtn.textContent = "↗";
-  openInEditorBtn.title = "Open in text editor";
-  openInEditorBtn.setAttribute("aria-label", "Open in text editor");
-  openInEditorBtn.addEventListener("click", (e) => {
+
+  const replyOpenNow = replyShouldBeOpen(t.id);
+  const replyToggleBtn = document.createElement("button");
+  replyToggleBtn.type = "button";
+  replyToggleBtn.className = "btn-ghost thread-reply-toggle";
+  replyToggleBtn.textContent = "Reply";
+  replyToggleBtn.setAttribute("aria-expanded", String(replyOpenNow));
+  replyToggleBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    vscode.postMessage({ type: "open-in-editor", threadId: t.id });
+    setReplyOpen(t.id, !replyShouldBeOpen(t.id), true);
   });
+
   const resolveBtn = document.createElement("button");
   resolveBtn.className = "btn-ghost";
   resolveBtn.textContent = t.status === "resolved" ? "Reopen" : "Resolve";
@@ -1595,53 +1772,65 @@ function renderThreadCard(t: ThreadState, posinset: number, setsize: number): HT
     e.stopPropagation();
     vscode.postMessage({ type: "toggle-resolve", threadId: t.id });
   });
-  const armed = pendingDeleteThread.has(t.id);
-  const deleteBtn = document.createElement("button");
-  deleteBtn.className = "btn-ghost danger";
-  deleteBtn.textContent = armed ? "Confirm delete" : "Delete";
-  deleteBtn.addEventListener("click", (e) => {
+
+  const menuWrap = document.createElement("span");
+  menuWrap.className = "mc-menu-wrap";
+  const menuBtn = document.createElement("button");
+  menuBtn.type = "button";
+  menuBtn.className = "btn-ghost thread-menu-btn";
+  menuBtn.textContent = "…";
+  menuBtn.title = "More thread actions";
+  menuBtn.setAttribute("aria-haspopup", "menu");
+  menuBtn.setAttribute("aria-expanded", "false");
+  menuBtn.setAttribute("aria-label", "More actions for this thread");
+  const menu = document.createElement("div");
+  menu.className = "mc-menu";
+  menu.setAttribute("role", "menu");
+  menu.hidden = true;
+  menuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (pendingDeleteThread.has(t.id)) {
-      pendingDeleteThread.delete(t.id);
-      vscode.postMessage({ type: "delete-thread", threadId: t.id });
-    } else {
-      pendingDeleteThread.add(t.id);
-      // Auto-disarm after a few seconds so a stale "Confirm delete"
-      // button doesn't sit there waiting to bite.
-      setTimeout(() => {
-        if (pendingDeleteThread.delete(t.id) && currentState) renderThreads(currentState);
-      }, 4000);
-      renderThreads(currentState!);
-    }
+    toggleMenuAt(menuBtn, menu);
   });
-  const sendClaudeBtn = document.createElement("button");
-  sendClaudeBtn.className = "btn-ghost";
-  sendClaudeBtn.textContent = "→ Claude";
-  sendClaudeBtn.title = "Send the whole thread (all comments + replies) to Claude";
-  sendClaudeBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
+
+  const openInEditorItem = buildMenuItem("Open in editor", () => {
+    vscode.postMessage({ type: "open-in-editor", threadId: t.id });
+    closeOpenMenu(false);
+  });
+  const sendThreadItem = buildMenuItem("Send this thread", () => {
     vscode.postMessage({ type: "send-to-claude-comment", threadId: t.id });
+    closeOpenMenu(false);
   });
-  const copyClaudeBtn = document.createElement("button");
-  copyClaudeBtn.className = "btn-ghost";
-  copyClaudeBtn.textContent = "Copy";
-  copyClaudeBtn.title = "Copy this thread's prompt to clipboard";
-  copyClaudeBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
+  const copyThreadItem = buildMenuItem("Copy prompt", () => {
     vscode.postMessage({ type: "copy-claude-comment", threadId: t.id });
+    closeOpenMenu(false);
   });
-  actions.append(openInEditorBtn, sendClaudeBtn, copyClaudeBtn, resolveBtn, deleteBtn);
-  if (armed) {
-    const cancelBtn = document.createElement("button");
-    cancelBtn.className = "btn-ghost";
-    cancelBtn.textContent = "Cancel";
-    cancelBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      pendingDeleteThread.delete(t.id);
-      renderThreads(currentState!);
-    });
-    actions.append(cancelBtn);
-  }
+  // Two-click confirm, armed in place (no re-render) so the open menu stays
+  // open across the arm step — the existing auto-disarm still applies.
+  const deleteItem = buildMenuItem(
+    pendingDeleteThread.has(t.id) ? "Confirm delete" : "Delete",
+    () => {
+      if (pendingDeleteThread.has(t.id)) {
+        pendingDeleteThread.delete(t.id);
+        vscode.postMessage({ type: "delete-thread", threadId: t.id });
+        closeOpenMenu(false);
+        return;
+      }
+      pendingDeleteThread.add(t.id);
+      deleteItem.textContent = "Confirm delete";
+      // Auto-disarm after a few seconds so a stale "Confirm delete"
+      // item doesn't sit there waiting to bite.
+      setTimeout(() => {
+        if (pendingDeleteThread.delete(t.id) && deleteItem.isConnected) {
+          deleteItem.textContent = "Delete";
+        }
+      }, 4000);
+    },
+    { danger: true },
+  );
+  menu.append(openInEditorItem, sendThreadItem, copyThreadItem, deleteItem);
+  menuWrap.append(menuBtn, menu);
+
+  actions.append(replyToggleBtn, resolveBtn, menuWrap);
   head.appendChild(actions);
   card.appendChild(head);
 
@@ -1658,8 +1847,11 @@ function renderThreadCard(t: ThreadState, posinset: number, setsize: number): HT
   // so clicking inside doesn't bubble to the card's click handler (which
   // would re-highlight the thread and trigger a re-render that wipes the
   // textarea content the user just typed).
+  // Collapsed until Reply is clicked or `r` is pressed on the highlighted
+  // card (round-4 P3.2); a card with a non-empty pending draft stays open
+  // across a re-render regardless (`replyShouldBeOpen`).
   const replyBox = document.createElement("div");
-  replyBox.className = "reply-box";
+  replyBox.className = replyOpenNow ? "reply-box open" : "reply-box";
   replyBox.addEventListener("click", (e) => e.stopPropagation());
   replyBox.addEventListener("mousedown", (e) => e.stopPropagation());
   const composer = buildComposer({
@@ -1668,12 +1860,13 @@ function renderThreadCard(t: ThreadState, posinset: number, setsize: number): HT
     rows: 2,
     // Restore in-progress text captured before the most recent re-render.
     initialValue: pendingReplyText.get(t.id) ?? "",
-    // Always-on reply box — don't grab focus on every thread re-render.
+    // The composer opens (and focuses) through `setReplyOpen`, not on mount.
     autofocus: false,
     onSubmit: (body) => {
       vscode.postMessage({ type: "reply", threadId: t.id, body });
       composer.textarea.value = "";
       pendingReplyText.delete(t.id);
+      setReplyOpen(t.id, false, false);
     },
   });
   // Persist what's typed so a re-render (e.g. highlight refresh) doesn't lose it.
@@ -2034,12 +2227,14 @@ window.addEventListener("scroll", () => positionFloatingButton(), true);
 dom.filterRadios.forEach((r) =>
   r.addEventListener("change", () => {
     filter = (r.value as typeof filter);
+    updateFilterSegments();
     // A different filter is a different list — start its render budget over
     // rather than carrying a limit the user raised for the previous one.
     renderedThreadLimit = THREAD_RENDER_CHUNK;
     if (currentState) render(currentState);
   }),
 );
+updateFilterSegments();
 
 window.addEventListener("message", (ev) => {
   const msg = ev.data as InitMsg | UpdateMsg | ReviewPendingMsg | ScrollToMsg | DrawioReadResult | SkillStatusMsg;

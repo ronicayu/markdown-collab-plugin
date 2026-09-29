@@ -145,6 +145,16 @@ export class UncommittedChangesController implements vscode.Disposable {
     this.tree.setState(state);
     const empty = state.kind !== "files" || state.files.length === 0;
     this.view.message = empty ? this.tree.emptyMessage : undefined;
+    // `doRefresh` already resolves the repo root (or fails to) to list
+    // uncommitted files, so this context key rides along for free — no
+    // separate git probe. "files" and "error" both mean a repo root was
+    // found (an "error" state is a failed git query *inside* a known
+    // repo); "no-workspace" and "no-repo" mean it wasn't.
+    void vscode.commands.executeCommand(
+      "setContext",
+      "markdownCollab.workspaceHasGit",
+      state.kind === "files" || state.kind === "error",
+    );
   }
 
   private async open(file: ChangedFile): Promise<void> {
@@ -177,6 +187,12 @@ export class UncommittedChangesController implements vscode.Disposable {
       }
     }
     this.disposables.length = 0;
+    // Reset context key so the (now-gated) trees hide themselves on reload/unload.
+    void vscode.commands.executeCommand(
+      "setContext",
+      "markdownCollab.workspaceHasGit",
+      false,
+    );
   }
 }
 

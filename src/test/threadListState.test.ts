@@ -128,6 +128,19 @@ describe("claudeSummary", () => {
     expect(s.text).toBe("2 new from Agents · 0 reviewed");
   });
 
+  // round-4 P3: `agentNoun` is the same name baked into `text`, exposed
+  // separately so a caller with its own copy (the sidebar's filter chip) can
+  // name the actual agent instead of hardcoding "Claude".
+  it("exposes the agent noun on its own for callers with their own copy to fill in", () => {
+    expect(claudeSummary([thread("a", { author: "codex" })]).agentNoun).toBe("Codex");
+    expect(claudeSummary([thread("a", { author: "claude" })]).agentNoun).toBe("Claude");
+    expect(
+      claudeSummary([thread("a", { author: "codex" }), thread("b", { author: "claude" })]).agentNoun,
+    ).toBe("Agents");
+    // No unread threads to derive a name from — falls back to "Claude".
+    expect(claudeSummary([]).agentNoun).toBe("Claude");
+  });
+
   it("reviewed count isn't agent-specific — a codex thread a human replied to still counts", () => {
     const s = claudeSummary([thread("a", { author: "codex", replies: ["ronica"] })]);
     expect(s.unread).toBe(0);
@@ -160,7 +173,7 @@ describe("emptyListMessage", () => {
   });
 
   it("points at the review command when no claude threads exist", () => {
-    expect(emptyListMessage("claude-unread")).toMatch(/Ask Claude to Review/);
+    expect(emptyListMessage("claude-unread")).toMatch(/Ask Agent to Review/);
   });
 
   it("blames the filter otherwise", () => {

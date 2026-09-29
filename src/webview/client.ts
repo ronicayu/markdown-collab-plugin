@@ -825,7 +825,7 @@ function renderCommentCard(c: CommentSummary): HTMLElement {
     }),
   );
   actions.appendChild(
-    threadActionButton(c.resolved ? "Unresolve" : "Resolve", "", () => {
+    threadActionButton(c.resolved ? "Reopen" : "Resolve", "", () => {
       vscode.postMessage({ type: "toggle-resolve-comment", commentId: c.id });
     }),
   );

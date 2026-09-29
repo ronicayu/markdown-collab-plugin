@@ -24,18 +24,27 @@ describe("buildSendModeItems", () => {
     expect(items[0]!.label).toMatch(/recommended/i);
   });
 
-  it("describes terminal in plain language", () => {
+  it("describes terminal in agent-neutral language — it types into whatever's there, not necessarily Claude", () => {
     const items = buildSendModeItems({ terminalDetected: true });
     const terminal = items.find((i) => i.mode === "terminal")!;
     expect(terminal.description).toBe(
-      "Types the prompt into your running Claude session. Works everywhere.",
+      "Types the prompt into whatever's running there. Works everywhere.",
     );
+    expect(terminal.label).not.toMatch(/claude/i);
+    expect(terminal.description).not.toMatch(/claude/i);
   });
 
-  it("adds a detail on the terminal item only when no terminal is detected", () => {
+  // 1.4: the label itself stays neutral ("Connect an Agent" can leave Cursor
+  // CLI or Codex running in that terminal instead of Claude); only the detail
+  // line names Claude, and only because `detectSendMode`'s auto-pick — the one
+  // thing this mode is still allowed to assume — is specifically about a
+  // Claude REPL.
+  it("names the detected Claude session in the detail line when there is one", () => {
     const detected = buildSendModeItems({ terminalDetected: true }).find((i) => i.mode === "terminal")!;
-    expect(detected.detail).toBeUndefined();
+    expect(detected.detail).toMatch(/claude/i);
+  });
 
+  it("tells the human no terminal was detected in the detail line otherwise", () => {
     const notDetected = buildSendModeItems({ terminalDetected: false }).find(
       (i) => i.mode === "terminal",
     )!;
@@ -65,7 +74,7 @@ describe("buildSendModeItems", () => {
     expect(items[0]!.label).toBe("Run Claude for me — recommended");
     // Only one item may claim "recommended".
     expect(items.filter((i) => /recommended/i.test(i.label))).toHaveLength(1);
-    expect(items[1]!.label).toBe("Send to your Claude terminal");
+    expect(items[1]!.label).toBe("Type into the active terminal");
   });
 
   it("tells the human what headless may do before they pick it", () => {

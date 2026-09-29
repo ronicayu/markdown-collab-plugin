@@ -8,7 +8,7 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { describe, expect, it } from "vitest";
-import { buildConnectAgentItems } from "../commands/setup";
+import { buildConnectAgentItems, buildDisconnectAgentItems } from "../commands/setup";
 
 const pkg = JSON.parse(readFileSync(resolve(__dirname, "../../package.json"), "utf8"));
 
@@ -39,6 +39,43 @@ describe("buildConnectAgentItems", () => {
       expect(item.description).not.toContain("\n");
     }
   });
+
+  // 1.1: Connect an Agent → Claude Code is the one setup front door now — its
+  // description has to say it does both the plugin install and the
+  // `.mcp.json` registration, not just the latter.
+  it("the Claude Code item's description names both the plugin and .mcp.json", () => {
+    const claude = buildConnectAgentItems({ cursorInApp: false, copilot: false }).find(
+      (i) => i.id === "claude",
+    )!;
+    expect(claude.description).toMatch(/plugin/i);
+    expect(claude.description).toMatch(/\.mcp\.json/);
+  });
+});
+
+// 4.4: "Connect an Agent has no inverse" — same guard shape as
+// buildConnectAgentItems above, for the QuickPick that undoes it.
+describe("buildDisconnectAgentItems", () => {
+  it("always offers Claude Code, Cursor CLI, Codex, and Other", () => {
+    const ids = buildDisconnectAgentItems({ cursorInApp: false, copilot: false }).map((i) => i.id);
+    expect(ids).toEqual(["claude", "cursor-cli", "codex", "other"]);
+  });
+
+  it("adds Cursor's in-app agent and Copilot only when those APIs exist — same gating as Connect", () => {
+    const withBoth = buildDisconnectAgentItems({ cursorInApp: true, copilot: true }).map((i) => i.id);
+    expect(withBoth).toEqual(["claude", "cursor-inapp", "cursor-cli", "codex", "copilot", "other"]);
+  });
+
+  it("every item's detail says exactly what running it removes", () => {
+    for (const item of buildDisconnectAgentItems({ cursorInApp: true, copilot: true })) {
+      expect(item.detail, `${item.id} has no detail`).toBeTruthy();
+    }
+  });
+
+  it("ids match buildConnectAgentItems' ids one for one", () => {
+    const connectIds = buildConnectAgentItems({ cursorInApp: true, copilot: true }).map((i) => i.id).sort();
+    const disconnectIds = buildDisconnectAgentItems({ cursorInApp: true, copilot: true }).map((i) => i.id).sort();
+    expect(disconnectIds).toEqual(connectIds);
+  });
 });
 
 describe("engines.vscode", () => {
@@ -65,6 +102,14 @@ describe("package.json contributions", () => {
       (c: { command: string }) => c.command === "markdownCollab.registerMcpServer",
     );
     expect(command).toBeTruthy();
+  });
+
+  it("declares the Disconnect Agent command (4.4)", () => {
+    const command = pkg.contributes.commands.find(
+      (c: { command: string }) => c.command === "markdownCollab.disconnectAgent",
+    );
+    expect(command).toBeTruthy();
+    expect(command.title).toMatch(/Disconnect/i);
   });
 
   it("declares exactly one mcpServerDefinitionProviders entry, matching the Copilot provider id", () => {

@@ -18,12 +18,20 @@
  */
 export type SkillDelivery = "installed" | "inline";
 
-/** The words every send prompt opens with. The caller finishes the sentence. */
+/**
+ * The words every send prompt opens with. The caller finishes the sentence.
+ *
+ * The prompt is built before anything knows which agent will read it —
+ * terminal and clipboard delivery reach Cursor, Codex, and Copilot as well
+ * as Claude Code since "Connect an Agent" — so the opener names both paths
+ * in one breath: the skill for Claude Code (by both of its names, since a
+ * session has whichever Set Up Claude Code managed to install), the MCP
+ * tools or the `mdc` CLI for anything else. Each agent recognises its own
+ * half and ignores the other.
+ */
 export function workflowOpener(delivery: SkillDelivery = "installed"): string {
-  return delivery === "inline"
-    ? "Follow the Markdown Collab review workflow in your instructions"
-    : // Both names: which one a session has depends on whether Set Up Claude
-      // Code installed the plugin or fell back to the standalone skill, and
-      // the prompt is built before anything could know.
-      "Use the Markdown Collab review skill (`markdown-collab:review`, or `vs-markdown-collab` on older installs)";
+  if (delivery === "inline") {
+    return "Follow the Markdown Collab review workflow in your instructions";
+  }
+  return "Use the Markdown Collab review skill (`markdown-collab:review`, or `vs-markdown-collab` on older installs) — or, if you are not Claude Code, the `markdown-collab` MCP tools or the `mdc` CLI —";
 }

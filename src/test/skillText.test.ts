@@ -38,6 +38,30 @@ const INTENTIONAL_CHANGES: Array<[string, string]> = [
     "Removing the anchored passage: delete both markers and the passage with the Edit tool — the thread orphans",
     "Removing the anchored passage: delete the open marker, the passage, and the close marker together with `mc_edit`/`mdc edit` (or the Edit tool interactively) — `old` spans both markers, so nothing is split; the thread orphans",
   ],
+  // The CLI's failure envelope and exit-code meaning (ux-review 0.7).
+  [
+    "prints JSON to stdout with exit codes `0` ok, `1` usage error, `2` integrity violation",
+    'prints JSON to stdout — a failure is `{"ok":false,"code":…,"message":…}` — with exit codes `0` ok, `1` usage error or refusal, `2` integrity violation',
+  ],
+  // Command titles went agent-neutral (ux-review 2.4).
+  [
+    '"Ask Claude to Review This Doc" / "Ask Claude to Review These Docs" commands',
+    '"Ask Agent to Review This Doc" / "Ask Agent to Review These Docs" commands',
+  ],
+  [
+    'the extension\'s "Ask Claude to Review These Docs" command builds',
+    'the extension\'s "Ask Agent to Review These Docs" command builds',
+  ],
+  // Integrity gained the empty-quote issue (ux-review 0.1).
+  [
+    "malformed thread JSON, duplicate ids",
+    "empty quotes, malformed thread JSON, duplicate ids",
+  ],
+  // Register Review Tools is a hidden alias of Connect an Agent (ux-review 1.1).
+  [
+    "add them with **Markdown Collab: Register Review Tools with Claude Code**, then restart.",
+    "add them with **Markdown Collab: Connect an Agent…** → Claude Code, then restart.",
+  ],
 ];
 
 const legacy = renderSkill("legacy");

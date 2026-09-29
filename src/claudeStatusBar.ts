@@ -79,7 +79,15 @@ export interface StatusBarChoice {
   command?: string;
 }
 
-const PROTOCOL_TOOLTIP = "Markdown Collab: Claude is working through the review tools";
+/**
+ * The per-thread wait's tooltip, named for whichever agent the protocol
+ * evidence actually came from (1.3) — `statusBarText` above already resolves
+ * the same `status.agent ?? "claude"` value for the status bar text itself;
+ * this is the tooltip's share of that same resolution, not a second guess.
+ */
+export function protocolTooltip(agentSlug?: string): string {
+  return `Markdown Collab: ${agentDisplayName(agentSlug ?? "claude").sentence} is working through the review tools`;
+}
 
 /**
  * The priority rule from the module header, as a pure function of the four
@@ -89,7 +97,7 @@ const PROTOCOL_TOOLTIP = "Markdown Collab: Claude is working through the review 
 export function chooseStatusBarView(inputs: {
   headless: { text: string; tooltip: string } | null;
   reviewPass: { text: string; tooltip: string } | null;
-  pending: string | null;
+  pending: { text: string; tooltip: string } | null;
   notice: { text: string; tooltip: string } | null;
 }): StatusBarChoice | null {
   if (inputs.headless) {
@@ -99,7 +107,7 @@ export function chooseStatusBarView(inputs: {
     return { source: "review-pass", ...inputs.reviewPass, command: "markdownCollab.reviewPassMenu" };
   }
   if (inputs.pending) {
-    return { source: "pending", text: inputs.pending, tooltip: PROTOCOL_TOOLTIP };
+    return { source: "pending", ...inputs.pending };
   }
   if (inputs.notice) {
     return { source: "notice", ...inputs.notice, command: "markdownCollab.headlessRunMenu" };
@@ -123,8 +131,8 @@ function currentReviewPassView(now: number): { record: ReviewPassRecord; view: {
 export function activateClaudeStatusBar(): vscode.Disposable {
   const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
 
-  /** The last text the protocol-evidence path asked for (null = hidden). */
-  let pendingText: string | null = null;
+  /** The last text/tooltip the protocol-evidence path asked for (null = hidden). */
+  let pendingView: { text: string; tooltip: string } | null = null;
   /**
    * The finished run still being shown: "finished" for a few seconds, a
    * failure until the human clicks it. Cleared by a click or a newer run.
@@ -144,7 +152,7 @@ export function activateClaudeStatusBar(): vscode.Disposable {
     const choice = chooseStatusBarView({
       headless: running ? headlessStatusBar(running.run.state, running.fileLabel, now) : null,
       reviewPass: reviewPassView?.view ?? null,
-      pending: pendingText,
+      pending: pendingView,
       notice: headlessNotice ? headlessStatusBar(headlessNotice.run.state, headlessNotice.fileLabel, now) : null,
     });
 
@@ -199,7 +207,8 @@ export function activateClaudeStatusBar(): vscode.Disposable {
     // this callback has no business deciding what has been answered — the
     // panels do that on every push.
     const status = claudePending.peek(docKey);
-    pendingText = statusBarText(status, vscode.workspace.asRelativePath(uri));
+    const text = statusBarText(status, vscode.workspace.asRelativePath(uri));
+    pendingView = text ? { text, tooltip: protocolTooltip(status.agent) } : null;
     render();
   };
 
@@ -281,9 +290,11 @@ export function activateClaudeStatusBar(): vscode.Disposable {
       else if (pick === "Dismiss") reviewPassPending.dismiss(record.folderKey);
       return;
     }
-    // "stale"
+    // "stale". No protocol evidence has arrived for this pass, so — like
+    // `statusBarText`'s own default — this names Claude only because that's
+    // the safe assumption with nothing more specific recorded yet.
     const pick = await vscode.window.showQuickPick(["Resend", "Dismiss", "Show logs"], {
-      placeHolder: `Review sent to Claude — nothing has arrived yet`,
+      placeHolder: `Review sent to ${agentDisplayName(record.agent ?? "claude").sentence} — nothing has arrived yet`,
     });
     if (pick === "Resend") await vscode.commands.executeCommand("markdownCollab.resendReviewPass");
     else if (pick === "Dismiss") reviewPassPending.dismiss(record.folderKey);

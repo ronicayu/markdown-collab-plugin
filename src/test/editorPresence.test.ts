@@ -239,6 +239,49 @@ describe("hoverFor", () => {
     expect(JSON.parse(args)).toEqual(["file:///w/a.md", id]);
   });
 
+  // 3.7: Reply and Resolve exist only inside the webview otherwise — no
+  // palette entry, no keybinding. The hover is the one other path in.
+  it("adds Reply and Resolve links next to Open in review view, on an open thread", () => {
+    const { source, id } = withThread();
+    const parsed = parse(source);
+    const offset = parsed.anchors.get(id)!.openEnd;
+    const linked = hoverFor(parsed, offset, {
+      now: NOW,
+      commandLinks: true,
+      file: "file:///w/a.md",
+    })!;
+    expect(linked.markdown).toContain("[Reply](command:markdownCollab.replyToThread?");
+    expect(linked.markdown).toContain("[Resolve](command:markdownCollab.resolveThread?");
+    expect(linked.markdown).not.toContain("Reopen");
+    const replyArgs = decodeURIComponent(linked.markdown.split("replyToThread?")[1].split(")")[0]);
+    expect(JSON.parse(replyArgs)).toEqual(["file:///w/a.md", id]);
+    const resolveArgs = decodeURIComponent(linked.markdown.split("resolveThread?")[1].split(")")[0]);
+    expect(JSON.parse(resolveArgs)).toEqual(["file:///w/a.md", id]);
+  });
+
+  it("labels the resolve link Reopen on an already-resolved thread", () => {
+    const { source, id } = withThread();
+    const resolved = replaceThread(source, id, resolve(parse(source).threads[0]));
+    const parsed = parse(resolved);
+    const offset = parsed.anchors.get(id)!.openEnd;
+    const linked = hoverFor(parsed, offset, {
+      now: NOW,
+      commandLinks: true,
+      file: "file:///w/a.md",
+    })!;
+    expect(linked.markdown).toContain("[Reopen](command:markdownCollab.resolveThread?");
+    expect(linked.markdown).not.toContain("[Resolve](");
+  });
+
+  it("omits the Reply/Resolve links when the caller doesn't ask for command links", () => {
+    const { source, id } = withThread();
+    const parsed = parse(source);
+    const offset = parsed.anchors.get(id)!.openEnd;
+    const plain = hoverFor(parsed, offset, { now: NOW })!.markdown;
+    expect(plain).not.toContain("replyToThread");
+    expect(plain).not.toContain("resolveThread");
+  });
+
   it("returns null where there is no thread", () => {
     const { source } = withThread();
     expect(hoverFor(parse(source), 0, { now: NOW })).toBeNull();

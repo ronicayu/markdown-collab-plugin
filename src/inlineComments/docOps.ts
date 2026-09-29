@@ -60,7 +60,12 @@ export type DocOpCode =
    */
   | "not_editable"
   /** The result would introduce integrity problems; nothing was changed. */
-  | "integrity";
+  | "integrity"
+  /**
+   * An argument is malformed — an `occurrence` that isn't a non-negative
+   * integer. Same code the MCP tools have always used for a bad argument.
+   */
+  | "invalid_arguments";
 
 /**
  * A refused operation. Carries a code so callers can map to their own error
@@ -141,11 +146,41 @@ function lastLiveComment(t: InlineThread) {
 }
 
 /**
+ * Validate an `occurrence` argument, from either front end: a number, or a
+ * string of digits (the CLI's flag, a client that quoted the number).
+ * Absent means 0.
+ *
+ * WHY THIS IS SHARED (ux-review-2026-09 0.1): `mdc` used to pass
+ * `Number("banana")` straight through, and NaN slips past every range check
+ * below — `NaN < 0` and `NaN >= n` are both false — so the ops anchored an
+ * empty thread at byte 0 and reported success. The MCP tools validated on
+ * their own; the CLI didn't. One validator, called by both front ends and
+ * again by the ops themselves, closes that for any future caller too.
+ */
+export function parseOccurrence(value: unknown): number {
+  if (value === undefined || value === null) return 0;
+  const n = typeof value === "string" && /^\s*\d+\s*$/.test(value) ? Number(value) : value;
+  if (typeof n !== "number" || !Number.isInteger(n) || n < 0) {
+    throw new DocOpError(
+      "invalid_arguments",
+      `occurrence must be a non-negative integer (1-based; 0 means "the only one"), got ${JSON.stringify(value)}`,
+      { occurrence: value },
+    );
+  }
+  return n;
+}
+
+/**
  * Locate the `occurrence`-th appearance of `quote` in the prose (before the
  * threads region), refusing ambiguity rather than guessing. `occurrence` is
  * 1-based; 0 means "there must be exactly one".
  */
 export function locatePassage(source: string, quote: string, occurrence = 0): number {
+  parseOccurrence(occurrence);
+  // An empty needle matches everywhere and never advances the scan below.
+  if (quote === "") {
+    throw new DocOpError("empty_selection", "quote must not be empty — give the exact text to anchor to", { quote });
+  }
   const parsed = parse(source);
   const limit = parsed.threadsRegion ? parsed.threadsRegion.start : source.length;
   const hits: number[] = [];
@@ -264,26 +299,41 @@ export function opList(source: string, actionable = false): ListResult {
   };
 }
 
+/**
+ * Append a reply. `agent` is true for every front end today (mdc and the MCP
+ * tools only ever write as an agent); it is a parameter so the reopen rule
+ * below is decided by the comment actually written, not assumed.
+ *
+ * An agent replying to a resolved thread reopens it (ux-review-2026-09 0.6):
+ * the sidebar shows Open by default, so an answer left on a resolved thread
+ * lands where the human isn't looking. A human replying keeps the status they
+ * chose — a note on a closed thread is theirs to make. `reopened` says which
+ * happened, so the caller never has to diff the status itself.
+ */
 export function opReply(
   source: string,
   threadId: string,
   body: string,
   now = () => new Date().toISOString(),
   author = "claude",
-): OpOutcome<{ threadId: string; commentId: string }> {
+  agent = true,
+): OpOutcome<{ threadId: string; commentId: string; reopened: boolean }> {
   const thread = findThread(source, threadId);
+  const appended = appendReply(thread, { author, agent, body, ts: now() });
+  const reply = appended.comments[appended.comments.length - 1]!;
+  const reopened = thread.status === "resolved" && isAgentComment(reply);
   // Claude just read this passage to answer about it, so its reply is the new
   // baseline for "text changed since this comment" (P1.3).
   const replied = withRefreshedAnchorHash(
     parse(source),
-    appendReply(thread, { author, agent: true, body, ts: now() }),
+    reopened ? { ...appended, status: "open", resolvedBy: undefined, resolvedTs: undefined } : appended,
   );
   const next = replaceThread(source, threadId, replied);
   assertNoNewIssues(source, next);
   const updated = findThread(next, threadId);
   return {
     next,
-    result: { threadId, commentId: updated.comments[updated.comments.length - 1]!.id },
+    result: { threadId, commentId: updated.comments[updated.comments.length - 1]!.id, reopened },
   };
 }
 
@@ -358,6 +408,7 @@ export function opEdit(
   replacement: string,
   occurrence = 0,
 ): OpOutcome<{ occurrence: number; occurrences: number; line: number; unanchored: string[] }> {
+  parseOccurrence(occurrence);
   if (old === "") {
     throw new DocOpError("empty_selection", "old text must not be empty — give the exact text to replace", { old });
   }
@@ -558,6 +609,24 @@ export function opResolve(
     status: "resolved",
     resolvedBy: author,
     resolvedTs: now(),
+  });
+  assertNoNewIssues(source, next);
+  return { next, result: { threadId } };
+}
+
+/**
+ * The inverse of `opResolve`: status back to open, the resolver's mark
+ * cleared. Same shape the review view's own Reopen produces (mutations.ts),
+ * so a thread reopened from the hover is indistinguishable from one reopened
+ * from the card.
+ */
+export function opReopen(source: string, threadId: string): OpOutcome<{ threadId: string }> {
+  const thread = findThread(source, threadId);
+  const next = replaceThread(source, threadId, {
+    ...thread,
+    status: "open",
+    resolvedBy: undefined,
+    resolvedTs: undefined,
   });
   assertNoNewIssues(source, next);
   return { next, result: { threadId } };

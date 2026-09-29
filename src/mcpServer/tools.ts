@@ -22,6 +22,7 @@ import {
   opResolve,
   opRewrite,
   opSuggest,
+  parseOccurrence,
   type OpOutcome,
 } from "../inlineComments/docOps";
 import type { McpTool, ToolResult } from "./protocol";
@@ -95,7 +96,8 @@ const BASE_TOOLS: readonly McpTool[] = [
     title: "Reply to a thread",
     description:
       "Append a reply, authored by you, to an existing thread. Use this to answer the human's question — " +
-      "it is not a way to edit the document.",
+      "it is not a way to edit the document. Replying to a resolved thread reopens it " +
+      "(the result says reopened: true).",
     inputSchema: {
       type: "object",
       properties: {
@@ -342,16 +344,6 @@ function optionalStr(args: Record<string, unknown>, name: string): string | unde
   return v;
 }
 
-function occurrenceOf(args: Record<string, unknown>): number {
-  const v = args.occurrence;
-  if (v === undefined || v === null) return 0;
-  const n = typeof v === "string" ? Number(v) : v;
-  if (typeof n !== "number" || !Number.isInteger(n) || n < 0) {
-    throw new ToolRefusal("invalid_arguments", "occurrence must be a non-negative integer");
-  }
-  return n;
-}
-
 /**
  * Run one tool call. Every refusal — bad arguments, unknown thread, a change
  * that would break integrity — comes back as an `isError` result carrying a
@@ -429,14 +421,14 @@ export async function callTool(
         return write(opReply(source, str(args, "threadId"), str(args, "body"), now, author), "reply");
       case "mc_open":
         return write(
-          opOpen(source, str(args, "quote"), str(args, "body"), occurrenceOf(args), now, author),
+          opOpen(source, str(args, "quote"), str(args, "body"), parseOccurrence(args.occurrence), now, author),
           "open",
         );
       case "mc_rewrite":
         return write(opRewrite(source, str(args, "threadId"), str(args, "with")), "rewrite");
       case "mc_edit":
         return write(
-          opEdit(source, str(args, "old"), strAllowEmpty(args, "new"), occurrenceOf(args)),
+          opEdit(source, str(args, "old"), strAllowEmpty(args, "new"), parseOccurrence(args.occurrence)),
           "edit",
         );
       case "mc_resolve":
@@ -450,7 +442,7 @@ export async function callTool(
             {
               note: optionalStr(args, "note"),
               threadId: optionalStr(args, "threadId"),
-              occurrence: occurrenceOf(args),
+              occurrence: parseOccurrence(args.occurrence),
             },
             now,
             author,

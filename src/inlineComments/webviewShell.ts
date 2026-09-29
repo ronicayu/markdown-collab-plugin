@@ -32,7 +32,7 @@ export function inlineCommentsAppBody(): string {
       <button id="find-next" class="btn-link" title="Next match (Enter)" aria-label="Next match">↓</button>
       <button id="find-close" class="btn-link" title="Close (Esc)" aria-label="Close find">×</button>
     </div>
-    <article id="preview"></article>
+    <article id="preview"><p class="mc-loading">Loading…</p></article>
     <button id="floating-add" hidden>+ Comment on selection</button>
     <button id="expand-threads" class="collapsed-toggle" title="Show comments" hidden>‹ Comments</button>
   </div>
@@ -41,23 +41,34 @@ export function inlineCommentsAppBody(): string {
       <div class="title-row">
         <h2>Comments</h2>
         <span id="thread-count"></span>
-        <button id="collapse-all" class="btn-link" title="Collapse / expand all comment threads">Collapse all</button>
         <button id="collapse-threads" class="btn-link" title="Hide comments panel" aria-label="Hide comments panel">›</button>
       </div>
       <div id="claude-summary" hidden>
         <span id="claude-summary-text" role="status" aria-live="polite"></span>
         <button id="claude-next" class="btn-link" title="Jump to the next unread thread from Claude. (Cmd/Ctrl+K, Cmd/Ctrl+Alt+N)">Next</button>
       </div>
-      <div class="filter-row">
-        <label><input type="radio" name="filter" value="open" checked> Open</label>
-        <label><input type="radio" name="filter" value="all"> All</label>
-        <label><input type="radio" name="filter" value="resolved"> Resolved</label>
-        <label id="filter-claude-label" hidden><input type="radio" name="filter" value="claude-unread"> New from Claude</label>
-        <button id="send-to-claude" title="Send the prompt to a running Claude terminal (or your configured send mode).">Send to Claude</button>
-        <button id="copy-prompt" class="btn-ghost" title="Copy the prompt to your clipboard.">Copy</button>
-        <button id="suggest-mode-toggle" class="btn-ghost" role="switch" aria-checked="false" title="When on, Send to Claude asks Claude to propose edits as suggestions you accept or reject.">Suggest: off</button>
-        <button id="remove-resolved" class="btn-ghost danger" hidden title="Delete every resolved comment from this file. Open comments and pending suggestions are kept.">Remove resolved</button>
-        <button id="finalize-doc" class="btn-ghost danger" hidden title="Remove ALL review data — every comment, marker, and pending suggestion — leaving clean markdown ready to commit.">Remove all</button>
+      <div class="filter-row" role="radiogroup" aria-label="Filter comment threads">
+        <label class="segment"><input type="radio" name="filter" value="open" checked><span>Open</span></label>
+        <label class="segment"><input type="radio" name="filter" value="all"><span>All</span></label>
+        <label class="segment"><input type="radio" name="filter" value="resolved"><span>Resolved</span></label>
+        <label id="filter-claude-label" class="segment" hidden><input type="radio" name="filter" value="claude-unread"><span id="filter-claude-label-text">New from Claude</span></label>
+      </div>
+      <div class="actions-row">
+        <button id="send-to-claude" class="mc-btn mc-btn--primary" title="Send the prompt to a running Claude terminal (or your configured send mode).">Send to Claude</button>
+        <span class="switch-row">
+          <label id="suggest-mode-label" for="suggest-mode-toggle">Suggest mode</label>
+          <button id="suggest-mode-toggle" type="button" class="switch" role="switch" aria-checked="false" aria-labelledby="suggest-mode-label" title="When on, Send to Claude asks Claude to propose edits as suggestions you accept or reject."></button>
+        </span>
+        <span class="mc-menu-wrap">
+          <button id="overflow-menu-btn" type="button" class="btn-ghost" aria-haspopup="menu" aria-expanded="false" aria-controls="overflow-menu" aria-label="More actions" title="More actions">…</button>
+          <div id="overflow-menu" class="mc-menu" role="menu" aria-label="More actions" hidden>
+            <button id="copy-prompt" type="button" role="menuitem" title="Copy the prompt to your clipboard.">Copy prompt</button>
+            <button id="collapse-all" type="button" role="menuitem" title="Collapse / expand all comment threads">Collapse all</button>
+            <button id="remove-resolved" type="button" role="menuitem" class="danger" hidden title="Delete every resolved comment from this file. Open comments and pending suggestions are kept.">Remove resolved</button>
+            <button id="finalize-doc" type="button" role="menuitem" class="danger" hidden title="Remove ALL review data — every comment, marker, and pending suggestion — leaving clean markdown ready to commit.">Remove all review data</button>
+          </div>
+        </span>
+        <button id="hint-toggle" class="btn-link" title="Show keyboard shortcuts" aria-pressed="false">?</button>
       </div>
       <div id="keys-hint">n / p to move between threads · r reply · e resolve</div>
       <div id="skill-warning" class="skill-warning" hidden>
@@ -65,7 +76,7 @@ export function inlineCommentsAppBody(): string {
         <button id="skill-install" class="btn-link"></button>
       </div>
     </header>
-    <div id="threads-list" role="feed"></div>
+    <div id="threads-list" role="feed"><p class="mc-loading">Loading…</p></div>
     <div id="composer" hidden></div>
   </aside>
 </div>`;

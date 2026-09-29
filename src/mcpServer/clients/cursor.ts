@@ -14,7 +14,15 @@
 // it doesn't run in a terminal, so env vars don't reach it, and it's
 // registered programmatically instead. See `mcpServer/agentConnections.ts`.)
 
-import { ENV_TOKEN, ENV_URL, MCP_SERVER_NAME, mergeMcpServersJson, type MergeResult } from "../registration";
+import {
+  ENV_TOKEN,
+  ENV_URL,
+  MCP_SERVER_NAME,
+  mergeMcpServersJson,
+  removeMcpServersJsonEntry,
+  type MergeResult,
+  type RemovalResult,
+} from "../registration";
 
 export interface CursorMcpEntry {
   url: string;
@@ -36,4 +44,9 @@ export function cursorMcpEntry(): CursorMcpEntry {
  */
 export function mergeCursorMcpJson(existing: string | null): MergeResult {
   return mergeMcpServersJson(existing, MCP_SERVER_NAME, cursorMcpEntry());
+}
+
+/** The inverse of `mergeCursorMcpJson` (4.4: Disconnect Agent → Cursor CLI). */
+export function removeCursorMcpEntry(existing: string | null): RemovalResult {
+  return removeMcpServersJsonEntry(existing, MCP_SERVER_NAME);
 }

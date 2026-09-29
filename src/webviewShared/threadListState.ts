@@ -62,6 +62,14 @@ export interface ClaudeSummary {
   hasAny: boolean;
   /** `"2 new from Claude · 1 reviewed"`. Empty when `hasAny` is false. */
   text: string;
+  /**
+   * The same agent noun baked into `text` ("Claude", another agent's name, or
+   * "agents"), exposed separately so callers with their own copy to fill in —
+   * the filter chip, a button's title — can name the actual agent instead of
+   * hardcoding "Claude" (round-4 P3, agent-neutral copy). Falls back to
+   * "Claude" when there are no unread threads to derive it from.
+   */
+  agentNoun: string;
 }
 
 /**
@@ -94,6 +102,7 @@ export function claudeSummary(threads: ListThread[]): ClaudeSummary {
     reviewed,
     hasAny,
     text: hasAny ? `${unreadLabel} · ${reviewedLabel}` : "",
+    agentNoun,
   };
 }
 
@@ -103,7 +112,11 @@ export function emptyListMessage(filter: ThreadFilter): string {
     return "No open comments. Select text in the preview to start a thread.";
   }
   if (filter === "claude-unread") {
-    return "No unread threads from Claude. Run 'Ask Claude to Review This Doc' to start one.";
+    // Command renamed to "Ask Agent to Review This Doc" (package.json). "from
+    // Claude" stays: this function only gets `filter`, not the thread list,
+    // so there's no agent to name — there are no unread threads to draw one
+    // from, which is exactly why this message is showing.
+    return "No unread threads from Claude. Run 'Ask Agent to Review This Doc' to start one.";
   }
   return "No comments match this filter.";
 }

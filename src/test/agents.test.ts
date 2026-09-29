@@ -20,6 +20,37 @@ describe("AGENTS_SNIPPET constant", () => {
   });
 });
 
+// 0.4: the snippet used to teach hand-editing the markers directly — "exactly
+// what mdc.ts and skillText.ts call the single most common way this workflow
+// breaks" (docs/ux-review-2026-09.md). It now follows the same hierarchy the
+// skill uses: MCP tools, then the `mdc` CLI, then hand-editing as a last resort.
+describe("AGENTS_SNIPPET hierarchy", () => {
+  it("orders MCP tools before the mdc CLI before hand-editing", () => {
+    const mcpAt = AGENTS_SNIPPET.indexOf("MCP tools");
+    const mdcAt = AGENTS_SNIPPET.indexOf("mdc");
+    const handEditAt = AGENTS_SNIPPET.indexOf("Hand-editing");
+    expect(mcpAt).toBeGreaterThan(-1);
+    expect(mdcAt).toBeGreaterThan(-1);
+    expect(handEditAt).toBeGreaterThan(-1);
+    expect(mcpAt).toBeLessThan(mdcAt);
+    expect(mdcAt).toBeLessThan(handEditAt);
+  });
+
+  it("names hand-editing as a last resort, not the primary instruction", () => {
+    expect(AGENTS_SNIPPET).toMatch(/only when neither exists/i);
+  });
+
+  it("lists the mdc CLI verbs in one line", () => {
+    expect(AGENTS_SNIPPET).toContain(
+      "list / reply / open / rewrite / edit / resolve / suggest / check",
+    );
+  });
+
+  it("stays under ~35 lines", () => {
+    expect(AGENTS_SNIPPET.split("\n").length).toBeLessThanOrEqual(35);
+  });
+});
+
 describe("ensureAgentsSnippet", () => {
   it("returns 'created' and writes the snippet when AGENTS.md is absent", async () => {
     const result = await ensureAgentsSnippet(tmpDir);

@@ -29,18 +29,20 @@ const outFile = (...parts: string[]): string => path.join(REPO_ROOT, "out", ...p
 
 /**
  * The `acquireVsCodeApi` stand-in. Records every posted message on
- * `window.__mcPosted` and keeps `setState`/`getState` honest (the inline client
- * persists collapsed threads through them, so a no-op stub would change
- * behavior).
+ * `window.__mcPosted` and keeps `setState`/`getState` honest (the inline
+ * client persists collapsed threads, the outline, and — round-4 P3.5 — the
+ * keyboard hint's dismissal through them, so a no-op stub would change
+ * behavior). The state itself is on `window.__mcState` too, so a spec can
+ * read back what the client persisted without a real webview reload.
  */
 const VSCODE_API_STUB = `
 window.__mcPosted = [];
-let __mcState = undefined;
+window.__mcState = undefined;
 window.acquireVsCodeApi = function () {
   return {
     postMessage: function (msg) { window.__mcPosted.push(msg); },
-    setState: function (s) { __mcState = s; },
-    getState: function () { return __mcState; },
+    setState: function (s) { window.__mcState = s; },
+    getState: function () { return window.__mcState; },
   };
 };
 `;
@@ -55,6 +57,11 @@ export async function clearPosted(page: Page): Promise<void> {
   await page.evaluate(() => {
     (window as unknown as { __mcPosted: unknown[] }).__mcPosted.length = 0;
   });
+}
+
+/** Whatever the client last passed to `vscode.setState()`. */
+export async function getState(page: Page): Promise<unknown> {
+  return page.evaluate(() => (window as unknown as { __mcState: unknown }).__mcState);
 }
 
 /**
@@ -90,10 +97,12 @@ async function bootPage(page: Page, body: string, styles: string[], script: stri
 }
 
 /**
- * Boot the inline-comments webview with the panel's own DOM skeleton and push
- * an `init`. Resolves once the thread list has rendered.
+ * Boot the inline-comments webview shell (panel DOM + client bundle) without
+ * pushing an `init` yet. Split out of `bootInlineView` so a spec can assert
+ * the pre-init state — the "Loading…" placeholder (round-4 P3.3) — before
+ * sending the message that replaces it.
  */
-export async function bootInlineView(page: Page, init: Record<string, unknown>): Promise<void> {
+export async function bootInlineViewShell(page: Page): Promise<void> {
   await bootPage(
     page,
     inlineCommentsAppBody(),
@@ -102,6 +111,14 @@ export async function bootInlineView(page: Page, init: Record<string, unknown>):
   );
   await awaitPosted(page, "ready");
   await clearPosted(page);
+}
+
+/**
+ * Boot the inline-comments webview with the panel's own DOM skeleton and push
+ * an `init`. Resolves once the thread list has rendered.
+ */
+export async function bootInlineView(page: Page, init: Record<string, unknown>): Promise<void> {
+  await bootInlineViewShell(page);
   await pushToWebview(page, { type: "init", ...init });
   await expect(page.locator("#preview")).not.toBeEmpty();
 }

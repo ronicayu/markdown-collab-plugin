@@ -2,6 +2,8 @@
 // src/skillCli/mdc.ts
 import { writeSync } from "node:fs";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { request } from "node:http";
+import * as path2 from "node:path";
 
 // src/inlineComments/staleness.ts
 function hashAnchorText(text) {
@@ -631,6 +633,18 @@ function checkIntegrity(source) {
       repairable: recoverable
     });
   }
+  for (const t of insp.parsed.threads) {
+    const a = insp.parsed.anchors.get(t.id);
+    if (!a || t.quote !== "") continue;
+    issues.push({
+      kind: "empty-quote",
+      severity: "warning",
+      message: a.openEnd === a.closeStart ? `Thread ${t.id} is anchored to an empty span and has an empty quote \u2014 it points at no text.` : `Thread ${t.id} has an empty quote, so it cannot be re-anchored if its markers are lost.`,
+      threadId: t.id,
+      offset: a.openStart,
+      repairable: false
+    });
+  }
   for (const id of insp.parsed.unanchoredSuggestionIds) {
     issues.push({
       kind: "unanchored-suggestion",
@@ -842,7 +856,23 @@ function lastLiveComment(t) {
   const live = t.comments.filter((c) => !c.deleted);
   return live[live.length - 1];
 }
+function parseOccurrence(value) {
+  if (value === void 0 || value === null) return 0;
+  const n = typeof value === "string" && /^\s*\d+\s*$/.test(value) ? Number(value) : value;
+  if (typeof n !== "number" || !Number.isInteger(n) || n < 0) {
+    throw new DocOpError(
+      "invalid_arguments",
+      `occurrence must be a non-negative integer (1-based; 0 means "the only one"), got ${JSON.stringify(value)}`,
+      { occurrence: value }
+    );
+  }
+  return n;
+}
 function locatePassage(source, quote, occurrence = 0) {
+  parseOccurrence(occurrence);
+  if (quote === "") {
+    throw new DocOpError("empty_selection", "quote must not be empty \u2014 give the exact text to anchor to", { quote });
+  }
   const parsed = parse(source);
   const limit = parsed.threadsRegion ? parsed.threadsRegion.start : source.length;
   const hits = [];
@@ -916,18 +946,21 @@ function opList(source, actionable = false) {
     suggestions
   };
 }
-function opReply(source, threadId, body, now = () => (/* @__PURE__ */ new Date()).toISOString(), author = "claude") {
+function opReply(source, threadId, body, now = () => (/* @__PURE__ */ new Date()).toISOString(), author = "claude", agent = true) {
   const thread = findThread(source, threadId);
+  const appended = appendReply(thread, { author, agent, body, ts: now() });
+  const reply = appended.comments[appended.comments.length - 1];
+  const reopened = thread.status === "resolved" && isAgentComment(reply);
   const replied = withRefreshedAnchorHash(
     parse(source),
-    appendReply(thread, { author, agent: true, body, ts: now() })
+    reopened ? { ...appended, status: "open", resolvedBy: void 0, resolvedTs: void 0 } : appended
   );
   const next = replaceThread(source, threadId, replied);
   assertNoNewIssues(source, next);
   const updated = findThread(next, threadId);
   return {
     next,
-    result: { threadId, commentId: updated.comments[updated.comments.length - 1].id }
+    result: { threadId, commentId: updated.comments[updated.comments.length - 1].id, reopened }
   };
 }
 function opRewrite(source, threadId, replacement) {
@@ -952,6 +985,7 @@ function opRewrite(source, threadId, replacement) {
   return { next, result: { threadId, previous, replacement } };
 }
 function opEdit(source, old, replacement, occurrence = 0) {
+  parseOccurrence(occurrence);
   if (old === "") {
     throw new DocOpError("empty_selection", "old text must not be empty \u2014 give the exact text to replace", { old });
   }
@@ -1159,6 +1193,13 @@ function opCheckAndCheckpoint(source, now = () => (/* @__PURE__ */ new Date()).t
   }
 }
 
+// src/mcpServer/protocol.ts
+var PROTOCOL_VERSION = "2025-06-18";
+
+// src/mcpServer/registration.ts
+var ENV_URL = "MARKDOWN_COLLAB_MCP_URL";
+var ENV_TOKEN = "MARKDOWN_COLLAB_MCP_TOKEN";
+
 // src/skillCli/checkHook.ts
 import * as path from "node:path";
 var SILENT_OK = { exitCode: 0, stderr: "" };
@@ -1218,7 +1259,8 @@ var USAGE = `mdc \u2014 Markdown Collab inline-comment CLI
 
   mdc list <file> [--actionable]              threads as JSON
   mdc reply <file> <threadId> --body TEXT [--author SLUG]
-                                              append a reply authored by claude (or --author)
+                                              append a reply authored by claude (or --author);
+                                              a resolved thread is reopened ("reopened": true)
   mdc rewrite <file> <threadId> --with TEXT   replace the anchored span, markers preserved
   mdc edit <file> --old TEXT --new TEXT [--occurrence N]
                                               replace exact prose text outside anchored spans
@@ -1239,15 +1281,23 @@ var USAGE = `mdc \u2014 Markdown Collab inline-comment CLI
   run is that default, so nothing changes for it. Sets the comment's JSON
   "agent" flag alongside "author".
 
-All commands print JSON to stdout. Exit codes: 0 ok, 1 usage, 2 integrity.`;
+  With ${ENV_URL}/_TOKEN set, writes go through the running extension; --direct writes the file itself.
+
+Every command prints JSON to stdout \u2014 on failure {"ok":false,"code":"\u2026","message":"\u2026"}, with the
+message also on stderr (check --hook prints only its stderr report). Exit codes: 0 ok, 1 usage or
+refused, 2 integrity.`;
 function out(obj) {
   writeSync(1, `${JSON.stringify(obj, null, 2)}
 `);
 }
-function fail(message, code = EXIT_USAGE) {
-  process.stderr.write(`mdc: ${message}
+function fail(message, opts = {}) {
+  writeSync(1, `${JSON.stringify({ ok: false, code: opts.code ?? "usage", message })}
 `);
-  process.exit(code);
+  writeSync(2, `mdc: ${message}
+${opts.detail ? `
+${opts.detail}
+` : ""}`);
+  process.exit(opts.exit ?? EXIT_USAGE);
 }
 var EXIT_FOR_CODE = {
   thread_not_found: EXIT_USAGE,
@@ -1263,21 +1313,35 @@ var EXIT_FOR_CODE = {
   empty_selection: EXIT_USAGE,
   out_of_range: EXIT_USAGE,
   nothing_to_do: EXIT_USAGE,
+  invalid_arguments: EXIT_USAGE,
   integrity: EXIT_INTEGRITY
 };
+function refuse(code, message, details, integrityCodes = []) {
+  const known = Object.prototype.hasOwnProperty.call(EXIT_FOR_CODE, code);
+  const exit = integrityCodes.includes(code) ? EXIT_INTEGRITY : known ? EXIT_FOR_CODE[code] : EXIT_USAGE;
+  if (code === "passage_ambiguous") {
+    const n = details?.occurrences;
+    return fail(`passage appears ${n} times; pass --occurrence 1..${n} to say which one you mean`, { code, exit });
+  }
+  const hint = code === "unanchored" || code === "integrity" ? " (see `mdc check`)" : "";
+  return fail(`${message}${hint}`, { code, exit });
+}
+var BOOLEAN_FLAGS = /* @__PURE__ */ new Set(["repair", "actionable", "hook", "direct", "help"]);
 function parseArgs(argv) {
   const _ = [];
   const flags = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a.startsWith("--")) {
+    if (a === "-h") {
+      flags.help = true;
+    } else if (a.startsWith("--")) {
       const name = a.slice(2);
       const next = argv[i + 1];
-      if (next !== void 0 && !next.startsWith("--")) {
+      if (BOOLEAN_FLAGS.has(name) || next === void 0) {
+        flags[name] = true;
+      } else {
         flags[name] = next;
         i++;
-      } else {
-        flags[name] = true;
       }
     } else {
       _.push(a);
@@ -1295,63 +1359,192 @@ function strAllowEmpty(flags, name) {
   if (typeof v !== "string") fail(`missing required --${name}`);
   return v;
 }
+function occurrenceFlag(flags) {
+  const v = flags.occurrence;
+  if (v === void 0) return 0;
+  if (v === true) fail("--occurrence needs a number", { code: "invalid_arguments" });
+  try {
+    return parseOccurrence(v);
+  } catch (e) {
+    if (!(e instanceof DocOpError)) throw e;
+    return fail(`--occurrence takes a 1-based number, got ${JSON.stringify(v)}`, { code: e.code });
+  }
+}
 function readDoc(file) {
   try {
     return readFileSync(file, "utf8");
   } catch (e) {
     const err = e;
-    return fail(err.code === "ENOENT" ? `no such file: ${file}` : `cannot read ${file}: ${err.message}`);
+    return err.code === "ENOENT" ? fail(`no such file: ${file}`, { code: "file_not_found" }) : fail(`cannot read ${file}: ${err.message}`, { code: "io_error" });
   }
 }
-function apply(file, action, run, opts = {}) {
+var REACH_TIMEOUT_MS = 3e3;
+var CALL_TIMEOUT_MS = 1e4;
+function post(ext, message, sessionId, timeoutMs) {
+  return new Promise((resolve3) => {
+    let connected = false;
+    let settled = false;
+    const settle = (a) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve3(a);
+    };
+    const payload = JSON.stringify(message);
+    let req;
+    try {
+      req = request(
+        ext.url,
+        {
+          method: "POST",
+          // A fresh connection, closed after: a pooled keep-alive socket
+          // would hold this process open after it has printed its answer.
+          agent: false,
+          headers: {
+            authorization: `Bearer ${ext.token}`,
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            "content-length": Buffer.byteLength(payload),
+            ...sessionId ? { "mcp-session-id": sessionId } : {}
+          }
+        },
+        (res) => {
+          const chunks = [];
+          res.on("data", (c) => chunks.push(c));
+          res.on("end", () => {
+            const header = res.headers["mcp-session-id"];
+            settle({
+              kind: "answered",
+              status: res.statusCode ?? 0,
+              sessionId: typeof header === "string" ? header : void 0,
+              body: Buffer.concat(chunks).toString("utf8")
+            });
+          });
+          res.on("error", (e) => settle({ kind: "lost", reason: e.message }));
+          res.on("close", () => settle({ kind: "lost", reason: "connection closed mid-answer" }));
+        }
+      );
+    } catch (e) {
+      resolve3({ kind: "unreachable", reason: e.message });
+      return;
+    }
+    const timer = setTimeout(() => {
+      settle({ kind: connected ? "lost" : "unreachable", reason: `no answer within ${timeoutMs}ms` });
+      req.destroy();
+    }, timeoutMs);
+    req.on("socket", (s) => s.once("connect", () => connected = true));
+    req.on("error", (e) => settle({ kind: connected ? "lost" : "unreachable", reason: e.message }));
+    req.end(payload);
+  });
+}
+function isObject(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function rpcResult(body) {
+  try {
+    const parsed = JSON.parse(body);
+    return isObject(parsed) && isObject(parsed.result) ? parsed.result : null;
+  } catch {
+    return null;
+  }
+}
+async function forward(ext, tool, args, author) {
+  const init = await post(
+    ext,
+    {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: author, version: "mdc" } }
+    },
+    void 0,
+    REACH_TIMEOUT_MS
+  );
+  if (init.kind !== "answered" || init.status !== 200 || !rpcResult(init.body)) return { kind: "fallback" };
+  const call = await post(
+    ext,
+    { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: tool, arguments: args } },
+    init.sessionId,
+    CALL_TIMEOUT_MS
+  );
+  if (call.kind === "unreachable") return { kind: "fallback" };
+  if (call.kind === "lost") return { kind: "unknown", reason: call.reason };
+  const result = call.status === 200 ? rpcResult(call.body) : null;
+  if (!result) return { kind: "fallback" };
+  const first = Array.isArray(result.content) ? result.content[0] : void 0;
+  const text = isObject(first) && typeof first.text === "string" ? first.text : "";
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    payload = void 0;
+  }
+  if (result.isError === true) {
+    const err = isObject(payload) && isObject(payload.error) ? payload.error : void 0;
+    if (err && typeof err.code === "string" && typeof err.message === "string") {
+      return { kind: "refused", code: err.code, message: err.message, details: isObject(err.details) ? err.details : void 0 };
+    }
+    return { kind: "refused", code: "refused", message: text || "the extension refused the call" };
+  }
+  return { kind: "applied", result: isObject(payload) ? payload : {} };
+}
+function extensionFromEnv(flags) {
+  if (flags.direct === true) return null;
+  const url = process.env[ENV_URL];
+  const token = process.env[ENV_TOKEN];
+  return url && token ? { url, token } : null;
+}
+function integrityOkOnDisk(absPath) {
+  try {
+    return checkIntegrity(readFileSync(absPath, "utf8")).ok;
+  } catch {
+    return void 0;
+  }
+}
+async function apply(file, m, ext, author) {
+  if (ext) {
+    readDoc(file);
+    const abs = path2.resolve(file);
+    const f = await forward(ext, m.tool, { file: abs, ...m.args }, author);
+    switch (f.kind) {
+      case "applied": {
+        const rest = { ...f.result };
+        delete rest.action;
+        delete rest.file;
+        out({ action: m.action, file, ...rest, integrityOk: integrityOkOnDisk(abs), via: "extension" });
+        return;
+      }
+      case "refused":
+        if (f.code !== "file_not_found" && f.code !== "no_workspace") {
+          return refuse(f.code, f.message, f.details, m.integrityCodes);
+        }
+        writeSync(2, `mdc: ${file} is not in the extension's workspace \u2014 writing directly
+`);
+        break;
+      case "unknown":
+        return fail(
+          `the extension at ${ext.url} did not answer (${f.reason}); the ${m.action} may already be applied \u2014 run \`mdc list ${file}\` before retrying`,
+          { code: "no_answer" }
+        );
+      case "fallback":
+        writeSync(2, `mdc: extension not reachable at ${ext.url} \u2014 writing directly
+`);
+        break;
+    }
+  }
   const source = readDoc(file);
   let outcome;
   try {
-    outcome = run(source);
+    outcome = m.run(source);
   } catch (e) {
-    if (e instanceof DocOpError) {
-      const escalated = opts.integrityCodes?.includes(e.code) ? EXIT_INTEGRITY : EXIT_FOR_CODE[e.code];
-      const hint = e.code === "unanchored" || e.code === "integrity" ? " (see `mdc check`)" : "";
-      if (e.code === "passage_ambiguous") {
-        const n = e.details?.occurrences;
-        return fail(
-          `passage appears ${n} times; pass --occurrence 1..${n} to say which one you mean`,
-          escalated
-        );
-      }
-      return fail(`${e.message}${hint}`, escalated);
-    }
+    if (e instanceof DocOpError) return refuse(e.code, e.message, e.details, m.integrityCodes);
     throw e;
   }
   writeFileSync(file, outcome.next, "utf8");
-  out({ action, file, ...outcome.result, integrityOk: checkIntegrity(outcome.next).ok });
+  out({ action: m.action, file, ...outcome.result, integrityOk: checkIntegrity(outcome.next).ok });
 }
 function cmdList(file, actionableOnly) {
   out({ file, ...opList(readDoc(file), actionableOnly) });
-}
-function cmdReply(file, threadId, body, author) {
-  apply(file, "reply", (s) => opReply(s, threadId, body, void 0, author));
-}
-function cmdRewrite(file, threadId, replacement) {
-  apply(file, "rewrite", (s) => opRewrite(s, threadId, replacement));
-}
-function cmdOpen(file, quote, body, occurrence, author) {
-  apply(file, "open", (s) => opOpen(s, quote, body, occurrence, void 0, author));
-}
-function cmdEdit(file, old, replacement, occurrence) {
-  apply(file, "edit", (s) => opEdit(s, old, replacement, occurrence));
-}
-function cmdResolve(file, threadId, author) {
-  apply(file, "resolve", (s) => opResolve(s, threadId, void 0, author));
-}
-function cmdSuggest(file, quote, proposed, note, occurrence, author) {
-  apply(file, "suggest", (s) => opSuggest(s, quote, proposed, { note, occurrence }, void 0, author));
-}
-function cmdAccept(file, anchorId) {
-  apply(file, "accept", (s) => opAccept(s, anchorId), { integrityCodes: ["unanchored"] });
-}
-function cmdReject(file, anchorId) {
-  apply(file, "reject", (s) => opReject(s, anchorId));
 }
 function cmdCheck(file, repair) {
   const source = readDoc(file);
@@ -1364,7 +1557,10 @@ function cmdCheck(file, repair) {
   const result = repairIntegrity(source);
   if (result.source !== source) {
     if (stripAllInlineMarkup(result.source) !== stripAllInlineMarkup(source)) {
-      fail("internal error: repair would have altered prose; nothing was written", EXIT_INTEGRITY);
+      fail("internal error: repair would have altered prose; nothing was written", {
+        code: "integrity",
+        exit: EXIT_INTEGRITY
+      });
     }
     writeFileSync(file, result.source, "utf8");
   }
@@ -1404,72 +1600,122 @@ function cmdCheckHook() {
   if (outcome.stderr) writeSync(2, outcome.stderr);
   process.exit(outcome.exitCode);
 }
-function main() {
-  const argv = process.argv.slice(2);
-  if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") {
+async function main() {
+  const { _, flags } = parseArgs(process.argv.slice(2));
+  if (flags.help === true) {
     writeSync(1, `${USAGE}
 `);
-    process.exit(argv.length === 0 ? EXIT_USAGE : EXIT_OK);
+    process.exit(EXIT_OK);
   }
-  const { _, flags } = parseArgs(argv);
   const [command, ...rest] = _;
+  if (command === void 0) fail("no command given", { detail: USAGE });
   const author = typeof flags.author === "string" && flags.author !== "" ? flags.author : "claude";
+  const ext = extensionFromEnv(flags);
+  const mutate = (file, m) => apply(file, m, ext, author);
   switch (command) {
     case "list":
       if (!rest[0]) fail("usage: mdc list <file> [--actionable]");
       return cmdList(rest[0], flags.actionable === true);
-    case "reply":
+    case "reply": {
       if (!rest[0] || !rest[1]) fail("usage: mdc reply <file> <threadId> --body TEXT [--author SLUG]");
-      return cmdReply(rest[0], rest[1], str(flags, "body"), author);
-    case "rewrite":
+      const threadId = rest[1];
+      const body = str(flags, "body");
+      return mutate(rest[0], {
+        action: "reply",
+        tool: "mc_reply",
+        args: { threadId, body },
+        run: (s) => opReply(s, threadId, body, void 0, author)
+      });
+    }
+    case "rewrite": {
       if (!rest[0] || !rest[1]) fail("usage: mdc rewrite <file> <threadId> --with TEXT");
-      return cmdRewrite(rest[0], rest[1], str(flags, "with"));
-    case "edit":
+      const threadId = rest[1];
+      const replacement = str(flags, "with");
+      return mutate(rest[0], {
+        action: "rewrite",
+        tool: "mc_rewrite",
+        args: { threadId, with: replacement },
+        run: (s) => opRewrite(s, threadId, replacement)
+      });
+    }
+    case "edit": {
       if (!rest[0]) fail("usage: mdc edit <file> --old TEXT --new TEXT [--occurrence N]");
-      return cmdEdit(
-        rest[0],
-        str(flags, "old"),
-        strAllowEmpty(flags, "new"),
-        typeof flags.occurrence === "string" ? Number(flags.occurrence) : 0
-      );
-    case "open":
+      const old = str(flags, "old");
+      const replacement = strAllowEmpty(flags, "new");
+      const occurrence = occurrenceFlag(flags);
+      return mutate(rest[0], {
+        action: "edit",
+        tool: "mc_edit",
+        args: { old, new: replacement, occurrence },
+        run: (s) => opEdit(s, old, replacement, occurrence)
+      });
+    }
+    case "open": {
       if (!rest[0]) fail("usage: mdc open <file> --quote TEXT --body TEXT [--occurrence N] [--author SLUG]");
-      return cmdOpen(
-        rest[0],
-        str(flags, "quote"),
-        str(flags, "body"),
-        typeof flags.occurrence === "string" ? Number(flags.occurrence) : 0,
-        author
-      );
-    case "resolve":
+      const quote = str(flags, "quote");
+      const body = str(flags, "body");
+      const occurrence = occurrenceFlag(flags);
+      return mutate(rest[0], {
+        action: "open",
+        tool: "mc_open",
+        args: { quote, body, occurrence },
+        run: (s) => opOpen(s, quote, body, occurrence, void 0, author)
+      });
+    }
+    case "resolve": {
       if (!rest[0] || !rest[1]) fail("usage: mdc resolve <file> <threadId> [--author SLUG]");
-      return cmdResolve(rest[0], rest[1], author);
-    case "suggest":
+      const threadId = rest[1];
+      return mutate(rest[0], {
+        action: "resolve",
+        tool: "mc_resolve",
+        args: { threadId },
+        run: (s) => opResolve(s, threadId, void 0, author)
+      });
+    }
+    case "suggest": {
       if (!rest[0]) {
         fail("usage: mdc suggest <file> --quote TEXT --with TEXT [--note TEXT] [--occurrence N] [--author SLUG]");
       }
-      return cmdSuggest(
-        rest[0],
-        str(flags, "quote"),
-        str(flags, "with"),
-        typeof flags.note === "string" ? flags.note : void 0,
-        typeof flags.occurrence === "string" ? Number(flags.occurrence) : 0,
-        author
-      );
-    case "accept":
+      const quote = str(flags, "quote");
+      const proposed = str(flags, "with");
+      const note = typeof flags.note === "string" ? flags.note : void 0;
+      const occurrence = occurrenceFlag(flags);
+      return mutate(rest[0], {
+        action: "suggest",
+        tool: "mc_suggest",
+        args: { quote, with: proposed, note, occurrence },
+        run: (s) => opSuggest(s, quote, proposed, { note, occurrence }, void 0, author)
+      });
+    }
+    case "accept": {
       if (!rest[0] || !rest[1]) fail("usage: mdc accept <file> <anchorId>");
-      return cmdAccept(rest[0], rest[1]);
-    case "reject":
+      const anchorId = rest[1];
+      return mutate(rest[0], {
+        action: "accept",
+        tool: "mc_accept",
+        args: { anchorId },
+        run: (s) => opAccept(s, anchorId),
+        // A suggestion that lost its markers is a damaged document, not a typo
+        // in the command — exit 2 so a wrapper can tell the two apart.
+        integrityCodes: ["unanchored"]
+      });
+    }
+    case "reject": {
       if (!rest[0] || !rest[1]) fail("usage: mdc reject <file> <anchorId>");
-      return cmdReject(rest[0], rest[1]);
+      const anchorId = rest[1];
+      return mutate(rest[0], {
+        action: "reject",
+        tool: "mc_reject",
+        args: { anchorId },
+        run: (s) => opReject(s, anchorId)
+      });
+    }
     case "check":
       if (flags.hook === true) return cmdCheckHook();
       if (!rest[0]) fail("usage: mdc check <file> [--repair]");
       return cmdCheck(rest[0], flags.repair === true);
     default:
-      fail(`unknown command: ${command}
-
-${USAGE}`);
+      fail(`unknown command: ${command}`, { detail: USAGE });
   }
 }
-main();
+main().catch((e) => fail(`internal error: ${e.message}`, { code: "internal_error" }));

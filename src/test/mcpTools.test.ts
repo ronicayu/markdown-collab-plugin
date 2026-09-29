@@ -145,6 +145,18 @@ describe("writes", () => {
     expect(checkIntegrity(h.read()).ok).toBe(true);
   });
 
+  it("mc_reply on a resolved thread reopens it and says so in the result (ux-review-2026-09 0.6)", async () => {
+    const h = harness();
+    const { threadId } = body(await h.call("mc_open", { file: "guide.md", quote: "nested lists", body: "q" }));
+    body(await h.call("mc_resolve", { file: "guide.md", threadId }));
+    const r = body(await h.call("mc_reply", { file: "guide.md", threadId, body: "one more thing" }));
+    expect(r).toMatchObject({ action: "reply", threadId, commentId: "c2", reopened: true });
+    expect(parse(h.read()).threads[0]!.status).toBe("open");
+
+    const again = body(await h.call("mc_reply", { file: "guide.md", threadId, body: "and another" }));
+    expect(again.reopened).toBe(false);
+  });
+
   it("mc_suggest records a proposal without changing the prose", async () => {
     const h = harness();
     const r = body(
@@ -204,6 +216,22 @@ describe("refusals", () => {
     expect(r.isError).toBeUndefined();
     const anchored = parse(h.read()).anchors;
     expect(anchored.size).toBe(1);
+  });
+
+  // ux-review-2026-09 0.1: the same validator the CLI and the ops use.
+  it.each(["banana", -1, 1.5, "1e0"])("refuses occurrence %j as invalid_arguments, writing nothing", async (occurrence) => {
+    const h = harness();
+    const before = h.read();
+    for (const [tool, args] of [
+      ["mc_open", { quote: "nested lists", body: "q" }],
+      ["mc_suggest", { quote: "nested lists", with: "lists" }],
+      ["mc_edit", { old: "nested lists", new: "lists" }],
+    ] as const) {
+      const r = await h.call(tool, { file: "guide.md", ...args, occurrence });
+      expect(r.isError, tool).toBe(true);
+      expect(body(r).error.code, tool).toBe("invalid_arguments");
+    }
+    expect(h.read()).toBe(before);
   });
 
   it("refuses a passage inside a code block", async () => {

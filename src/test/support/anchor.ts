@@ -1,4 +1,7 @@
-import { Anchor } from "./types";
+// Test support: reference anchor resolver with no production importers.
+// Retained for tests that verify anchor resolution and roundtrip behavior.
+
+import { Anchor } from "../../types";
 
 function findAllOccurrences(text: string, needle: string): number[] {
   if (needle.length === 0) return [];

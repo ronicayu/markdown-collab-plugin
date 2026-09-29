@@ -44,16 +44,20 @@ test("Send to Claude posts send-to-claude", async ({ page }) => {
   expect(await awaitPosted(page, "send-to-claude")).toEqual({ type: "send-to-claude" });
 });
 
-test("the suggest-mode toggle posts toggle-suggest-mode and follows the host's answer", async ({ page }) => {
+test("the suggest-mode switch posts toggle-suggest-mode and follows the host's answer", async ({ page }) => {
+  // round-4 P3.1: a labelled `role="switch"`, not a chip whose own label read
+  // as status text ("Suggest: off"). The state lives beside it in a fixed
+  // "Suggest mode" label; the switch itself only ever carries aria-checked.
   const toggle = page.locator("#suggest-mode-toggle");
-  await expect(toggle).toHaveText("Suggest: off");
+  await expect(page.locator("#suggest-mode-label")).toHaveText("Suggest mode");
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
 
   await toggle.click();
   expect(await awaitPosted(page, "toggle-suggest-mode")).toEqual({ type: "toggle-suggest-mode" });
-  // The webview does NOT flip its own label: the setting is the host's, and the
-  // toggle only reflects what comes back. Anything else would show "on" after a
-  // write that failed.
-  await expect(toggle).toHaveText("Suggest: off");
+  // The webview does NOT flip its own state: the setting is the host's, and
+  // the switch only reflects what comes back. Anything else would show "on"
+  // after a write that failed.
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
 
   await pushToWebview(page, {
     type: "update",
@@ -61,12 +65,17 @@ test("the suggest-mode toggle posts toggle-suggest-mode and follows the host's a
     suggestMode: true,
     pendingThreadIds: [],
   });
-  await expect(toggle).toHaveText("Suggest: on");
   await expect(toggle).toHaveAttribute("aria-checked", "true");
 });
 
 test("replying in a thread posts the reply with its thread id and body", async ({ page }) => {
-  const replyBox = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"] .reply-box`);
+  // round-4 P3.2: the reply box is collapsed until Reply is clicked.
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  const replyBox = card.locator(".reply-box");
+  await expect(replyBox).toBeHidden();
+  await card.locator(".thread-reply-toggle").click();
+  await expect(replyBox).toBeVisible();
+
   const submit = replyBox.getByRole("button", { name: "Reply", exact: true });
   // The composer stays disabled until there's something to send.
   await expect(submit).toBeDisabled();
@@ -79,6 +88,42 @@ test("replying in a thread posts the reply with its thread id and body", async (
     threadId: fixture.openThreadId,
     body: "The setting is markdownCollab.proposeEditsAsSuggestions.",
   });
+  // Collapses back once sent.
+  await expect(replyBox).toBeHidden();
+});
+
+test("clicking Reply toggles the composer open and closed", async ({ page }) => {
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  const toggle = card.locator(".thread-reply-toggle");
+  const replyBox = card.locator(".reply-box");
+  await expect(replyBox).toBeHidden();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+  await toggle.click();
+  await expect(replyBox).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  const focused = await replyBox.locator("textarea").evaluate((el) => el === document.activeElement);
+  expect(focused).toBe(true);
+
+  await toggle.click();
+  await expect(replyBox).toBeHidden();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+});
+
+test("a card with an unsent draft keeps its reply box open across a re-render", async ({ page }) => {
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  await card.locator(".thread-reply-toggle").click();
+  await card.locator(".reply-box textarea").fill("half a thought");
+
+  // Any external update re-renders the whole list.
+  await pushToWebview(page, {
+    type: "update",
+    state: inlineInit(fixture.source).state,
+    suggestMode: false,
+    pendingThreadIds: [],
+  });
+  await expect(card.locator(".reply-box")).toBeVisible();
+  await expect(card.locator(".reply-box textarea")).toHaveValue("half a thought");
 });
 
 test("Resolve posts toggle-resolve for the clicked thread only", async ({ page }) => {
@@ -90,12 +135,72 @@ test("Resolve posts toggle-resolve for the clicked thread only", async ({ page }
   });
 });
 
-test("deleting a thread needs a second click to confirm", async ({ page }) => {
-  const actions = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"] .thread-actions`);
-  await actions.getByRole("button", { name: "Delete", exact: true }).click();
+test("the per-card \"…\" menu holds Open in editor, Send this thread, Copy prompt, and Delete", async ({ page }) => {
+  // round-4 P3.2: everything but Reply/Resolve moved off the card face.
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  const menuBtn = card.locator(".thread-menu-btn");
+  await expect(menuBtn).toHaveAttribute("aria-haspopup", "menu");
+  await expect(menuBtn).toHaveAttribute("aria-expanded", "false");
+
+  const menu = card.locator(".mc-menu");
+  await expect(menu).toBeHidden();
+  await menuBtn.click();
+  await expect(menu).toBeVisible();
+  await expect(menuBtn).toHaveAttribute("aria-expanded", "true");
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "Open in editor",
+    "Send this thread",
+    "Copy prompt",
+    "Delete",
+  ]);
+});
+
+test("Escape closes a card's menu and returns focus to its \"…\" button", async ({ page }) => {
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  const menuBtn = card.locator(".thread-menu-btn");
+  await menuBtn.click();
+  await expect(card.locator(".mc-menu")).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(card.locator(".mc-menu")).toBeHidden();
+  const focused = await menuBtn.evaluate((el) => el === document.activeElement);
+  expect(focused).toBe(true);
+});
+
+test("a click outside a card's open menu closes it", async ({ page }) => {
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  await card.locator(".thread-menu-btn").click();
+  await expect(card.locator(".mc-menu")).toBeVisible();
+
+  await page.locator("#preview").click();
+  await expect(card.locator(".mc-menu")).toBeHidden();
+});
+
+test("\"Send this thread\" and \"Copy prompt\" in the card menu post the thread-scoped messages", async ({ page }) => {
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  await card.locator(".thread-menu-btn").click();
+  await card.getByRole("menuitem", { name: "Send this thread" }).click();
+  expect(await awaitPosted(page, "send-to-claude-comment")).toEqual({
+    type: "send-to-claude-comment",
+    threadId: fixture.openThreadId,
+  });
+
+  await card.locator(".thread-menu-btn").click();
+  await card.getByRole("menuitem", { name: "Copy prompt" }).click();
+  expect(await awaitPosted(page, "copy-claude-comment")).toEqual({
+    type: "copy-claude-comment",
+    threadId: fixture.openThreadId,
+  });
+});
+
+test("deleting a thread needs a second click to confirm, inside the card menu", async ({ page }) => {
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  await card.locator(".thread-menu-btn").click();
+  const deleteItem = card.getByRole("menuitem", { name: "Delete", exact: true });
+  await deleteItem.click();
   // Armed, not fired: one stray click must never destroy a thread.
   expect(await posted(page)).toEqual([]);
-  const confirm = actions.getByRole("button", { name: "Confirm delete" });
+  const confirm = card.getByRole("menuitem", { name: "Confirm delete" });
   await expect(confirm).toBeVisible();
 
   await confirm.click();
@@ -243,9 +348,9 @@ test("e posts toggle-resolve for the highlighted thread — the same message Res
 });
 
 test("n/p/r/e are inert while a reply textarea has focus", async ({ page }) => {
-  const replyTextarea = page.locator(
-    `.thread-card[data-thread="${fixture.openThreadId}"] .reply-box textarea`,
-  );
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  await card.locator(".thread-reply-toggle").click(); // opens the composer
+  const replyTextarea = card.locator(".reply-box textarea");
   await replyTextarea.click();
 
   await page.keyboard.press("n");
@@ -289,9 +394,10 @@ test("Accept all needs a second click, and only appears for more than one sugges
 // and this file's `beforeEach` already booted the page once with the shared
 // fixture; a second `init`-time script injection into the same page throws.)
 
-test("the ↗ button posts open-in-editor for that thread", async ({ page }) => {
+test("\"Open in editor\" in the card menu posts open-in-editor for that thread", async ({ page }) => {
   const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
-  await card.getByRole("button", { name: "Open in text editor" }).click();
+  await card.locator(".thread-menu-btn").click();
+  await card.getByRole("menuitem", { name: "Open in editor" }).click();
   expect(await awaitPosted(page, "open-in-editor")).toEqual({
     type: "open-in-editor",
     threadId: fixture.openThreadId,
@@ -313,10 +419,9 @@ test("o is a no-op when nothing is highlighted", async ({ page }) => {
 });
 
 test("o is inert while a reply textarea has focus", async ({ page }) => {
-  const replyTextarea = page.locator(
-    `.thread-card[data-thread="${fixture.openThreadId}"] .reply-box textarea`,
-  );
-  await replyTextarea.click();
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  await card.locator(".thread-reply-toggle").click();
+  await card.locator(".reply-box textarea").click();
   await page.keyboard.press("o");
   expect(await posted(page)).toEqual([]);
 });

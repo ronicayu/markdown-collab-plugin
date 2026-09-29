@@ -3,26 +3,23 @@ import * as path from "path";
 
 export const AGENTS_SENTINEL = "## Markdown review comments";
 
+// The hierarchy below matches skillText.ts's `changePaths` (0.4): MCP tools
+// first, the `mdc` CLI second, hand-editing last and only when neither
+// exists. AGENTS.md reaches every kind of agent, most of which have no skill
+// loader to read the fuller version from, so this is the same rule in miniature
+// — not a fourth, independent set of instructions to drift from the other three.
 export const AGENTS_SNIPPET = `## Markdown review comments
 
-Markdown Collab stores review feedback inline in the \`.md\` file itself.
+Markdown Collab stores review feedback inline in the \`.md\` file itself — anchored spans wrapped in paired \`<!--mc:a:ID-->…<!--mc:/a:ID-->\` markers, threads recorded one \`<!--mc:t {JSON}-->\` line per thread between \`<!--mc:threads:begin-->\`/\`<!--mc:threads:end-->\`. Detect a reviewed file by the literal string \`<!--mc:threads:begin-->\`.
 
-Threads live inside the \`.md\`:
-- Anchored spans are wrapped in paired HTML comments: \`<!--mc:a:ID-->anchored text<!--mc:/a:ID-->\`. \`ID\` is 1–12 char base36.
-- A block at the end of the file holds one \`<!--mc:t {JSON}-->\` line per thread, fenced by \`<!--mc:threads:begin-->\` and \`<!--mc:threads:end-->\`.
-- Each thread JSON: \`{"id":"ID","quote":"<original anchor text>","status":"open"|"resolved","comments":[Comment, …]}\`.
-- Each \`Comment\`: \`{"id":"c<N>","parent"?:"c<N>","author":"<name>","ts":"<ISO-8601 UTC>","body":"<markdown>"}\`.
+Never hand-edit a marker or a thread line directly — one dropped \`-->\` silently orphans a reviewer's comment. Three ways to change one, in order:
 
-**Detection:** the file contains \`<!--mc:threads:begin-->\`.
-
-When addressing an open thread:
-1. Make the prose edit the reviewer asked for. Keep the \`<!--mc:a:ID-->…<!--mc:/a:ID-->\` markers wrapping the rewritten passage; if the passage is removed, delete both markers (the thread will surface as unanchored — that is the correct outcome).
-2. Append a new comment to the thread's \`comments\` array on the matching \`<!--mc:t …-->\` line:
-   \`{"id":"c<next>","parent":"<last-comment-id>","author":"claude","ts":"<ISO-8601 UTC>","body":"<what you did>"}\`
-   where \`<next>\` is the next sequential \`c<N>\` for that thread.
-3. Do NOT change \`status\` — only the human reviewer resolves a thread.
-4. Do NOT mutate existing comment objects — append only.
-5. Only initiate a brand-new thread when the human explicitly asks ("leave a comment on X"). Pick a unique 5-char base36 id, wrap the passage with paired markers, append a fresh \`<!--mc:t …-->\` line with a single \`c1\` comment authored by \`claude\`.
+1. **The \`markdown-collab\` MCP tools**, if they're in your tool list (offer "Markdown Collab: Connect an Agent…" if not): \`mc_list\` reads open threads with their live anchored text; \`mc_reply\`/\`mc_open\`/\`mc_rewrite\` act on them; \`mc_edit\` changes prose outside anchored spans; \`mc_resolve\` only when the human asks; \`mc_suggest\` in suggest mode; \`mc_check\` on every file you touch, last.
+2. **The \`mdc\` CLI**, if it's on PATH: \`mdc <verb> <file> [args]\` — list / reply / open / rewrite / edit / resolve / suggest / check, same rules as the tools above.
+3. **Hand-editing, only when neither exists:**
+   - Reply: find the thread's \`<!--mc:t {…}-->\` line and append \`{"id":"c<next>","parent":"<last-comment-id>","author":"<you>","ts":"<ISO-8601 UTC>","body":"<what you did>"}\` to its \`comments\` array. Never change \`status\`; never edit or remove an existing comment.
+   - New thread, only on explicit request ("leave a comment on X"): pick a unique id, wrap the passage in \`<!--mc:a:ID-->…<!--mc:/a:ID-->\`, append a fresh \`<!--mc:t {…}-->\` line with a single \`c1\` comment.
+   - Rewriting an anchored passage keeps both markers on the new wording; removing the passage deletes both markers and leaves the thread unanchored — the correct outcome, don't re-anchor to nearby text.
 
 `;
 

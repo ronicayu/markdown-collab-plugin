@@ -202,7 +202,13 @@ export function activateEditorPresence(log: Logger): vscode.Disposable {
           const md = new vscode.MarkdownString(hit.markdown);
           // Required for the `command:` link to be clickable. The content is
           // built from the document's own threads, not from anything remote.
-          md.isTrusted = { enabledCommands: ["markdownCollab.revealThread"] };
+          md.isTrusted = {
+            enabledCommands: [
+              "markdownCollab.revealThread",
+              "markdownCollab.replyToThread",
+              "markdownCollab.resolveThread",
+            ],
+          };
           const anchor = parsed.anchors.get(hit.thread.id);
           const range = anchor
             ? new vscode.Range(doc.positionAt(anchor.openEnd), doc.positionAt(anchor.closeStart))

@@ -188,6 +188,19 @@ describe("runCheckHook: healthy and warning-only documents stay silent", () => {
     const r = runCheckHook(hookStdin("/proj/doc.md"), io);
     expect(r).toEqual({ exitCode: 0, stderr: "" });
   });
+
+  it("an empty-quote thread is a warning too — `mdc check` reports it, the hook doesn't", () => {
+    // What `mdc open --occurrence banana` used to write (ux-review-2026-09
+    // 0.1). The markers are paired and the JSON is valid — no structural
+    // damage, so it stays below the hook's error-only bar.
+    const { source, id } = healthyDoc();
+    const damaged = source
+      .replace(`<!--mc:a:${id}-->exponential backoff<!--mc:/a:${id}-->`, "exponential backoff")
+      .replace("# Guide", `<!--mc:a:${id}--><!--mc:/a:${id}--># Guide`)
+      .replace('"quote":"exponential backoff"', '"quote":""');
+    const io = memIo({ "/proj/doc.md": damaged });
+    expect(runCheckHook(hookStdin("/proj/doc.md"), io)).toEqual({ exitCode: 0, stderr: "" });
+  });
 });
 
 describe("runCheckHook: error-severity damage reports and exits 2", () => {

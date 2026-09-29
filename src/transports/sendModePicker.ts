@@ -43,20 +43,26 @@ export interface SendModePickerOptions {
  * practice this only ever runs with it false, but the parameter keeps the item
  * list honest (and testable) rather than hard-coding the "nothing detected"
  * wording as a constant.
+ *
+ * The terminal item's label and description stay agent-neutral (1.4): the
+ * mode types into whatever's in the active terminal, not necessarily Claude —
+ * "Connect an Agent" can leave Cursor CLI or Codex running there instead. What
+ * *is* Claude-specific — `detectSendMode`'s Claude-REPL auto-pick — only shows
+ * up in the detail line, and only when it actually found one.
  */
 export function buildSendModeItems(opts: SendModePickerOptions): SendModePickerItem[] {
   const headless = opts.headlessAvailable === true;
   const terminal: SendModePickerItem = {
-    label: headless ? "Send to your Claude terminal" : "Send to your Claude terminal (recommended)",
-    description: "Types the prompt into your running Claude session. Works everywhere.",
-    ...(opts.terminalDetected
-      ? {}
-      : { detail: "No Claude terminal detected — you'll be offered to start one." }),
+    label: headless ? "Type into the active terminal" : "Type into the active terminal (recommended)",
+    description: "Types the prompt into whatever's running there. Works everywhere.",
+    detail: opts.terminalDetected
+      ? "A Claude Code session is running in a visible terminal — the prompt goes there."
+      : "No Claude terminal detected — you'll be offered to start one.",
     mode: "terminal",
   };
   const clipboard: SendModePickerItem = {
     label: "Copy to clipboard",
-    description: "Paste it into Claude yourself.",
+    description: "Paste it into your agent yourself.",
     mode: "clipboard",
   };
   if (!headless) return [terminal, clipboard];

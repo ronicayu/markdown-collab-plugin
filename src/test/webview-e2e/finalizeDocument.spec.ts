@@ -52,6 +52,8 @@ test.describe("inline comments view", () => {
       user: { name: "r" },
       imageBaseUris: { docDir: "", workspaceFolder: null },
     });
+    // round-4 P3.1: lives in the toolbar's "…" overflow menu now.
+    await page.locator("#overflow-menu-btn").click();
     const btn = page.locator("#finalize-doc");
     await expect(btn).toBeVisible();
 
@@ -68,6 +70,7 @@ test.describe("inline comments view", () => {
       user: { name: "r" },
       imageBaseUris: { docDir: "", workspaceFolder: null },
     });
+    await page.locator("#overflow-menu-btn").click();
     await expect(page.locator("#finalize-doc")).toBeVisible();
   });
 
@@ -78,6 +81,7 @@ test.describe("inline comments view", () => {
       user: { name: "r" },
       imageBaseUris: { docDir: "", workspaceFolder: null },
     });
+    await page.locator("#overflow-menu-btn").click();
     await expect(page.locator("#finalize-doc")).toBeVisible();
 
     // The host pushes the post-finalize state: no threads, no suggestions.

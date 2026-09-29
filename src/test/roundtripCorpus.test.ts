@@ -733,8 +733,8 @@ describe("round-trip corpus: the anchor hash", () => {
     // Older versions wrote no anchorHash. Reserializing such a file must not
     // invent one — an invented hash would read as "unchanged" forever after.
     const source = fixture("tables.md");
-    const at = source.indexOf("Ops");
-    const r = addThread(source, at, at + 3, { author: "ronica", body: "legacy", ts: TS });
+    const at = source.indexOf("Ronica");
+    const r = addThread(source, at, at + 6, { author: "ronica", body: "legacy", ts: TS });
     const legacy = withThreads(
       r.source,
       parse(r.source).threads.map((t) => ({ ...t, anchorHash: undefined })),

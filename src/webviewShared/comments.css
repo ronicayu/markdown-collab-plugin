@@ -85,6 +85,10 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   line-height: 1.45;
+  /* A very long comment used to push the whole card (and everything below it
+     in the list) to whatever height it wanted (round-4 P3.6). */
+  max-height: 24rem;
+  overflow-y: auto;
 }
 .mc-card__body code {
   font-family: var(--vscode-editor-font-family, monospace);

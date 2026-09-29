@@ -17,7 +17,7 @@
 // line untouched. Appends a fresh table, canonically spelled, when ours
 // isn't there yet.
 
-import type { MergeResult } from "../registration";
+import type { MergeResult, RemovalResult } from "../registration";
 import { ENV_TOKEN } from "../registration";
 
 const HEADER_UNQUOTED = "[mcp_servers.markdown-collab]";
@@ -99,4 +99,33 @@ export function mergeCodexToml(existing: string | null, port: number): MergeResu
   const text = `${newLines.join("\n")}\n`;
   if (existing === text) return { text: null, replaced };
   return { text, replaced };
+}
+
+/**
+ * The inverse of `mergeCodexToml` (4.4: Disconnect Agent → Codex) — drop our
+ * table (either header spelling) up to the next table header or EOF, leaving
+ * every other table, comment, and blank line untouched. `text: null` when the
+ * table isn't there at all, so Disconnect on a workspace that never ran
+ * Connect is a no-op.
+ */
+export function removeCodexTable(existing: string | null): RemovalResult {
+  if (existing === null || !codexTablePresent(existing)) return { text: null, removed: false };
+
+  const hadTrailingNewline = existing.endsWith("\n");
+  const lines = existing.split("\n");
+  if (hadTrailingNewline) lines.pop(); // split() leaves a trailing "" when the text ends in \n
+
+  const headerIdx = lines.findIndex(isOurHeader);
+  let end = headerIdx + 1;
+  while (end < lines.length && !isTableHeader(lines[end]!)) end++;
+
+  const before = lines.slice(0, headerIdx);
+  // Drop the blank separator line directly above our table — the one
+  // `mergeCodexToml` inserts when appending after another table — so removing
+  // us doesn't leave it stranded where our table used to be.
+  while (before.length > 0 && before[before.length - 1] === "") before.pop();
+  const after = lines.slice(end);
+
+  const newLines = after.length === 0 ? before : before.length === 0 ? after : [...before, "", ...after];
+  return { text: newLines.length > 0 ? `${newLines.join("\n")}\n` : "", removed: true };
 }

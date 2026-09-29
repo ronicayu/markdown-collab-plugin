@@ -1,5 +1,139 @@
 # Changelog
 
+## 0.35.12 — 2026-09-28 (GitHub only)
+
+Everything here comes from `docs/ux-review-2026-09.md`, a product and UX
+review of 0.35.11. The numbers are its item numbers.
+
+### Fixed: `mdc` could corrupt a file and then call it clean (0.1)
+
+`mdc open guide.md --quote alpha --body x --occurrence banana` exited 0,
+reported `"quote":"alpha"`, and wrote `<!--mc:a:ID--><!--mc:/a:ID-->` at byte
+0 with an empty quote in the thread; `mdc check` then said `ok: true`.
+`Number("banana")` is `NaN`, and `locatePassage` guarded against 0 and
+out-of-range but not that. Both front ends now validate through one
+`parseOccurrence` in docOps, so the MCP tools also stop coercing `"0x2"` and
+`""`. Integrity reports an empty quote as `empty-quote` — a warning, not
+repairable, since there is nothing to re-anchor to — so `check` exits 2 on the
+document the old bug produced. The repro is a test on both front ends.
+
+### Changed: `mdc` writes through the running extension (0.2)
+
+The MCP tools have always applied edits as a WorkspaceEdit: undoable, ordered
+against whatever is unsaved in the editor. `mdc` wrote the file directly, and
+an unsaved edit in the text editor could collide with it. Now, when
+`MARKDOWN_COLLAB_MCP_URL` and `MARKDOWN_COLLAB_MCP_TOKEN` are in the
+environment — every terminal VS Code opens has them — the eight mutating verbs
+call the extension's `mc_*` tool instead, and the result JSON says
+`"via": "extension"`. `--author` is carried as the session's client name.
+
+It falls back to the direct write, with one line on stderr saying so, when the
+server isn't reachable, refuses the token, answers with something that isn't
+the protocol, or reports the file is outside that window's workspace. It does
+not fall back when a `tools/call` went out and got no answer: the write may
+already have landed, and repeating it would duplicate a reply. That case exits
+1 with `no_answer` and says to run `mdc list` before retrying. `--direct`
+forces the old path; `list` and `check` never leave the machine.
+
+### Fixed: three smaller `mdc` holes (0.5, 0.6, 0.7)
+
+A flag value that began with `--` was read as the next flag, so
+`--body "--this"` failed with "missing required --body". The boolean flags are
+now declared, and every other flag takes the next token as its value.
+
+An agent's reply to a resolved thread left it resolved, filtered out of the
+default Open view. It now reopens the thread, and the result — CLI and
+`mc_reply` — carries `"reopened": true`. A human's reply still leaves the
+status alone.
+
+`--help` claimed "All commands print JSON to stdout"; failures went to stderr
+as prose. A failure is now `{"ok":false,"code":…,"message":…}` on stdout with
+the human line still on stderr, the same shape as an MCP refusal.
+`mdc <verb> --help` prints the usage and exits 0 instead of 1.
+
+### Fixed: a comment added from the keyboard now saves (0.3)
+
+`Comment on Selection` applied its edit and left the buffer dirty; the review
+view saves after every mutation. Both save now, so an agent reading the file
+sees the comment. The "Comment added" toast is a four-second status-bar
+message.
+
+### Changed: one setup command, and its inverse (1.1, 4.4)
+
+**Connect an Agent… → Claude Code** installs or updates the plugin and writes
+the `.mcp.json` entry in one go, and one toast says what it did. **Set Up
+Claude Code** and **Register Review Tools with Claude Code** still work but are
+hidden from the palette. The first-activation nudge offers Connect an Agent.
+**Disconnect an Agent…** is new: it removes the `.mcp.json`, `.cursor/mcp.json`
+or `.codex/config.toml` entry, leaving other entries alone, or unregisters a
+live Cursor or Copilot registration.
+
+### Changed: the copy follows the agent (1.3, 1.4, 2.4, 2.5, 2.6)
+
+Since 0.35 the terminal and clipboard paths can reach Cursor, Codex, and
+Copilot, but the prompt opener named a Claude Code skill, five toasts said
+"paste into Claude Code", the status-bar tooltip said Claude while its text
+said Codex, and the walkthrough never mentioned another agent. The opener now
+names both paths in one sentence; the toasts say "your agent"; the tooltip
+uses the agent the text uses; the picker labels the terminal option by what it
+does. Command titles: **Ask Agent to Review This Doc / These Docs / What
+Changed**, **Next Unread from Agent**, **Send Unresolved Comments to Agent**,
+**Open Review View**, **Open PR Review**, **Open Uncommitted Changes**. Claude stays in the names of Claude-only things: the plugin, the
+`claude` REPL detection, headless runs, `claudePath`, `headlessModel`.
+The `AGENTS.md` snippet taught every agent to hand-edit markers; it now says
+MCP tools first, `mdc` second, hand-edit last. The walkthrough gained a step
+for other agents, lists headless as a delivery mode, and no longer quotes a
+picker label that didn't exist. The sidebar is "the review view" everywhere;
+"anchor" is the markup, "thread" the review object, "comment" one message.
+
+### Changed: less in the host (2.1, 2.2, 2.3)
+
+The two Explorer trees were visible in every workspace, git or not; they now
+appear only when the workspace has a git repository, collapsed. The six
+entries the extension put in every `.md` file's right-click menu are one
+**Markdown Collab** submenu plus Open Review View; the editor menus get the
+same. Eleven commands leave the palette (two icon-only refreshes, the
+folder-review variant that reviewed only the active file when run from the
+palette, and the hidden aliases above).
+
+The review had also proposed gating the live editor behind a setting and
+labelling PR review a preview. Both were dropped before this shipped: they
+are the two most-used surfaces. The README now says what PR review is — a
+review client for a colleague's Markdown, with comments on the platform — and
+that the review view and the live editor are on their way to becoming one
+view.
+
+### Changed: the review view (3.1–3.6)
+
+The filters are a segmented control on one row. The second row is the Send
+button, a labelled suggest-mode switch, and an overflow menu holding Copy
+prompt, Collapse all, Remove resolved, and Remove all review data. Each card
+shows Reply and Resolve; Open in editor, Send this thread, Copy prompt, and
+Delete (still two-click) are in a per-card menu. The reply box is collapsed
+until Reply or `r`. The panel shows "Loading…" instead of nothing while the
+first state arrives. With the outline open, a narrow split now collapses to
+one column — `#app.with-outline` had outranked the breakpoint rule. Highlight
+colours derive from theme tokens, the danger red is one variable, high
+contrast gets outlines, and a very long comment scrolls inside its card. The
+keyboard hint hides after the first `n`/`p`/`r`/`e`/`o`; `?` brings it back.
+
+### Added: Reply and Resolve from the hover (3.7)
+
+Hovering a commented passage in the text editor offers Reply, Resolve (or
+Reopen), and Open in review view. They go through the same document ops as
+the review view and save.
+
+### Changed: the reference locators are test support (4.3)
+
+`src/anchor.ts` and `src/collab/anchorLocator.ts` had no production
+importers; they were the oracle for six alignment tests. They live under
+`src/test/support/` now.
+
+### Known
+
+The README GIFs show 0.35.11's toolbar and cards; `npm run record:gifs`
+re-records them from the shipped bundle.
+
 ## 0.35.11 — 2026-09-28 (GitHub only)
 
 ### Changed: the package ships 30 files instead of 158

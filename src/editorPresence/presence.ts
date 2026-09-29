@@ -214,8 +214,18 @@ export function hoverFor(
   if (opts.commandLinks && opts.file) {
     // Encoded as a JSON array, which is what VS Code expects in a command URI.
     const args = encodeURIComponent(JSON.stringify([opts.file, thread.id]));
+    // Reply and Resolve/Reopen (3.7) give the hover its own path to the two
+    // things the webview could always do — no palette entry, no keybinding,
+    // reply-box-in-a-sidebar required. "Reopen" is the resolved-thread label;
+    // both labels point at the same command, which reads the thread's current
+    // status itself.
+    const resolveLabel = thread.status === "resolved" ? "Reopen" : "Resolve";
     lines.push("");
-    lines.push(`[Open in review view](command:markdownCollab.revealThread?${args})`);
+    lines.push(
+      `[Open in review view](command:markdownCollab.revealThread?${args}) · ` +
+        `[Reply](command:markdownCollab.replyToThread?${args}) · ` +
+        `[${resolveLabel}](command:markdownCollab.resolveThread?${args})`,
+    );
   }
 
   return { thread, markdown: lines.join("\n") };

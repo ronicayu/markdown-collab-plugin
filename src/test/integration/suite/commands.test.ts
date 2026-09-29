@@ -39,6 +39,10 @@ const ALL_COMMANDS = [
   "markdownCollab.repairInlineComments",
   "markdownCollab.toggleSuggestMode",
   "markdownCollab.startPrReview",
+  "markdownCollab.connectAgent",
+  "markdownCollab.disconnectAgent",
+  "markdownCollab.resolveThread",
+  "markdownCollab.replyToThread",
 ];
 
 function fixturePath(name: string): string {

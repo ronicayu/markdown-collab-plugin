@@ -52,6 +52,8 @@ test.describe("inline comments view", () => {
       user: { name: "r" },
       imageBaseUris: { docDir: "", workspaceFolder: null },
     });
+    // round-4 P3.1: lives in the toolbar's "…" overflow menu now.
+    await page.locator("#overflow-menu-btn").click();
     const btn = page.locator("#remove-resolved");
     await expect(btn).toBeVisible();
     await expect(btn).toHaveText("Remove 2 resolved");

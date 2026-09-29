@@ -26,9 +26,9 @@
 import * as vscode from "vscode";
 import type { Logger } from "../logging";
 import type { McpServerHandle } from "./index";
-import { MCP_SERVER_NAME } from "./registration";
-import { mergeCursorMcpJson } from "./clients/cursor";
-import { codexTablePresent, mergeCodexToml } from "./clients/codex";
+import { MCP_SERVER_NAME, removeMcpJsonEntry } from "./registration";
+import { mergeCursorMcpJson, removeCursorMcpEntry } from "./clients/cursor";
+import { codexTablePresent, mergeCodexToml, removeCodexTable } from "./clients/codex";
 import { genericSnippet } from "./clients/generic";
 import { CopilotMcpProvider, COPILOT_PROVIDER_ID, hasCopilotProviderApi } from "./clients/copilot";
 
@@ -62,6 +62,15 @@ export async function markAgentConnected(context: vscode.ExtensionContext, id: S
   await context.workspaceState.update(key, Array.from(set));
 }
 
+/** Forget that `id` was connected (4.4: Disconnect Agent) — the inverse of `markAgentConnected`, so `reconnectAgents` doesn't resurrect it on the next restart. */
+export async function markAgentDisconnected(context: vscode.ExtensionContext, id: SessionAgentId): Promise<void> {
+  const key = workspaceKey();
+  if (!key) return;
+  const set = connectedSet(context);
+  set.delete(id);
+  await context.workspaceState.update(key, Array.from(set));
+}
+
 // ---------------------------------------------------------------------------
 // Cursor (in-app agent)
 // ---------------------------------------------------------------------------
@@ -88,6 +97,21 @@ export function registerCursorInApp(handle: Pick<McpServerHandle, "url" | "token
     name: MCP_SERVER_NAME,
     server: { url: handle.url, headers: { Authorization: `Bearer ${handle.token}` } },
   });
+}
+
+/**
+ * Unregister from Cursor's in-app agent (4.4: Disconnect Agent) — the
+ * inverse of `registerCursorInApp`. Nothing was ever written to disk for
+ * this client, so this is the entire undo: the live registration goes away
+ * for the rest of the session.
+ */
+export function unregisterCursorInApp(): void {
+  const cursor = (
+    vscode as unknown as {
+      cursor: { mcp: { unregisterServer: (name: string) => void } };
+    }
+  ).cursor;
+  cursor.mcp.unregisterServer(MCP_SERVER_NAME);
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +183,42 @@ export async function writeCodexConfig(folder: vscode.Uri, port: number): Promis
   if (merged.text === null) return "unchanged";
   await vscode.workspace.fs.createDirectory(dir);
   await vscode.workspace.fs.writeFile(uri, Buffer.from(merged.text, "utf8"));
+  return "written";
+}
+
+// ---------------------------------------------------------------------------
+// File removers (4.4: Disconnect Agent) — the inverse of the writers above.
+// Each is idempotent: called on a workspace that never connected, it reads
+// the file, finds nothing of ours, and writes nothing back.
+// ---------------------------------------------------------------------------
+
+/** Remove the `markdown-collab` entry from the workspace's `.mcp.json`, leaving every other server untouched. */
+export async function removeClaudeMcpJson(folder: vscode.Uri): Promise<FileWriteOutcome> {
+  const uri = vscode.Uri.joinPath(folder, ".mcp.json");
+  const existing = await readWorkspaceFile(uri);
+  const outcome = removeMcpJsonEntry(existing);
+  if (outcome.text === null) return "unchanged";
+  await vscode.workspace.fs.writeFile(uri, Buffer.from(outcome.text, "utf8"));
+  return "written";
+}
+
+/** Remove the `markdown-collab` entry from `.cursor/mcp.json`, leaving every other server untouched. */
+export async function removeCursorCliConfig(folder: vscode.Uri): Promise<FileWriteOutcome> {
+  const uri = vscode.Uri.joinPath(folder, ".cursor", "mcp.json");
+  const existing = await readWorkspaceFile(uri);
+  const outcome = removeCursorMcpEntry(existing);
+  if (outcome.text === null) return "unchanged";
+  await vscode.workspace.fs.writeFile(uri, Buffer.from(outcome.text, "utf8"));
+  return "written";
+}
+
+/** Remove the `[mcp_servers.markdown-collab]` table from `.codex/config.toml`, leaving every other table untouched. */
+export async function removeCodexConfig(folder: vscode.Uri): Promise<FileWriteOutcome> {
+  const uri = vscode.Uri.joinPath(folder, ".codex", "config.toml");
+  const existing = await readWorkspaceFile(uri);
+  const outcome = removeCodexTable(existing);
+  if (outcome.text === null) return "unchanged";
+  await vscode.workspace.fs.writeFile(uri, Buffer.from(outcome.text, "utf8"));
   return "written";
 }
 

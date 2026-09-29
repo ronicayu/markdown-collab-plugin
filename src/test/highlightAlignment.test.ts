@@ -19,7 +19,7 @@
 
 import { describe, expect, it } from "vitest";
 import { stripInlineMarkup } from "../collab/anchorExtractor";
-import { locateAnchorInRendered } from "../collab/anchorLocator";
+import { locateAnchorInRendered } from "./support/anchorLocator";
 
 // Mirror what PM's `doc.textContent` produces: concatenate the visible
 // text of every block, no separators, no markup.
