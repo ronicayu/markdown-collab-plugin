@@ -43,8 +43,9 @@ export const CROSS_DOCUMENT_DIMENSION = [
  * in the order given (the caller sorts); the order is also the order Claude is
  * told to work in, so threads land in a predictable sequence.
  *
- * Mirrors `buildReviewRequestPayload` for the single-file case: no upper bound
- * on threads, no prose edits, optional free-form focus directive.
+ * Mirrors `buildReviewRequestPayload` for the single-file case: rank and cap
+ * at five threads *per file* with a per-file summary thread for the rest
+ * (10x-plan-6 P3), no prose edits, optional free-form focus directive.
  */
 export function buildMultiFileReviewPayload(
   files: ReviewFile[],

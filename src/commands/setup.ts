@@ -7,7 +7,7 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import type { Logger } from "../logging";
-import { ensureAgentsSnippet } from "../agents";
+import { ensureAgentsSnippet, type AgentsSnippetOutcome } from "../agents";
 import { checkClaudeSkill, installClaudeSkill, removeLegacySkill, skillFingerprint } from "../skill";
 import {
   LOCAL_MARKETPLACE_DIRNAME,
@@ -22,6 +22,7 @@ import {
   currentMcpServer,
   ensureMcpJsonRegistration,
   resetMcpJsonConsent,
+  type McpServerHandle,
 } from "../mcpServer";
 import {
   activateCopilotProvider,
@@ -316,28 +317,38 @@ async function installLegacySkillSummary(log: Logger, fallbackReason: string): P
   }
 }
 
+/** What `ensureAgentsSnippet` did, as one sentence for a toast. Pure. */
+export function agentsSnippetSentence(action: AgentsSnippetOutcome, folderName: string): string {
+  switch (action) {
+    case "created":
+      return `Created AGENTS.md in ${folderName} with the review-comment format.`;
+    case "appended":
+      return `Added the review-comment format to AGENTS.md in ${folderName}.`;
+    case "refreshed":
+      return `Refreshed the review-comment format in AGENTS.md in ${folderName}.`;
+    case "already-present":
+      return `AGENTS.md in ${folderName} already has the review-comment format.`;
+    case "customized":
+      return `AGENTS.md in ${folderName} has a hand-edited "Markdown review comments" section — left as is.`;
+  }
+}
+
 /**
- * Run `ensureAgentsSnippet` and toast the outcome. Shared by `initializeAgents`
- * (still works, just hidden from the palette after 0.4) and Connect an Agent →
- * Other agent…'s "Add to AGENTS.md" follow-up action.
+ * Run `ensureAgentsSnippet` and say what it did. Shared by `initializeAgents`
+ * (still works, just hidden from the palette after 0.4) and the first step of
+ * Connect an Agent for every agent but Claude Code (10x-plan-6 P1.1), which
+ * folds the sentence into its own follow-up question rather than stacking two
+ * toasts. A failure is shown here and comes back as null.
  */
-async function applyAgentsSnippet(folder: vscode.WorkspaceFolder, log: Logger): Promise<void> {
+async function applyAgentsSnippet(folder: vscode.WorkspaceFolder, log: Logger): Promise<string | null> {
   try {
-    const action = await ensureAgentsSnippet(folder.uri.fsPath);
-    const verb =
-      action === "created"
-        ? "created"
-        : action === "appended"
-          ? "updated"
-          : "already up to date";
-    void vscode.window.showInformationMessage(
-      `AGENTS.md ${verb} in ${folder.name}.`,
-    );
+    return agentsSnippetSentence(await ensureAgentsSnippet(folder.uri.fsPath), folder.name);
   } catch (e) {
     log.error("ensureAgentsSnippet failed", e);
     void vscode.window.showErrorMessage(
       `Failed to update AGENTS.md: ${(e as Error).message}`,
     );
+    return null;
   }
 }
 
@@ -349,7 +360,8 @@ async function invokeInitializeAgents(log: Logger): Promise<void> {
     );
     return;
   }
-  await applyAgentsSnippet(folder, log);
+  const sentence = await applyAgentsSnippet(folder, log);
+  if (sentence) void vscode.window.showInformationMessage(sentence);
 }
 
 async function pickWorkspaceFolder(): Promise<vscode.WorkspaceFolder | undefined> {
@@ -380,6 +392,9 @@ export interface ConnectAgentItem extends vscode.QuickPickItem {
  * in-app agent and Copilot's agent-mode provider are the two whose API might
  * not exist (older forks, older VS Code); Claude Code, Cursor CLI, Codex, and
  * the generic fallback need no runtime capability and are always offered.
+ *
+ * Every entry but Claude Code reads "Writes AGENTS.md, then offers …" so the
+ * human sees the order before picking (10x-plan-6 P1.1).
  */
 export function buildConnectAgentItems(caps: { cursorInApp: boolean; copilot: boolean }): ConnectAgentItem[] {
   const items: ConnectAgentItem[] = [
@@ -394,80 +409,135 @@ export function buildConnectAgentItems(caps: { cursorInApp: boolean; copilot: bo
     items.push({
       id: "cursor-inapp",
       label: "Cursor (in-app agent)",
-      description: "Registers the live URL and token directly with Cursor's agent — nothing on disk.",
+      description: "Writes AGENTS.md, then offers to register the review tools live with Cursor's agent — nothing on disk.",
     });
   }
   items.push({
     id: "cursor-cli",
     label: "Cursor CLI (cursor-agent)",
-    description: "Writes .cursor/mcp.json with ${env:...} references — no port or token on disk.",
+    description: "Writes AGENTS.md, then offers .cursor/mcp.json for the review tools — env references only, no token.",
   });
   items.push({
     id: "codex",
     label: "Codex",
-    description: "Writes .codex/config.toml with the loopback URL and bearer_token_env_var — no token on disk.",
+    description: "Writes AGENTS.md, then offers .codex/config.toml for the review tools — no token on disk.",
   });
   if (caps.copilot) {
     items.push({
       id: "copilot",
       label: "GitHub Copilot (agent mode)",
-      description: "Registers an MCP server definition with the live URL and token — nothing on disk.",
+      description: "Writes AGENTS.md, then offers to register the review tools live with Copilot — nothing on disk.",
     });
   }
   items.push({
     id: "other",
     label: "Other agent…",
-    description: "Opens a scratch document with the URL, token, and a generic mcpServers snippet.",
+    description: "Writes AGENTS.md, then offers the review tools' URL and a session token in a scratch document.",
   });
   return items;
 }
 
-async function invokeConnectAgent(deps: CommandDeps): Promise<void> {
-  const { context, rootLog, log } = deps;
-  const handle = currentMcpServer();
-  if (!handle) {
-    void vscode.window.showWarningMessage(
-      "Markdown Collab: the review tool server isn't running — reload the window and try again. See the Markdown Collab output channel.",
+/** Every Connect entry but Claude Code: AGENTS.md first, the tools second (10x-plan-6 P1.1). */
+export type FormatFirstAgentId = Exclude<ConnectAgentItem["id"], "claude">;
+
+/** The optional second step, as it is offered once AGENTS.md is written. */
+export interface McpOffer {
+  /** The question, naming the client and what a yes writes or registers. */
+  question: string;
+  /** The button that says yes. */
+  accept: string;
+}
+
+const MCP_OFFERS: Record<FormatFirstAgentId, McpOffer> = {
+  "cursor-inapp": {
+    question:
+      "Also register the review tools with Cursor's in-app agent so its edits are undoable? (registers live for this session — nothing on disk)",
+    accept: "Register",
+  },
+  "cursor-cli": {
+    question:
+      "Also register the review tools with Cursor CLI so its edits are undoable? (writes .cursor/mcp.json — env references only, no token)",
+    accept: "Register",
+  },
+  codex: {
+    question:
+      "Also register the review tools with Codex so its edits are undoable? (writes .codex/config.toml — no token on disk)",
+    accept: "Register",
+  },
+  copilot: {
+    question:
+      "Also register the review tools with GitHub Copilot so its edits are undoable? (registers live for this session — nothing on disk)",
+    accept: "Register",
+  },
+  other: {
+    question:
+      "Also connect your agent to the review tools so its edits are undoable? (opens a scratch document with the URL and a session token — nothing on disk)",
+    accept: "Show connection details",
+  },
+};
+
+/** The follow-up question for one client. Pure, so the copy is testable. */
+export function mcpOfferFor(id: FormatFirstAgentId): McpOffer {
+  return MCP_OFFERS[id];
+}
+
+/** Every entry with a second step to offer is, by construction, one that writes AGENTS.md first. */
+function isFormatFirst(id: ConnectAgentItem["id"]): id is FormatFirstAgentId {
+  return Object.prototype.hasOwnProperty.call(MCP_OFFERS, id);
+}
+
+/** What `connectFormatFirst` needs from the host — injected so the order is testable. */
+export interface FormatFirstIo {
+  /** Write or refresh AGENTS.md; the sentence saying what happened, or null when it failed (already reported). */
+  writeAgentsSnippet(): Promise<string | null>;
+  /** False when the tool server isn't running: there is nothing to register then. */
+  serverRunning: boolean;
+  /** A non-modal question; resolves to the button clicked, or undefined when dismissed. */
+  ask(message: string, ...actions: string[]): Promise<string | undefined>;
+  tell(message: string): void;
+  /** The client's MCP registration — reports its own outcome. */
+  register(): Promise<void>;
+}
+
+/**
+ * Connect an agent that isn't Claude Code (10x-plan-6 P1.1).
+ *
+ * The file format is the API: the only non-Claude loop anyone has run was
+ * Copilot hand-editing the markers from a pasted prompt, and they survived.
+ * So AGENTS.md is written first, every time, and the MCP registration is only
+ * offered after it — optional, because the agent can already do the job
+ * without it; what the tools add is that its edits land in the undo stack.
+ */
+export async function connectFormatFirst(
+  id: FormatFirstAgentId,
+  io: FormatFirstIo,
+): Promise<"agents-only" | "registered" | "failed"> {
+  const agents = await io.writeAgentsSnippet();
+  if (agents === null) return "failed";
+  if (!io.serverRunning) {
+    io.tell(
+      `Markdown Collab: ${agents} The review tool server isn't running, so registering the tools isn't offered — reload the window to get that step.`,
     );
-    return;
+    return "agents-only";
   }
-  const folder = vscode.workspace.workspaceFolders?.[0];
-  const items = buildConnectAgentItems({ cursorInApp: hasCursorInAppApi(), copilot: hasCopilotProviderApi() });
-  const pick = await vscode.window.showQuickPick(items, {
-    placeHolder: "Markdown Collab: connect an agent to the review tools",
-  });
-  if (!pick) return;
+  const offer = mcpOfferFor(id);
+  const choice = await io.ask(`Markdown Collab: ${agents} ${offer.question}`, offer.accept, "Not now");
+  if (choice !== offer.accept) return "agents-only";
+  await io.register();
+  return "registered";
+}
 
-  switch (pick.id) {
-    case "claude": {
-      // 1.1: one setup does both — the plugin install (same code
-      // `installClaudeSkill`/`Set Up Claude Code` uses, kept working as a
-      // hidden alias) and the `.mcp.json` registration (same code
-      // `registerMcpServer` uses, also kept as a hidden alias) — one toast
-      // summarizing both outcomes.
-      const pluginOutcome = await setUpClaudeCode(context, log);
-      // Reset the remembered answer so a previous "Not now" can't silently
-      // swallow this explicit request.
-      await resetMcpJsonConsent(context);
-      const mcpOutcome = await ensureMcpJsonRegistration(context, handle, rootLog.scope("mcp"));
-
-      const parts: string[] = [];
-      if (pluginOutcome.summary) parts.push(pluginOutcome.summary);
-      if (mcpOutcome !== "declined") {
-        parts.push(
-          "Connected via `.mcp.json` in this workspace (no token written to the file).",
-        );
-      }
-      if (parts.length === 0) break; // both declined/cancelled — nothing to report
-      const hint =
-        " Restart running Claude sessions (or run /reload-plugins and /mcp inside it) to pick this up.";
-      if (pluginOutcome.failed) {
-        void vscode.window.showErrorMessage(`Markdown Collab: ${parts.join(" ")}`);
-      } else {
-        void vscode.window.showInformationMessage(`Markdown Collab: ${parts.join(" ")}${hint}`);
-      }
-      break;
-    }
+/**
+ * The second step of `connectFormatFirst` for each client — what Connect an
+ * Agent did on its own before 10x-plan-6 P1.1, toasts included.
+ */
+async function registerWithClient(
+  id: FormatFirstAgentId,
+  handle: McpServerHandle,
+  folder: vscode.WorkspaceFolder,
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  switch (id) {
     case "cursor-inapp": {
       try {
         registerCursorInApp(handle);
@@ -481,13 +551,9 @@ async function invokeConnectAgent(deps: CommandDeps): Promise<void> {
           `Markdown Collab: could not register with Cursor — ${(e as Error).message}`,
         );
       }
-      break;
+      return;
     }
     case "cursor-cli": {
-      if (!folder) {
-        void vscode.window.showWarningMessage("Markdown Collab: open a folder first.");
-        break;
-      }
       try {
         const outcome = await writeCursorCliConfig(folder.uri);
         void vscode.window.showInformationMessage(
@@ -500,13 +566,9 @@ async function invokeConnectAgent(deps: CommandDeps): Promise<void> {
           `Markdown Collab: could not write .cursor/mcp.json — ${(e as Error).message}`,
         );
       }
-      break;
+      return;
     }
     case "codex": {
-      if (!folder) {
-        void vscode.window.showWarningMessage("Markdown Collab: open a folder first.");
-        break;
-      }
       try {
         const outcome = await writeCodexConfig(folder.uri, handle.port);
         void vscode.window.showInformationMessage(
@@ -519,7 +581,7 @@ async function invokeConnectAgent(deps: CommandDeps): Promise<void> {
           `Markdown Collab: could not write .codex/config.toml — ${(e as Error).message}`,
         );
       }
-      break;
+      return;
     }
     case "copilot": {
       const provider = currentCopilotProvider();
@@ -527,7 +589,7 @@ async function invokeConnectAgent(deps: CommandDeps): Promise<void> {
         void vscode.window.showWarningMessage(
           "Markdown Collab: this VS Code build doesn't support the Copilot MCP provider API.",
         );
-        break;
+        return;
       }
       provider.setConnected(true);
       provider.setLiveServer({ url: handle.url, token: handle.token });
@@ -536,25 +598,80 @@ async function invokeConnectAgent(deps: CommandDeps): Promise<void> {
         "Markdown Collab: registered with GitHub Copilot — nothing written to disk. In Copilot Chat, enable the " +
           "Markdown Collab tools in agent mode's tool picker.",
       );
-      break;
+      return;
     }
-    case "other": {
+    case "other":
       await openGenericSnippetDocument(handle);
-      const message =
-        "Markdown Collab: opened a scratch document with the URL and a session token — nothing written to disk.";
-      if (!folder) {
-        void vscode.window.showInformationMessage(message);
-        break;
-      }
-      // A generic client can't read AGENTS.md's hierarchy through a skill
-      // loader — this is the offer to still teach it the tools-first rule
-      // (0.4), one click away rather than a separate command to know about.
-      const action = await vscode.window.showInformationMessage(message, "Add to AGENTS.md");
-      if (action === "Add to AGENTS.md") await applyAgentsSnippet(folder, log);
-      break;
-    }
+      void vscode.window.showInformationMessage(
+        "Markdown Collab: opened a scratch document with the URL and a session token — nothing written to disk.",
+      );
+      return;
   }
 }
+
+async function invokeConnectAgent(deps: CommandDeps): Promise<void> {
+  const { context, rootLog, log } = deps;
+  const handle = currentMcpServer();
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  const items = buildConnectAgentItems({ cursorInApp: hasCursorInAppApi(), copilot: hasCopilotProviderApi() });
+  const pick = await vscode.window.showQuickPick(items, {
+    placeHolder: "Markdown Collab: connect an agent to your review comments",
+  });
+  if (!pick) return;
+
+  const id = pick.id;
+  if (isFormatFirst(id)) {
+    if (!folder) {
+      void vscode.window.showWarningMessage("Markdown Collab: open a folder first — AGENTS.md is written into it.");
+      return;
+    }
+    await connectFormatFirst(id, {
+      writeAgentsSnippet: () => applyAgentsSnippet(folder, log),
+      serverRunning: handle !== null,
+      ask: (message, ...actions) => Promise.resolve(vscode.window.showInformationMessage(message, ...actions)),
+      tell: (message) => void vscode.window.showInformationMessage(message),
+      register: async () => {
+        if (handle) await registerWithClient(id, handle, folder, context);
+      },
+    });
+    return;
+  }
+
+  // Claude Code is unchanged by 10x-plan-6 P1.1: the plugin carries the skill
+  // and `mdc`, so it never needed AGENTS.md, and `.mcp.json` stays part of
+  // the one setup.
+  if (!handle) {
+    void vscode.window.showWarningMessage(
+      "Markdown Collab: the review tool server isn't running — reload the window and try again. See the Markdown Collab output channel.",
+    );
+    return;
+  }
+  // 1.1: one setup does both — the plugin install (same code
+  // `installClaudeSkill`/`Set Up Claude Code` uses, kept working as a hidden
+  // alias) and the `.mcp.json` registration (same code `registerMcpServer`
+  // uses, also kept as a hidden alias) — one toast summarizing both outcomes.
+  const pluginOutcome = await setUpClaudeCode(context, log);
+  // Reset the remembered answer so a previous "Not now" can't silently
+  // swallow this explicit request.
+  await resetMcpJsonConsent(context);
+  const mcpOutcome = await ensureMcpJsonRegistration(context, handle, rootLog.scope("mcp"));
+
+  const parts: string[] = [];
+  if (pluginOutcome.summary) parts.push(pluginOutcome.summary);
+  if (mcpOutcome !== "declined") {
+    parts.push("Connected via `.mcp.json` in this workspace (no token written to the file).");
+  }
+  if (parts.length === 0) return; // both declined/cancelled — nothing to report
+  const hint = " Restart running Claude sessions (or run /reload-plugins and /mcp inside it) to pick this up.";
+  if (pluginOutcome.failed) {
+    void vscode.window.showErrorMessage(`Markdown Collab: ${parts.join(" ")}`);
+  } else {
+    void vscode.window.showInformationMessage(`Markdown Collab: ${parts.join(" ")}${hint}`);
+  }
+}
+
+/** Appended to every Disconnect item whose Connect wrote AGENTS.md. */
+const AGENTS_KEPT = " AGENTS.md is left as is — other agents may be reading it.";
 
 /** One entry in the Disconnect Agent quick pick — the inverse listing of `ConnectAgentItem` (4.4). */
 export interface DisconnectAgentItem extends vscode.QuickPickItem {
@@ -567,6 +684,11 @@ export interface DisconnectAgentItem extends vscode.QuickPickItem {
  * a client this host could have connected in the first place. Every item's
  * `detail` says exactly what running it removes, since "disconnect" is
  * otherwise a vague promise (4.4: "Connect an Agent has no inverse").
+ *
+ * Disconnect only ever undoes the MCP registration. The AGENTS.md section
+ * Connect wrote first (10x-plan-6 P1.1) is shared by every agent that reads
+ * the file, so no single agent's Disconnect gets to remove it — each of those
+ * items says so.
  */
 export function buildDisconnectAgentItems(caps: { cursorInApp: boolean; copilot: boolean }): DisconnectAgentItem[] {
   const items: DisconnectAgentItem[] = [
@@ -582,34 +704,34 @@ export function buildDisconnectAgentItems(caps: { cursorInApp: boolean; copilot:
       id: "cursor-inapp",
       label: "Cursor (in-app agent)",
       description: "Unregisters the live server from Cursor's in-app agent.",
-      detail: "Nothing was ever written to disk for this client — the registration just goes away for this session.",
+      detail: `Nothing was ever written to disk for this client — the registration just goes away for this session.${AGENTS_KEPT}`,
     });
   }
   items.push({
     id: "cursor-cli",
     label: "Cursor CLI (cursor-agent)",
     description: "Removes the markdown-collab entry from .cursor/mcp.json.",
-    detail: "Leaves every other server in .cursor/mcp.json untouched.",
+    detail: `Leaves every other server in .cursor/mcp.json untouched.${AGENTS_KEPT}`,
   });
   items.push({
     id: "codex",
     label: "Codex",
     description: "Removes the [mcp_servers.markdown-collab] table from .codex/config.toml.",
-    detail: "Leaves every other table in .codex/config.toml untouched.",
+    detail: `Leaves every other table in .codex/config.toml untouched.${AGENTS_KEPT}`,
   });
   if (caps.copilot) {
     items.push({
       id: "copilot",
       label: "GitHub Copilot (agent mode)",
       description: "Unregisters the live server definition from Copilot.",
-      detail: "Nothing was ever written to disk for this client — the registration just goes away for this session.",
+      detail: `Nothing was ever written to disk for this client — the registration just goes away for this session.${AGENTS_KEPT}`,
     });
   }
   items.push({
     id: "other",
     label: "Other agent…",
     description: "Nothing to remove.",
-    detail: "Nothing was ever written to disk for a generic agent — the session token dies with this window.",
+    detail: `The connection details were never saved, and their session token dies with this window.${AGENTS_KEPT}`,
   });
   return items;
 }
@@ -719,7 +841,7 @@ async function invokeDisconnectAgent(deps: CommandDeps): Promise<void> {
     }
     case "other": {
       void vscode.window.showInformationMessage(
-        "Markdown Collab: nothing was ever written to disk for a generic agent — the session token already died with this window.",
+        "Markdown Collab: nothing to remove for a generic agent — its connection details were never saved. AGENTS.md is left as is.",
       );
       break;
     }

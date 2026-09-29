@@ -8,7 +8,15 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { describe, expect, it } from "vitest";
-import { buildConnectAgentItems, buildDisconnectAgentItems } from "../commands/setup";
+import {
+  agentsSnippetSentence,
+  buildConnectAgentItems,
+  buildDisconnectAgentItems,
+  connectFormatFirst,
+  mcpOfferFor,
+  type FormatFirstAgentId,
+  type FormatFirstIo,
+} from "../commands/setup";
 
 const pkg = JSON.parse(readFileSync(resolve(__dirname, "../../package.json"), "utf8"));
 
@@ -75,6 +83,116 @@ describe("buildDisconnectAgentItems", () => {
     const connectIds = buildConnectAgentItems({ cursorInApp: true, copilot: true }).map((i) => i.id).sort();
     const disconnectIds = buildDisconnectAgentItems({ cursorInApp: true, copilot: true }).map((i) => i.id).sort();
     expect(disconnectIds).toEqual(connectIds);
+  });
+});
+
+// 10x-plan-6 P1.1: for every agent but Claude Code the file format is the
+// API — Connect writes AGENTS.md first and offers the MCP registration second,
+// and Disconnect only ever undoes the second step.
+const FORMAT_FIRST: FormatFirstAgentId[] = ["cursor-inapp", "cursor-cli", "codex", "copilot", "other"];
+
+describe("Connect an Agent: AGENTS.md first, the review tools optional", () => {
+  const items = buildConnectAgentItems({ cursorInApp: true, copilot: true });
+
+  it("every entry but Claude Code says AGENTS.md comes first, before the tools", () => {
+    for (const item of items.filter((i) => i.id !== "claude")) {
+      expect(item.description, item.id).toMatch(/^Writes AGENTS\.md, then offers /);
+      expect(item.description, item.id).toMatch(/review tools/);
+    }
+  });
+
+  it("the Claude Code entry doesn't mention AGENTS.md — it is unchanged", () => {
+    expect(items.find((i) => i.id === "claude")!.description).not.toContain("AGENTS.md");
+  });
+
+  it.each([
+    ["cursor-inapp", /Cursor's in-app agent/, /registers live/],
+    ["cursor-cli", /Cursor CLI/, /writes \.cursor\/mcp\.json/],
+    ["codex", /Codex/, /writes \.codex\/config\.toml/],
+    ["copilot", /GitHub Copilot/, /registers live/],
+    ["other", /your agent/, /opens a scratch document/],
+  ] as const)("the %s offer names the client and what saying yes does", (id, client, effect) => {
+    const offer = mcpOfferFor(id);
+    expect(offer.question).toMatch(/^Also /);
+    expect(offer.question).toMatch(/undoable\?/);
+    expect(offer.question).toMatch(client);
+    expect(offer.question).toMatch(effect);
+    expect(offer.accept).toBeTruthy();
+  });
+
+  it("says what AGENTS.md got, naming the folder, for every outcome", () => {
+    for (const action of ["created", "appended", "refreshed", "already-present", "customized"] as const) {
+      const sentence = agentsSnippetSentence(action, "my-repo");
+      expect(sentence, action).toContain("AGENTS.md");
+      expect(sentence, action).toContain("my-repo");
+    }
+    expect(agentsSnippetSentence("customized", "my-repo")).toMatch(/left as is/);
+  });
+});
+
+describe("connectFormatFirst", () => {
+  /** A recording host: `answer` is what the human clicks on the follow-up question. */
+  function host(opts: { agents?: string | null; serverRunning?: boolean; answer?: (accept: string) => string | undefined }) {
+    const log: string[] = [];
+    const io: FormatFirstIo = {
+      writeAgentsSnippet: async () => {
+        log.push("agents");
+        return opts.agents === undefined ? "Created AGENTS.md in ws." : opts.agents;
+      },
+      serverRunning: opts.serverRunning ?? true,
+      ask: async (message, ...actions) => {
+        log.push(`ask: ${message} [${actions.join(" | ")}]`);
+        return opts.answer?.(actions[0]!);
+      },
+      tell: (message) => void log.push(`tell: ${message}`),
+      register: async () => void log.push("register"),
+    };
+    return { io, log };
+  }
+
+  it.each(FORMAT_FIRST)("%s: writes AGENTS.md, then asks, then registers on yes", async (id) => {
+    const { io, log } = host({ answer: (accept) => accept });
+    expect(await connectFormatFirst(id, io)).toBe("registered");
+    expect(log).toHaveLength(3);
+    expect(log[0]).toBe("agents");
+    expect(log[1]).toBe(`ask: Markdown Collab: Created AGENTS.md in ws. ${mcpOfferFor(id).question} [${mcpOfferFor(id).accept} | Not now]`);
+    expect(log[2]).toBe("register");
+  });
+
+  it("Not now, or dismissing the question, stops after AGENTS.md", async () => {
+    for (const answer of [() => "Not now", () => undefined]) {
+      const { io, log } = host({ answer });
+      expect(await connectFormatFirst("codex", io)).toBe("agents-only");
+      expect(log).not.toContain("register");
+    }
+  });
+
+  it("without the tool server, AGENTS.md is still written and the step is explained instead of offered", async () => {
+    const { io, log } = host({ serverRunning: false, answer: (accept) => accept });
+    expect(await connectFormatFirst("cursor-cli", io)).toBe("agents-only");
+    expect(log[0]).toBe("agents");
+    expect(log[1]).toMatch(/^tell: Markdown Collab: Created AGENTS\.md in ws\. .*reload the window/);
+    expect(log.some((l) => l.startsWith("ask:") || l === "register")).toBe(false);
+  });
+
+  it("a failed AGENTS.md write stops there — the error was already shown", async () => {
+    const { io, log } = host({ agents: null, answer: (accept) => accept });
+    expect(await connectFormatFirst("copilot", io)).toBe("failed");
+    expect(log).toEqual(["agents"]);
+  });
+});
+
+describe("Disconnect an Agent: the tools only, never AGENTS.md", () => {
+  const items = buildDisconnectAgentItems({ cursorInApp: true, copilot: true });
+
+  it("every entry whose Connect wrote AGENTS.md says it is left as is", () => {
+    for (const item of items.filter((i) => i.id !== "claude")) {
+      expect(item.detail, item.id).toMatch(/AGENTS\.md is left as is/);
+    }
+  });
+
+  it("the Claude Code entry doesn't mention AGENTS.md — its Connect never wrote it", () => {
+    expect(items.find((i) => i.id === "claude")!.detail).not.toContain("AGENTS.md");
   });
 });
 

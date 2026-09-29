@@ -698,6 +698,24 @@ describe("mdc CLI: reply reopens a resolved thread", () => {
   });
 });
 
+// 10x-plan-6 P1.4: a write `mdc` makes to the file itself says so.
+describe("mdc CLI: a direct write records via: cli", () => {
+  it("open, reply and suggest stamp it, and list reports it", () => {
+    const doc = writeDoc("a.md", DOC);
+    const id = json(run(["open", doc, "--quote", "bearer token", "--body", "q"])).threadId;
+    expect(run(["reply", doc, id, "--body", "a", "--author", "codex"]).status).toBe(0);
+    expect(run(["suggest", doc, "--quote", "exponential backoff", "--with", "backoff"]).status).toBe(0);
+
+    const parsed = parse(fs.readFileSync(doc, "utf8"));
+    expect(parsed.threads[0]!.comments.map((c) => c.via)).toEqual(["cli", "cli"]);
+    expect(parsed.suggestions[0]!.via).toBe("cli");
+
+    const listed = json(run(["list", doc]));
+    expect(listed.threads[0].comments.map((c: { via?: string }) => c.via)).toEqual(["cli", "cli"]);
+    expect(listed.suggestions[0].via).toBe("cli");
+  });
+});
+
 // --- forwarding to the extension (ux-review-2026-09 0.2) -------------------
 
 /** `run`, but asynchronous — a server in this process has to be able to answer. */
@@ -1018,6 +1036,9 @@ describe("mdc CLI: writes go through the running extension", () => {
       const thread = parse(fs.readFileSync(doc, "utf8")).threads[0]!;
       expect(thread.status).toBe("open");
       expect(thread.comments.at(-1)).toMatchObject({ author: "codex", agent: true, body: "answered" });
+      // 10x-plan-6 P1.4: the forwarded reply landed through the server, so it
+      // says "tools" — beside the thread's first comment, written directly.
+      expect(thread.comments.map((c) => c.via)).toEqual(["cli", "tools"]);
     } finally {
       await server.close();
     }

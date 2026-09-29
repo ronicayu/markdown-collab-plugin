@@ -602,7 +602,9 @@ async function main(): Promise<void> {
         action: "reply",
         tool: "mc_reply",
         args: { threadId, body },
-        run: (s) => opReply(s, threadId, body, undefined, author),
+        // `run` is only the direct write — the forwarded one runs `mc_reply`,
+        // which stamps "tools" itself (10x-plan-6 P1.4).
+        run: (s) => opReply(s, threadId, body, undefined, author, true, "cli"),
       });
     }
     case "rewrite": {
@@ -637,7 +639,7 @@ async function main(): Promise<void> {
         action: "open",
         tool: "mc_open",
         args: { quote, body, occurrence },
-        run: (s) => opOpen(s, quote, body, occurrence, undefined, author),
+        run: (s) => opOpen(s, quote, body, occurrence, undefined, author, "cli"),
       });
     }
     case "resolve": {
@@ -662,7 +664,7 @@ async function main(): Promise<void> {
         action: "suggest",
         tool: "mc_suggest",
         args: { quote, with: proposed, note, occurrence },
-        run: (s) => opSuggest(s, quote, proposed, { note, occurrence }, undefined, author),
+        run: (s) => opSuggest(s, quote, proposed, { note, occurrence }, undefined, author, "cli"),
       });
     }
     case "accept": {

@@ -263,3 +263,119 @@ describe("runCheckHook: relative path resolution", () => {
     expect(r.stderr).toContain("Markdown Collab: doc.md has 1 comment-marker problem after this edit:");
   });
 });
+
+// 10x-plan-6 P2.1: `mc_edit`/`mc_rewrite` refuse suggest-mode direct edits at
+// the tool layer (mcpTools.test.ts), but Claude Code's own Edit tool bypasses
+// the tools entirely — this hook is the only backstop for that path. The
+// setting is workspace configuration, always written with
+// `ConfigurationTarget.Workspace` (`commands/send.ts`), so for a single-folder
+// workspace it's on disk at `<hook cwd>/.vscode/settings.json`.
+describe("runCheckHook: suggest mode on disk (10x-plan-6 P2.1)", () => {
+  const SETTINGS_ON = JSON.stringify({ "markdownCollab.proposeEditsAsSuggestions": true });
+  const SETTINGS_OFF = JSON.stringify({ "markdownCollab.proposeEditsAsSuggestions": false });
+
+  it("reports a direct edit when suggest mode is on in .vscode/settings.json at the hook's cwd", () => {
+    const { source } = healthyDoc();
+    const io = memIo({
+      "/proj/doc.md": source,
+      "/proj/.vscode/settings.json": SETTINGS_ON,
+    });
+
+    const r = runCheckHook(hookStdin("/proj/doc.md"), io);
+
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain(
+      "suggest mode is on for this workspace — propose edits with mc_suggest / mdc suggest instead of editing directly",
+    );
+  });
+
+  it("stays silent when the setting is present but false", () => {
+    const { source } = healthyDoc();
+    const io = memIo({
+      "/proj/doc.md": source,
+      "/proj/.vscode/settings.json": SETTINGS_OFF,
+    });
+    expect(runCheckHook(hookStdin("/proj/doc.md"), io)).toEqual({ exitCode: 0, stderr: "" });
+  });
+
+  it("stays silent — never guesses — when there is no .vscode/settings.json at all", () => {
+    const { source } = healthyDoc();
+    const io = memIo({ "/proj/doc.md": source });
+    expect(runCheckHook(hookStdin("/proj/doc.md"), io)).toEqual({ exitCode: 0, stderr: "" });
+  });
+
+  it("stays silent on a .md file with no threads region yet, even with suggest mode on", () => {
+    const io = memIo({
+      "/proj/plain.md": "# Doc\n\nNo comments here yet.\n",
+      "/proj/.vscode/settings.json": SETTINGS_ON,
+    });
+    expect(runCheckHook(hookStdin("/proj/plain.md"), io)).toEqual({ exitCode: 0, stderr: "" });
+  });
+
+  it("reads settings.json with line comments and a trailing comma (JSONC)", () => {
+    const { source } = healthyDoc();
+    const jsonc = [
+      "{",
+      "  // suggest mode on for this workspace",
+      '  "markdownCollab.proposeEditsAsSuggestions": true,',
+      "}",
+    ].join("\n");
+    const io = memIo({ "/proj/doc.md": source, "/proj/.vscode/settings.json": jsonc });
+
+    const r = runCheckHook(hookStdin("/proj/doc.md"), io);
+
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("suggest mode is on for this workspace");
+  });
+
+  it("reads settings.json with a block comment around unrelated settings", () => {
+    const { source } = healthyDoc();
+    const jsonc = [
+      "{",
+      "  /* editor tweaks",
+      '     "editor.fontSize": 14, */',
+      '  "markdownCollab.proposeEditsAsSuggestions": true',
+      "}",
+    ].join("\n");
+    const io = memIo({ "/proj/doc.md": source, "/proj/.vscode/settings.json": jsonc });
+
+    const r = runCheckHook(hookStdin("/proj/doc.md"), io);
+
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("suggest mode is on for this workspace");
+  });
+
+  it("stays silent on unparseable settings.json rather than guessing", () => {
+    const { source } = healthyDoc();
+    const io = memIo({ "/proj/doc.md": source, "/proj/.vscode/settings.json": "not { json at all" });
+    expect(runCheckHook(hookStdin("/proj/doc.md"), io)).toEqual({ exitCode: 0, stderr: "" });
+  });
+
+  it("resolves settings.json against the hook's own cwd, not the edited file's directory", () => {
+    const { source } = healthyDoc();
+    const io = memIo({
+      "/from/hook/nested/doc.md": source,
+      "/from/hook/.vscode/settings.json": SETTINGS_ON,
+    });
+
+    const r = runCheckHook(hookStdin("nested/doc.md", { cwd: "/from/hook" }), io);
+
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("suggest mode is on for this workspace");
+  });
+
+  it("reports both suggest mode and marker damage together when an edit causes both", () => {
+    const { source, id } = healthyDoc();
+    const corrupted = source.replace(`<!--mc:/a:${id}-->`, "");
+    const io = memIo({
+      "/proj/doc.md": corrupted,
+      "/proj/.vscode/settings.json": SETTINGS_ON,
+    });
+
+    const r = runCheckHook(hookStdin("/proj/doc.md"), io);
+
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("suggest mode is on for this workspace");
+    expect(r.stderr).toContain("comment-marker problem");
+  });
+});

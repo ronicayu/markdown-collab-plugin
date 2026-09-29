@@ -54,8 +54,9 @@ asking. Every plan from here starts with a usage question, not a code sweep.
    hand-edits per the spec and runs `mdc check` if they can, or asks the
    human to.
 4. **Know how each reply arrived.** The extension can tell an MCP write from
-   an external file change. Record it per comment (`via: "tools" | "file"`)
-   and show a small marker on the card. After a week there is data, not
+   an external file change. Record it per comment (`via: "tools" | "cli"`,
+   absent = written straight into the file) and show a small marker on the
+   card. After a week there is data, not
    "应该是 mdc".
 5. **One dogfooded loop per agent before the marketplace description claims
    it.** Cursor and Codex have none yet.
@@ -133,6 +134,27 @@ This is a round of work on its own. Do the spike first:
 - Don't add a severity field to the thread format. The cap is a prompt rule
   (option A), not a schema change (option B).
 - Don't start the view merge without the spike.
+
+## Status — 0.35.13 (2026-09-29)
+
+P0, P1, P2.1–2.3, P3 and P5 shipped in 0.35.13. Deviations:
+
+- **P1.1** Connect → non-Claude asks the MCP question as one non-modal
+  toast right after writing AGENTS.md, not a second QuickPick. The
+  snippet links `docs/format.md` by its GitHub URL — `docs/` isn't in the
+  `.vsix`, so a relative link would break in every user's workspace; the
+  link resolves once round-4 reaches `main`.
+- **P1.4** `via: "tools" | "cli"`, absent for a hand edit. `opResolve`
+  isn't stamped; resolving writes no comment.
+- **P2.1** The hook reads only `<cwd>/.vscode/settings.json` and only
+  flags files that already have a threads block. A multi-root
+  `.code-workspace` isn't read; it stays silent rather than guess.
+- **P2.4** Held for question 2.
+- **P3** Five per file in a multi-file pass, one summary per file.
+- **P4** Spike in `docs/spike-one-view.md`; no product code.
+- **P5.2** The "New from Claude" filter chip already derived its name
+  per thread; only the Send button, switch and pending text changed.
+- **Not done:** question 5 (marketplace description) — untouched.
 
 ## Open questions for Ronica
 

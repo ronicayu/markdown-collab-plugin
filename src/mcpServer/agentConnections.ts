@@ -1,6 +1,11 @@
 // Wiring for "Connect an Agent" (10x-plan-4 P1.1): which clients are hooked
 // up, and keeping them hooked up across restarts.
 //
+// Since 10x-plan-6 P1.1 everything here is the optional second step for the
+// agents that aren't Claude Code: Connect writes AGENTS.md first (see
+// `connectFormatFirst` in commands/setup.ts), because the file format is what
+// those agents are held to, and only then offers a registration from here.
+//
 // Two different kinds of "stay connected":
 //   - Cursor CLI's `.cursor/mcp.json` and Codex's `.codex/config.toml` are
 //     files. `.cursor/mcp.json` references the env vars the way Cursor CLI

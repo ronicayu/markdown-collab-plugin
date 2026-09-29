@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import type { CliRunner, RunCliResult } from "../pr/cli";
 import {
+  countReviewThreads,
   headFileContent,
   listUncommittedMarkdownFiles,
   repoRootFor,
@@ -129,6 +130,34 @@ describe("stageStates", () => {
       "git diff --name-only -M": fail("boom"),
     });
     expect((await stageStates("/repo", runner)).size).toBe(0);
+  });
+});
+
+describe("countReviewThreads", () => {
+  // 10x-plan-6 P5.1: the stage-time reminder counts threads still embedded
+  // in the file, so it needs to agree with the review format's own parser —
+  // no reimplementing the `<!--mc:t …-->` shape here.
+  const withThreadsBlock = (...lines: string[]) =>
+    ["Body.", "", "<!--mc:threads:begin-->", ...lines, "<!--mc:threads:end-->"].join("\n");
+
+  it("is zero for a file with no threads block", () => {
+    expect(countReviewThreads("Just prose, no review data.")).toBe(0);
+  });
+
+  it("counts every thread regardless of status", () => {
+    const md = withThreadsBlock(
+      `<!--mc:t {"id":"t1","quote":"a","status":"open","comments":[{"id":"c1","author":"r","ts":"2026-01-01T00:00:00Z","body":"x"}]}-->`,
+      `<!--mc:t {"id":"t2","quote":"b","status":"resolved","comments":[{"id":"c1","author":"r","ts":"2026-01-01T00:00:00Z","body":"y"}]}-->`,
+      `<!--mc:t {"id":"t3","quote":"c","status":"open","comments":[{"id":"c1","author":"r","ts":"2026-01-01T00:00:00Z","body":"z"}]}-->`,
+    );
+    // Two open, one resolved — Remove All Review Data strips all three, so
+    // all three count, not just the open ones.
+    expect(countReviewThreads(md)).toBe(3);
+  });
+
+  it("is zero once the threads block is empty", () => {
+    const md = withThreadsBlock();
+    expect(countReviewThreads(md)).toBe(0);
   });
 });
 

@@ -7,15 +7,15 @@ Review Markdown *with* Claude, in VS Code. Comments live inside the `.md` file, 
 
 ![Click Review with Claude; three comment threads land; walk them with the keyboard](media/gifs/review-with-claude.gif)
 
-Click **Review with Claude**. Claude reads your doc and leaves a comment per concern, and you triage them. No terminal to open, nothing to paste. It needs Claude Code installed and signed in, and nothing else.
+Click **Review with Claude**. Claude reads your doc and leaves a comment per concern, and you triage them. The first send asks how to reach Claude and remembers your answer — typing into a running terminal session is the normal path.
 
 ## What you get
 
-- **Comments stored in the file.** Each thread is an HTML comment wrapped around the exact passage it points at, so it's invisible on GitHub and in every preview, and it survives a commit, a branch switch, and a colleague opening the file. No sidecar, no database.
+- **Comments stored in the file.** Each thread is an HTML comment wrapped around the exact passage it points at, so it's invisible on GitHub and in every preview. The state stays in the file overnight and across sessions — strip it with **Remove All Review Data** before you commit; staging a file that still carries threads reminds you once. No sidecar, no database.
 - **Claude as reviewer or as writer.** Ask Claude to review a document, a folder, or only what changed since its last pass. Or leave comments yourself and send them; Claude edits the document and replies in each thread.
 - **Suggestions you can undo.** In suggest mode, Claude's edits arrive as tracked changes. Accept applies one, Reject keeps your wording, and both are ordinary editor edits, so Cmd+Z takes them back.
 - **A review view, and the text editor too.** A rendered preview with a threads sidebar, plus dimmed markers, hovers, and a CodeLens in the plain text editor, so a reviewed file never looks corrupted.
-- **Other agents.** The review tools are an MCP server. Cursor, Codex, GitHub Copilot, and any other MCP client can use them; comments say which agent wrote them.
+- **Other agents.** The file format is the contract: copy the prompt and any agent can edit it by following `AGENTS.md`, no integration required. Connect Cursor, Codex, Copilot, or another MCP client as an optional second step, for edits you can undo; comments say which agent wrote them.
 
 ## Get started
 
@@ -24,7 +24,7 @@ Click **Review with Claude**. Claude reads your doc and leaves a comment per con
    code --install-extension markdown-collab.markdown-collab-plugin
    ```
    Cursor, Windsurf, VSCodium, and Gitpod install it from [Open VSX](https://open-vsx.org/extension/markdown-collab/markdown-collab-plugin). A `.vsix` is on every [GitHub release](https://github.com/ronicayu/markdown-collab-plugin/releases).
-2. **Connect an Agent…, once per machine.** `Cmd-Shift-P` → **Markdown Collab: Connect an Agent…** → **Claude Code**. This installs the Markdown Collab plugin into Claude Code — the review workflow as `/markdown-collab:review`, the anchor-safe `mdc` helper on Claude's PATH, a check that tells Claude the moment an edit breaks a comment anchor — and registers this extension's review tools in the same step, so Claude's edits arrive as edits you can undo. It installs from a marketplace the extension keeps on your machine, so the plugin always matches the extension's version, and it offers an update when a new one ships. Restart any running Claude session afterwards, or run `/reload-plugins`. Using Cursor, Codex, or Copilot instead? The same command lists them — see [Connect an agent](#connect-an-agent) below.
+2. **Connect an Agent…, once per machine.** `Cmd-Shift-P` → **Markdown Collab: Connect an Agent…** → **Claude Code**. This installs the Markdown Collab plugin into Claude Code — the review workflow as `/markdown-collab:review`, the anchor-safe `mdc` helper on Claude's PATH, a check that tells Claude the moment an edit breaks a comment anchor — and registers this extension's review tools in the same step, so Claude's edits arrive as edits you can undo. It installs from a marketplace the extension keeps on your machine, so the plugin always matches the extension's version, and it offers an update when a new one ships. Restart any running Claude session afterwards, or run `/reload-plugins`. Using Cursor, Codex, or Copilot instead? The same command lists them — see [Other agents](#other-agents) below.
 3. **Open a Markdown file** and click the comment icon in its title bar. Then either click **Review with Claude**, or select a passage in the preview, click **Comment**, write your note, and click **Send to Claude**.
 
 Want to try it with no Claude at all? **Markdown Collab: Open Tutorial Playground** writes a scratch document that arrives mid-review, with threads, a reply, and two pending suggestions to accept or reject.
@@ -45,9 +45,15 @@ Without the extension, the Claude side is also available on its own: `claude plu
 
 **Suggest mode** is the toggle next to the Send button, or `markdownCollab.proposeEditsAsSuggestions`. Sending one thread from its card works the same way as sending them all.
 
+## Reviewing a colleague's PR
+
+**Open PR Review** shows the Markdown a GitHub PR or GitLab MR changed, rendered, with the platform's existing comments inline — what changed and what's already been said, in one view. Add comments, reply, edit your drafts, and post them back through your `gh` or `glab` sign-in; no extra tokens.
+
+This isn't an agent loop. There's no Claude in it, and nothing gets written into the file: the comments live where they always did, on the PR or MR. It's a client for reading and answering them without leaving the editor.
+
 ## Asking Claude to review
 
-Right-click a `.md` file → **Ask Agent to Review This Doc**, or click **Review with Claude** in an empty sidebar. Claude opens one thread per substantive concern: a wrong claim, an ambiguous sentence, a broken example, a contradiction with another section. There is no cap; if thirty things warrant a thread, you get thirty. Pure typos and style preferences are skipped unless you ask for them. If Claude finds nothing, it says so instead of inventing something.
+Right-click a `.md` file → **Ask Agent to Review This Doc**, or click **Review with Claude** in an empty sidebar. Claude opens one thread per substantive concern: a wrong claim, an ambiguous sentence, a broken example, a contradiction with another section. It ranks concerns by severity and opens threads for the five that matter most, plus one summary thread listing everything else so you can ask for any of them ("open 3 and 7") — add *"give me ten"* (or more) to the focus directive to raise the cap. Pure typos and style preferences are skipped unless you ask for them. If Claude finds nothing, it says so instead of inventing something.
 
 The sidebar shows *"N new from Claude · M reviewed"* with a **Next** button, and a thread counts as reviewed once you reply to or resolve it. Files over 50 KB ask for a confirmation before sending.
 
@@ -64,9 +70,7 @@ Afterwards, **Review Session Summary** turns the thread state into a digest for 
 
 **The text editor.** Anchors are dimmed, commented text is tinted, and the threads block at the end of the file folds away. Hovering a commented passage shows its thread, with a link into the review view, and one CodeLens at the top of the file gives the counts and opens the view. Select text and press `Cmd+K Cmd+Alt+M` to comment without leaving the editor.
 
-**Uncommitted changes.** An **Uncommitted Markdown** tree in the Explorer lists every Markdown file that differs from HEAD. Each opens in the review view with changed blocks striped, removed text shown struck through where it used to be, arrows to step between changes, and stage and unstage buttons on each row. The diff is prose against prose, so a paragraph that only gained an anchor isn't marked as changed.
-
-**Pull requests and merge requests.** **Open PR Review** shows the Markdown a GitHub PR or GitLab MR changed, rendered, with the platform's existing comments inline. Add comments, reply, edit your drafts, and post them back. This is a review client for a colleague's Markdown, not an agent loop: the comments live on the PR or MR, not in the file. It uses your `gh` or `glab` sign-in; no extra tokens.
+**Uncommitted changes.** An **Uncommitted Markdown** tree in the Explorer lists every Markdown file that differs from HEAD. Each opens in the review view with changed blocks striped, removed text shown struck through where it used to be, arrows to step between changes, and stage and unstage buttons on each row. The diff is prose against prose, so a paragraph that only gained an anchor isn't marked as changed. A file that still carries review threads shows the count in the tree, and staging it reminds you once that **Remove All Review Data** strips them.
 
 **The live editor.** A WYSIWYG editor with the same threads sidebar, for one person and an agent on the same machine: you type, the agent edits the file on disk, both show up live. Open a `.md` with **Open With… → Markdown Collab (live editor)**, or run **Open Live Editor**. The review view and the live editor share one sidebar and differ in whether the rendered text is editable; they are on their way to becoming one view, read-only by default with editing a toggle.
 
@@ -74,15 +78,16 @@ Afterwards, **Review Session Summary** turns the thread state into a digest for 
 
 The **Send to Claude** button delivers one of three ways. The first click asks, remembers your answer per workspace, and never asks again. **Reset Send Mode** clears it.
 
+**Type into the active terminal** is the recommended, normal path: if a Claude terminal is already open, this is picked for you without asking; otherwise the picker offers to start one. It works with any agent's terminal, not only Claude's.
+
+### Other ways to send
+
 | Mode | What happens | Choose it when |
 |---|---|---|
-| `headless` | **Run Claude for me.** The extension runs Claude Code in the background and shows progress in the status bar. | Claude Code is installed and signed in, and you'd rather not keep a terminal open. |
-| `terminal` | Types the prompt into your running Claude session. If a Claude terminal is already open, this is picked for you. | Works everywhere. |
+| `headless` | **Run Claude for me.** The extension runs Claude Code in the background and shows progress in the status bar. | You'd rather not keep a terminal open. Still needs Claude Code installed and signed in. |
 | `clipboard` | Copies the prompt for you to paste. | You'd rather hand it off yourself. |
 
-### Run Claude for me
-
-Headless runs are offered first in the picker whenever they can work, but never chosen for you. What they need: Claude Code installed and signed in (run `claude` once in a terminal if you never have), a trusted workspace, and the review tool server, which starts with the extension. If `claude` isn't on the PATH VS Code sees, set `markdownCollab.claudePath`. `markdownCollab.headlessModel` picks the model.
+Headless runs are offered in the picker whenever they can work, but never chosen for you. What they need: Claude Code installed and signed in (run `claude` once in a terminal if you never have), a trusted workspace, and the review tool server, which starts with the extension. If `claude` isn't on the PATH VS Code sees, set `markdownCollab.claudePath`. `markdownCollab.headlessModel` picks the model.
 
 In this mode Claude can read files and use this extension's review tools, and nothing else: no shell, no direct file edits, no other MCP servers, and none of your Claude Code hooks. Every change lands through the editor, undoable and checked before it applies. The status bar reads *Claude is reviewing guide.md · 1m 20s* while it works; click it to cancel, and a run stops itself after 30 minutes. When it finishes, a notification carries the first line of Claude's report, with **Show report** for the whole thing and the estimated cost.
 
@@ -100,11 +105,17 @@ Every review request has a pulse, whichever way it was sent. Each state is somet
 | *Review arrived: 12 new comments* | Every file is finished. *No concerns found* is also an answer. |
 | *Review sent 10m ago — nothing arrived* | Ten minutes of silence. Click for Resend, Dismiss, or Show logs. |
 
-## Connect an agent
+## Other agents
 
-Whichever mode you use, an agent's edits are best made through this extension's review tools: they arrive as editor edits you can undo, and a change that would break an anchor is refused before it lands, not repaired after.
+The file format is the contract, and any agent that reads project instructions can act on it — Cursor, Codex, Copilot, or anything else:
 
-**Connect an Agent…** hooks the review tools up to whichever client you use. The list shows only the entries your editor can support.
+1. **Copy the prompt.** Set the send mode to `clipboard`, or pick it from the picker on your first send — the prompt goes to your clipboard instead of a terminal.
+2. **The agent edits the file, following `AGENTS.md`.** [`docs/format.md`](docs/format.md) is the full contract — every marker, the threads block, the suggestion shape. The `AGENTS.md` snippet (written or refreshed by **Connect an Agent…**, or the hidden **Initialize AGENTS.md** command) points any agent that reads it at the same rules, so it can reply and open threads without a tool of its own.
+3. **Repair Comment Anchors is the safety net.** If the agent breaks a marker anyway, it fixes what can be fixed without guessing. `mdc check` does the same check — but only from inside a Claude Code session; `mdc` isn't on any other agent's PATH.
+
+### Optional: undoable edits through MCP
+
+For an agent that can call MCP tools, **Connect an Agent…** hooks the review tools up directly: its edits arrive as editor edits you can undo, and a change that would break an anchor is refused before it lands, not repaired after. The list shows only the entries your editor can support.
 
 | Client | What it writes |
 |---|---|
@@ -117,7 +128,7 @@ Whichever mode you use, an agent's edits are best made through this extension's 
 
 No token is ever written to a file. Comments written by another agent are credited to it: the sidebar says *"3 new from Codex"*, and the card says who replied.
 
-Connecting is always your call. If your agent doesn't have the tools, every prompt tells it to use the `mdc` helper instead, and the file ends up the same.
+Connecting is always your call — the three steps above work with no MCP registration at all.
 
 **Disconnect an Agent…** removes an entry you no longer want registered.
 
@@ -187,7 +198,7 @@ The <!--mc:a:k7q3p-->quick brown fox<!--mc:/a:k7q3p--> jumps…
 <!--mc:threads:end-->
 ```
 
-Commit the file as it is; the review state ships with it. When you're done reviewing, **Remove All Review Data** strips everything in one step.
+The state stays in the file overnight and across sessions — a commit, a branch switch, a colleague opening the file, all fine. Strip it before you commit with **Remove All Review Data**, which clears everything in one step; staging a file that still carries threads reminds you once, in case you meant to run it first.
 
 Under `.markdown-collab/`, the extension writes runtime state for the tool server and, if you create it, your conventions file. Ignore the first, commit the second:
 

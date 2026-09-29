@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Claude reviews your Markdown in VS Code — inline comments stored in the file, suggestions you accept or reject, and runs that need no terminal. Works with Cursor, Codex, and Copilot agents too.",
-  "version": "0.35.12",
+  "version": "0.35.13",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -296,12 +296,12 @@
           ],
           "enumDescriptions": [
             "Ask which way to send, the first time per workspace, then remember the answer. Run 'Markdown Collab: Reset Send Mode' to be asked again.",
-            "Runs Claude for you in the background and shows progress in the status bar. Recommended when Claude Code is installed and signed in.",
-            "Type the prompt into your running terminal session. Works with any agent's terminal — recommended otherwise.",
+            "Runs Claude for you in the background and shows progress in the status bar — if you'd rather not keep a terminal open; needs Claude Code installed and signed in.",
+            "Type the prompt into your running terminal session. Works with any agent's terminal — recommended.",
             "Copy the prompt to your clipboard so you can paste it into Claude yourself."
           ],
           "default": "ask",
-          "markdownDescription": "How the **Send to Claude** button gets your comments to Claude.\n\n- `ask` — asks the first time per workspace, then remembers your answer. Run [Reset Send Mode](command:markdownCollab.resetSendMode) to be asked again.\n- `headless` — **Run Claude for me**: the extension runs Claude Code in the background and shows progress in the status bar. In this mode Claude can only read files and use the review tools. Recommended when Claude Code is installed and signed in.\n- `terminal` — types the prompt into your running terminal session. Works with any agent's terminal — recommended otherwise.\n- `clipboard` — copies the prompt so you can paste it into Claude yourself.\n\nWhichever agent you use, connect it to this extension's review tools so its edits arrive as edits you can undo — see **Connect an Agent…** in the README."
+          "markdownDescription": "How the **Send to Claude** button gets your comments to Claude.\n\n- `ask` — asks the first time per workspace, then remembers your answer. Run [Reset Send Mode](command:markdownCollab.resetSendMode) to be asked again.\n- `terminal` — types the prompt into your running terminal session. Works with any agent's terminal — recommended.\n- `headless` — **Run Claude for me**: the extension runs Claude Code in the background and shows progress in the status bar. In this mode Claude can only read files and use the review tools — if you'd rather not keep a terminal open; needs Claude Code installed and signed in.\n- `clipboard` — copies the prompt so you can paste it into Claude yourself.\n\nWhichever agent you use, connect it to this extension's review tools so its edits arrive as edits you can undo — see **Connect an Agent…** in the README."
         },
         "markdownCollab.collab.userName": {
           "type": "string",
@@ -653,7 +653,7 @@
       {
         "id": "markdownCollab.gettingStarted",
         "title": "Review Markdown with an AI agent",
-        "description": "Leave review comments anchored in the file itself, send them to your agent, and accept its suggestions — all without leaving VS Code. Claude Code is the most complete setup; other agents connect through the same review tools.",
+        "description": "Leave review comments anchored in the file itself, send them to your agent, and accept its suggestions — all without leaving VS Code. Claude Code is the most complete setup; any other agent can act on the same file format, with the review tools as an optional upgrade.",
         "steps": [
           {
             "id": "playground",

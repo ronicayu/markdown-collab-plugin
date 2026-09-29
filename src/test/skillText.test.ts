@@ -62,6 +62,62 @@ const INTENTIONAL_CHANGES: Array<[string, string]> = [
     "add them with **Markdown Collab: Register Review Tools with Claude Code**, then restart.",
     "add them with **Markdown Collab: Connect an Agent…** → Claude Code, then restart.",
   ],
+  // 10x-plan-6 P1.3: stop implying other agents have `mdc` — only a Claude
+  // Code session (this plugin, or the standalone skill) ever does.
+  [
+    "or the server not running).\n\nHand-editing markers with the Edit tool is a distant third",
+    "or the server not running).\n\n`mdc` itself is reachable only inside a Claude Code session — this plugin, " +
+      "or the standalone skill; an agent that isn't Claude Code has neither and instead follows " +
+      "`docs/format.md`, asking you to run **Markdown Collab: Repair Comment Anchors** when it can't run a " +
+      "check itself.\n\nHand-editing markers with the Edit tool is a distant third",
+  ],
+  // 10x-plan-6 P2.3: one suggestion, one change — split a paragraph rewrite,
+  // or leave a comment when it can't be; the tool refuses a `with` that reads
+  // like a whole paragraph rather than accepting it as one "suggestion".
+  [
+    "The original text stays in the file; the proposal is recorded separately. `--note` is your rationale, " +
+      "shown on the suggestion card — always include it. Same anchoring rules as opening a thread: ambiguous, " +
+      "or in code/frontmatter/the threads region, gets refused — pass `occurrence` or pick a different span. " +
+      "One suggestion per contiguous change, re-reading between several so offsets stay valid. **Do NOT accept " +
+      "or reject your own suggestions** — that's the human's call in the review UI, only on explicit " +
+      "instruction. Verify with `mc_check` and `mc_list` (reports each suggestion's `original` and `proposed`).",
+    "The original text stays in the file; the proposal is recorded separately. `--note` is your rationale, " +
+      "shown on the suggestion card — always include it. Same anchoring rules as opening a thread: ambiguous, " +
+      "or in code/frontmatter/the threads region, gets refused — pass `occurrence` or pick a different span. " +
+      "**One suggestion changes one sentence or one list item.** Re-read between several so offsets stay " +
+      "valid. A paragraph-level rewrite is split into several suggestions, one per sentence; when it genuinely " +
+      "can't be split (the change reworks the paragraph as a whole), open a comment carrying the proposed text " +
+      "instead of forcing it into one giant suggestion. A `with` far longer than the quoted passage is refused " +
+      "(`suggestion_too_large`) — that's the tool telling you to split it, not a limit to work around. **Do NOT " +
+      "accept or reject your own suggestions** — that's the human's call in the review UI, only on explicit " +
+      "instruction. Verify with `mc_check` and `mc_list` (reports each suggestion's `original` and `proposed`).",
+  ],
+  // 10x-plan-6 P3: rank by severity, cap the top five, summarize the rest —
+  // "no upper bound" produced too many comments even though most were sound.
+  [
+    "#### No upper bound on thread count\n\nThere is **no maximum number of threads** per review pass. Leave a " +
+      "thread for every substantive concern that fits the focus directive (or the general rubric, if no focus " +
+      'was given). If you find 30 issues, leave 30 threads. The human triages with the sidebar UI; your job is ' +
+      'signal, not curation.\n\nDo not "leave the top N" — dropping findings to hit a count target risks ' +
+      "suppressing the one that matters most.",
+    "#### Rank, cap at five, then summarize\n\nRank concerns by severity and open threads for the **five** " +
+      "that matter most. Put everything else in one summary thread anchored to the document's title (its " +
+      "first `#` heading, or the very first line when it has none): `Also noticed (N): …`, one line per item " +
+      'naming its passage — so the human can read it and say "open 3 and 7" for exactly the ones they want ' +
+      'promoted. The `Focus:` line can override the cap explicitly ("give me ten", "everything"); absent that, ' +
+      "five is it, whether the pass turns up six issues or sixty.\n\nDon't drop a finding to make the cap — " +
+      "every concern still reaches the human, in its own thread if it's top five, in the summary line " +
+      "otherwise. The human triages with the sidebar UI; your job is signal, ranked.",
+  ],
+  [
+    "3. **Focus and the no-upper-bound rule apply per pass, not per file.** Verify each file with `mc_check` " +
+      "before moving to the next — cheaper to catch a broken marker in file 1 before editing files 2 and 3 — " +
+      "and report per file, with cross-document findings called out separately.",
+    "3. **Focus applies per pass; the five-thread cap applies per file.** Each file gets its own top five and " +
+      "its own summary thread for the rest — not one shared cap or one shared summary across the whole pass. " +
+      "Verify each file with `mc_check` before moving to the next — cheaper to catch a broken marker in file 1 " +
+      "before editing files 2 and 3 — and report per file, with cross-document findings called out separately.",
+  ],
 ];
 
 const legacy = renderSkill("legacy");
@@ -125,7 +181,7 @@ describe("plugin rendering", () => {
     for (const phrase of ["old_string", "new_string", "base36 id", "Edit the passage to"]) {
       expect(body, phrase).not.toContain(phrase);
     }
-    expect(plugin).toContain("There is **no maximum number of threads**");
+    expect(plugin).toContain("Rank concerns by severity and open threads for the **five** that matter most.");
     expect(plugin).toContain("It is the **primary filter**");
     expect(words(plugin)).toBeLessThanOrEqual(5000);
   });
@@ -151,8 +207,8 @@ describe("headless rendering (tools only)", () => {
     for (const tool of ["mc_list", "mc_reply", "mc_rewrite", "mc_edit", "mc_open", "mc_resolve", "mc_suggest", "mc_accept", "mc_check", "mc_status"]) {
       expect(headless, tool).toContain(tool);
     }
-    expect(headless).toContain("There is **no maximum number of threads**");
-    expect(headless).toContain("If you find 30 issues, leave 30 threads.");
+    expect(headless).toContain("Rank concerns by severity and open threads for the **five** that matter most.");
+    expect(headless).toContain('Also noticed (N): …`, one line per item naming its passage');
     expect(headless).toContain("It is the **primary filter**");
     expect(headless).toContain("Do not fabricate threads to feel productive.");
     expect(headless).toContain("Deletions become orphans by design");
@@ -207,8 +263,7 @@ describe("MCP instructions", () => {
     for (const rule of [
       "Only the human resolves",
       "append-only history",
-      "open a thread with `mc_open` for every substantive concern and never edit prose",
-      "There is no upper bound on threads",
+      "open a thread with `mc_open` for the five most severe concerns, then one summary thread for the rest",
       "Suggest mode: route every change through `mc_suggest`",
       "`mc_rewrite` changes text inside a thread's anchor; `mc_edit` changes prose outside anchors",
       "never hand-edit a marker",

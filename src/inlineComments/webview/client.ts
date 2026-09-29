@@ -7,6 +7,7 @@
 // underlying .md file — there is no in-webview cache of comments.
 
 import { createMarkdownRenderer, ensurePlantuml } from "../../webviewShared/markdownPipeline";
+import { isAgentComment } from "../../agentIdentity";
 import { isClaudeUnread } from "../claudeUnread";
 import { slugifyHeading } from "../linkParse";
 import { findCountLabel, findMatchesIn, stepIndex } from "../../webviewShared/findState";
@@ -56,6 +57,15 @@ interface InlineComment {
   id: string;
   parent?: string;
   author: string;
+  /** Set by the tools/CLI on every comment an agent writes (10x-plan-4 P1.2). */
+  agent?: boolean;
+  /**
+   * How this comment reached the file — "tools" (MCP) or "cli" (`mdc`).
+   * Absent means it was typed straight into the file's text, by a human or by
+   * an agent editing directly (round-6 P1.4). Only meaningful on an agent
+   * comment; `renderComment` gates the marker on `isAgentComment` first.
+   */
+  via?: "tools" | "cli";
   ts: string;
   body: string;
   editedTs?: string;
@@ -130,6 +140,17 @@ interface InitMsg {
   /** Host-decided wording for the waiting row (10x-plan-2 P0.2). */
   pendingLabel?: string;
   /**
+   * Display name of the agent that last wrote to this file (round-6 P5.2) —
+   * "Codex", "Cursor", etc. Absent means Claude: every file this shipped
+   * before had exactly one agent, so an old host (or one that hasn't looked
+   * this up yet) omitting the field must still read as it always has. Used
+   * wherever the UI has no per-thread agent to name instead (the Send
+   * button, its title, the suggest-mode switch title, and the default
+   * pending-row text) — the per-thread "New from X" wording already draws on
+   * each comment's own author and ignores this field.
+   */
+  agentName?: string;
+  /**
    * Whether the host can run Claude for this workspace right now — the same
    * check the send-mode picker uses (10x-plan-4 P2.4). Drives which label the
    * empty-state card's button shows and, on click, whether the host forces
@@ -153,6 +174,7 @@ interface UpdateMsg {
   suggestMode?: boolean;
   pendingThreadIds?: string[];
   pendingLabel?: string;
+  agentName?: string;
   headlessAvailable?: boolean;
 }
 
@@ -622,6 +644,19 @@ function updateSuggestModeToggle(on: boolean): void {
   dom.suggestModeToggle.classList.toggle("on", on);
 }
 
+/**
+ * Put `agentName` into the toolbar wherever there's no per-thread agent to
+ * name instead (round-6 P5.2): the Send button reads "Send to Codex" for a
+ * file Codex is working on, its title and the suggest-mode switch title
+ * follow suit. Called after every `init`/`update` — `agentName` itself
+ * already fell back to "Claude" there, so this never needs to.
+ */
+function updateAgentUi(): void {
+  dom.sendToClaude.textContent = `Send to ${agentName}`;
+  dom.sendToClaude.title = `Send the prompt to a running ${agentName} terminal (or your configured send mode).`;
+  dom.suggestModeToggle.title = `When on, Send to ${agentName} asks ${agentName} to propose edits as suggestions you accept or reject.`;
+}
+
 dom.skillInstall.addEventListener("click", () => {
   dom.skillInstall.disabled = true;
   dom.skillInstall.textContent = "Installing…";
@@ -750,6 +785,10 @@ let pendingThreadIds: ReadonlySet<string> = new Set();
 // What the waiting row says. The host owns the wording because only it knows
 // whether the wait is inferred or protocol-backed.
 let pendingLabelText = "Claude is working\u2026";
+// Display name of the agent that last wrote to this file (round-6 P5.2),
+// "Claude" until an `init`/`update` says otherwise. Drives the Send button,
+// its title, and the suggest-mode switch title \u2014 see `updateAgentUi`.
+let agentName = "Claude";
 // Whether the host can run Claude headlessly for this workspace right now \u2014
 // only meaningful for the empty-state card's button label (10x-plan-4 P2.4).
 let headlessAvailable = false;
@@ -1888,11 +1927,31 @@ function renderThreadCard(t: ThreadState, posinset: number, setsize: number): HT
   return card;
 }
 
+/**
+ * "via tools" / "via cli" / "via file" — how an agent's comment reached the
+ * file (round-6 P1.4). Human comments never get a marker at all: nobody
+ * needs to be told they typed their own reply. An unrecognized `via` (an
+ * older file, or a value from an agent this build doesn't know about yet)
+ * reads the same as absent — "via file" — which is always a safe guess: it
+ * just means "not through the tools or `mdc`", true of anything hand-edited.
+ */
+function viaMarker(c: InlineComment): { label: string; title: string } | undefined {
+  if (!isAgentComment(c)) return undefined;
+  const kind: "tools" | "cli" | "file" = c.via === "tools" || c.via === "cli" ? c.via : "file";
+  const title = {
+    tools: "The agent wrote this through the review tools (MCP), not by hand-editing the file.",
+    cli: "The agent wrote this through the `mdc` command-line tool.",
+    file: "The agent edited the file's text directly — not through the review tools or `mdc`.",
+  }[kind];
+  return { label: `via ${kind}`, title };
+}
+
 function renderComment(thread: ThreadState, c: InlineComment, pending = false): HTMLElement {
   if (c.deleted) {
     const card = buildCommentCard({
       author: c.author,
       timestamp: c.ts,
+      via: viaMarker(c),
       body: "(comment deleted)",
       reply: !!c.parent,
     });
@@ -1920,6 +1979,7 @@ function renderComment(thread: ThreadState, c: InlineComment, pending = false): 
       author: c.author,
       timestamp: c.ts,
       note: c.editedTs ? "edited" : undefined,
+      via: viaMarker(c),
       bodyEl: composer.el,
       reply: !!c.parent,
     });
@@ -1971,6 +2031,7 @@ function renderComment(thread: ThreadState, c: InlineComment, pending = false): 
     author: c.author,
     timestamp: c.ts,
     note: c.editedTs ? "edited" : undefined,
+    via: viaMarker(c),
     bodyEl,
     reply: !!c.parent,
     actions,
@@ -2250,14 +2311,18 @@ window.addEventListener("message", (ev) => {
     renderSkillWarning(msg.skillStatus);
     updateSuggestModeToggle(msg.suggestMode ?? false);
     pendingThreadIds = new Set(msg.pendingThreadIds ?? []);
-    if (msg.pendingLabel) pendingLabelText = msg.pendingLabel;
+    agentName = msg.agentName || "Claude";
+    updateAgentUi();
+    pendingLabelText = msg.pendingLabel ?? `${agentName} is working…`;
     headlessAvailable = msg.headlessAvailable ?? false;
     currentDiff = msg.diff ?? null;
     render(msg.state);
   } else if (msg.type === "update") {
     updateSuggestModeToggle(msg.suggestMode ?? false);
     pendingThreadIds = new Set(msg.pendingThreadIds ?? []);
-    if (msg.pendingLabel) pendingLabelText = msg.pendingLabel;
+    agentName = msg.agentName || "Claude";
+    updateAgentUi();
+    pendingLabelText = msg.pendingLabel ?? `${agentName} is working…`;
     headlessAvailable = msg.headlessAvailable ?? false;
     currentDiff = msg.diff ?? null;
     render(msg.state);

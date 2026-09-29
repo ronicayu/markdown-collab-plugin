@@ -20,6 +20,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { imageResourceRootPaths } from "../webviewShared/resourceRoots";
 import { isInsideRoot } from "../pathUtils";
+import { agentDisplayName, isAgentComment } from "../agentIdentity";
 import { checkClaudeSkill, type SkillStatus } from "../skill";
 import { runDrawioRead } from "../collab/drawioService";
 import { claudePending, onPendingChanged } from "../claudePendingService";
@@ -91,10 +92,19 @@ interface InitMessage {
   /**
    * Whether a headless Claude run is available right now — the same check
    * `commands/send.ts` uses for the send-mode picker (10x-plan-4 P2.4). Drives
-   * the empty-state card's button label and, on click, whether the dispatch
-   * is forced through headless.
+   * the empty-state card's button label ("Review with Claude" vs "Ask Claude
+   * to review this doc"). No longer forces the dispatch through headless on
+   * click (10x-plan-6 P0.1b) — the button now goes through the same
+   * remembered send mode / picker as every other send.
    */
   headlessAvailable: boolean;
+  /**
+   * Display name of the agent that most recently wrote to this file — the
+   * host's answer to "who should the Send button and pending text say?"
+   * instead of the client hardcoding "Claude" (10x-plan-6 P5.2). "Claude"
+   * when no agent has written here yet.
+   */
+  agentName: string;
 }
 
 interface UpdateMessage {
@@ -105,6 +115,8 @@ interface UpdateMessage {
   pendingThreadIds: string[];
   pendingLabel: string;
   headlessAvailable: boolean;
+  /** Same contract as `InitMessage.agentName`. */
+  agentName: string;
 }
 
 interface SkillStatusMessage {
@@ -629,23 +641,17 @@ ${inlineCommentsAppBody()}
   /**
    * "Review with Claude" / "Ask Claude to review this doc" from the
    * first-run empty-state card (10x-plan-4 P2.4) — the first-minute path for
-   * a document with zero threads. When headless can actually run here, force
-   * this one dispatch through it, skipping the send-mode prompt entirely:
-   * the whole point of a one-click button is not landing in another picker.
-   * Otherwise fall through to the plain command, which resolves the
-   * configured/remembered mode (or asks) exactly like the title-bar entry
-   * point does. Either way this is the same command normal "Ask Claude to
-   * Review" runs through, focus prompt included — not a second, cut-down
-   * copy of that flow.
+   * a document with zero threads. Used to force this dispatch through
+   * headless whenever it could run, skipping the send-mode prompt entirely;
+   * 10x-plan-6 P0.1b drops that override — the grill established terminal,
+   * not headless, is the mode actually used, so the button now goes through
+   * the same ask-review flow as the title-bar entry point: the remembered
+   * send mode, or the picker when there isn't one yet. This is the same
+   * command normal "Ask Claude to Review" runs through, focus prompt
+   * included — not a second, cut-down copy of that flow.
    */
   private async handleEmptyStateReview(): Promise<void> {
-    const avail = await headlessAvailability(this.context.workspaceState);
-    await vscode.commands.executeCommand(
-      "markdownCollab.askClaudeToReview",
-      this.doc.uri,
-      undefined,
-      avail.ok ? { forceMode: "headless" } : undefined,
-    );
+    await vscode.commands.executeCommand("markdownCollab.askClaudeToReview", this.doc.uri);
   }
 
   /**
@@ -900,7 +906,8 @@ ${inlineCommentsAppBody()}
   }
 
   private async pushInit(): Promise<void> {
-    const state = serialize(parse(this.doc.getText()), { lineNumbers: readLineNumbers() });
+    const parsed = parse(this.doc.getText());
+    const state = serialize(parsed, { lineNumbers: readLineNumbers() });
     const docDirUri = vscode.Uri.file(path.dirname(this.doc.uri.fsPath));
     const folder = vscode.workspace.getWorkspaceFolder(this.doc.uri);
     const msg: InitMessage = {
@@ -919,6 +926,7 @@ ${inlineCommentsAppBody()}
       pendingThreadIds: this.pendingThreadIds(),
       pendingLabel: this.pendingLabelText(),
       headlessAvailable: this.headlessAvailableForRender(),
+      agentName: mostRecentAgentName(parsed),
     };
     await this.panel.webview.postMessage(msg);
   }
@@ -961,7 +969,8 @@ ${inlineCommentsAppBody()}
     // Callers include editor-less triggers (diff refresh, pending-set
     // changes) where a GC'd document would otherwise render frozen content.
     await this.ensureLiveDoc();
-    const state = serialize(parse(this.doc.getText()), { lineNumbers: readLineNumbers() });
+    const parsed = parse(this.doc.getText());
+    const state = serialize(parsed, { lineNumbers: readLineNumbers() });
     const msg: UpdateMessage = {
       type: "update",
       state,
@@ -970,6 +979,7 @@ ${inlineCommentsAppBody()}
       pendingThreadIds: this.pendingThreadIds(),
       pendingLabel: this.pendingLabelText(),
       headlessAvailable: this.headlessAvailableForRender(),
+      agentName: mostRecentAgentName(parsed),
     };
     await this.panel.webview.postMessage(msg);
   }
@@ -1105,4 +1115,32 @@ function readLineNumbers(): boolean {
 
 function readSuggestMode(): boolean {
   return vscode.workspace.getConfiguration("markdownCollab").get<boolean>("proposeEditsAsSuggestions", false);
+}
+
+/**
+ * The display name of the agent that most recently wrote to this file —
+ * across every comment and suggestion, resolved or pending, whichever has
+ * the latest timestamp (10x-plan-6 P5.2). Reuses `agentIdentity`'s slug→copy
+ * map so a Codex- or Cursor-written file says so instead of the client
+ * hardcoding "Claude"; a file no agent has written to yet defaults to
+ * "Claude", same as `agentGroupLabel`'s empty-group fallback.
+ *
+ * Exported for the unit test; pure over an already-parsed document so it
+ * needs no vscode surface of its own.
+ */
+export function mostRecentAgentName(parsed: ParsedDocument): string {
+  let latestTs: string | undefined;
+  let latestAuthor: string | undefined;
+  const consider = (entry: { author: string; ts: string; agent?: boolean }): void => {
+    if (!isAgentComment(entry)) return;
+    if (latestTs === undefined || entry.ts > latestTs) {
+      latestTs = entry.ts;
+      latestAuthor = entry.author;
+    }
+  };
+  for (const thread of parsed.threads) {
+    for (const comment of thread.comments) consider(comment);
+  }
+  for (const suggestion of parsed.suggestions) consider(suggestion);
+  return agentDisplayName(latestAuthor ?? "claude").noun;
 }

@@ -139,6 +139,8 @@ Ordinary prose edits — text outside an anchored span — use \`mc_edit\`, whic
 
 Marker surgery by hand is the single most common way this workflow breaks: one dropped \`-->\` silently orphans a reviewer's comment. So you never hand-edit a marker or a thread line — every change goes through the *same* engine the editor itself uses, whichever front end is available: the **MCP tools** (first choice, when they're in your tool list — edits go through the editor, undoable with Cmd+Z, validated before they land), or the **\`mdc\` CLI** (${cliInvocation(t)} same verbs, for when the tools aren't there — a session outside this VS Code window, MCP disabled by policy, or the server not running).
 
+\`mdc\` itself is reachable only inside a Claude Code session — this plugin, or the standalone skill; an agent that isn't Claude Code has neither and instead follows \`docs/format.md\`, asking you to run **Markdown Collab: Repair Comment Anchors** when it can't run a check itself.
+
 Hand-editing markers with the Edit tool is a distant third and only when neither exists — see *Appendix: hand-editing markers* at the end of this file.
 
 ${toolTable(t)}
@@ -359,11 +361,11 @@ These calibrate the rubric. Mirror the *shape* of the good examples; avoid the f
 
 **Bad — fix dressed as a comment.** Body: *"I changed this to X."* You don't edit prose in Review Mode. Open a thread proposing the change in the body; let the human accept it.
 
-#### No upper bound on thread count
+#### Rank, cap at five, then summarize
 
-There is **no maximum number of threads** per review pass. Leave a thread for every substantive concern that fits the focus directive (or the general rubric, if no focus was given). If you find 30 issues, leave 30 threads. The human triages with the sidebar UI; your job is signal, not curation.
+Rank concerns by severity and open threads for the **five** that matter most. Put everything else in one summary thread anchored to the document's title (its first \`#\` heading, or the very first line when it has none): \`Also noticed (N): …\`, one line per item naming its passage — so the human can read it and say "open 3 and 7" for exactly the ones they want promoted. The \`Focus:\` line can override the cap explicitly ("give me ten", "everything"); absent that, five is it, whether the pass turns up six issues or sixty.
 
-Do not "leave the top N" — dropping findings to hit a count target risks suppressing the one that matters most.
+Don't drop a finding to make the cap — every concern still reaches the human, in its own thread if it's top five, in the summary line otherwise. The human triages with the sidebar UI; your job is signal, ranked.
 
 #### Honest empty result
 
@@ -381,14 +383,14 @@ A Review Mode prompt may name **several files** instead of one — the extension
 
 1. **Read every listed file end to end before opening any thread** — you can't judge cross-file consistency otherwise, and a thread opened in file 1 may be answered by file 3. Then open threads file by file, in the order listed (same Phase 5 mechanics; ids unique only within their own file).
 2. **Cross-document consistency is part of the pass**, not an optional extra: terminology drift, a claim in one file contradicted by another, duplicated guidance that's diverged, cross-references that no longer resolve. Anchor such a thread in the file that's wrong (or the more prominent one), quoting the other file's conflicting text — the human is reading without it open.
-3. **Focus and the no-upper-bound rule apply per pass, not per file.** Verify each file with \`mc_check\` before moving to the next — cheaper to catch a broken marker in file 1 before editing files 2 and 3 — and report per file, with cross-document findings called out separately.
+3. **Focus applies per pass; the five-thread cap applies per file.** Each file gets its own top five and its own summary thread for the rest — not one shared cap or one shared summary across the whole pass. Verify each file with \`mc_check\` before moving to the next — cheaper to catch a broken marker in file 1 before editing files 2 and 3 — and report per file, with cross-document findings called out separately.
 
 #### Workflow — Review Mode pass, in short
 
 Read the doc end to end first. Initiate threads one at a time, in document order, with \`mc_open\`${cliOnly(t, "/`mdc open`")} — never edit prose. Narrate long passes with \`mc_status\`. Verify with \`mc_check\`, which also ends the human's wait.`,
     brief: {
       kind: "rule",
-      text: "Review mode (\"review this doc\"): open a thread with `mc_open` for every substantive concern and never edit prose. There is no upper bound on threads — never drop findings to hit a count.",
+      text: "Review mode (\"review this doc\"): open a thread with `mc_open` for the five most severe concerns, then one summary thread for the rest (\"Also noticed (N): …\"). Never edit prose.",
     },
   },
   {
@@ -413,7 +415,7 @@ Then confirm, from \`mc_list\`, that each addressed thread ends with your commen
 
 When the human asks you to **suggest** or **propose** changes rather than make them ("suggest edits", "don't apply, let me accept them", or a send payload requesting suggest mode), do NOT edit the prose directly — every change becomes a pending suggestion via \`mc_suggest(file, quote: "…", with: "…", note: "why")\`${cliOnly(t, ' (CLI: `suggest <file> --quote "…" --with "…" --note "…"`)')}.
 
-The original text stays in the file; the proposal is recorded separately. \`${t === "headless" ? "note" : "--note"}\` is your rationale, shown on the suggestion card — always include it. Same anchoring rules as opening a thread: ambiguous, or in code/frontmatter/the threads region, gets refused — pass \`occurrence\` or pick a different span. One suggestion per contiguous change, re-reading between several so offsets stay valid. **Do NOT accept or reject your own suggestions** — that's the human's call in the review UI, only on explicit instruction. Verify with \`mc_check\` and \`mc_list\` (reports each suggestion's \`original\` and \`proposed\`).
+The original text stays in the file; the proposal is recorded separately. \`${t === "headless" ? "note" : "--note"}\` is your rationale, shown on the suggestion card — always include it. Same anchoring rules as opening a thread: ambiguous, or in code/frontmatter/the threads region, gets refused — pass \`occurrence\` or pick a different span. **One suggestion changes one sentence or one list item.** Re-read between several so offsets stay valid. A paragraph-level rewrite is split into several suggestions, one per sentence; when it genuinely can't be split (the change reworks the paragraph as a whole), open a comment carrying the proposed text instead of forcing it into one giant suggestion. A \`with\` far longer than the quoted passage is refused (\`suggestion_too_large\`) — that's the tool telling you to split it, not a limit to work around. **Do NOT accept or reject your own suggestions** — that's the human's call in the review UI, only on explicit instruction. Verify with \`mc_check\` and \`mc_list\` (reports each suggestion's \`original\` and \`proposed\`).
 
 Mutually exclusive with direct edits per request: if the human wants suggestions, route ALL changes through \`${t === "headless" ? "mc_suggest" : "suggest"}\`, never mix in a few direct edits. Review Mode is unaffected — it never edits prose at all.`,
     brief: {

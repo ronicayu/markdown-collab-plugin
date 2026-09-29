@@ -90,7 +90,7 @@ describe("buildReviewRequestPayload", () => {
     expect(result.payload.prompt).not.toContain("Focus:");
   });
 
-  it("instructs Claude not to edit prose and not to cap thread count", () => {
+  it("instructs Claude not to edit prose and to rank + cap at five with a summary", () => {
     setFolder(tmpDir);
     const result = buildReviewRequestPayload(
       stubDoc(path.join(tmpDir, "README.md")),
@@ -99,6 +99,9 @@ describe("buildReviewRequestPayload", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     expect(result.payload.prompt).toMatch(/do not edit prose/i);
-    expect(result.payload.prompt).toMatch(/no upper bound|no maximum|as many/i);
+    expect(result.payload.prompt).toMatch(/rank concerns by severity/i);
+    expect(result.payload.prompt).toMatch(/five that matter most/i);
+    expect(result.payload.prompt).toMatch(/summary thread/i);
+    expect(result.payload.prompt).not.toMatch(/no upper bound|no maximum/i);
   });
 });

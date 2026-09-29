@@ -33,10 +33,13 @@ export interface SendModePickerOptions {
 /**
  * Build the picker's items.
  *
- * With headless available it comes first and carries "recommended": it is the
- * one path that needs nothing else running. It is *offered*, never chosen —
- * this list only appears when nothing was auto-detected, and picking stays the
- * human's call (10x-plan-4's open question 1). Without it, terminal leads.
+ * Terminal leads and always carries "recommended" (10x-plan-6 P0.1: the grill
+ * established it's the mode actually used, not headless — headless was built
+ * for "people who can't use a terminal", who can't sign in to Claude Code
+ * either). It is *offered*, never chosen — this list only appears when
+ * nothing was auto-detected, and picking stays the human's call (10x-plan-4's
+ * open question 1). Headless, when available, is listed second: a way to not
+ * keep a terminal open, not the default path. Clipboard is last either way.
  *
  * `terminalDetected` is the same evidence `detectSendMode` uses — when it's
  * true the caller has already auto-selected terminal without asking, so in
@@ -53,7 +56,7 @@ export interface SendModePickerOptions {
 export function buildSendModeItems(opts: SendModePickerOptions): SendModePickerItem[] {
   const headless = opts.headlessAvailable === true;
   const terminal: SendModePickerItem = {
-    label: headless ? "Type into the active terminal" : "Type into the active terminal (recommended)",
+    label: "Type into the active terminal (recommended)",
     description: "Types the prompt into whatever's running there. Works everywhere.",
     detail: opts.terminalDetected
       ? "A Claude Code session is running in a visible terminal — the prompt goes there."
@@ -67,13 +70,14 @@ export function buildSendModeItems(opts: SendModePickerOptions): SendModePickerI
   };
   if (!headless) return [terminal, clipboard];
   return [
+    terminal,
     {
-      label: "Run Claude for me — recommended",
-      description: "Claude works in the background; progress shows in the status bar.",
-      detail: "Claude can only read files and use the review tools. Click the status bar to cancel.",
+      label: "Run Claude for me",
+      description: "Claude works in the background if you'd rather not keep a terminal open.",
+      detail:
+        "Needs Claude Code installed and signed in. Claude can only read files and use the review tools — click the status bar to cancel.",
       mode: "headless",
     },
-    terminal,
     clipboard,
   ];
 }

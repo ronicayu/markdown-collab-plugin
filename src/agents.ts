@@ -1,31 +1,86 @@
+import { createHash } from "crypto";
 import * as fs from "fs/promises";
 import * as path from "path";
 
 export const AGENTS_SENTINEL = "## Markdown review comments";
 
-// The hierarchy below matches skillText.ts's `changePaths` (0.4): MCP tools
-// first, the `mdc` CLI second, hand-editing last and only when neither
-// exists. AGENTS.md reaches every kind of agent, most of which have no skill
-// loader to read the fuller version from, so this is the same rule in miniature
-// — not a fourth, independent set of instructions to drift from the other three.
+/** Where the format contract lives. The `docs/` folder isn't in the .vsix, so
+ *  the link goes to the repository rather than to a path in the workspace. */
+export const FORMAT_SPEC_URL = "https://github.com/ronicayu/markdown-collab-plugin/blob/main/docs/format.md";
+
+// 10x-plan-6 P1.3: the file format is the API for every agent that isn't
+// Claude Code. The only non-Claude loop ever run was Copilot hand-editing the
+// markers from a pasted prompt, and they survived — while `mdc`, which the old
+// snippet ranked second, is only ever on PATH inside a Claude Code session. So
+// this leads with the contract (docs/format.md), names the tools as the better
+// path when an agent happens to have them, and says plainly who has `mdc` and
+// what to do without it: ask the human to run Repair.
 export const AGENTS_SNIPPET = `## Markdown review comments
 
-Markdown Collab stores review feedback inline in the \`.md\` file itself — anchored spans wrapped in paired \`<!--mc:a:ID-->…<!--mc:/a:ID-->\` markers, threads recorded one \`<!--mc:t {JSON}-->\` line per thread between \`<!--mc:threads:begin-->\`/\`<!--mc:threads:end-->\`. Detect a reviewed file by the literal string \`<!--mc:threads:begin-->\`.
+Markdown Collab stores review feedback inline in the \`.md\` file itself — anchored spans wrapped in paired \`<!--mc:a:ID-->…<!--mc:/a:ID-->\` markers, threads recorded one \`<!--mc:t {JSON}-->\` line per thread between \`<!--mc:threads:begin-->\`/\`<!--mc:threads:end-->\` at the end of the file. Detect a reviewed file by the literal string \`<!--mc:threads:begin-->\`.
 
-Never hand-edit a marker or a thread line directly — one dropped \`-->\` silently orphans a reviewer's comment. Three ways to change one, in order:
+**The file format is the contract:** [\`docs/format.md\`](${FORMAT_SPEC_URL}) in the Markdown Collab repository defines every marker and field. If the \`markdown-collab\` MCP tools are in your tool list, use them instead of editing by hand — \`mc_list\`, then \`mc_reply\`/\`mc_open\`/\`mc_rewrite\`/\`mc_edit\`/\`mc_suggest\`, and \`mc_check\` last — they keep the markers intact and the human can undo them. Otherwise edit the file by hand, carefully; one dropped \`-->\` silently orphans a reviewer's comment:
 
-1. **The \`markdown-collab\` MCP tools**, if they're in your tool list (offer "Markdown Collab: Connect an Agent…" if not): \`mc_list\` reads open threads with their live anchored text; \`mc_reply\`/\`mc_open\`/\`mc_rewrite\` act on them; \`mc_edit\` changes prose outside anchored spans; \`mc_resolve\` only when the human asks; \`mc_suggest\` in suggest mode; \`mc_check\` on every file you touch, last.
-2. **The \`mdc\` CLI**, if it's on PATH: \`mdc <verb> <file> [args]\` — list / reply / open / rewrite / edit / resolve / suggest / check, same rules as the tools above.
-3. **Hand-editing, only when neither exists:**
-   - Reply: find the thread's \`<!--mc:t {…}-->\` line and append \`{"id":"c<next>","parent":"<last-comment-id>","author":"<you>","ts":"<ISO-8601 UTC>","body":"<what you did>"}\` to its \`comments\` array. Never change \`status\`; never edit or remove an existing comment.
-   - New thread, only on explicit request ("leave a comment on X"): pick a unique id, wrap the passage in \`<!--mc:a:ID-->…<!--mc:/a:ID-->\`, append a fresh \`<!--mc:t {…}-->\` line with a single \`c1\` comment.
-   - Rewriting an anchored passage keeps both markers on the new wording; removing the passage deletes both markers and leaves the thread unanchored — the correct outcome, don't re-anchor to nearby text.
+- **Reply:** append \`{"id":"c<next>","parent":"<last-comment-id>","author":"<you>","agent":true,"ts":"<ISO-8601 UTC>","body":"<what you did>"}\` to the \`comments\` array on the thread's \`<!--mc:t {…}-->\` line. Never change \`status\`; never edit or remove an existing comment.
+- **New thread**, only on explicit request ("leave a comment on X"): pick an unused 5-character id from \`0-9a-z\`, wrap the passage in \`<!--mc:a:ID-->…<!--mc:/a:ID-->\`, and add a line \`<!--mc:t {"id":"ID","quote":"<the passage>","status":"open","comments":[<one c1 comment>]}-->\` just before \`<!--mc:threads:end-->\` (no block yet: add both fence lines at the very end of the file, after a blank line).
+- **Rewriting an anchored passage** keeps both markers on the new wording; removing the passage deletes both markers and leaves the thread unanchored — the correct outcome, don't re-anchor to nearby text.
+- Never type inside a marker or put one in a code block or the frontmatter. Inside JSON strings, write \`-->\` as \`--\\u003e\` and \`<!--\` as \`\\u003c!--\`.
+
+**Then check the file.** The \`mdc\` CLI exists only inside Claude Code sessions: if \`mdc\` is on your PATH, run \`mdc check <file>\`; otherwise ask the human to run "Markdown Collab: Repair Comment Anchors" on the file.
 
 `;
 
-export async function ensureAgentsSnippet(
-  workspaceRoot: string,
-): Promise<"created" | "appended" | "already-present"> {
+/**
+ * Every snippet an earlier version wrote, as `sectionHash` sees it. A section
+ * that still hashes to one of these is ours and untouched, so it is replaced
+ * with the current text; anything else under the heading was edited by hand
+ * and is left alone. When `AGENTS_SNIPPET` changes, add its old hash here —
+ * agents.test.ts pins the current one so that step can't be skipped.
+ */
+const PRIOR_SNIPPET_HASHES = new Set([
+  "e523ef2be85bcea3", // 1.0: the JSON sidecar workflow
+  "44edbc6df78836a3", // 0.27: inline format, sidecar kept as legacy
+  "04c086242ea7cfed", // 0.34: inline only, hand-editing instructions
+  "5b05cecb60496801", // 0.35.12: MCP tools, then mdc, then hand-editing
+]);
+
+/** Line endings and trailing whitespace don't make a section someone's edit. */
+export function sectionHash(text: string): string {
+  return createHash("sha256").update(text.replace(/\r\n/g, "\n").trimEnd()).digest("hex").slice(0, 16);
+}
+
+/**
+ * Our section of AGENTS.md: from the sentinel heading to the next heading of
+ * the same or a higher level, or the end of the file. Null when the heading
+ * isn't there as a line of its own.
+ */
+function findSection(text: string): { start: number; end: number } | null {
+  const heading = /^## Markdown review comments[ \t]*\r?$/m.exec(text);
+  if (!heading) return null;
+  const bodyStart = heading.index + heading[0].length;
+  const next = /^#{1,2}[ \t]/m.exec(text.slice(bodyStart));
+  return { start: heading.index, end: next ? bodyStart + next.index : text.length };
+}
+
+export type AgentsSnippetOutcome =
+  /** No AGENTS.md; one was written with the snippet. */
+  | "created"
+  /** AGENTS.md existed without the section; the snippet was appended. */
+  | "appended"
+  /** The section was an earlier version's, untouched; it now reads as the current one. */
+  | "refreshed"
+  /** The section is already the current snippet. */
+  | "already-present"
+  /** The section was edited by hand. Nothing was written. */
+  | "customized";
+
+/**
+ * Write the snippet into the workspace's AGENTS.md, or bring an earlier
+ * version of it up to date (10x-plan-6 P1.1 runs this first for every agent
+ * that isn't Claude Code). Never overwrites a section someone edited: that is
+ * reported as `customized` and left for the human.
+ */
+export async function ensureAgentsSnippet(workspaceRoot: string): Promise<AgentsSnippetOutcome> {
   const target = path.join(workspaceRoot, "AGENTS.md");
   let existing: string | null = null;
   try {
@@ -40,11 +95,22 @@ export async function ensureAgentsSnippet(
     return "created";
   }
 
-  if (existing.includes(AGENTS_SENTINEL)) {
-    return "already-present";
+  const section = findSection(existing);
+  if (!section) {
+    // The sentinel text without its heading line (quoted in prose, or under a
+    // `###`) is still someone's mention of it — not ours to append beside.
+    if (existing.includes(AGENTS_SENTINEL)) return "customized";
+    await fs.writeFile(target, existing + "\n\n" + AGENTS_SNIPPET, "utf8");
+    return "appended";
   }
 
-  const appended = existing + "\n\n" + AGENTS_SNIPPET;
-  await fs.writeFile(target, appended, "utf8");
-  return "appended";
+  const current = sectionHash(existing.slice(section.start, section.end));
+  if (current === sectionHash(AGENTS_SNIPPET)) return "already-present";
+  if (!PRIOR_SNIPPET_HASHES.has(current)) return "customized";
+
+  // The snippet ends in a blank line, so whatever followed our section keeps
+  // exactly one blank line above it.
+  const after = existing.slice(section.end).replace(/^(\r?\n)+/, "");
+  await fs.writeFile(target, existing.slice(0, section.start) + AGENTS_SNIPPET + after, "utf8");
+  return "refreshed";
 }

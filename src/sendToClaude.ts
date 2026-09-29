@@ -61,14 +61,20 @@ export interface ReviewPayload {
 
 /**
  * The terms of a Review Mode pass, shared by the single-file and multi-file
- * prompts: unbounded thread count (see the skill's "No upper bound" rule) and
- * no prose edits, because the human triages from the sidebar.
+ * prompts (10x-plan-6 P3): rank by severity, open threads for the five that
+ * matter most, summarize the rest, and no prose edits — the human triages
+ * from the sidebar. Multi-file passes cap and summarize per file, not once
+ * across the whole pass (`multiFileReview.ts`'s `CROSS_DOCUMENT_DIMENSION`
+ * covers the one thing that *is* pass-wide: consistency between the files).
  */
 export function reviewModeClosing(fileCount: number): string {
-  const subject = fileCount === 1 ? "the doc warrants" : "the docs warrant";
+  const perFile = fileCount === 1 ? "" : " in each file";
+  const summaryOwner = fileCount === 1 ? "one summary thread" : "that file's own summary thread";
   return (
-    "Open a review thread for every substantive concern. There is no upper bound — " +
-    `leave as many as ${subject}. Do not edit prose; the human triages from the sidebar.`
+    `Rank concerns by severity and open a thread for the five that matter most${perFile}. Put everything else in ` +
+    `${summaryOwner}, anchored to the document's title (or its first heading) — "Also noticed (N): …", one line ` +
+    "per item naming its passage, so the human can ask to open specific ones. A focus directive can raise or " +
+    'remove the cap ("give me ten", "everything"). Do not edit prose; the human triages from the sidebar.'
   );
 }
 

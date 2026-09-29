@@ -19,8 +19,14 @@ test("renders the prose, both threads, and the pending suggestion", async ({ pag
   // The "open" filter is on by default; the answered thread is still open.
   await expect(page.locator(".thread-card")).toHaveCount(2);
   await expect(page.locator(".mc-suggestion")).toHaveCount(1);
-  await expect(page.locator(".mc-suggestion__del")).toContainText("Release notes");
-  await expect(page.locator(".mc-suggestion__ins")).toContainText("Release highlights");
+  // "Release notes" → "Release highlights" is a one-word change, small enough
+  // that the card defaults to the inline word diff (round-6 P2.2), not the
+  // old two-paragraph old/new block.
+  const sentence = page.locator(".mc-suggestion .mc-suggestion__sentence");
+  await expect(sentence).toBeVisible();
+  await expect(sentence.locator("del")).toHaveText("notes");
+  await expect(sentence.locator("ins")).toHaveText("highlights");
+  await expect(page.locator(".mc-suggestion .mc-suggestion__diff")).toBeHidden();
 });
 
 test("Accept on a suggestion posts accept-suggestion for that anchor", async ({ page }) => {

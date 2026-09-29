@@ -48,6 +48,15 @@ export interface ToolDeps {
   /** Fired when a call is refused. The result still goes back to Claude. */
   onRefusal?(event: { tool: string; code: string; message: string }): void;
   now?(): string;
+  /**
+   * Whether the human's `markdownCollab.proposeEditsAsSuggestions` choice is on
+   * for this document (10x-plan-6 P2.1), keyed by the same document key
+   * `resolveFile` returned. `mc_edit`/`mc_rewrite` refuse outright when it is —
+   * optional so a caller that predates the setting (a test harness, the
+   * `mdc` CLI's own local-write path, which can't ask a VS Code window
+   * anything) keeps today's behaviour: direct edits allowed.
+   */
+  suggestModeFor?(file: string): boolean;
 }
 
 /** A refusal the caller should see as a tool error, not a transport failure. */
@@ -60,6 +69,37 @@ export class ToolRefusal extends Error {
     super(message);
     this.name = "ToolRefusal";
   }
+}
+
+/**
+ * 10x-plan-6 P2.1: suggest mode used to be a request the agent could ignore
+ * (and did — the plan's whole reason for enforcing it here). `mc_edit` and
+ * `mc_rewrite` now refuse outright when it's on for the file, writing
+ * nothing; the forwarded `mdc edit`/`mdc rewrite` inherit the refusal for
+ * free because they run this same `callTool`.
+ */
+function refuseIfSuggestMode(deps: ToolDeps, key: string): void {
+  if (deps.suggestModeFor?.(key)) {
+    throw new ToolRefusal(
+      "suggest_mode_on",
+      "Suggest mode is on for this file — propose the change with mc_suggest instead",
+    );
+  }
+}
+
+/**
+ * 10x-plan-6 P2.3: a suggestion is meant to read as one sentence or one list
+ * item, not a whole paragraph pasted into `with`. The multiplier gives a
+ * short quote room to grow into a fuller clause; the flat floor keeps a long
+ * quote from earning a proportionally enormous replacement. Whichever is
+ * larger wins, so neither end of the quote-length range is unfairly strict.
+ */
+export const SUGGESTION_MAX_MULTIPLE_OF_QUOTE = 3;
+export const SUGGESTION_MIN_CHARS = 300;
+
+/** Exported for tests — the refusal itself only ever runs through `mc_suggest`. */
+export function suggestionTooLarge(quote: string, replacement: string): boolean {
+  return replacement.length > Math.max(SUGGESTION_MAX_MULTIPLE_OF_QUOTE * quote.length, SUGGESTION_MIN_CHARS);
 }
 
 const FILE_PROP = {
@@ -134,7 +174,8 @@ const BASE_TOOLS: readonly McpTool[] = [
     title: "Rewrite an anchored span",
     description:
       "Replace the text a thread is anchored to, keeping its markers intact. " +
-      "Use this to apply a change the human asked for in that thread.",
+      "Use this to apply a change the human asked for in that thread. Refused with suggest_mode_on when " +
+      "suggest mode is on for the file — use mc_suggest instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -153,7 +194,8 @@ const BASE_TOOLS: readonly McpTool[] = [
       "anchor, use mc_rewrite instead. To delete an anchored passage, make `old` span its open marker, the " +
       "passage and its close marker: the thread is left unanchored, by design. Anything else that touches a " +
       "review marker (splits one, or holds only one of a pair) or the threads region is refused with " +
-      "not_editable. Ambiguous text (appears more than once) is refused unless occurrence (1-based) is given.",
+      "not_editable. Ambiguous text (appears more than once) is refused unless occurrence (1-based) is given. " +
+      "Refused with suggest_mode_on when suggest mode is on for the file — use mc_suggest instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -186,7 +228,9 @@ const BASE_TOOLS: readonly McpTool[] = [
     title: "Propose an edit as a suggestion",
     description:
       "Propose a change the human accepts or rejects, instead of applying it. The document still reads as the " +
-      "original until they accept. Use this whenever suggest mode is requested.",
+      "original until they accept. Use this whenever suggest mode is requested. One suggestion, one sentence or " +
+      "list item — a `with` far longer than `quote` is refused with suggestion_too_large; split a paragraph " +
+      "rewrite into several suggestions instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -416,29 +460,43 @@ export async function callTool(
       return text({ action, file: key, ...outcome.result });
     };
 
+    // Every comment or suggestion written here is stamped as arriving through
+    // the tools (10x-plan-6 P1.4) — a forwarded `mdc` write included, since it
+    // is this same call by the time it lands.
     switch (name) {
       case "mc_reply":
-        return write(opReply(source, str(args, "threadId"), str(args, "body"), now, author), "reply");
+        return write(opReply(source, str(args, "threadId"), str(args, "body"), now, author, true, "tools"), "reply");
       case "mc_open":
         return write(
-          opOpen(source, str(args, "quote"), str(args, "body"), parseOccurrence(args.occurrence), now, author),
+          opOpen(source, str(args, "quote"), str(args, "body"), parseOccurrence(args.occurrence), now, author, "tools"),
           "open",
         );
       case "mc_rewrite":
+        refuseIfSuggestMode(deps, key);
         return write(opRewrite(source, str(args, "threadId"), str(args, "with")), "rewrite");
       case "mc_edit":
+        refuseIfSuggestMode(deps, key);
         return write(
           opEdit(source, str(args, "old"), strAllowEmpty(args, "new"), parseOccurrence(args.occurrence)),
           "edit",
         );
       case "mc_resolve":
         return write(opResolve(source, str(args, "threadId"), now, author), "resolve");
-      case "mc_suggest":
+      case "mc_suggest": {
+        const quote = str(args, "quote");
+        const proposed = str(args, "with");
+        if (suggestionTooLarge(quote, proposed)) {
+          throw new ToolRefusal(
+            "suggestion_too_large",
+            `suggestion is too large (${proposed.length} chars replacing a ${quote.length}-char quote) — ` +
+              "split it into smaller suggestions, one sentence or list item each",
+          );
+        }
         return write(
           opSuggest(
             source,
-            str(args, "quote"),
-            str(args, "with"),
+            quote,
+            proposed,
             {
               note: optionalStr(args, "note"),
               threadId: optionalStr(args, "threadId"),
@@ -446,9 +504,11 @@ export async function callTool(
             },
             now,
             author,
+            "tools",
           ),
           "suggest",
         );
+      }
       case "mc_accept":
         return write(opAccept(source, str(args, "anchorId")), "accept");
       case "mc_reject":

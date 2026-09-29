@@ -39,6 +39,9 @@ function withRefreshedAnchorHash(parsed, thread) {
 }
 
 // src/inlineComments/format.ts
+function isWriteVia(v) {
+  return v === "tools" || v === "cli";
+}
 var OPEN_RE = /<!--mc:a:([a-z0-9]{1,12})-->/g;
 var CLOSE_RE = /<!--mc:\/a:([a-z0-9]{1,12})-->/g;
 var THREADS_BEGIN = "<!--mc:threads:begin-->";
@@ -193,7 +196,7 @@ function parseThreads(body, malformed) {
         status: obj.status === "resolved" ? "resolved" : "open",
         resolvedBy: obj.resolvedBy,
         resolvedTs: obj.resolvedTs,
-        comments: Array.isArray(obj.comments) ? obj.comments.filter(isValidComment) : [],
+        comments: Array.isArray(obj.comments) ? obj.comments.filter(isValidComment).map(withKnownVia) : [],
         anchorHash: typeof obj.anchorHash === "string" ? obj.anchorHash : void 0
       });
     } catch {
@@ -244,6 +247,7 @@ function parseSuggestions(body) {
         // Forgetting a field in this list means it was never truly optional —
         // it was silently deleted the moment the file was next saved.
         agent: typeof obj.agent === "boolean" ? obj.agent : void 0,
+        via: isWriteVia(obj.via) ? obj.via : void 0,
         ts: typeof obj.ts === "string" ? obj.ts : "",
         original: obj.original,
         proposed: obj.proposed,
@@ -258,6 +262,12 @@ function isValidComment(c) {
   if (!c || typeof c !== "object") return false;
   const o = c;
   return typeof o.id === "string" && typeof o.author === "string" && typeof o.ts === "string" && typeof o.body === "string";
+}
+function withKnownVia(c) {
+  if (!("via" in c) || isWriteVia(c.via)) return c;
+  const rest = { ...c };
+  delete rest.via;
+  return rest;
 }
 function findFrontmatter(source) {
   const offset = source.charCodeAt(0) === 65279 ? 1 : 0;
@@ -368,6 +378,7 @@ function renderThreadsRegion(threads, suggestions = [], checkpoint = null) {
     if (s.threadId) obj.threadId = s.threadId;
     obj.author = s.author;
     if (s.agent) obj.agent = true;
+    if (s.via) obj.via = s.via;
     obj.ts = s.ts;
     obj.original = s.original;
     obj.proposed = s.proposed;
@@ -449,7 +460,16 @@ function addThread(source, selStart, selEnd, comment) {
     quote,
     status: "open",
     comments: [
-      { id: "c1", author: comment.author, ...comment.agent ? { agent: true } : {}, ts, body: comment.body }
+      {
+        id: "c1",
+        author: comment.author,
+        ...comment.agent ? { agent: true } : {},
+        // Only when set, so a comment written without it serializes to exactly
+        // the bytes it always did.
+        ...comment.via ? { via: comment.via } : {},
+        ts,
+        body: comment.body
+      }
     ],
     // The author is looking at this text right now, so it is the baseline the
     // "text changed since this comment" badge compares against (P1.3).
@@ -518,6 +538,7 @@ function appendReply(thread, reply) {
         id: nextId,
         author: reply.author,
         ...reply.agent ? { agent: true } : {},
+        ...reply.via ? { via: reply.via } : {},
         ts,
         body: reply.body,
         parent: reply.parent
@@ -550,6 +571,7 @@ function addSuggestion(source, selStart, selEnd, suggestion) {
     threadId: suggestion.threadId,
     author: suggestion.author,
     agent: suggestion.agent,
+    via: suggestion.via,
     ts: suggestion.ts ?? (/* @__PURE__ */ new Date()).toISOString(),
     original,
     proposed: suggestion.proposed,
@@ -924,7 +946,7 @@ function opList(source, actionable = false) {
       // True when the passage moved after the last comment — read this one
       // first, the comment may be answering text that no longer exists.
       stale: stale.has(t.id),
-      comments: t.comments.filter((c) => !c.deleted).map((c) => ({ id: c.id, author: c.author, ts: c.ts, body: c.body }))
+      comments: t.comments.filter((c) => !c.deleted).map((c) => ({ id: c.id, author: c.author, ts: c.ts, body: c.body, ...c.via ? { via: c.via } : {} }))
     };
   });
   const suggestions = parsed.suggestions.map((s) => {
@@ -933,6 +955,7 @@ function opList(source, actionable = false) {
       anchorId: s.anchorId,
       threadId: s.threadId,
       author: s.author,
+      ...s.via ? { via: s.via } : {},
       anchored: a !== void 0,
       original: s.original,
       proposed: s.proposed,
@@ -946,9 +969,9 @@ function opList(source, actionable = false) {
     suggestions
   };
 }
-function opReply(source, threadId, body, now = () => (/* @__PURE__ */ new Date()).toISOString(), author = "claude", agent = true) {
+function opReply(source, threadId, body, now = () => (/* @__PURE__ */ new Date()).toISOString(), author = "claude", agent = true, via) {
   const thread = findThread(source, threadId);
-  const appended = appendReply(thread, { author, agent, body, ts: now() });
+  const appended = appendReply(thread, { author, agent, via, body, ts: now() });
   const reply = appended.comments[appended.comments.length - 1];
   const reopened = thread.status === "resolved" && isAgentComment(reply);
   const replied = withRefreshedAnchorHash(
@@ -1079,11 +1102,11 @@ function opEdit(source, old, replacement, occurrence = 0) {
     }
   };
 }
-function opOpen(source, quote, body, occurrence = 0, now = () => (/* @__PURE__ */ new Date()).toISOString(), author = "claude") {
+function opOpen(source, quote, body, occurrence = 0, now = () => (/* @__PURE__ */ new Date()).toISOString(), author = "claude", via) {
   const at = locatePassage(source, quote, occurrence);
   let result;
   try {
-    result = addThread(source, at, at + quote.length, { author, agent: true, body, ts: now() });
+    result = addThread(source, at, at + quote.length, { author, agent: true, via, body, ts: now() });
   } catch (e) {
     throw new DocOpError("not_anchorable", e.message, { quote });
   }
@@ -1101,13 +1124,14 @@ function opResolve(source, threadId, now = () => (/* @__PURE__ */ new Date()).to
   assertNoNewIssues(source, next);
   return { next, result: { threadId } };
 }
-function opSuggest(source, quote, proposed, opts = {}, now = () => (/* @__PURE__ */ new Date()).toISOString(), author = "claude") {
+function opSuggest(source, quote, proposed, opts = {}, now = () => (/* @__PURE__ */ new Date()).toISOString(), author = "claude", via) {
   const at = locatePassage(source, quote, opts.occurrence ?? 0);
   let result;
   try {
     result = addSuggestion(source, at, at + quote.length, {
       author,
       agent: true,
+      via,
       proposed,
       note: opts.note,
       threadId: opts.threadId,
@@ -1205,6 +1229,7 @@ import * as path from "node:path";
 var SILENT_OK = { exitCode: 0, stderr: "" };
 var THREADS_BEGIN_MARKER = "<!--mc:threads:begin-->";
 var MAX_ISSUE_LINES = 10;
+var SUGGEST_MODE_SETTING = "markdownCollab.proposeEditsAsSuggestions";
 function runCheckHook(stdinText, io) {
   try {
     return decide(stdinText, io);
@@ -1231,9 +1256,63 @@ function decide(stdinText, io) {
   const content = io.readFile(absPath);
   if (content === null) return SILENT_OK;
   if (!content.includes(THREADS_BEGIN_MARKER)) return SILENT_OK;
+  const reports = [];
+  if (suggestModeOnDisk(hookCwd, io)) {
+    reports.push(suggestModeReport(filePath));
+  }
   const errors = opCheck(content).issues.filter((issue) => issue.severity === "error");
-  if (errors.length === 0) return SILENT_OK;
-  return { exitCode: 2, stderr: formatReport(filePath, errors) };
+  if (errors.length > 0) reports.push(formatReport(filePath, errors));
+  if (reports.length === 0) return SILENT_OK;
+  return { exitCode: 2, stderr: reports.join("") };
+}
+function suggestModeReport(filePath) {
+  return `Markdown Collab: ${filePath} was edited directly, but suggest mode is on for this workspace \u2014 propose edits with mc_suggest / mdc suggest instead of editing directly.
+`;
+}
+function suggestModeOnDisk(hookCwd, io) {
+  const raw = io.readFile(path.join(hookCwd, ".vscode", "settings.json"));
+  if (raw === null) return false;
+  const parsed = parseJsonc(raw);
+  if (!isPlainObject(parsed)) return false;
+  return parsed[SUGGEST_MODE_SETTING] === true;
+}
+function parseJsonc(raw) {
+  let out2 = "";
+  let inString = false;
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (inString) {
+      out2 += c;
+      if (c === "\\" && i + 1 < raw.length) {
+        out2 += raw[++i];
+      } else if (c === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      out2 += c;
+      continue;
+    }
+    if (c === "/" && raw[i + 1] === "/") {
+      while (i < raw.length && raw[i] !== "\n") i++;
+      out2 += "\n";
+      continue;
+    }
+    if (c === "/" && raw[i + 1] === "*") {
+      i += 2;
+      while (i < raw.length && !(raw[i] === "*" && raw[i + 1] === "/")) i++;
+      i++;
+      continue;
+    }
+    out2 += c;
+  }
+  try {
+    return JSON.parse(out2.replace(/,(\s*[}\]])/g, "$1"));
+  } catch {
+    return void 0;
+  }
 }
 function formatReport(filePath, errors) {
   const noun = errors.length === 1 ? "problem" : "problems";
@@ -1624,7 +1703,9 @@ async function main() {
         action: "reply",
         tool: "mc_reply",
         args: { threadId, body },
-        run: (s) => opReply(s, threadId, body, void 0, author)
+        // `run` is only the direct write — the forwarded one runs `mc_reply`,
+        // which stamps "tools" itself (10x-plan-6 P1.4).
+        run: (s) => opReply(s, threadId, body, void 0, author, true, "cli")
       });
     }
     case "rewrite": {
@@ -1659,7 +1740,7 @@ async function main() {
         action: "open",
         tool: "mc_open",
         args: { quote, body, occurrence },
-        run: (s) => opOpen(s, quote, body, occurrence, void 0, author)
+        run: (s) => opOpen(s, quote, body, occurrence, void 0, author, "cli")
       });
     }
     case "resolve": {
@@ -1684,7 +1765,7 @@ async function main() {
         action: "suggest",
         tool: "mc_suggest",
         args: { quote, with: proposed, note, occurrence },
-        run: (s) => opSuggest(s, quote, proposed, { note, occurrence }, void 0, author)
+        run: (s) => opSuggest(s, quote, proposed, { note, occurrence }, void 0, author, "cli")
       });
     }
     case "accept": {

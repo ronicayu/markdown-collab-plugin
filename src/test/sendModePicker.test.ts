@@ -58,9 +58,9 @@ describe("buildSendModeItems", () => {
     expect(items.some((i) => i.mode === "clipboard")).toBe(true);
   });
 
-  // 10x-plan-4 P0.1: headless is listed only when it would actually run, and
-  // then first — offered, never chosen (the picker only appears when nothing
-  // was auto-detected, and the pick is the human's).
+  // 10x-plan-6 P0.1: headless is listed only when it would actually run —
+  // the grill established terminal is what's actually used, so it leads and
+  // keeps "recommended" whether or not headless is on offer.
   it("leaves headless out when it isn't available", () => {
     for (const headlessAvailable of [undefined, false]) {
       const items = buildSendModeItems({ terminalDetected: false, headlessAvailable });
@@ -68,19 +68,22 @@ describe("buildSendModeItems", () => {
     }
   });
 
-  it("lists headless first, as the recommended choice, when available", () => {
+  it("keeps terminal first and recommended, with headless second, when headless is available", () => {
     const items = buildSendModeItems({ terminalDetected: false, headlessAvailable: true });
-    expect(items.map((i) => i.mode)).toEqual(["headless", "terminal", "clipboard"]);
-    expect(items[0]!.label).toBe("Run Claude for me — recommended");
+    expect(items.map((i) => i.mode)).toEqual(["terminal", "headless", "clipboard"]);
+    expect(items[0]!.label).toBe("Type into the active terminal (recommended)");
     // Only one item may claim "recommended".
     expect(items.filter((i) => /recommended/i.test(i.label))).toHaveLength(1);
-    expect(items[1]!.label).toBe("Type into the active terminal");
+    expect(items[1]!.label).toBe("Run Claude for me");
   });
 
   it("tells the human what headless may do before they pick it", () => {
-    const headless = buildSendModeItems({ terminalDetected: false, headlessAvailable: true })[0]!;
+    const headless = buildSendModeItems({ terminalDetected: false, headlessAvailable: true }).find(
+      (i) => i.mode === "headless",
+    )!;
     expect(headless.detail).toMatch(/only read files and use the review tools/);
     expect(headless.detail).toMatch(/cancel/i);
+    expect(headless.detail).toMatch(/installed and signed in/i);
   });
 
   it("carries no jargon in any label, description, or detail", () => {

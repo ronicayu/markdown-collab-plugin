@@ -80,6 +80,9 @@
 }
 .mc-card__author { font-weight: 600; color: var(--vscode-foreground); }
 .mc-card__time { color: var(--mc-muted); }
+/* "via tools" / "via cli" / "via file" — how an agent's comment reached the
+   file (round-6 P1.4). Small and muted, same register as the timestamp. */
+.mc-card__via { color: var(--mc-muted); font-size: 11px; }
 .mc-card__body {
   font-size: 13px;
   white-space: pre-wrap;
@@ -267,6 +270,42 @@
   color: var(--mc-muted);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* --- suggestion (inline word diff, round-6 P2.2) -------------------------- */
+/* One sentence with the changed words marked in place — the default view for
+   a small edit. `commentUi.ts` picks this or the block view above based on
+   `isBulkRewrite`, and either view carries a toggle to the other one. */
+.mc-suggestion__diffwrap { margin-top: 6px; }
+.mc-suggestion__sentence {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--mc-border);
+  border-radius: var(--mc-radius);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.mc-suggestion__sentence del {
+  background: var(--vscode-diffEditor-removedTextBackground, color-mix(in srgb, var(--mc-danger) 28%, transparent));
+  text-decoration-color: color-mix(in srgb, var(--mc-danger) 60%, transparent);
+  border-radius: 2px;
+}
+.mc-suggestion__sentence ins {
+  background: var(--vscode-diffEditor-insertedTextBackground, color-mix(in srgb, var(--vscode-charts-green, #4caf50) 34%, transparent));
+  text-decoration: none;
+  border-radius: 2px;
+}
+.mc-suggestion__toggle { margin-top: 4px; }
+/* Colour alone doesn't carry the del/ins distinction under a high-contrast
+   theme — outline each, same convention the inline view's own client.css
+   uses for its highlight and focus states. */
+body.vscode-high-contrast .mc-suggestion__sentence del,
+body.vscode-high-contrast-light .mc-suggestion__sentence del,
+body.vscode-high-contrast .mc-suggestion__sentence ins,
+body.vscode-high-contrast-light .mc-suggestion__sentence ins {
+  outline: 1px solid var(--vscode-contrastBorder, currentColor);
 }
 
 /* --- composer ------------------------------------------------------------ */

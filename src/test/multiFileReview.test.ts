@@ -46,10 +46,12 @@ describe("buildMultiFileReviewPayload", () => {
     );
   });
 
-  it("keeps the no-upper-bound and no-prose-edits terms", () => {
+  it("caps at five per file, with a per-file summary thread, and keeps the no-prose-edits term", () => {
     const p = buildMultiFileReviewPayload(files("a.md", "b.md"));
-    expect(p.prompt).toMatch(/no upper bound/i);
+    expect(p.prompt).toMatch(/five that matter most in each file/i);
+    expect(p.prompt).toMatch(/that file's own summary thread/i);
     expect(p.prompt).toMatch(/do not edit prose/i);
+    expect(p.prompt).not.toMatch(/no upper bound/i);
   });
 
   it("carries no existing comments — the pass creates threads from scratch", () => {

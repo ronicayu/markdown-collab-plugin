@@ -368,3 +368,65 @@ describe("inlineComments/format - threads region inside code", () => {
     expect(parse(doc).threads.map((t) => t.id)).toEqual(["bb2"]);
   });
 });
+
+// 10x-plan-6 P1.4: `via` is optional and additive. A file written before it
+// existed must re-serialize to the same bytes, a value this version doesn't
+// know reads as absent, and the two known values survive every rewrite.
+describe("inlineComments/format - the via field", () => {
+  const region = (thread: string, suggestion?: string) =>
+    [
+      "Doc with <!--mc:a:aa111-->a passage<!--mc:/a:aa111--> and <!--mc:a:bb222-->another<!--mc:/a:bb222-->.",
+      "",
+      "<!--mc:threads:begin-->",
+      thread,
+      ...(suggestion ? [suggestion] : []),
+      "<!--mc:threads:end-->",
+      "",
+    ].join("\n");
+  const LEGACY_THREAD =
+    '<!--mc:t {"id":"aa111","quote":"a passage","status":"open","anchorHash":"0badf00d","comments":[' +
+    '{"id":"c1","author":"ronica","ts":"2026-05-12T10:00:00.000Z","body":"why?"},' +
+    '{"id":"c2","author":"claude","agent":true,"ts":"2026-05-12T10:01:00.000Z","body":"because","parent":"c1"}]}-->';
+  const LEGACY_SUGGESTION =
+    '<!--mc:s {"anchorId":"bb222","author":"claude","agent":true,"ts":"2026-05-12T10:02:00.000Z","original":"another","proposed":"one more"}-->';
+
+  it("a file without it re-serializes byte for byte", () => {
+    const md = region(LEGACY_THREAD, LEGACY_SUGGESTION);
+    const parsed = parse(md);
+    expect(withThreads(md, parsed.threads, parsed.suggestions)).toBe(md);
+    expect(parsed.threads[0]!.comments.every((c) => !("via" in c))).toBe(true);
+    expect(parsed.suggestions[0]!.via).toBeUndefined();
+  });
+
+  it("tools and cli survive parse → serialize → parse on comments and suggestions", () => {
+    const md = region(
+      LEGACY_THREAD.replace('"agent":true,', '"agent":true,"via":"cli",'),
+      LEGACY_SUGGESTION.replace('"agent":true,', '"agent":true,"via":"tools",'),
+    );
+    const parsed = parse(md);
+    expect(parsed.threads[0]!.comments.map((c) => c.via)).toEqual([undefined, "cli"]);
+    expect(parsed.suggestions[0]!.via).toBe("tools");
+    expect(withThreads(md, parsed.threads, parsed.suggestions)).toBe(md);
+  });
+
+  it("an unknown value reads as absent and is not written back", () => {
+    const md = region(
+      LEGACY_THREAD.replace('"agent":true,', '"agent":true,"via":"file",'),
+      LEGACY_SUGGESTION.replace('"agent":true,', '"agent":true,"via":{"x":1},'),
+    );
+    const parsed = parse(md);
+    expect(parsed.threads[0]!.comments.map((c) => c.via)).toEqual([undefined, undefined]);
+    expect(parsed.suggestions[0]!.via).toBeUndefined();
+    expect(withThreads(md, parsed.threads, parsed.suggestions)).toBe(region(LEGACY_THREAD, LEGACY_SUGGESTION));
+  });
+
+  it("appendReply and addThread write it only when given", () => {
+    const md = "The quick brown fox.";
+    const plain = addThread(md, 4, 9, { author: "a", body: "b", ts: TS });
+    expect(plain.source).not.toContain('"via"');
+    const stamped = addThread(md, 4, 9, { author: "codex", agent: true, via: "tools", body: "b", ts: TS });
+    expect(stamped.thread.comments[0]).toMatchObject({ via: "tools" });
+    expect(appendReply(plain.thread, { author: "r", body: "x", ts: TS }).comments[1]).not.toHaveProperty("via");
+    expect(appendReply(plain.thread, { author: "c", body: "x", ts: TS, via: "cli" }).comments[1]!.via).toBe("cli");
+  });
+});

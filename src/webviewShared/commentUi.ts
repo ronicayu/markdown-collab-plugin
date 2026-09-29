@@ -11,6 +11,7 @@ import type MarkdownIt from "markdown-it";
 import { createCommentRenderer } from "./markdownPipeline";
 import { formatRelativeTime } from "../collab/relativeTime";
 import { agentDisplayName, isAgentComment } from "../agentIdentity";
+import { diffWords, isBulkRewrite } from "./wordDiff";
 
 /**
  * What the card shows for an author: the agent's display name for an agent
@@ -153,6 +154,13 @@ export interface CommentCardOptions {
   timestamp?: string | number;
   /** Extra muted note in the meta row after the time (e.g. "edited"). */
   note?: string;
+  /**
+   * How this comment reached the file — "via tools" / "via cli" / "via file"
+   * (round-6 P1.4). Agent comments only; the caller gates this on its own
+   * `isAgentComment` check and omits it for a human's comment. `title` is the
+   * one-sentence explanation shown as a tooltip.
+   */
+  via?: { label: string; title: string };
   /** Plain-text body. Rendered as text (callers that want markdown set `bodyEl`). */
   body?: string;
   /** Pre-rendered body element (e.g. markdown HTML), used instead of `body`. */
@@ -228,6 +236,13 @@ export function buildCommentCard(opts: CommentCardOptions): HTMLElement {
     time.className = "mc-card__time";
     time.textContent = formatRelativeTime(opts.timestamp);
     meta.appendChild(time);
+  }
+  if (opts.via) {
+    const via = document.createElement("span");
+    via.className = "mc-card__via";
+    via.textContent = opts.via.label;
+    via.title = opts.via.title;
+    meta.appendChild(via);
   }
   if (opts.note) {
     const note = document.createElement("span");
@@ -315,9 +330,8 @@ export interface SuggestionCardOptions {
 }
 
 /**
- * A pending suggestion rendered as an inline diff (original struck through,
- * proposed inserted) with Accept / Reject. The changed middle is emphasized
- * against a plain common prefix/suffix so a small edit reads at a glance.
+ * A pending suggestion with its diff (see `buildSuggestionDiff`) and
+ * Accept / Reject.
  */
 export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
   const card = document.createElement("div");
@@ -345,7 +359,7 @@ export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
   meta.appendChild(badge);
   card.appendChild(meta);
 
-  card.appendChild(buildDiff(opts.original, opts.proposed));
+  card.appendChild(buildSuggestionDiff(opts.original, opts.proposed));
 
   if (opts.note) {
     // Claude's rationale, which is prose it writes like any other comment.
@@ -382,6 +396,64 @@ export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
     card.addEventListener("click", opts.onClick);
   }
   return card;
+}
+
+/**
+ * The suggestion's diff, in whichever form fits it (round-6 P2.2). A small
+ * edit — the common case, one sentence or one list item — renders as one
+ * paragraph with the changed words struck through / inserted in place, which
+ * reads at a glance the way a real edit does. `isBulkRewrite` decides which
+ * form is the default; either way a toggle lets the human switch to the
+ * other one, because the ratio guess is exactly that, a guess.
+ */
+function buildSuggestionDiff(original: string, proposed: string): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "mc-suggestion__diffwrap";
+
+  const inlineEl = buildInlineDiff(original, proposed);
+  const blockEl = buildDiff(original, proposed);
+  let showInline = !isBulkRewrite(original, proposed);
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "mc-btn mc-btn--link mc-suggestion__toggle";
+  const applyMode = (): void => {
+    inlineEl.hidden = !showInline;
+    blockEl.hidden = showInline;
+    toggle.textContent = showInline ? "Show old / new" : "Show inline";
+    toggle.title = showInline
+      ? "Show the change as two full paragraphs instead of one."
+      : "Show the change as one sentence with the edited words marked.";
+  };
+  toggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    showInline = !showInline;
+    applyMode();
+  });
+  applyMode();
+
+  wrap.append(inlineEl, blockEl, toggle);
+  return wrap;
+}
+
+/**
+ * One paragraph with the changed words wrapped in real `<del>`/`<ins>`
+ * elements — the common-word parts render as plain text in between, so a
+ * one-word change reads inside the sentence instead of as a doubled block.
+ */
+function buildInlineDiff(original: string, proposed: string): HTMLElement {
+  const p = document.createElement("p");
+  p.className = "mc-suggestion__sentence";
+  for (const op of diffWords(original, proposed)) {
+    if (op.kind === "equal") {
+      p.appendChild(document.createTextNode(op.text));
+      continue;
+    }
+    const el = document.createElement(op.kind === "del" ? "del" : "ins");
+    el.textContent = op.text;
+    p.appendChild(el);
+  }
+  return p;
 }
 
 /** Build the two-row original→proposed diff with the changed middle emphasized. */

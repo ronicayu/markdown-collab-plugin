@@ -8,6 +8,7 @@ import {
   DocOpError,
   locatePassage,
   opEdit,
+  opList,
   opOpen,
   opReopen,
   opReply,
@@ -178,5 +179,67 @@ describe("docOps: an agent reply reopens a resolved thread", () => {
 
   it("opReopen refuses an unknown thread id", () => {
     expect(() => opReopen(DOC, "nope1")).toThrow(DocOpError);
+  });
+});
+
+// 10x-plan-6 P1.4: every comment an agent writes records which path it took —
+// "tools" through the MCP server, "cli" for `mdc` writing the file itself — and
+// a comment written any other way carries no field at all.
+describe("docOps: via records how a write arrived", () => {
+  it.each(["tools", "cli"] as const)("opOpen stamps via: %s on the first comment", (via) => {
+    const { next } = opOpen(DOC, "nested lists", "note", 0, NOW, "codex", via);
+    expect(parse(next).threads[0]!.comments[0]).toMatchObject({ author: "codex", agent: true, via });
+    expect(next).toContain(`"via":"${via}"`);
+  });
+
+  it.each(["tools", "cli"] as const)("opReply stamps via: %s on the reply only", (via) => {
+    const opened = opOpen(DOC, "nested lists", "human question", 0, NOW);
+    const { next } = opReply(opened.next, opened.result.threadId, "answer", NOW, "claude", true, via);
+    const comments = parse(next).threads[0]!.comments;
+    expect(comments[0]!.via).toBeUndefined();
+    expect(comments[1]).toMatchObject({ body: "answer", via });
+  });
+
+  it.each(["tools", "cli"] as const)("opSuggest stamps via: %s on the suggestion record", (via) => {
+    const { next } = opSuggest(DOC, "Suggest mode ships behind a setting.", "Off by default.", {}, NOW, "claude", via);
+    expect(parse(next).suggestions[0]).toMatchObject({ agent: true, via });
+    expect(next).toContain(`"via":"${via}"`);
+  });
+
+  it("left undefined, nothing is written — the bytes are what they were before the field existed", () => {
+    const opened = opOpen(DOC, "nested lists", "q", 0, NOW);
+    const replied = opReply(opened.next, opened.result.threadId, "a", NOW);
+    const suggested = opSuggest(replied.next, "Suggest mode ships behind a setting.", "Off.", {}, NOW);
+    expect(suggested.next).not.toContain('"via"');
+    const parsed = parse(suggested.next);
+    expect(parsed.threads[0]!.comments.every((c) => !("via" in c))).toBe(true);
+  });
+
+  it("opList exposes via on comments and suggestions, and omits it where absent", () => {
+    const opened = opOpen(DOC, "nested lists", "q", 0, NOW, "claude");
+    const replied = opReply(opened.next, opened.result.threadId, "a", NOW, "codex", true, "cli");
+    const suggested = opSuggest(replied.next, "Suggest mode ships behind a setting.", "Off.", {}, NOW, "claude", "tools");
+    const listed = opList(suggested.next);
+    expect(listed.threads[0]!.comments[0]).not.toHaveProperty("via");
+    expect(listed.threads[0]!.comments[1]).toMatchObject({ author: "codex", via: "cli" });
+    expect(listed.suggestions[0]).toMatchObject({ via: "tools" });
+    expect(opList(opened.next).suggestions).toEqual([]);
+  });
+
+  it("a hand-written comment with an unknown via reads as absent, and a reply beside it still lands", () => {
+    const handWritten =
+      "Text with <!--mc:a:abc12-->a passage<!--mc:/a:abc12--> in it.\n\n" +
+      "<!--mc:threads:begin-->\n" +
+      '<!--mc:t {"id":"abc12","quote":"a passage","status":"open","comments":[' +
+      '{"id":"c1","author":"ronica","ts":"2026-09-01T00:00:00.000Z","body":"q","via":"file"},' +
+      '{"id":"c2","author":"copilot","agent":true,"ts":"2026-09-01T00:01:00.000Z","body":"a","via":7}]}-->\n' +
+      "<!--mc:threads:end-->\n";
+    const comments = parse(handWritten).threads[0]!.comments;
+    expect(comments.map((c) => c.via)).toEqual([undefined, undefined]);
+    expect(comments.every((c) => !("via" in c))).toBe(true);
+    expect(opList(handWritten).threads[0]!.comments.every((c) => !("via" in c))).toBe(true);
+
+    const { next } = opReply(handWritten, "abc12", "follow-up", NOW, "claude", true, "tools");
+    expect(parse(next).threads[0]!.comments.map((c) => c.via)).toEqual([undefined, undefined, "tools"]);
   });
 });

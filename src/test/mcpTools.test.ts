@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { HELP_HINT, TOOLS, callTool, type ToolDeps } from "../mcpServer/tools";
+import {
+  HELP_HINT,
+  SUGGESTION_MAX_MULTIPLE_OF_QUOTE,
+  SUGGESTION_MIN_CHARS,
+  TOOLS,
+  callTool,
+  suggestionTooLarge,
+  type ToolDeps,
+} from "../mcpServer/tools";
 import { renderSkill } from "../skillText";
 import { addThread, parse } from "../inlineComments/format";
 import { checkIntegrity } from "../inlineComments/integrity";
@@ -352,5 +360,161 @@ describe("author threading (10x-plan-4 P1.2)", () => {
     body(await h.call("mc_reply", { file: "guide.md", threadId: opened.threadId, body: "codex replied" }, "codex"));
     const listed = body(await h.call("mc_list", { file: "guide.md", actionable: true }));
     expect(listed.threads.find((t: { id: string }) => t.id === opened.threadId)).toBeUndefined();
+  });
+});
+
+// 10x-plan-6 P1.4: a write through the tools says so in the file, and mc_list
+// hands the same field back so an agent can see it too.
+describe("via: tools", () => {
+  it("mc_open, mc_reply and mc_suggest stamp via: tools, and mc_list reports it", async () => {
+    const h = harness();
+    const { threadId } = body(await h.call("mc_open", { file: "guide.md", quote: "nested lists", body: "q" }, "codex"));
+    body(await h.call("mc_reply", { file: "guide.md", threadId, body: "a" }, "cursor"));
+    body(
+      await h.call("mc_suggest", {
+        file: "guide.md",
+        quote: "Suggest mode ships behind a setting.",
+        with: "Suggest mode is off by default.",
+      }),
+    );
+
+    const parsed = parse(h.read());
+    expect(parsed.threads[0]!.comments.map((c) => c.via)).toEqual(["tools", "tools"]);
+    expect(parsed.suggestions[0]!.via).toBe("tools");
+
+    const listed = body(await h.call("mc_list", { file: "guide.md" }));
+    expect(listed.threads[0].comments).toEqual([
+      expect.objectContaining({ author: "codex", via: "tools" }),
+      expect.objectContaining({ author: "cursor", via: "tools" }),
+    ]);
+    expect(listed.suggestions[0].via).toBe("tools");
+  });
+
+  it("a comment that came some other way lists without the field", async () => {
+    const seeded = addThread(DOC, DOC.indexOf("nested lists"), DOC.indexOf("nested lists") + 12, {
+      author: "ronica",
+      body: "Ordered too?",
+      ts: "2026-07-01T00:00:00.000Z",
+    });
+    const h = harness(seeded.source);
+    const listed = body(await h.call("mc_list", { file: "guide.md" }));
+    expect(listed.threads[0].comments[0]).not.toHaveProperty("via");
+  });
+});
+
+// 10x-plan-6 P2.1: suggest mode used to be a request the model could ignore.
+// `suggestModeFor` on `ToolDeps` is how a host tells `callTool` it's on for a
+// given document key; `mc_edit`/`mc_rewrite` must refuse outright rather than
+// silently applying the change, and every other tool (mc_suggest above all)
+// must be unaffected.
+describe("suggest mode refusal (10x-plan-6 P2.1)", () => {
+  function harnessWithSuggestMode(suggestModeFor?: ToolDeps["suggestModeFor"]) {
+    const files = new Map<string, string>([["/ws/guide.md", DOC]]);
+    const deps: ToolDeps = {
+      resolveFile: async (file) => (file.startsWith("/") ? file : `/ws/${file}`),
+      readDoc: async (key) => files.get(key)!,
+      writeDoc: async (key, next) => {
+        files.set(key, next);
+      },
+      suggestModeFor,
+    };
+    return { deps, read: () => files.get("/ws/guide.md")!, call: (name: string, args: Record<string, unknown>) => callTool(name, args, deps) };
+  }
+
+  it("mc_edit refuses with suggest_mode_on and writes nothing", async () => {
+    const h = harnessWithSuggestMode(() => true);
+    const before = h.read();
+    const r = await h.call("mc_edit", { file: "guide.md", old: "nested lists", new: "ordered lists" });
+    expect(r.isError).toBe(true);
+    expect(body(r).error.code).toBe("suggest_mode_on");
+    expect(body(r).error.message).toBe(
+      "Suggest mode is on for this file — propose the change with mc_suggest instead",
+    );
+    expect(h.read()).toBe(before);
+  });
+
+  it("mc_rewrite refuses with suggest_mode_on and writes nothing", async () => {
+    const h = harnessWithSuggestMode(() => true);
+    const opened = body(await h.call("mc_open", { file: "guide.md", quote: "nested lists", body: "q" }));
+    const before = h.read();
+    const r = await h.call("mc_rewrite", { file: "guide.md", threadId: opened.threadId, with: "x" });
+    expect(r.isError).toBe(true);
+    expect(body(r).error.code).toBe("suggest_mode_on");
+    expect(h.read()).toBe(before);
+  });
+
+  it("mc_edit and mc_rewrite proceed as usual when suggest mode is off", async () => {
+    const h = harnessWithSuggestMode(() => false);
+    const r = await h.call("mc_edit", { file: "guide.md", old: "nested lists", new: "ordered lists" });
+    expect(r.isError).toBeUndefined();
+    expect(h.read()).toContain("ordered lists");
+  });
+
+  it("a caller that never wires suggestModeFor keeps direct edits working", async () => {
+    const h = harnessWithSuggestMode(undefined);
+    const r = await h.call("mc_edit", { file: "guide.md", old: "nested lists", new: "ordered lists" });
+    expect(r.isError).toBeUndefined();
+  });
+
+  it("mc_suggest is unaffected — it IS the suggest-mode path", async () => {
+    const h = harnessWithSuggestMode(() => true);
+    const r = await h.call("mc_suggest", { file: "guide.md", quote: "nested lists", with: "ordered lists" });
+    expect(r.isError).toBeUndefined();
+  });
+
+  it("other mutating tools (mc_reply, mc_open, mc_resolve) are unaffected", async () => {
+    const h = harnessWithSuggestMode(() => true);
+    const openResult = await h.call("mc_open", { file: "guide.md", quote: "nested lists", body: "q" });
+    expect(openResult.isError).toBeUndefined();
+    const { threadId } = body(openResult);
+    expect((await h.call("mc_reply", { file: "guide.md", threadId, body: "a" })).isError).toBeUndefined();
+    expect((await h.call("mc_resolve", { file: "guide.md", threadId })).isError).toBeUndefined();
+  });
+
+  it("is keyed by the resolved document, not called once globally", async () => {
+    const seen: string[] = [];
+    const h = harnessWithSuggestMode((key) => {
+      seen.push(key);
+      return true;
+    });
+    await h.call("mc_edit", { file: "guide.md", old: "nested lists", new: "x" });
+    expect(seen).toEqual(["/ws/guide.md"]);
+  });
+});
+
+// 10x-plan-6 P2.3: one suggestion, one change — a `with` that reads like a
+// whole-paragraph rewrite is refused rather than accepted as a "suggestion".
+describe("mc_suggest size guard (10x-plan-6 P2.3)", () => {
+  it("suggestionTooLarge is the max of the multiple-of-quote and the flat floor", () => {
+    expect(suggestionTooLarge("x".repeat(10), "y".repeat(SUGGESTION_MIN_CHARS))).toBe(false);
+    expect(suggestionTooLarge("x".repeat(10), "y".repeat(SUGGESTION_MIN_CHARS + 1))).toBe(true);
+    const longQuote = "x".repeat(200);
+    const atMultiple = "y".repeat(longQuote.length * SUGGESTION_MAX_MULTIPLE_OF_QUOTE);
+    expect(suggestionTooLarge(longQuote, atMultiple)).toBe(false);
+    expect(suggestionTooLarge(longQuote, atMultiple + "z")).toBe(true);
+  });
+
+  it("mc_suggest refuses a with far longer than the quote, writing nothing", async () => {
+    const h = harness();
+    const before = h.read();
+    const r = await h.call("mc_suggest", {
+      file: "guide.md",
+      quote: "nested lists",
+      with: "x".repeat(SUGGESTION_MIN_CHARS + 1),
+    });
+    expect(r.isError).toBe(true);
+    expect(body(r).error.code).toBe("suggestion_too_large");
+    expect(body(r).error.message).toMatch(/split/);
+    expect(h.read()).toBe(before);
+  });
+
+  it("mc_suggest allows a with right at the boundary", async () => {
+    const h = harness();
+    const r = await h.call("mc_suggest", {
+      file: "guide.md",
+      quote: "nested lists",
+      with: "x".repeat(SUGGESTION_MIN_CHARS),
+    });
+    expect(r.isError).toBeUndefined();
   });
 });

@@ -8,12 +8,14 @@
  * No platform CLI, no remote — plain `git` against the working tree.
  */
 
+import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
 import type { ChangedFile } from "../pr/diff";
 import { InlineCommentsPanel } from "../inlineComments/inlineCommentsPanel";
 import type { Logger } from "../logging";
 import {
+  countReviewThreads,
   listUncommittedMarkdownFiles,
   repoRootFor,
   stageFile,
@@ -21,6 +23,7 @@ import {
   unstageFile,
   type StageState,
 } from "./gitUncommitted";
+import { SessionThreadReminderGate } from "./stageReminder";
 
 interface DirNode {
   kind: "dir";
@@ -35,6 +38,12 @@ interface FileNode {
   file: ChangedFile;
   /** Missing when the stage query failed; the file still lists and opens. */
   stage?: StageState;
+  /**
+   * Review threads still embedded in the working-tree copy of this file
+   * (10x-plan-6 P5.1). Zero/absent when the file carries none, or when it
+   * couldn't be read — either way it renders the same as "nothing to flag".
+   */
+  threadCount?: number;
 }
 
 type TreeNode = DirNode | FileNode;
@@ -49,6 +58,8 @@ export class UncommittedChangesController implements vscode.Disposable {
   /** Serializes refreshes; a refresh requested mid-refresh runs once more after. */
   private refreshing: Promise<void> | null = null;
   private refreshQueued = false;
+  /** One stage-time reminder per file per session (10x-plan-6 P5.1). */
+  private readonly threadReminders = new SessionThreadReminderGate();
 
   constructor(
     private readonly openFile: (uri: vscode.Uri, opts: { showDiff: boolean }) => Promise<void>,
@@ -133,12 +144,39 @@ export class UncommittedChangesController implements vscode.Disposable {
       // Best-effort: a failed stage query degrades to a list with no staged
       // badges, not to an empty view.
       const stages = await stageStates(this.repoRoot).catch(() => new Map<string, StageState>());
-      this.setTreeState({ kind: "files", repoRoot: this.repoRoot, files, stages });
+      const threadCounts = await this.readThreadCounts(files);
+      this.setTreeState({ kind: "files", repoRoot: this.repoRoot, files, stages, threadCounts });
       InlineCommentsPanel.refreshDiffPanels();
     } catch (e) {
       this.log.warn(`uncommitted refresh failed: ${(e as Error).message}`);
       this.setTreeState({ kind: "error", message: (e as Error).message });
     }
+  }
+
+  /**
+   * Threads still embedded in each file's *working-tree* copy — not HEAD's —
+   * since staging is exactly the moment that content is about to be
+   * committed (10x-plan-6 P5.1). Best-effort per file: an unreadable file
+   * counts as carrying none rather than failing the whole refresh, the same
+   * degrade-don't-fail shape as the stage-state query above.
+   */
+  private async readThreadCounts(files: ChangedFile[]): Promise<Map<string, number>> {
+    const root = this.repoRoot;
+    const counts = new Map<string, number>();
+    if (!root) return counts;
+    await Promise.all(
+      files.map(async (f) => {
+        try {
+          const abs = path.join(root, ...f.path.split("/"));
+          const text = await fs.readFile(abs, "utf8");
+          const count = countReviewThreads(text);
+          if (count > 0) counts.set(f.path, count);
+        } catch {
+          /* unreadable — treat as carrying no threads */
+        }
+      }),
+    );
+    return counts;
   }
 
   private setTreeState(state: TreeState): void {
@@ -175,7 +213,37 @@ export class UncommittedChangesController implements vscode.Disposable {
         `Could not ${staged ? "stage" : "unstage"} ${node.file.path}: ${(e as Error).message}`,
       );
     }
+    if (staged && node.threadCount) {
+      this.remindAboutThreads(node.file.path, node.threadCount);
+    }
     await this.refresh();
+  }
+
+  /**
+   * One nudge, once per file per session, when staging a file that still
+   * carries review-thread data (10x-plan-6 P5.1). This only ever points at
+   * the existing "Remove All Review Data" command — it never runs it and
+   * never touches the file itself; that command's own confirmation still
+   * applies when the human picks it.
+   */
+  private remindAboutThreads(relPath: string, count: number): void {
+    if (!this.threadReminders.shouldRemind(relPath)) return;
+    const root = this.repoRoot;
+    const fileName = path.basename(relPath);
+    const subject = count === 1 ? "1 thread is" : `${count} threads are`;
+    void vscode.window
+      .showInformationMessage(
+        `${subject} still in ${fileName} — Remove All Review Data strips them before you commit.`,
+        "Remove review data",
+        "Keep them",
+      )
+      .then((choice) => {
+        // "Keep them", or the toast dismissed with neither — do nothing
+        // further. Never modify the file ourselves either way.
+        if (choice !== "Remove review data" || !root) return;
+        const abs = path.join(root, ...relPath.split("/"));
+        void vscode.commands.executeCommand("markdownCollab.finalizeDocument", vscode.Uri.file(abs));
+      });
   }
 
   dispose(): void {
@@ -200,7 +268,13 @@ type TreeState =
   | { kind: "no-workspace" }
   | { kind: "no-repo" }
   | { kind: "error"; message: string }
-  | { kind: "files"; repoRoot: string; files: ChangedFile[]; stages?: Map<string, StageState> };
+  | {
+      kind: "files";
+      repoRoot: string;
+      files: ChangedFile[];
+      stages?: Map<string, StageState>;
+      threadCounts?: Map<string, number>;
+    };
 
 class UncommittedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
   private readonly emitter = new vscode.EventEmitter<TreeNode | undefined | void>();
@@ -211,7 +285,8 @@ class UncommittedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
   setState(state: TreeState): void {
     this.state = state;
-    this.rootChildren = state.kind === "files" ? buildTree(state.files, state.stages) : [];
+    this.rootChildren =
+      state.kind === "files" ? buildTree(state.files, state.stages, state.threadCounts) : [];
     this.emitter.fire();
   }
 
@@ -248,12 +323,23 @@ class UncommittedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
       node.file.status === "R" ? "renamed" : "modified";
     const stage = node.stage ?? "unstaged";
     item.description = stage === "unstaged" ? status : `${status} · ${stage}`;
-    item.tooltip = `${node.file.path} (${status}, ${stage})`;
+    let tooltip = `${node.file.path} (${status}, ${stage})`;
+    // A small marker for a file that still carries review-thread data
+    // (10x-plan-6 P5.1) — the stage-time reminder's lead-in, not a warning:
+    // nothing here is wrong, it's just what "Remove All Review Data" is for.
+    if (node.threadCount) {
+      const label = node.threadCount === 1 ? "1 thread" : `${node.threadCount} threads`;
+      item.description += ` · ${label}`;
+      tooltip += ` — ${label} still in the file`;
+    }
+    item.tooltip = tooltip;
     item.resourceUri = vscode.Uri.file(node.file.path);
     item.iconPath = vscode.ThemeIcon.File;
     // The stage state rides on contextValue so the inline +/− buttons follow
-    // it: partial offers both, like the built-in SCM view.
-    item.contextValue = `uncommittedFile-${stage}`;
+    // it: partial offers both, like the built-in SCM view. The "-threads"
+    // suffix is additive — it doesn't change the `uncommittedFile-<stage>`
+    // prefix the stage/unstage menu regexes match on.
+    item.contextValue = `uncommittedFile-${stage}${node.threadCount ? "-threads" : ""}`;
     item.command = {
       command: "markdownCollab.openUncommittedFile",
       title: "Review uncommitted changes",
@@ -268,7 +354,11 @@ function isMarkdown(p: string): boolean {
   return lower.endsWith(".md") || lower.endsWith(".markdown");
 }
 
-function buildTree(files: ChangedFile[], stages?: Map<string, StageState>): TreeNode[] {
+function buildTree(
+  files: ChangedFile[],
+  stages?: Map<string, StageState>,
+  threadCounts?: Map<string, number>,
+): TreeNode[] {
   interface MutableDir { name: string; fullPath: string; dirs: Map<string, MutableDir>; files: FileNode[]; }
   const root: MutableDir = { name: "", fullPath: "", dirs: new Map(), files: [] };
 
@@ -286,7 +376,13 @@ function buildTree(files: ChangedFile[], stages?: Map<string, StageState>): Tree
       }
       cursor = child;
     }
-    cursor.files.push({ kind: "file", name: fileName, file: f, stage: stages?.get(f.path) });
+    cursor.files.push({
+      kind: "file",
+      name: fileName,
+      file: f,
+      stage: stages?.get(f.path),
+      threadCount: threadCounts?.get(f.path),
+    });
   }
 
   const toNodes = (m: MutableDir): TreeNode[] => {

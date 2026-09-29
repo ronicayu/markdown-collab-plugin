@@ -128,11 +128,13 @@ describe("SKILL_CONTENT — tools-first structure", () => {
     expect(body).toMatch(/mc_check[\s\S]{0,400}Claude is\s+working/);
   });
 
-  it("keeps the never-cap rule verbatim", () => {
-    // Ronica's standing constraint on Review Mode: never ration findings.
-    expect(SKILL_CONTENT).toContain("There is **no maximum number of threads**");
-    expect(SKILL_CONTENT).toContain("If you find 30 issues, leave 30 threads.");
-    expect(SKILL_CONTENT).toContain('Do not "leave the top N"');
+  it("caps Review Mode at five threads, with a summary thread for the rest (10x-plan-6 P3)", () => {
+    // The grill behind 10x-plan-6 overturned the old never-ration rule: too
+    // many comments landed even though most were sound findings.
+    expect(SKILL_CONTENT).toContain("Rank concerns by severity and open threads for the **five** that matter most.");
+    expect(SKILL_CONTENT).toContain("Also noticed (N): …");
+    expect(SKILL_CONTENT).not.toContain("There is **no maximum number of threads**");
+    expect(SKILL_CONTENT).not.toContain('Do not "leave the top N"');
   });
 
   it("keeps the focus directive as the primary filter", () => {

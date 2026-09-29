@@ -1,5 +1,109 @@
 # Changelog
 
+## 0.35.13 — 2026-09-29 (GitHub only)
+
+Round 6, P0–P3 and P5 of `docs/10x-plan-6.md`. The plan came out of a
+conversation about what actually gets used, after the UX review shipped;
+its first table lists the six judgements that changed. P4, the merge of the
+review view and the live editor, is a spike this version doesn't include.
+
+### Changed: the terminal is the normal way to send (P0)
+
+The README, the walkthrough, the send-mode setting and the picker all led
+with headless "Run Claude for me". Nobody uses it. The terminal is now the
+recommended path everywhere; headless and clipboard are "Other ways to
+send", and headless says what it is for — not keeping a terminal open — and
+what it still needs: Claude Code installed and signed in. The empty state's
+"Review with Claude" button used to force a headless run when one was
+possible; it now goes through the remembered send mode like every other
+send. "Survives a commit, a branch switch, and a colleague opening the
+file" became what it does in practice: the state stays in the file
+overnight and across sessions, and you strip it before you commit. PR
+review has its own section: a review client for a colleague's Markdown,
+with the comments on the platform.
+
+### Changed: for other agents, the file format is the contract (P1)
+
+The only loop anyone has run with a non-Claude agent was Copilot, by
+copying the prompt and pasting it; Copilot edited the markers by hand and
+they survived. `mdc` is on PATH only inside Claude Code sessions, so no other
+agent has it anyway. **Connect an Agent…** for Cursor, Codex, Copilot and
+Other now writes or refreshes the `AGENTS.md` snippet first and then offers
+the MCP registration as a second, optional step — "also register the review
+tools so its edits are undoable?" — and still writes the snippet when the
+tool server isn't up. The snippet is fourteen lines: the format is the
+contract, use the MCP tools if you have them, otherwise the hand-edit rules,
+then check or ask the human to run Repair Comment Anchors. A section that
+matches an earlier shipped snippet is replaced in place; one someone edited
+is left alone. **Disconnect an Agent…** never touches `AGENTS.md`.
+
+`docs/format.md` is the contract itself, derived from the parser and its
+tests: markers, the threads block, every thread and comment field, the
+suggestion record, the checkpoint, the integrity rules `mdc check` enforces
+and what Repair will and won't fix, and how to write the file by hand. The
+README's "Other agents" section is three lines plus an "Optional: undoable
+edits through MCP" subsection holding the client table.
+
+Every comment an agent writes now records how it arrived: `via: "tools"` for
+the MCP tools (including `mdc` forwarded through them), `via: "cli"` for a
+direct `mdc` write, and nothing for a hand edit. The field is written only
+when set, so existing files re-serialize byte for byte. The card shows it —
+*via tools*, *via cli*, *via file* — on agent comments, so "how did Copilot
+write back?" has an answer in the file instead of a guess.
+
+### Changed: suggest mode is enforced, and suggestions are readable (P2)
+
+Suggest mode was off in practice because the agent ignored it and edited
+directly, and because a suggestion that rewrote a paragraph showed as one
+`-` line and one `+` line. Now `mc_edit` and `mc_rewrite` refuse with
+`suggest_mode_on` while the workspace setting is on, pointing at
+`mc_suggest`; forwarded `mdc edit` / `mdc rewrite` inherit the refusal. The
+Claude Code PostToolUse hook reports a direct Edit or Write to a reviewed
+`.md` when `.vscode/settings.json` in the hook's working directory has
+suggest mode on. `mc_suggest` refuses a replacement longer than three times
+the quote or 300 characters, whichever is larger, with `suggestion_too_large`
+and "split it". The skill says one suggestion changes one sentence or one
+list item.
+
+The suggestion card shows the change inside the sentence — the changed
+words as `<del>` and `<ins>`, themed with the diff-editor colours — and falls
+back to the old two-line form, with a toggle, when more than 60% of the
+tokens changed or either side is over 600 characters. The word diff is a
+hundred dependency-free lines shared by the review view, the live editor and
+PR review. Turning suggest mode on by default for review passes waits for a
+yes on plan-6's question 2.
+
+### Changed: a review pass opens five threads, then a summary (P3)
+
+"There is no cap; if thirty things warrant a thread, you get thirty"
+produced too many. The agent now ranks concerns by severity, opens threads
+for the five that matter most — per file in a multi-file pass — and puts the
+rest in one summary thread anchored to the title, "Also noticed (N): …", one
+line per item, so you can ask for any of them by number. The focus
+directive can raise or remove the cap ("give me ten", "everything"). The
+skill, the review prompts, the README and the walkthrough all say so.
+
+### Added: a reminder when staging a file that still carries threads (P5)
+
+The Uncommitted Markdown tree shows "· 3 threads" on a file that still has
+review data. Staging it from the tree shows one toast — "3 threads are still
+in guide.md — Remove All Review Data strips them before you commit" — with
+**Remove review data** (runs the usual confirm) and **Keep them**. Once per
+file per window. Nothing is ever finalized automatically; threads live
+across days on purpose.
+
+### Changed: the review view names the agent
+
+The Send button, its tooltip, the suggest-mode switch and the default
+pending text use the display name of the agent that last wrote to the file,
+sent by the host as `agentName`; "Claude" when none has.
+
+### Known
+
+The `package.json` marketplace description still leads with "runs that need
+no terminal" and claims Cursor, Codex and Copilot; plan-6 question 5 decides
+it. The README GIFs were re-recorded from this version's bundle.
+
 ## 0.35.12 — 2026-09-28 (GitHub only)
 
 Everything here comes from `docs/ux-review-2026-09.md`, a product and UX

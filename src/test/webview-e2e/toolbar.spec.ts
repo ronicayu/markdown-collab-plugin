@@ -6,7 +6,7 @@
 import { expect, test } from "@playwright/test";
 import { addThread, parse, replaceThread, type InlineThread } from "../../inlineComments/format";
 import { serialize } from "../../inlineComments/serializeState";
-import { awaitPosted, bootInlineView, getState } from "./harness";
+import { awaitPosted, bootInlineView, getState, pushToWebview } from "./harness";
 import { reviewFixture } from "./fixtures";
 
 const fixture = reviewFixture();
@@ -41,6 +41,38 @@ test("the filter row is a radiogroup, and arrow keys move the selection", async 
   await page.keyboard.press("ArrowRight");
   await expect(resolved).toBeChecked();
   await expect(page.locator(".thread-card")).toHaveCount(0);
+});
+
+test("agentName from the host renames the Send button and updates its title and the suggest-mode switch title (round-6 P5.2)", async ({ page }) => {
+  // Absent agentName reads as Claude — the existing fixture boot (no
+  // agentName field) must keep showing exactly what it always has.
+  await expect(page.locator("#send-to-claude")).toHaveText("Send to Claude");
+  await expect(page.locator("#send-to-claude")).toHaveAttribute("title", /Claude/);
+  await expect(page.locator("#suggest-mode-toggle")).toHaveAttribute("title", /Claude/);
+
+  await pushToWebview(page, {
+    type: "update",
+    state: serialize(parse(fixture.source)),
+    suggestMode: false,
+    pendingThreadIds: [],
+    agentName: "Codex",
+  });
+
+  await expect(page.locator("#send-to-claude")).toHaveText("Send to Codex");
+  await expect(page.locator("#send-to-claude")).toHaveAttribute("title", /Codex/);
+  await expect(page.locator("#suggest-mode-toggle")).toHaveAttribute("title", /Codex/);
+});
+
+test("without a host-computed pendingLabel, the waiting row falls back to '<agentName> is working…'", async ({ page }) => {
+  await pushToWebview(page, {
+    type: "update",
+    state: serialize(parse(fixture.source)),
+    suggestMode: false,
+    pendingThreadIds: [fixture.openThreadId],
+    agentName: "Codex",
+  });
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  await expect(card.locator(".mc-card__pending")).toContainText("Codex is working");
 });
 
 test("the overflow menu is closed by default and opens on click", async ({ page }) => {

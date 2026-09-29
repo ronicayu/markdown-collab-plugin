@@ -746,3 +746,52 @@ describe("round-trip corpus: the anchor hash", () => {
     expect(checkIntegrity(legacy).ok).toBe(true);
   });
 });
+
+// 10x-plan-6 P1.4. `via` is another optional field, on comments and
+// suggestions this time — same two obligations as the anchor hash: survive the
+// round trips when present, and never appear when nobody wrote it.
+describe("round-trip corpus: via", () => {
+  const QUOTES: Record<string, string> = {
+    "tables.md": "Ronica",
+    "frontmatter-lists.md": "multi-byte",
+    "code-and-markers.md": "Real prose",
+  };
+
+  for (const [name, quote] of Object.entries(QUOTES)) {
+    it(`${name}: tools and cli survive parse → serialize → parse, byte for byte`, () => {
+      const source = fixture(name);
+      const at = offsetOfOccurrence(source, quote, 1);
+      const opened = addThread(source, at, at + quote.length, {
+        author: "codex",
+        agent: true,
+        via: "tools",
+        body: "via tools",
+        ts: TS,
+      });
+      const replied = replaceThread(
+        opened.source,
+        opened.thread.id,
+        appendReply(opened.thread, { author: "claude", agent: true, via: "cli", body: "via cli", ts: TS }),
+      );
+      const parsed = parse(replied);
+      expect(parsed.threads[0]!.comments.map((c) => c.via)).toEqual(["tools", "cli"]);
+      expect(withThreads(replied, parsed.threads)).toBe(replied);
+      expect(checkIntegrity(replied).ok).toBe(true);
+    });
+  }
+
+  it("a document nobody stamped stays without it", () => {
+    const source = fixture("tables.md");
+    const at = source.indexOf("Ronica");
+    const r = addThread(source, at, at + 6, { author: "ronica", body: "human", ts: TS });
+    const reply = replaceThread(r.source, r.thread.id, appendReply(r.thread, { author: "ronica", body: "again", ts: TS }));
+    const suggested = addSuggestion(reply, reply.indexOf("green"), reply.indexOf("green") + 5, {
+      author: "claude",
+      proposed: "blue",
+      ts: TS,
+    }).source;
+    expect(suggested).not.toContain('"via"');
+    const reparsed = parse(suggested);
+    expect(withThreads(suggested, reparsed.threads, reparsed.suggestions)).toBe(suggested);
+  });
+});

@@ -28,6 +28,7 @@ import {
   withThreads,
   type InlineThread,
   type ReviewCheckpoint,
+  type WriteVia,
 } from "./format";
 import { checkpointFor } from "./deltaReview";
 import { checkIntegrity, type IntegrityIssue } from "./integrity";
@@ -223,13 +224,16 @@ export interface ListedThread {
   anchoredText: string | null;
   /** The anchored text changed after the thread's last comment (P1.3). */
   stale: boolean;
-  comments: Array<{ id: string; author: string; ts: string; body: string }>;
+  /** `via` only on a comment the tools or the CLI wrote (10x-plan-6 P1.4). */
+  comments: Array<{ id: string; author: string; ts: string; body: string; via?: WriteVia }>;
 }
 
 export interface ListedSuggestion {
   anchorId: string;
   threadId?: string;
   author: string;
+  /** Same as a listed comment's `via`. */
+  via?: WriteVia;
   anchored: boolean;
   original: string;
   proposed: string;
@@ -276,7 +280,7 @@ export function opList(source: string, actionable = false): ListResult {
         stale: stale.has(t.id),
         comments: t.comments
           .filter((c) => !c.deleted)
-          .map((c) => ({ id: c.id, author: c.author, ts: c.ts, body: c.body })),
+          .map((c) => ({ id: c.id, author: c.author, ts: c.ts, body: c.body, ...(c.via ? { via: c.via } : {}) })),
       };
     });
   const suggestions = parsed.suggestions.map((s) => {
@@ -285,6 +289,7 @@ export function opList(source: string, actionable = false): ListResult {
       anchorId: s.anchorId,
       threadId: s.threadId,
       author: s.author,
+      ...(s.via ? { via: s.via } : {}),
       anchored: a !== undefined,
       original: s.original,
       proposed: s.proposed,
@@ -309,6 +314,11 @@ export function opList(source: string, actionable = false): ListResult {
  * lands where the human isn't looking. A human replying keeps the status they
  * chose — a note on a closed thread is theirs to make. `reopened` says which
  * happened, so the caller never has to diff the status itself.
+ *
+ * `via` is the front end's own name for the path the write took (10x-plan-6
+ * P1.4) — `"tools"` from the MCP server, `"cli"` from `mdc` writing directly.
+ * Left undefined, the comment carries no such field, which is what a write
+ * from anywhere else (the editor's hover reply) has always looked like.
  */
 export function opReply(
   source: string,
@@ -317,9 +327,10 @@ export function opReply(
   now = () => new Date().toISOString(),
   author = "claude",
   agent = true,
+  via?: WriteVia,
 ): OpOutcome<{ threadId: string; commentId: string; reopened: boolean }> {
   const thread = findThread(source, threadId);
-  const appended = appendReply(thread, { author, agent, body, ts: now() });
+  const appended = appendReply(thread, { author, agent, via, body, ts: now() });
   const reply = appended.comments[appended.comments.length - 1]!;
   const reopened = thread.status === "resolved" && isAgentComment(reply);
   // Claude just read this passage to answer about it, so its reply is the new
@@ -543,6 +554,7 @@ export function opEdit(
   };
 }
 
+/** Open a thread on a quoted passage. `via` as in `opReply`. */
 export function opOpen(
   source: string,
   quote: string,
@@ -550,11 +562,12 @@ export function opOpen(
   occurrence = 0,
   now = () => new Date().toISOString(),
   author = "claude",
+  via?: WriteVia,
 ): OpOutcome<{ threadId: string; quote: string }> {
   const at = locatePassage(source, quote, occurrence);
   let result;
   try {
-    result = addThread(source, at, at + quote.length, { author, agent: true, body, ts: now() });
+    result = addThread(source, at, at + quote.length, { author, agent: true, via, body, ts: now() });
   } catch (e) {
     // addThread refuses frontmatter, the threads region, and code.
     throw new DocOpError("not_anchorable", (e as Error).message, { quote });
@@ -704,6 +717,7 @@ export function opFinalize(source: string): OpOutcome<{
 /**
  * Propose an edit: wrap the passage's original text and record the proposal.
  * The file still renders as the original — the human accepts or rejects.
+ * `via` as in `opReply`, stamped on the suggestion record.
  */
 export function opSuggest(
   source: string,
@@ -712,6 +726,7 @@ export function opSuggest(
   opts: { note?: string; occurrence?: number; threadId?: string } = {},
   now = () => new Date().toISOString(),
   author = "claude",
+  via?: WriteVia,
 ): OpOutcome<{ anchorId: string; original: string; proposed: string }> {
   const at = locatePassage(source, quote, opts.occurrence ?? 0);
   let result;
@@ -719,6 +734,7 @@ export function opSuggest(
     result = addSuggestion(source, at, at + quote.length, {
       author,
       agent: true,
+      via,
       proposed,
       note: opts.note,
       threadId: opts.threadId,
