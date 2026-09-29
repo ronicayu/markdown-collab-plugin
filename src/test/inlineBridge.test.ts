@@ -12,7 +12,8 @@ import {
   replyToThread,
   setThreadResolved,
 } from "../collab/inlineBridge";
-import { parse, withThreads } from "../inlineComments/format";
+import { addSuggestion, parse, withThreads } from "../inlineComments/format";
+import { checkpointFor } from "../inlineComments/deltaReview";
 import { locateNthOccurrence } from "../collab/liveAnchorLocator";
 
 const DOC = [
@@ -656,5 +657,115 @@ describe("anchorOrdinal + ordinal highlight (table / structural-markdown regress
     const loc = locateNthOccurrence(rendered, c.anchor.text, c.anchorOrdinal)!;
     expect(loc).not.toBeNull();
     expect(loc.start).toBe(rendered.indexOf("active", rendered.indexOf("active") + 1));
+  });
+});
+
+describe("live-edit write paths preserve suggestions + review checkpoint", () => {
+  // Regression coverage for the spike's "found along the way" bug: every write
+  // path that goes through `withThreads` from this module rebuilds the source
+  // from prose it already stripped of the threads region, so a call that
+  // forgets to pass the current suggestions/checkpoint back in silently drops
+  // them, even though nothing about the write touched either. Build a doc that
+  // exercises all three: one open thread, one pending suggestion, and a review
+  // checkpoint.
+  function seedWithSuggestionAndCheckpoint(): { source: string; threadId: string; anchorId: string } {
+    const withThread = seed();
+    const start = withThread.source.indexOf("second paragraph");
+    const { source: withSuggestion, suggestion } = addSuggestion(
+      withThread.source,
+      start,
+      start + "second paragraph".length,
+      { author: "claude", proposed: "second section", ts: "2026-01-01T00:00:00.000Z" },
+    );
+    const checkpoint = checkpointFor(withSuggestion, () => "2026-01-02T00:00:00.000Z");
+    const source = withThreads(withSuggestion, parse(withSuggestion).threads, undefined, checkpoint);
+    // Sanity: the seed really carries all three before any write path runs.
+    const parsed = parse(source);
+    expect(parsed.suggestions).toHaveLength(1);
+    expect(parsed.checkpoint).not.toBeNull();
+    return { source, threadId: withThread.id, anchorId: suggestion.anchorId };
+  }
+
+  it("a prose edit (mergeProseEdit / assembleMarkedSource) keeps the suggestion and checkpoint", () => {
+    const { source, threadId } = seedWithSuggestionAndCheckpoint();
+    const edited = proseOf(source).replace("# Title", "# Title edited");
+    const merged = mergeProseEdit(source, edited);
+    const parsed = parse(merged);
+    expect(parsed.suggestions).toHaveLength(1);
+    expect(parsed.suggestions[0]!.proposed).toBe("second section");
+    expect(parsed.checkpoint).not.toBeNull();
+    expect(parsed.checkpoint!.ts).toBe("2026-01-02T00:00:00.000Z");
+    // The thread is still there too (edit happened elsewhere in the prose).
+    expect(commentsOf(merged).some((c) => c.id === threadId)).toBe(true);
+  });
+
+  it("keeps the suggestion's own anchor markers (not just its record) through a prose edit elsewhere", () => {
+    const { source, anchorId } = seedWithSuggestionAndCheckpoint();
+    // Edit well away from the suggestion's span so its text is untouched but
+    // shifts to a later offset — the marker has to move with it.
+    const edited = proseOf(source).replace("# Title", "# Title\n\nBrand new intro paragraph.");
+    const merged = mergeProseEdit(source, edited);
+    const parsed = parse(merged);
+    expect(parsed.anchors.has(anchorId)).toBe(true);
+    expect(parsed.unanchoredSuggestionIds).not.toContain(anchorId);
+    const a = parsed.anchors.get(anchorId)!;
+    expect(merged.slice(a.openEnd, a.closeStart)).toBe("second paragraph");
+  });
+
+  it("a new comment through addThreadAtOffsets keeps the suggestion and checkpoint", () => {
+    const { source, threadId } = seedWithSuggestionAndCheckpoint();
+    const newBody = proseOf(source);
+    const sel = "brown fox";
+    const start = newBody.indexOf(sel);
+    const res = addThreadAtOffsets(source, newBody, start, start + sel.length, {
+      author: "ron",
+      body: "new comment",
+      ts: "2026-01-03T00:00:00.000Z",
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const parsed = parse(res.source);
+    expect(parsed.suggestions).toHaveLength(1);
+    expect(parsed.suggestions[0]!.proposed).toBe("second section");
+    expect(parsed.checkpoint).not.toBeNull();
+    const comments = commentsOf(res.source);
+    expect(comments).toHaveLength(2); // old thread + new one
+    expect(comments.some((c) => c.id === threadId)).toBe(true);
+  });
+
+  it("a loosely-anchored comment (addThreadFromAnchor's unlocatable-text fallback) keeps the suggestion and checkpoint", () => {
+    const { source, threadId } = seedWithSuggestionAndCheckpoint();
+    // "Alex — PM" isn't in the doc verbatim, so `locate` fails and the save
+    // falls through to the loosely-anchored path (inlineBridge.ts ~342).
+    const res = addThreadFromAnchor(source, { text: "Alex — PM", contextBefore: "", contextAfter: "" }, {
+      author: "ron",
+      body: "loose comment",
+      ts: "2026-01-04T00:00:00.000Z",
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const parsed = parse(res.source);
+    expect(parsed.suggestions).toHaveLength(1);
+    expect(parsed.suggestions[0]!.proposed).toBe("second section");
+    expect(parsed.checkpoint).not.toBeNull();
+    const comments = commentsOf(res.source);
+    expect(comments).toHaveLength(2); // old thread + new loosely-anchored one
+    expect(comments.some((c) => c.id === threadId)).toBe(true);
+    expect(comments.some((c) => c.anchor.text === "Alex — PM")).toBe(true);
+  });
+
+  it("placeAnchorsInProse (the editor-reported-position path) also keeps the suggestion and checkpoint", () => {
+    // Shares assembleMarkedSource with mergeProseEdit, and has the same bug:
+    // covered separately since it's a distinct entry point the collab editor
+    // provider calls on every edit that carries live anchor positions.
+    const { source, threadId, anchorId } = seedWithSuggestionAndCheckpoint();
+    const newProse = proseOf(source).replace("# Title", "# Title\n\nBrand new intro paragraph.");
+    const out = placeAnchorsInProse(source, newProse, []);
+    const parsed = parse(out);
+    expect(parsed.suggestions).toHaveLength(1);
+    expect(parsed.suggestions[0]!.proposed).toBe("second section");
+    expect(parsed.checkpoint).not.toBeNull();
+    expect(parsed.anchors.has(anchorId)).toBe(true);
+    expect(commentsOf(out).some((c) => c.id === threadId)).toBe(true);
   });
 });

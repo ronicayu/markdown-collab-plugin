@@ -25,8 +25,10 @@ import {
   replaceThread,
   startPastHeadingPrefix,
   withThreads,
+  type InlineSuggestion,
   type InlineThread,
   type ParsedDocument,
+  type ReviewCheckpoint,
 } from "../inlineComments/format";
 import { isThreadStale } from "../inlineComments/staleness";
 import {
@@ -347,9 +349,10 @@ export function addThreadFromAnchor(
  * body markdown). The marker is placed precisely at [selStart, selEnd) — no
  * text search — so commenting can't fail to "locate" the selection even when
  * the stored document has drifted from the editor's serialization. `newBody`
- * is adopted as the body (re-anchoring existing threads into it); the
- * frontmatter is re-prepended. Returns ok:false only when the offsets are
- * unusable, letting the caller fall back to the text-anchored path.
+ * is adopted as the body (re-anchoring existing threads and suggestions into
+ * it, and preserving the review checkpoint); the frontmatter is re-prepended.
+ * Returns ok:false only when the offsets are unusable, letting the caller
+ * fall back to the text-anchored path.
  */
 export function addThreadAtOffsets(
   oldSource: string,
@@ -402,6 +405,20 @@ export function addThreadAtOffsets(
       kept.push({ id: thread.id, start: loc.start, end: loc.end });
     }
   }
+  // Pending suggestions re-anchor the same way — otherwise a comment added
+  // elsewhere in the document would silently strand every suggestion's markers.
+  for (const s of parsed.suggestions) {
+    const span = anchorsInProse.get(s.anchorId);
+    if (!span) continue;
+    const loc = locate(newBody, {
+      text: oldProse.slice(span.proseStart, span.proseEnd),
+      contextBefore: oldProse.slice(Math.max(0, span.proseStart - CONTEXT_CHARS), span.proseStart),
+      contextAfter: oldProse.slice(span.proseEnd, span.proseEnd + CONTEXT_CHARS),
+    });
+    if (loc && !kept.some((k) => overlaps(k, loc))) {
+      kept.push({ id: s.anchorId, start: loc.start, end: loc.end });
+    }
+  }
   kept.sort((a, b) => a.start - b.start);
 
   let marked = "";
@@ -416,7 +433,20 @@ export function addThreadAtOffsets(
   }
   marked += newBody.slice(cursor);
 
-  return { ok: true, source: withThreads(frontmatterOf(oldSource) + marked, [...parsed.threads, newThread]) };
+  // `withThreads` only keeps whatever suggestions/checkpoint IT can parse back
+  // out of the string it's handed — and `frontmatterOf(oldSource) + marked` has
+  // no threads region at all (buildBridge stripped it), so without passing
+  // `parsed.suggestions`/`parsed.checkpoint` explicitly here, both are silently
+  // dropped even though this write never touched either.
+  return {
+    ok: true,
+    source: withThreads(
+      frontmatterOf(oldSource) + marked,
+      [...parsed.threads, newThread],
+      parsed.suggestions,
+      parsed.checkpoint,
+    ),
+  };
 }
 
 /** Append a reply to a thread. Returns the rewritten source, or null if the thread is gone. */
@@ -675,6 +705,7 @@ function recoverUnanchoredByQuote(
 export function mergeProseEdit(oldSource: string, newProse: string): string {
   const { prose: oldProse, parsed, anchorsInProse } = buildBridge(oldSource);
   const threads = parsed.threads;
+  const suggestions = parsed.suggestions;
   const edit = diffEnvelope(oldProse, newProse);
   // Whitespace-collapsed view of newProse for the context-bracket fallback.
   // Computed at most once per merge (only when a thread actually reaches that
@@ -693,19 +724,38 @@ export function mergeProseEdit(oldSource: string, newProse: string): string {
       : recoverUnanchoredByQuote(newProse, thread.quote);
     if (loc) placements.push({ id: thread.id, start: loc.start, end: loc.end });
   }
+  // Pending suggestions re-anchor the same way threads do — a suggestion's
+  // anchor markers get stripped out of the prose the editor sees (buildBridge
+  // treats them the same as thread markers), so without this every prose edit
+  // would silently unanchor every suggestion in the document.
+  for (const s of suggestions) {
+    const span = anchorsInProse.get(s.anchorId);
+    const loc = span
+      ? reanchorThreadByText(oldProse, newProse, collapsed, edit, span)
+      : recoverUnanchoredByQuote(newProse, s.original);
+    if (loc) placements.push({ id: s.anchorId, start: loc.start, end: loc.end });
+  }
 
-  return assembleMarkedSource(oldSource, newProse, threads, placements);
+  return assembleMarkedSource(oldSource, newProse, threads, suggestions, parsed.checkpoint, placements);
 }
 
 /**
- * Wrap each placement's `[start, end)` of `newProse` in its marker, dropping
- * overlaps (markers must nest cleanly), then re-prepend the frontmatter the
- * editor never sees and re-append the threads region.
+ * Wrap each placement's `[start, end)` of `newProse` in its marker (a
+ * placement's `id` may be a thread id or a suggestion's `anchorId` — the
+ * wrapping itself doesn't care which), dropping overlaps (markers must nest
+ * cleanly), then re-prepend the frontmatter the editor never sees and
+ * re-append the threads region with `threads`, `suggestions` and `checkpoint`
+ * passed through explicitly. That last part matters: the string this builds
+ * (`frontmatterOf(oldSource) + marked`) has no threads region at all — it was
+ * stripped out by `buildBridge` — so `withThreads` has nothing of its own to
+ * fall back to keeping; passing these in is the only way they survive.
  */
 function assembleMarkedSource(
   oldSource: string,
   newProse: string,
   threads: InlineThread[],
+  suggestions: InlineSuggestion[],
+  checkpoint: ReviewCheckpoint | null,
   placements: Array<{ id: string; start: number; end: number }>,
 ): string {
   placements.sort((a, b) => a.start - b.start || a.end - b.end);
@@ -729,7 +779,7 @@ function assembleMarkedSource(
   }
   marked += newProse.slice(cursor);
 
-  return withThreads(frontmatterOf(oldSource) + marked, threads);
+  return withThreads(frontmatterOf(oldSource) + marked, threads, suggestions, checkpoint);
 }
 
 /**
@@ -782,5 +832,17 @@ export function placeAnchorsInProse(
     if (!loc && !span) loc = recoverUnanchoredByQuote(newProse, thread.quote);
     if (loc) placements.push({ id: thread.id, start: loc.start, end: loc.end });
   }
-  return assembleMarkedSource(oldSource, newProse, parsed.threads, placements);
+  // The editor doesn't track suggestion spans as decorations (suggestions show
+  // as sidebar cards, not live highlights), so there's no reported position to
+  // place by — fall back straight to text re-anchoring, same as an unreported
+  // thread.
+  for (const s of parsed.suggestions) {
+    const span = anchorsInProse.get(s.anchorId);
+    let loc: { start: number; end: number } | null = span
+      ? reanchorThreadByText(oldProse, newProse, collapsed, edit, span)
+      : null;
+    if (!loc && !span) loc = recoverUnanchoredByQuote(newProse, s.original);
+    if (loc) placements.push({ id: s.anchorId, start: loc.start, end: loc.end });
+  }
+  return assembleMarkedSource(oldSource, newProse, parsed.threads, parsed.suggestions, parsed.checkpoint, placements);
 }

@@ -151,7 +151,22 @@ P0, P1, P2.1–2.3, P3 and P5 shipped in 0.35.13. Deviations:
   `.code-workspace` isn't read; it stays silent rather than guess.
 - **P2.4** Held for question 2.
 - **P3** Five per file in a multi-file pass, one summary per file.
-- **P4** Spike in `docs/spike-one-view.md`; no product code.
+- **P4** Spike in `docs/spike-one-view.md`: **go with conditions**.
+  Read-only milkdown renders the same content (better on footnotes and
+  HTML `<img>`; gaps: PlantUML, draw.io, task checkboxes, `<br>`, mermaid
+  source shown, suggestion text not highlighted — all S). Porting: diff
+  stripes M, sidebar parity M, highlight alignment L. Round-trip: 2 of 8
+  fixtures byte-clean; one keystroke rewrites 40–624 lines of a real doc
+  (`-`→`*` bullets, tight→loose lists, table re-padding, escapes, setext→ATX,
+  reference links inlined, `<br>` deleted). That answers question 4: yes.
+  Edit mode can never be the default; the conditions are to fix the two
+  bugs below, anchor by source position with 0 misplaced highlights, and
+  have edit mode write back only the edited blocks. The spike also found
+  two shipped bugs: the live editor drops pending suggestions and the
+  checkpoint on every edit or comment (`inlineBridge.ts` never passes
+  suggestions to `withThreads`), and draw.io renders in neither view (the
+  mxgraph factory is called without `this` in a strict-mode bundle). Both
+  fixed in 0.35.14.
 - **P5.2** The "New from Claude" filter chip already derived its name
   per thread; only the Send button, switch and pending text changed.
 - **Not done:** question 5 (marketplace description) — untouched.

@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.35.14 — 2026-09-29 (GitHub only)
+
+Two bugs the one-view spike (`docs/spike-one-view.md`) found in shipping
+code, both in the surfaces that get the most use.
+
+### Fixed: the live editor dropped pending suggestions and the checkpoint
+
+Every edit or new comment made in the live editor deleted the file's
+pending suggestions and its review checkpoint. `buildBridge` strips the
+threads region before the editor sees the prose, and the three write paths
+in `src/collab/inlineBridge.ts` then rebuilt the file with `withThreads`
+from that bare prose — so the "keep what's already there" default had
+nothing to keep. `addThreadAtOffsets` and `assembleMarkedSource` (shared by
+`mergeProseEdit` and `placeAnchorsInProse`) now carry the suggestions and
+the checkpoint through explicitly, and a suggestion's anchor markers are
+re-placed after an edit with the same tiered text matching a thread's are,
+so a suggestion survives the edit anchored rather than orphaned. Four tests
+seed a thread, a suggestion and a checkpoint and drive each path.
+
+### Fixed: draw.io rendered in neither view
+
+The bundles are strict mode. mxgraph's factory is written for sloppy mode:
+it assigns to `this` expecting the global object, and creates globals by
+bare assignment. Called bare, `this` was undefined and it threw "Cannot set
+properties of undefined (setting 'mxBasePath')"; called with `globalThis`,
+it then threw `ReferenceError: mxForceIncludes is not defined`. `loadMx`
+now calls the factory with `globalThis` and pre-declares the two bootstrap
+globals the existing hoist missed. A webview e2e spec renders a `.drawio`
+reference in both the review view and the live editor and asserts an
+`<svg>` appears; it failed on the old code with the exact reported error.
+
 ## 0.35.13 — 2026-09-29 (GitHub only)
 
 Round 6, P0–P3 and P5 of `docs/10x-plan-6.md`. The plan came out of a

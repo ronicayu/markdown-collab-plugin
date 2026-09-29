@@ -49,19 +49,41 @@ function loadMx(): Promise<MxFactory> {
       // from a relative path that doesn't exist inside the webview's
       // sandbox, which surfaces as a noisy 404 in devtools but is
       // harmless for our render-only use.
+      //
+      // mxForceIncludes and mxResourceExtension aren't ones we care about the
+      // value of, but they still have to be set: mxClient's bootstrap (see the
+      // `.call(globalThis, …)` comment below) does
+      // `if (typeof(mxForceIncludes) == 'undefined') { mxForceIncludes = false; }`
+      // for both — a bare assignment to an undeclared identifier, which is an
+      // implicit global everywhere else but a thrown ReferenceError under
+      // strict mode. Pre-setting them as real global properties makes the
+      // `typeof` check see them as already defined, so that assignment branch
+      // never runs.
       const globals = globalThis as unknown as Record<string, unknown>;
       if (globals.mxBasePath === undefined) globals.mxBasePath = "";
       if (globals.mxLoadResources === undefined) globals.mxLoadResources = false;
       if (globals.mxLoadStylesheets === undefined) globals.mxLoadStylesheets = false;
       if (globals.mxImageBasePath === undefined) globals.mxImageBasePath = "";
+      if (globals.mxForceIncludes === undefined) globals.mxForceIncludes = false;
+      if (globals.mxResourceExtension === undefined) globals.mxResourceExtension = ".txt";
       const mod = await import("mxgraph");
       const factoryFn = (mod as { default?: unknown }).default ?? mod;
       const fn = factoryFn as unknown as (opts: Record<string, unknown>) => MxFactory;
-      const mx = fn({
+      // mxgraph's factory (javascript/dist/build.js) is `function (opts) { for
+      // (var name in opts) { this[name] = opts[name]; } ... }` — written to be
+      // called as a bare sloppy-mode function so `this` defaults to the global
+      // object, hoisting mxBasePath etc. onto it for the bare identifier reads
+      // later in the same function. The shipped bundles are strict mode
+      // ("use strict"), so a bare `fn(...)` call leaves `this` as `undefined`
+      // and the very first assignment throws. `.call(globalThis, ...)` gives
+      // it back the receiver it expects.
+      const mx = fn.call(globalThis, {
         mxBasePath: "",
         mxLoadResources: false,
         mxLoadStylesheets: false,
         mxImageBasePath: "",
+        mxForceIncludes: false,
+        mxResourceExtension: ".txt",
       });
       return mx;
     })();
