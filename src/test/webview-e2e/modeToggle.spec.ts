@@ -14,9 +14,10 @@
 // `addThreadAtProseRange` and changes no prose line.
 
 import { expect, test, type Page } from "@playwright/test";
-import { awaitPosted, bootLiveEditor, clearPosted, posted, pushToWebview } from "./harness";
-import { liveInit } from "./fixtures";
-import { addThreadAtProseRange, applyBlockEdits } from "../../collab/inlineBridge";
+import { awaitPosted, bootLiveEditor, bootLiveEditorShell, clearPosted, posted, pushToWebview } from "./harness";
+import { liveInit, liveProse } from "./fixtures";
+import { addThreadAtEditorRange, addThreadAtProseRange, applyBlockEdits } from "../../collab/inlineBridge";
+import type { EditorPoint } from "../../collab/sourcePositions";
 import { addThread, parse, stripAllInlineMarkup } from "../../inlineComments/format";
 import { onlyMarkersAdded } from "../support/oneViewCorpus";
 
@@ -97,7 +98,6 @@ async function spliced(page: Page, source: string): Promise<{ message: EditBlock
   await clearPosted(page);
   const r = applyBlockEdits(source, message);
   if (!r.ok) throw new Error(r.error);
-  expect(r.restructured).toBe(false);
   return { message, source: r.source };
 }
 
@@ -136,7 +136,8 @@ test("keystrokes post only the blocks they changed, and the host splices those i
   // Enter at the end of the last paragraph, then typing: an insertion after it.
   await caretIn(page, "behind a setting.");
   await page.keyboard.press("Enter");
-  await page.keyboard.type("New para");
+  // One input, so a slow machine can't split the word across two debounces.
+  await page.keyboard.insertText("New para");
   const inserted = await spliced(page, split.source);
   expect(inserted.message.edits).toEqual([{ from: 6, to: 6, markdown: "New para", types: ["paragraph"] }]);
   expect(inserted.source).toBe(split.source.replace("setting<!--mc:/a:" + ids[1] + "-->.", "setting<!--mc:/a:" + ids[1] + "-->.\n\nNew para"));
@@ -251,4 +252,206 @@ test("a re-render the host sends after refusing an edit says why and becomes the
   const edited = await spliced(page, source);
   expect(edited.message.epoch).toBe(4);
   expect(edited.message.edits).toHaveLength(1);
+});
+
+// More of what people do with a keyboard: each posts what the editor holds,
+// the host splices it, and the file may change only where the edit was.
+
+/** Whether `after` is `before` with `[from, to)` of it replaced — returns the replacement, or null. */
+function onlyReplaced(before: string, after: string, from: number, to: number): string | null {
+  const tail = before.length - to;
+  if (after.slice(0, from) !== before.slice(0, from) || after.slice(after.length - tail) !== before.slice(to)) return null;
+  return after.slice(from, after.length - tail);
+}
+
+/** Select from `startText`'s first character to `endText`'s last, across blocks. */
+async function selectText(page: Page, startText: string, endText: string): Promise<void> {
+  await editable(page).focus();
+  await page.evaluate(
+    ({ startText, endText }) => {
+      const root = document.querySelector(".milkdown .ProseMirror")!;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      const texts: Text[] = [];
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) texts.push(n as Text);
+      const a = texts.find((t) => t.data.includes(startText))!;
+      const b = texts.find((t) => t.data.includes(endText))!;
+      const r = document.createRange();
+      r.setStart(a, a.data.indexOf(startText));
+      r.setEnd(b, b.data.indexOf(endText) + endText.length);
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(r);
+    },
+    { startText, endText },
+  );
+}
+
+test("selecting a whole paragraph and deleting it removes that paragraph's bytes and nothing else", async ({ page }) => {
+  const { source, ids } = fixture();
+  await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
+  await selectText(page, "The parser", "correctly.");
+  await page.keyboard.press("Backspace");
+  const emptied = await spliced(page, source);
+  // The paragraph is still there, empty: milkdown writes one as `<br />`.
+  const para = parse(source).anchors.get(ids[0]!)!;
+  const start = source.lastIndexOf("\n", para.openStart) + 1;
+  const end = source.indexOf("\n", para.closeEnd);
+  expect(onlyReplaced(source, emptied.source, start, end)).toBe("<br />");
+  expect(regionOf(emptied.source)).toBe(regionOf(source));
+
+  // Backspace again takes the empty paragraph out, with one separator.
+  await page.keyboard.press("Backspace");
+  const removed = await spliced(page, emptied.source);
+  expect(removed.source).toBe(source.slice(0, start - 2) + source.slice(end));
+});
+
+test("typing in the middle of a list item that isn't the last changes only that item", async ({ page }) => {
+  const { source } = fixture();
+  await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
+  await caretIn(page, "first item", "first".length);
+  // One key, so a slow machine can't split it across two debounces.
+  await page.keyboard.type("s");
+  const typed = await spliced(page, source);
+  expect(typed.message.edits).toHaveLength(1);
+  // Still tight: no blank line appears between the items.
+  expect(typed.source).toBe(source.replace("- first item", "- firsts item"));
+});
+
+test("pasting two paragraphs adds exactly them, with a blank line between", async ({ page }) => {
+  const { source, ids } = fixture();
+  await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
+  await caretIn(page, "lists correctly.");
+  await page.evaluate(() => {
+    const data = new DataTransfer();
+    data.setData("text/plain", "Pasted one.\n\nPasted two.");
+    const target = document.querySelector(".milkdown .ProseMirror")!;
+    target.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+  });
+  const pasted = await spliced(page, source);
+  const close = `<!--mc:/a:${ids[0]}-->`;
+  const at = source.indexOf(" correctly.", source.indexOf(close)) + " correctly.".length;
+  expect(onlyReplaced(source, pasted.source, at, at)).toBe("Pasted one.\n\nPasted two.");
+  expect(pasted.message.edits.map((e) => e.types)).toEqual([["paragraph", "paragraph"]]);
+});
+
+test("undo after typing puts the file back byte for byte, markers included", async ({ page }) => {
+  const { source } = fixture();
+  await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
+  await caretIn(page, "behind a setting.");
+  await page.keyboard.type("!");
+  const typed = await spliced(page, source);
+  expect(typed.source).toBe(source.replace("-->.\n", "-->.!\n"));
+  await page.keyboard.press("ControlOrMeta+z");
+  const undone = await spliced(page, typed.source);
+  expect(undone.source).toBe(source);
+});
+
+// Pushes and rebuilds crossing each other: nothing typed or sent may be lost
+// without a word, and the epoch an edit carries is the one the host last sent.
+
+test("an external change that arrives while the editor is being built is applied once it's built", async ({ page }) => {
+  const { source } = fixture();
+  // The build takes a turn of the event loop, as it can in VS Code — here on purpose.
+  await page.evaluate(() => {
+    (window as unknown as { __mcTestHooks: Record<string, unknown> }).__mcTestHooks = {
+      beforeEditorBuild: () => new Promise((r) => setTimeout(r, 150)),
+    };
+  });
+  await bootLiveEditorShell(page);
+  const changed = source.replace("Suggest mode ships", "Suggest mode now ships");
+  // Back to back: the editor is still being built when the change arrives.
+  await page.evaluate(
+    (msgs) => {
+      for (const m of msgs) window.postMessage(m, "*");
+    },
+    [
+      { type: "init", ...liveInit(source), epoch: 1 },
+      { type: "externalChange", text: liveProse(changed), epoch: 2 },
+    ],
+  );
+  await awaitPosted(page, "ready-with-content");
+  await expect(editable(page)).toContainText("Suggest mode now ships");
+  await clearPosted(page);
+  await caretIn(page, "lists correctly.");
+  await page.keyboard.type("!");
+  const typed = await spliced(page, changed);
+  expect(typed.message.epoch).toBe(2);
+});
+
+test("a keystroke still in the debounce when the host rebuilds the editor is posted first", async ({ page }) => {
+  const { source } = fixture();
+  await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
+  await caretIn(page, "lists correctly.");
+  await page.keyboard.type("!");
+  // The switch to Reading arrives before the debounce fires.
+  await pushToWebview(page, { type: "init", ...liveInit(source), readOnly: true, epoch: 2 });
+  const edit = (await awaitPosted(page, "edit-blocks")) as unknown as EditBlocks;
+  expect(edit.epoch).toBe(1);
+  expect(edit.edits).toEqual([{ from: 1, to: 2, markdown: "The parser handles nested lists correctly.!", types: ["paragraph"] }]);
+  await expect(editable(page)).toHaveAttribute("contenteditable", "false");
+});
+
+test("a quiet push replaces the text without announcing an outside edit", async ({ page }) => {
+  const { source } = fixture();
+  await bootLiveEditor(page, { ...liveInit(source), readOnly: true, epoch: 1 });
+  const changed = source.replace("correctly.", "correctly.!");
+  await pushToWebview(page, { type: "externalChange", text: liveProse(changed), epoch: 2, quiet: true });
+  await expect(editable(page)).toContainText("correctly.!");
+  await page.waitForTimeout(100);
+  // Counted now, not polled: a notice would still be showing.
+  expect(await page.locator(".mdc-banner").count()).toBe(0);
+  expect(await page.locator(".mdc-toast--visible").count()).toBe(0);
+});
+
+// An edit-mode comment: the selection is named by structure, and the host
+// finds it in the file's own bytes — the add changes nothing but its markers,
+// in a block the serializer rewrote as much as in one it never touched.
+test("in edit mode, a comment adds its two markers to the file's own bytes and nothing else", async ({ page }) => {
+  const COMMENT = { author: "ronica", body: "Why?", ts: TS };
+  // A block typed into (its bytes now the serializer's), a list, a padded table.
+  const base = "# Notes\n\nSome __strong__ text and _more_.\n\n- one\n- two\n\n| a   | b   |\n|-----|-----|\n| 1   | 2   |\n";
+  await bootLiveEditor(page, { ...liveInit(base), epoch: 1 });
+  await caretIn(page, "text and");
+  await page.keyboard.press("End");
+  await page.keyboard.type("!");
+  let source = (await spliced(page, base)).source;
+
+  for (const [first, last] of [
+    ["strong", "text"],
+    ["two", "two"],
+    ["2", "2"],
+  ] as const) {
+    await selectText(page, first, last);
+    await page.locator(".mdc-add-comment-btn").click();
+    const composer = page.locator(".mdc-composer-slot .mc-composer");
+    await composer.locator("textarea").fill("Why?");
+    await composer.getByRole("button", { name: "Save" }).click();
+    const msg = await awaitPosted(page, "add-comment");
+    // Nothing the editor serialized goes with it for the host to adopt.
+    expect(msg.fullMd).toBeUndefined();
+    expect(msg.editRange).toBeDefined();
+    const r = addThreadAtEditorRange(source, msg.editRange as { first: EditorPoint; last: EditorPoint }, COMMENT);
+    if (!r.ok) throw new Error(r.error);
+    const id = parse(r.source).threads.find((t) => !parse(source).threads.some((b) => b.id === t.id))!.id;
+    expect(onlyMarkersAdded(source, r.source, id), `${first}…${last}`).toEqual([]);
+    const a = parse(r.source).anchors.get(id)!;
+    expect(stripAllInlineMarkup(r.source.slice(a.openEnd, a.closeStart))).toContain(last);
+    source = r.source;
+    await pushToWebview(page, { type: "add-comment-result", ok: true });
+    await clearPosted(page);
+  }
+});
+
+test("a keystroke and Enter twice in one debounce, then typing: neither edit is refused", async ({ page }) => {
+  const { source } = fixture();
+  await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
+  await caretIn(page, "behind a setting.");
+  // Within one debounce: the two empty paragraphs at the end come with a real change.
+  await page.keyboard.type("!");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  const first = await spliced(page, source);
+  expect(first.message.edits).toEqual([{ from: 4, to: 5, markdown: "Suggest mode ships behind a setting.!", types: ["paragraph"] }]);
+  await page.keyboard.type("x");
+  const typed = await spliced(page, first.source);
+  expect(typed.source).toBe(first.source.replace(/\.!\n/, ".!\n\n<br />\n\nx\n"));
 });

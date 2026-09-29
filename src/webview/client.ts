@@ -28,8 +28,10 @@ import {
   rootCtx,
   serializerCtx,
 } from "@milkdown/core";
-import { commonmark } from "@milkdown/preset-commonmark";
-import { gfm } from "@milkdown/preset-gfm";
+import { bulletListSchema, commonmark } from "@milkdown/preset-commonmark";
+import { extendListItemSchemaForTask, gfm } from "@milkdown/preset-gfm";
+import type { Ctx } from "@milkdown/ctx";
+import type { NodeSchema } from "@milkdown/transformer";
 import { listener, listenerCtx } from "@milkdown/plugin-listener";
 import { history } from "@milkdown/plugin-history";
 import { nord } from "@milkdown/theme-nord";
@@ -48,8 +50,11 @@ import { locateAnchorInLiveText, locateNthOccurrence } from "../collab/liveAncho
 import { renderedRangeToPmRange, renderedTextOf } from "../collab/pmPositionMapper";
 import {
   buildSourceIndex,
+  editorSelectionPoints,
   editorSelectionToSource,
   sourceRangeToEditor,
+  type EditorPoint,
+  type PmBlockLike,
   type PmNodeLike,
   type SourceIndex,
 } from "../collab/sourcePositions";
@@ -172,6 +177,8 @@ interface ExternalChangeMessage {
   epoch?: number;
   /** Set when the host re-rendered because it couldn't take an edit: says why, instead of the external-edit notice. */
   toast?: string;
+  /** The person's own edit, written after the editor was rebuilt without it: nothing to announce. */
+  quiet?: boolean;
 }
 
 interface FrontmatterMessage {
@@ -252,6 +259,17 @@ interface RevealThreadMessage {
   threadId: string;
 }
 
+/**
+ * How a send from the sidebar went: `ok` when it was handed to the agent,
+ * `saved` when the file on disk had the editor's text first. The host doesn't
+ * send when the save fails — the agent would read the old version.
+ */
+interface SendResultMessage {
+  type: "send-result";
+  ok: boolean;
+  saved: boolean;
+}
+
 type IncomingMessage =
   | InitMessage
   | ExternalChangeMessage
@@ -266,6 +284,7 @@ type IncomingMessage =
   | DrawioReadResultMessage
   | SkillStatusMessage
   | ReviewPendingMessage
+  | SendResultMessage
   | RevealThreadMessage;
 
 const vscode = acquireVsCodeApi();
@@ -317,16 +336,11 @@ const sidebarPush: Omit<SidebarState, "readOnly"> = {
 
 const threadSidebar = createThreadSidebar({
   post: (msg) => {
-    // Edits still in the debounce go first: the mode switch re-reads the
-    // file, and the agent reads it from disk.
-    if (msg.type === "set-read-only" || msg.type === "send-to-claude" || msg.type === "send-to-claude-comment") {
-      flushBlockEdits();
-    }
+    // Edits still in the debounce go first, whatever the message: the host
+    // writes a reply or an accepted suggestion over the file as it has it,
+    // the mode switch re-reads the file, and the agent reads it from disk.
+    flushBlockEdits();
     vscode.postMessage(msg);
-    if (msg.type === "send-to-claude" || msg.type === "send-to-claude-comment") {
-      const agent = sidebarPush.agentName || "Claude";
-      showNotice(readOnly ? `Sent to ${agent}` : `Sent to ${agent} — your edits are saved to disk`);
-    }
   },
   getState: () => vscode.getState(),
   setState: (state) => {
@@ -567,7 +581,9 @@ async function init(msg: InitMessage): Promise<void> {
  * pane. Read-only installs the source-position schema and never edits; edit
  * mode reports each edit as the blocks it changed (`flushBlockEdits`).
  */
-function createEditor(text: string): Promise<Editor> {
+async function createEditor(text: string): Promise<Editor> {
+  // Test seam: a spec stretches the build across a turn of the event loop.
+  await (testHooks?.beforeEditorBuild as (() => Promise<void>) | undefined)?.();
   return Editor.make()
     .config((ctx) => {
       ctx.set(rootCtx, editorContainer!);
@@ -576,6 +592,7 @@ function createEditor(text: string): Promise<Editor> {
         ctx.update(editorViewOptionsCtx, (prev) => ({ ...prev, editable: () => false }));
         installSourcePositions(ctx);
       }
+      installTightLists(ctx);
       ctx.update(prosePluginsCtx, (prev) =>
         prev.concat([
           makeFlattenCellSelectionPlugin(),
@@ -624,16 +641,42 @@ function createEditor(text: string): Promise<Editor> {
 }
 
 /**
+ * Serialize a list as tight or loose as it was parsed. Milkdown keeps a
+ * list's and an item's `spread` as the string "true" / "false", and the
+ * bullet list and list item hand that string on to remark, which only reads a
+ * boolean — so every edit to a tight bullet list wrote it back loose, a blank
+ * line between every item (the ordered list converts; these two don't). The
+ * list item is GFM's, which converts for task items only.
+ */
+function installTightLists(ctx: Ctx): void {
+  const booleanSpread = (node: PmDocNode): PmDocNode =>
+    typeof node.attrs.spread === "boolean"
+      ? node
+      : node.type.create({ ...node.attrs, spread: node.attrs.spread === "true" }, node.content, node.marks);
+  const wrap = (schema: NodeSchema, applies: (node: PmDocNode) => boolean): NodeSchema => {
+    const runner = schema.toMarkdown.runner;
+    return {
+      ...schema,
+      toMarkdown: {
+        ...schema.toMarkdown,
+        runner: (state, node) => runner(state, applies(node) ? booleanSpread(node) : node),
+      },
+    };
+  };
+  ctx.update(bulletListSchema.key, (prev) => (c) => wrap(prev(c), () => true));
+  ctx.update(extendListItemSchemaForTask.key, (prev) => (c) => wrap(prev(c), (node) => node.attrs.checked == null));
+}
+
+/**
  * A second `init`: the host switched this panel's mode (`set-read-only`) and
  * re-sent the file. Only the editor is rebuilt — read-only with the
  * source-position schema, edit mode without it — on the file's current text;
  * the layout and the sidebar stay.
  */
 async function reinitEditor(msg: InitMessage): Promise<void> {
-  if (editDebounce) {
-    clearTimeout(editDebounce);
-    editDebounce = null;
-  }
+  // Keystrokes still in the debounce go to the host before the editor that
+  // holds them is destroyed; it writes them and sends them back.
+  flushBlockEdits();
   const previous = editor;
   editor = null;
   editBaseDoc = null;
@@ -663,6 +706,17 @@ async function reinitEditor(msg: InitMessage): Promise<void> {
   reportReady(true);
 }
 
+/** The top-level nodes the host's block table counts, each with its position. */
+function topLevelBlocks(doc: PmDocNode): Array<{ node: PmDocNode; pos: number }> {
+  const out: Array<{ node: PmDocNode; pos: number }> = [];
+  let pos = 0;
+  for (const node of markdownBlockNodes(doc)) {
+    out.push({ node, pos });
+    pos += node.nodeSize;
+  }
+  return out;
+}
+
 /** The document the host just sent is the base the next edit is diffed against. */
 function resetEditBase(epoch: number | undefined): void {
   if (typeof epoch === "number") editEpoch = epoch;
@@ -690,11 +744,20 @@ function flushBlockEdits(): void {
   const base = editBaseDoc;
   if (!editor || readOnly || !base) return;
   let message: BlockEditsMessage | null = null;
-  editor.action((ctx) => {
-    const doc = ctx.get(editorViewCtx).state.doc;
-    message = blockEditsBetween(base, doc, ctx.get(serializerCtx));
-    editBaseDoc = doc;
-  });
+  try {
+    editor.action((ctx) => {
+      const doc = ctx.get(editorViewCtx).state.doc;
+      message = blockEditsBetween(base, doc, ctx.get(serializerCtx));
+      editBaseDoc = doc;
+    });
+  } catch (err) {
+    // The edit can't be reported, so the document no longer matches the
+    // file: stop diffing against it and let the host re-render from the file
+    // (a new base arrives with it) and say so.
+    editBaseDoc = null;
+    postError("edit-blocks", err);
+    return;
+  }
   if (message) vscode.postMessage(message);
 }
 
@@ -1248,29 +1311,6 @@ function revealCommentInSidebar(commentId: string): void {
   // The sidebar makes it the current card, widening its filter if that one
   // hides the thread.
   threadSidebar.revealThread(commentId);
-}
-
-// Compute the rendered-text offset (offset into doc.textContent) that
-// corresponds to a ProseMirror position. Used to display the
-// "Commenting on:" preview in the composer. Returns -1 if the position
-// can't be located (e.g. it falls inside a non-text node).
-function renderedOffsetForPm(doc: { descendants: (cb: (n: { isText: boolean; nodeSize: number }, p: number) => boolean | void) => void }, pmPos: number): number {
-  let textCounted = 0;
-  let result = -1;
-  doc.descendants((node, pos) => {
-    if (result >= 0) return false;
-    if (node.isText) {
-      const nodeStart = pos;
-      const nodeEnd = pos + node.nodeSize;
-      if (pmPos >= nodeStart && pmPos <= nodeEnd) {
-        result = textCounted + (pmPos - nodeStart);
-        return false;
-      }
-      textCounted += node.nodeSize;
-    }
-    return true;
-  });
-  return result;
 }
 
 function jumpToAnchor(comment: CommentSummary): void {
@@ -1919,20 +1959,12 @@ const READ_ONLY_REFUSALS = {
 function openComposerForCurrentSelection(): void {
   if (!editor || !composerEl) return;
   let anchor: import("../types").Anchor | null = null;
-  // Exact selection offsets into `anchorFullMd` (the editor's current body
-  // markdown). The host places the invisible marker at these offsets instead
-  // of fuzzy-searching, so commenting never fails to "locate the text".
-  // -1 means "unknown" (the rare slice-not-in-fullMd case) → host falls back.
-  let anchorSelStart = -1;
-  let anchorSelEnd = -1;
-  let anchorFullMd = "";
-  // Which occurrence of the selected text this is (0-based, in the rendered
-  // editor text). Sent so the host can place the marker on the right occurrence
-  // when offsets are unavailable and the anchor text repeats (table cells).
-  let anchorOrdinal = -1;
   // Read-only mode: the prose span under the selection and the bytes there,
   // taken now — if the file changes before Save, the host sees they differ.
   let proseRange: { start: number; end: number; text: string } | null = null;
+  // Edit mode: the selection's first and last characters, named by structure,
+  // with the text of the containers they're in — checked the same way.
+  let editRange: { first: EditorPoint; last: EditorPoint } | null = null;
   let displayText = "";
   let failureReason = "";
   // Three-layer selection lookup — see the comment block on
@@ -1948,7 +1980,6 @@ function openComposerForCurrentSelection(): void {
   const recent = lastNonEmptySelection;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
-    const serializer = ctx.get(serializerCtx);
     const live = view.state.selection;
     let selFrom: number;
     let selTo: number;
@@ -1986,100 +2017,22 @@ function openComposerForCurrentSelection(): void {
       };
       return;
     }
-    // Phase-3 write side: use Milkdown's own serializer to compute
-    // the markdown for the user's selection, instead of mapping
-    // through a hand-rolled stripper. `doc.cut(from, to)` slices the
-    // PM tree; serializing the slice gives us markdown identical to
-    // what Milkdown would write for that span on save.
-    const fullMd = serializer(view.state.doc);
-    cachedMarkdown = fullMd;
-    anchorFullMd = fullMd;
-    // The selection's *visible text* (textContent) is reliable for ANY
-    // content — table cells, bold, links — and is the anchor backbone: the
-    // live highlight matches it against the editor text and the host stores
-    // it as the quote. The markdown slice + offsets are computed too, but
-    // only as a precise-placement bonus when the slice maps cleanly into
-    // fullMd (plain paragraph spans). A table cell serializes to a mini-table
-    // that isn't in fullMd verbatim — we just skip the offsets there and let
-    // the host place by text or save loosely-anchored, instead of refusing.
-    // Same text-node-only string the offsets below are measured in — see
-    // `renderedTextOf`. With `doc.textContent`, a hard break above the
-    // selection shifted the quote we store by one character per break.
-    const renderedText = renderedTextOf(view.state.doc);
-    const renderedSelStart = renderedOffsetForPm(view.state.doc, selFrom);
-    const renderedSelEnd = renderedOffsetForPm(view.state.doc, selTo);
-    let sliceMd = "";
-    try {
-      sliceMd = serializer(view.state.doc.cut(selFrom, selTo)).trim();
-    } catch {
-      sliceMd = "";
-    }
-    displayText =
-      renderedSelStart >= 0 && renderedSelEnd >= 0
-        ? renderedText.slice(renderedSelStart, renderedSelEnd).trim()
-        : sliceMd;
-
-    const anchorText = displayText || sliceMd;
-    if (anchorText.replace(/\s/g, "").length === 0) {
-      failureReason = "Select some non-whitespace text to comment on.";
+    // Edit mode: this document carries no source positions (a split or join
+    // copies them onto both halves), so the selection is named by structure —
+    // block, text container, character — for the host to find in the file's
+    // own bytes. Nothing the editor serializes goes with it.
+    const named = editorSelectionPoints(
+      topLevelBlocks(view.state.doc) as unknown as Array<{ node: PmBlockLike; pos: number }>,
+      selFrom,
+      selTo,
+    );
+    if (!named.ok) {
+      failureReason = READ_ONLY_REFUSALS[named.reason];
       return;
     }
-    anchor = {
-      text: anchorText,
-      contextBefore:
-        renderedSelStart >= 0 ? renderedText.slice(Math.max(0, renderedSelStart - 24), renderedSelStart) : "",
-      contextAfter: renderedSelEnd >= 0 ? renderedText.slice(renderedSelEnd, renderedSelEnd + 24) : "",
-    };
-
-    // Record which occurrence of the anchor text this selection is, counting
-    // matches in the rendered text before it. The host uses this to place the
-    // marker on the right occurrence when context can't (duplicate table cells).
-    if (renderedSelStart >= 0 && anchorText.length > 0) {
-      let ord = 0;
-      let from = 0;
-      while (true) {
-        const idx = renderedText.indexOf(anchorText, from);
-        if (idx < 0 || idx >= renderedSelStart) break;
-        ord++;
-        from = idx + 1;
-      }
-      anchorOrdinal = ord;
-    }
-
-    // Precise-placement bonus: if the markdown slice appears in fullMd, record
-    // exact offsets so the host wraps that exact span. Otherwise leave the
-    // offsets at -1 and let the host fall back to text / loose anchoring.
-    if (sliceMd.length > 0) {
-      const occurrences: number[] = [];
-      let from = 0;
-      while (true) {
-        const idx = fullMd.indexOf(sliceMd, from);
-        if (idx < 0) break;
-        occurrences.push(idx);
-        from = idx + 1;
-      }
-      if (occurrences.length > 0) {
-        let approxMdStart = -1;
-        try {
-          approxMdStart = serializer(view.state.doc.cut(0, selFrom)).length;
-        } catch {
-          approxMdStart = -1;
-        }
-        let chosen = occurrences[0]!;
-        if (approxMdStart >= 0 && occurrences.length > 1) {
-          let bestDiff = Infinity;
-          for (const o of occurrences) {
-            const diff = Math.abs(o - approxMdStart);
-            if (diff < bestDiff) {
-              bestDiff = diff;
-              chosen = o;
-            }
-          }
-        }
-        anchorSelStart = chosen;
-        anchorSelEnd = chosen + sliceMd.length;
-      }
-    }
+    displayText = named.text;
+    editRange = { first: named.first, last: named.last };
+    anchor = { text: named.text, contextBefore: "", contextAfter: "" };
   });
 
   if (!anchor) {
@@ -2088,6 +2041,7 @@ function openComposerForCurrentSelection(): void {
   }
   const finalAnchor: import("../types").Anchor = anchor;
   const finalRange = proseRange as { start: number; end: number; text: string } | null;
+  const finalEditRange = editRange as { first: EditorPoint; last: EditorPoint } | null;
 
   const preview = displayText.slice(0, 120) + (displayText.length > 120 ? "…" : "");
   composerEl.innerHTML = "";
@@ -2114,17 +2068,16 @@ function openComposerForCurrentSelection(): void {
         });
         return;
       }
+      // Edits still in the debounce reach the file before the comment does,
+      // so the host finds the text the selection was named against.
+      flushBlockEdits();
       vscode.postMessage({
         type: "add-comment",
         anchor: finalAnchor,
         body,
         author: userName,
-        // Exact placement: the host wraps [selStart, selEnd) in fullMd with the
-        // marker, no fuzzy locate. Falls back to anchor text when offsets are -1.
-        fullMd: anchorFullMd,
-        selStart: anchorSelStart,
-        selEnd: anchorSelEnd,
-        anchorOrdinal,
+        editRange: finalEditRange,
+        epoch: editEpoch,
       });
     },
     onCancel: () => {
@@ -2169,7 +2122,13 @@ function reportReady(synced: boolean): void {
   vscode.postMessage({ type: "ready-with-content", length, synced, error });
 }
 
-function applyExternalChange(text: string, changed?: ChangeSummary | null, epoch?: number, toast?: string): void {
+function applyExternalChange(
+  text: string,
+  changed?: ChangeSummary | null,
+  epoch?: number,
+  toast?: string,
+  quiet?: boolean,
+): void {
   if (!editor) return;
   // Cancel a still-pending local edit post. The keystroke that scheduled it
   // predates this external (Claude) change, so letting it fire would overwrite
@@ -2237,6 +2196,8 @@ function applyExternalChange(text: string, changed?: ChangeSummary | null, epoch
     showToast(toast, 8000);
     return;
   }
+  // Nothing happened the person needs to hear about (an edit of theirs, written late).
+  if (quiet) return;
 
   // Presence: flash the span Claude edited and name the nearest heading in a
   // clickable notice. Falls back to a plain notice when there's no locatable
@@ -2387,13 +2348,20 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
   if (!msg || typeof msg !== "object") return;
   if (msg.type === "init") {
     // A second `init` is a mode switch: rebuild the editor, after the first if it's still building.
-    initQueue = initQueue.then(() => (editor ? reinitEditor(msg) : init(msg))).catch((err) => postError("init", err));
+    initQueue = initQueue.then(async () => {
+      const stage = editor ? "reinit" : "init";
+      try {
+        await (editor ? reinitEditor(msg) : init(msg));
+      } catch (err) {
+        postError(stage, err);
+      }
+    });
   } else if (msg.type === "externalChange") {
-    try {
-      applyExternalChange(msg.text, msg.changed, msg.epoch, msg.toast);
-    } catch (err) {
-      postError("externalChange", err);
-    }
+    // After any `init` still building: applied to no editor, the change and
+    // its epoch would be lost, and every later edit would carry the old one.
+    initQueue = initQueue
+      .then(() => applyExternalChange(msg.text, msg.changed, msg.epoch, msg.toast, msg.quiet))
+      .catch((err) => postError("externalChange", err));
   } else if (msg.type === "frontmatter") {
     renderFrontmatter(msg.frontmatter);
   } else if (msg.type === "line-map") {
@@ -2439,6 +2407,10 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     threadSidebar.setSkillStatus(msg.status);
   } else if (msg.type === "review-pending") {
     threadSidebar.notifyReviewPending(msg.existingIds);
+  } else if (msg.type === "send-result") {
+    // Only what the host confirmed: nothing is claimed about the file before it answers.
+    const agent = sidebarPush.agentName || "Claude";
+    if (msg.ok) showNotice(msg.saved && !readOnly ? `Sent to ${agent} — your edits are saved to disk` : `Sent to ${agent}`);
   } else if (msg.type === "reveal-thread") {
     // After any `init` still building: the thread has to be in the list, and
     // its highlight in the document.

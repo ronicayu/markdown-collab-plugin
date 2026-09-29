@@ -399,34 +399,45 @@ function indexBlock(
     return true;
   });
   const n = text.length;
-  const block: IndexedBlock = {
+  const aligned = alignContainer(markdown, src, text, decodeNamed);
+  return {
     start: src.start,
     end: src.end,
-    mapped: false,
+    mapped: aligned !== null,
     text,
     pos: Int32Array.from(positions),
-    srcStart: new Int32Array(n).fill(-1),
-    srcEnd: new Int32Array(n).fill(-1),
-    code: new Uint8Array(n),
+    srcStart: aligned?.starts ?? new Int32Array(n).fill(-1),
+    srcEnd: aligned?.ends ?? new Int32Array(n).fill(-1),
+    code: aligned?.code ?? new Uint8Array(n),
   };
+}
+
+/**
+ * Each character of a text container's `text` (as the editor shows it) with
+ * the source span it came from, and whether it's inline code. Null unless the
+ * run lengths sum to the text and every run aligns — nothing is guessed.
+ */
+function alignContainer(
+  markdown: string,
+  src: BlockSource,
+  text: string,
+  decodeNamed: DecodeNamed,
+): { starts: Int32Array; ends: Int32Array; code: Uint8Array } | null {
   const runs = src.runs;
-  if (!runs) return block;
+  if (!runs) return null;
   let total = 0;
   for (const r of runs) total += r[2];
-  if (total !== n) return block;
+  if (total !== text.length) return null;
+  const starts = new Int32Array(text.length).fill(-1);
+  const ends = new Int32Array(text.length).fill(-1);
+  const code = new Uint8Array(text.length);
   let at = 0;
   for (const r of runs) {
-    const visible = text.slice(at, at + r[2]);
-    if (!alignRun(markdown, r, visible, decodeNamed, block.srcStart, block.srcEnd, at)) {
-      block.srcStart.fill(-1);
-      block.srcEnd.fill(-1);
-      return block;
-    }
-    if (r[3] === 1) block.code.fill(1, at, at + r[2]);
+    if (!alignRun(markdown, r, text.slice(at, at + r[2]), decodeNamed, starts, ends, at)) return null;
+    if (r[3] === 1) code.fill(1, at, at + r[2]);
     at += r[2];
   }
-  block.mapped = true;
-  return block;
+  return { starts, ends, code };
 }
 
 /**
@@ -578,11 +589,14 @@ export function markdownBlocks(markdown: string): MarkdownBlock[] {
 /**
  * How many of `blocks` the editor counts. The serializer writes an empty
  * paragraph as `<br />` except the document's last, which it writes as
- * nothing — so the editor never counts a trailing empty paragraph, and a
- * trailing placeholder here is left out to match.
+ * nothing — so the editor never counts the empty paragraphs at its end
+ * (`markdownBlockNodes`), and the run of placeholders at the end here is left
+ * out to match.
  */
 export function editorBlockCount(blocks: readonly MarkdownBlock[]): number {
-  return blocks.length > 0 && blocks[blocks.length - 1]!.placeholder ? blocks.length - 1 : blocks.length;
+  let count = blocks.length;
+  while (count > 0 && blocks[count - 1]!.placeholder) count--;
+  return count;
 }
 
 /** One replacement in `spliceMarkdownBlocks`: blocks `[from, to)` became `types`. */
@@ -651,4 +665,175 @@ export function spliceMarkdownBlocks(
   }
   for (; copied < blocks.length; copied++) out.push(moved(blocks[copied]!));
   return out;
+}
+
+// --- edit mode: a selection, named for the host -------------------------------
+//
+// Edit mode's document can't carry source positions (a split or join copies a
+// block's attrs onto both halves), and after an edit the file's bytes for that
+// block are the serializer's, not what the editor first parsed. So a comment's
+// selection is named by structure instead — which top-level block, which text
+// container in it, which character of that container's text — and the host
+// finds those characters in the file's own bytes with the same alignment the
+// read-only mode uses. The container's text travels with it: if the file's
+// bytes there don't explain it, the file changed, and the comment is refused.
+
+/** One character of the editor's document, named so the host can find it in the file. */
+export interface EditorPoint {
+  /** Index among the top-level blocks (`markdownBlocks`, `markdownBlockNodes`). */
+  block: number;
+  /** That block's node type, checked against the file's. */
+  type: string;
+  /** Index among the block's text containers (paragraph, heading, table cell) that have text, in document order. */
+  container: number;
+  /** The character's offset in the container's text. */
+  offset: number;
+  /** The container's text in the editor. */
+  text: string;
+}
+
+/** The characters a text container shows, from its mdast leaves (`stamp`'s rule, by value). */
+function visibleTextOfNode(node: MdNode): string {
+  let out = "";
+  for (const child of node.children ?? []) {
+    if (child.type === "text" || child.type === "inlineCode") {
+      out += visibleTextOf(typeof child.value === "string" ? child.value : "", child.type === "text" ? 0 : 1);
+    } else if (child.children) {
+      out += visibleTextOfNode(child);
+    }
+  }
+  return out;
+}
+
+/** Named character references, decoded by the parser the editor's own parse uses. */
+function decodeNamedByParser(name: string): string | undefined {
+  const reference = `&${name};`;
+  const tree = fromMarkdown(reference) as unknown as MdNode;
+  const value = tree.children?.[0]?.children?.[0]?.value;
+  return typeof value === "string" && value !== reference ? value : undefined;
+}
+
+/**
+ * The source range of `markdown` from `first`'s start to `last`'s end — the
+ * first and last characters of an edit-mode selection — or null when the
+ * file's bytes at either don't explain the editor's text there.
+ */
+export function editorRangeToSource(markdown: string, first: EditorPoint, last: EditorPoint): { start: number; end: number } | null {
+  const tree = fromMarkdown(markdown, {
+    extensions: [(gfmSyntax ??= gfm())],
+    // The annotation runs first, before GFM splits text nodes and drops their positions.
+    mdastExtensions: [{ transforms: [(t) => annotateSourceRuns(t as unknown as MdNode)] }, (gfmTree ??= gfmFromMarkdown())],
+  }) as unknown as MdNode;
+  const roots = (tree.children ?? []).filter((c) => editorTypeOf(c) !== null);
+  const locate = (p: EditorPoint, edge: "start" | "end"): number => {
+    const root = roots[p.block];
+    if (!root || editorTypeOf(root) !== p.type) return -1;
+    const containers: BlockSource[] = [];
+    const visit = (node: MdNode): void => {
+      const src = node.data?.[SOURCE_ATTR] as BlockSource | undefined;
+      if (src) {
+        if (visibleTextOfNode(node).length > 0) containers.push(src);
+        return;
+      }
+      for (const child of node.children ?? []) visit(child);
+    };
+    visit(root);
+    const src = containers[p.container];
+    if (!src || !(p.offset >= 0 && p.offset < p.text.length)) return -1;
+    const aligned = alignContainer(markdown, src, p.text, decodeNamedByParser);
+    if (!aligned) return -1;
+    return edge === "start" ? aligned.starts[p.offset]! : aligned.ends[p.offset]!;
+  };
+  const start = locate(first, "start");
+  const end = locate(last, "end");
+  return start >= 0 && end > start ? { start, end } : null;
+}
+
+/** An edit-mode selection's first and last characters, or why it can't be named. */
+export type EditorSelection =
+  | { ok: true; first: EditorPoint; last: EditorPoint; text: string }
+  | { ok: false; reason: "empty" | "code" | "unmapped" };
+
+/** A ProseMirror node as `editorSelectionPoints` walks it (so tests can pass plain objects). */
+export interface PmBlockLike extends PmNodeLike {
+  marks?: ReadonlyArray<{ type: { name: string } }>;
+}
+
+// The editor's text containers — the nodes milkdown makes of mdast's.
+const PM_TEXT_CONTAINERS = new Set(["paragraph", "heading", "table_cell", "table_header"]);
+
+/**
+ * Name the selection `[from, to)` of edit mode's document by structure: its
+ * first and last visible characters (trimmed of whitespace, as the read-only
+ * mapping trims) as `EditorPoint`s. `blocks` are the top-level nodes the
+ * host's table counts (`markdownBlockNodes`), each with its position. Refuses
+ * a selection with no text, one touching code, or one whose boundary isn't in
+ * a text container.
+ */
+export function editorSelectionPoints(
+  blocks: ReadonlyArray<{ node: PmBlockLike; pos: number }>,
+  from: number,
+  to: number,
+): EditorSelection {
+  const chars: Array<{ pos: number; ch: string; code: boolean; point: EditorPoint | null }> = [];
+  blocks.forEach(({ node: block, pos: blockPos }, index) => {
+    if (blockPos + block.nodeSize <= from || blockPos >= to) return;
+    let container = -1;
+    const takeContainer = (node: PmNodeLike, nodePos: number): void => {
+      let text = "";
+      const positions: number[] = [];
+      const code: boolean[] = [];
+      node.descendants((child, rel) => {
+        if (child.isText && child.text) {
+          const isCode = !!(child as PmBlockLike).marks?.some((m) => m.type.name === "inlineCode");
+          for (let k = 0; k < child.text.length; k++) {
+            positions.push(nodePos + 1 + rel + k);
+            code.push(isCode);
+          }
+          text += child.text;
+        }
+        return true;
+      });
+      if (text.length === 0) return;
+      container++;
+      for (let i = 0; i < text.length; i++) {
+        if (positions[i]! < from || positions[i]! >= to) continue;
+        chars.push({ pos: positions[i]!, ch: text[i]!, code: code[i]!, point: { block: index, type: block.type.name, container, offset: i, text } });
+      }
+    };
+    if (PM_TEXT_CONTAINERS.has(block.type.name)) {
+      takeContainer(block, blockPos);
+      return;
+    }
+    block.descendants((node, rel, parent) => {
+      const pos = blockPos + 1 + rel;
+      if (PM_TEXT_CONTAINERS.has(node.type.name)) {
+        takeContainer(node, pos);
+        return false;
+      }
+      if (node.isText && node.text) {
+        // Text outside a container: a code block's.
+        for (let k = 0; k < node.text.length; k++) {
+          const p = pos + k;
+          if (p >= from && p < to) chars.push({ pos: p, ch: node.text[k]!, code: parent?.type.name === "code_block", point: null });
+        }
+      }
+      return true;
+    });
+  });
+  chars.sort((a, b) => a.pos - b.pos);
+  let lo = 0;
+  let hi = chars.length - 1;
+  while (lo <= hi && /\s/.test(chars[lo]!.ch)) lo++;
+  while (hi >= lo && /\s/.test(chars[hi]!.ch)) hi--;
+  if (lo > hi) return { ok: false, reason: "empty" };
+  let text = "";
+  for (let i = lo; i <= hi; i++) {
+    if (chars[i]!.code) return { ok: false, reason: "code" };
+    text += chars[i]!.ch;
+  }
+  const first = chars[lo]!.point;
+  const last = chars[hi]!.point;
+  if (!first || !last) return { ok: false, reason: "unmapped" };
+  return { ok: true, first, last, text };
 }

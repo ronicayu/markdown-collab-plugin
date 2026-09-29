@@ -99,10 +99,14 @@ describe("githubPlatform.listExistingComments resolved enrichment", () => {
   it("marks comments resolved from their review thread", async () => {
     setCliRunner(async (_bin, args) => {
       if (args.includes("graphql")) {
+        // The GraphQL fetch only ever asks for each thread's first comment
+        // (its root) — see the "maps by the thread root" test below — so
+        // the fixture carries one id per thread, matching what the real
+        // query returns.
         return {
           code: 0,
           stdout: threadsPage([
-            { id: "PRRT_thread1", isResolved: true, ids: [11, 12] },
+            { id: "PRRT_thread1", isResolved: true, ids: [11] },
             { id: "PRRT_thread2", isResolved: false, ids: [20] },
           ]),
           stderr: "",
@@ -132,6 +136,55 @@ describe("githubPlatform.listExistingComments resolved enrichment", () => {
       ["12", true, "PRRT_thread1"],
       ["20", true, "PRRT_thread2"],
     ]);
+  });
+
+  it("requests only the thread's first comment (comments(first: 1)), not first: 100", async () => {
+    const queries: string[] = [];
+    setCliRunner(async (_bin, args) => {
+      if (args.includes("graphql")) {
+        const q = args.find((a) => a.startsWith("query="));
+        if (q) queries.push(q);
+        return { code: 0, stdout: threadsPage([{ isResolved: false, ids: [1] }]), stderr: "" } as RunCliResult;
+      }
+      return { code: 0, stdout: JSON.stringify([restComment(1)]), stderr: "" } as RunCliResult;
+    });
+    await githubPlatform.listExistingComments(ctx());
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toContain("comments(first: 1)");
+    expect(queries[0]).not.toContain("comments(first: 100)");
+  });
+
+  it("resolves every comment in a 150-comment thread by mapping through the thread root, not per-comment", async () => {
+    // The regression this guards: the old query fetched comments(first: 100)
+    // per thread and keyed the map by every comment's OWN id, so anything
+    // past #100 in a big thread had no entry and silently lost its resolved
+    // state (and its resolveId — the Resolve button disappeared). The fix
+    // fetches only the thread's root and looks every comment up by its
+    // `threadId` (the root's id, via `in_reply_to_id`), so thread size no
+    // longer matters.
+    const ROOT = 1;
+    const REPLY_COUNT = 149;
+    setCliRunner(async (_bin, args) => {
+      if (args.includes("graphql")) {
+        return {
+          code: 0,
+          stdout: threadsPage([{ id: "PRRT_big", isResolved: true, ids: [ROOT] }]),
+          stderr: "",
+        } as RunCliResult;
+      }
+      const replies = Array.from({ length: REPLY_COUNT }, (_, i) =>
+        restComment(ROOT + 1 + i, { in_reply_to_id: ROOT }),
+      );
+      return {
+        code: 0,
+        stdout: JSON.stringify([restComment(ROOT), ...replies]),
+        stderr: "",
+      } as RunCliResult;
+    });
+    const out = await githubPlatform.listExistingComments(ctx());
+    expect(out).toHaveLength(1 + REPLY_COUNT);
+    expect(out.every((c) => c.resolved === true)).toBe(true);
+    expect(out.every((c) => c.resolvable === true && c.resolveId === "PRRT_big")).toBe(true);
   });
 
   it("follows pagination across thread pages", async () => {
@@ -171,5 +224,30 @@ describe("githubPlatform.listExistingComments resolved enrichment", () => {
     expect(out[0].resolved).toBeUndefined();
     expect(out[0].resolvable).toBeUndefined();
     expect(out[0].resolveId).toBeUndefined();
+  });
+
+  it("sends a numeric repo name as a string, via -f, not -F", async () => {
+    // `-F` sniffs its value into a number before sending it — for a repo
+    // name that's purely digits (legal on GitHub), that turns `repo=123`
+    // into the JSON number 123 instead of the string "123", which GitHub's
+    // `repository(name: String!)` argument rejects or silently no-ops on.
+    const calls: { args: string[] }[] = [];
+    setCliRunner(async (_bin, args) => {
+      calls.push({ args });
+      if (args.includes("graphql")) {
+        return { code: 0, stdout: threadsPage([]), stderr: "" } as RunCliResult;
+      }
+      return { code: 0, stdout: JSON.stringify([restComment(1)]), stderr: "" } as RunCliResult;
+    });
+    await githubPlatform.listExistingComments(ctx({ repo: "123", owner: "456" }));
+    const graphqlCall = calls.find((c) => c.args.includes("graphql"))!;
+    const flagFor = (entry: string): string | undefined => {
+      const i = graphqlCall.args.indexOf(entry);
+      return i > 0 ? graphqlCall.args[i - 1] : undefined;
+    };
+    expect(flagFor("repo=123")).toBe("-f");
+    expect(flagFor("owner=456")).toBe("-f");
+    // `pr` genuinely is a GraphQL `Int!`, so it's the one arg that keeps `-F`.
+    expect(flagFor("pr=7")).toBe("-F");
   });
 });

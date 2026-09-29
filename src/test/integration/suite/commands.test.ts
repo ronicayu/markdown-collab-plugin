@@ -86,11 +86,12 @@ async function writeFixtureWithThread(
   body: string,
   anchorText: string,
   commentBody = "test comment",
+  author = "user",
 ): Promise<vscode.Uri> {
   const start = body.indexOf(anchorText);
   assert.ok(start >= 0, `anchor text ${JSON.stringify(anchorText)} not in fixture body`);
   const { source } = addThread(body, start, start + anchorText.length, {
-    author: "user",
+    author,
     body: commentBody,
     ts: "2026-05-02T00:00:00.000Z",
   });
@@ -248,6 +249,56 @@ suite("All extension commands", () => {
     } finally {
       await vscode.commands.executeCommand("workbench.action.closeAllEditors");
       await rmIfExists(uri.fsPath);
+    }
+  });
+
+  // ---------------------------------------------------------------------
+  // nextUnreadFromClaude — walks every open thread an agent started that the
+  // human hasn't answered yet, one file at a time, in path order. Filenames
+  // are prefixed "0-" so they sort ahead of every other fixture in this
+  // directory (`ReviewView.listClaudeUnread` walks by absolute fsPath), which
+  // keeps the two-file order deterministic regardless of what other fixtures
+  // exist at the moment this test runs.
+  // ---------------------------------------------------------------------
+  test("nextUnreadFromClaude lands on each agent-opened unread thread's file, in order", async () => {
+    const bodyA = "# Doc A\n\nThe anchored passage from A is here.\n";
+    const bodyB = "# Doc B\n\nThe anchored passage from B is here.\n";
+    const uriA = await writeFixtureWithThread(
+      "0-next-unread-a.md",
+      bodyA,
+      "anchored passage from A",
+      "needs a look",
+      "claude",
+    );
+    const uriB = await writeFixtureWithThread(
+      "0-next-unread-b.md",
+      bodyB,
+      "anchored passage from B",
+      "needs a look too",
+      "claude",
+    );
+    try {
+      // `ReviewView`'s scan is lazy and this may be the first thing in the
+      // whole suite to touch it, so the very first invocation can land on
+      // nothing until the workspace scan (or the fs watcher, on a warm
+      // cache) catches up — retry the command itself rather than poll a
+      // separate readiness signal the view doesn't expose. Once the cache
+      // is warm this resolves on the first call.
+      await waitFor(async () => {
+        await vscode.commands.executeCommand("markdownCollab.nextUnreadFromClaude");
+        return activeTabIsLiveEditorOn(uriA);
+      }, 10000, "nextUnreadFromClaude never landed on file 1 (0-next-unread-a.md)");
+
+      await vscode.commands.executeCommand("markdownCollab.nextUnreadFromClaude");
+      await waitFor(
+        () => activeTabIsLiveEditorOn(uriB),
+        5000,
+        "nextUnreadFromClaude never landed on file 2 (0-next-unread-b.md)",
+      );
+    } finally {
+      await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+      await rmIfExists(uriA.fsPath);
+      await rmIfExists(uriB.fsPath);
     }
   });
 

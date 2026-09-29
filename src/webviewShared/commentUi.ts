@@ -11,7 +11,7 @@ import type MarkdownIt from "markdown-it";
 import { createCommentRenderer } from "./markdownPipeline";
 import { formatRelativeTime } from "../collab/relativeTime";
 import { agentDisplayName, isAgentComment } from "../agentIdentity";
-import { diffWords, isBulkRewrite, suggestionGist } from "./wordDiff";
+import { diffWords, exceedsTokenCap, isBulkRewrite, MAX_DIFF_TOKENS, suggestionGist } from "./wordDiff";
 
 /**
  * What the card shows for an author: the agent's display name for an agent
@@ -455,20 +455,41 @@ export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
  * reads at a glance the way a real edit does. `isBulkRewrite` decides which
  * form is the default; either way a toggle lets the human switch to the
  * other one, because the ratio guess is exactly that, a guess.
+ *
+ * The inline view is never built until it's actually shown (round-9 P1.1,
+ * security review): `buildInlineDiff` walks `diffWords`' O(n·m) LCS table,
+ * and building it unconditionally — even while the block view was the one
+ * on screen — is what let a huge pasted-in suggestion freeze the webview on
+ * every render, toggle or not. Past `exceedsTokenCap`, it's never built at
+ * all; the toggle itself is disabled so there's no click that can trigger
+ * it either.
  */
 function buildSuggestionDiff(original: string, proposed: string): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "mc-suggestion__diffwrap";
 
-  const inlineEl = buildInlineDiff(original, proposed);
   const blockEl = buildDiff(original, proposed);
-  let showInline = !isBulkRewrite(original, proposed);
-
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "mc-btn mc-btn--link mc-suggestion__toggle";
+  wrap.append(blockEl, toggle);
+
+  if (exceedsTokenCap(original) || exceedsTokenCap(proposed)) {
+    blockEl.hidden = false;
+    toggle.disabled = true;
+    toggle.textContent = "Show inline";
+    toggle.title = `This suggestion is too large to diff word by word (over ${MAX_DIFF_TOKENS} words on one side) — showing the full old/new text instead.`;
+    return wrap;
+  }
+
+  let inlineEl: HTMLElement | null = null;
+  let showInline = !isBulkRewrite(original, proposed);
   const applyMode = (): void => {
-    inlineEl.hidden = !showInline;
+    if (showInline && !inlineEl) {
+      inlineEl = buildInlineDiff(original, proposed);
+      wrap.insertBefore(inlineEl, blockEl);
+    }
+    if (inlineEl) inlineEl.hidden = !showInline;
     blockEl.hidden = showInline;
     toggle.textContent = showInline ? "Show old / new" : "Show inline";
     toggle.title = showInline
@@ -482,7 +503,6 @@ function buildSuggestionDiff(original: string, proposed: string): HTMLElement {
   });
   applyMode();
 
-  wrap.append(inlineEl, blockEl, toggle);
   return wrap;
 }
 

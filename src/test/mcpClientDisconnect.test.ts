@@ -3,10 +3,16 @@
 // mcpClientCodex.test.ts): running it on a workspace that never connected is
 // a no-op, and every other entry in the file survives untouched.
 
-import { describe, expect, it } from "vitest";
+import * as fsp from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import * as vscode from "vscode";
 import { removeMcpJsonEntry, removeMcpServersJsonEntry, mergeMcpJson, MCP_SERVER_NAME } from "../mcpServer/registration";
 import { mergeCursorMcpJson, removeCursorMcpEntry } from "../mcpServer/clients/cursor";
 import { mergeCodexToml, removeCodexTable, codexTablePresent } from "../mcpServer/clients/codex";
+import { refuseSymlink } from "../mcpServer/agentConnections";
+import { readHostFile } from "./hostSources";
 
 describe("removeMcpServersJsonEntry", () => {
   it("is a no-op when the file doesn't exist", () => {
@@ -157,5 +163,66 @@ describe("removeCodexTable (.codex/config.toml)", () => {
     const existing = mergeCodexToml(null, 51234).text!;
     const { text } = removeCodexTable(existing);
     expect(text).not.toMatch(/51234/);
+  });
+});
+
+// L5: the .mcp.json / .cursor/mcp.json / .codex/config.toml writers and
+// removers in agentConnections.ts must not follow a symlink out of the
+// workspace. `refuseSymlink` is the shared check; these test it directly
+// against real files and symlinks, since the six functions that call it are
+// otherwise only exercisable through vscode.workspace.fs (no stand-in for
+// that exists in this test suite).
+describe("refuseSymlink (L5)", () => {
+  let tmp: string;
+  beforeEach(async () => {
+    tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "mc-agentconn-symlink-"));
+  });
+  afterEach(async () => {
+    await fsp.rm(tmp, { recursive: true, force: true });
+  });
+
+  it("returns null for an ordinary path with no symlink involved", async () => {
+    expect(await refuseSymlink(vscode.Uri.file(path.join(tmp, "mcp.json")))).toBeNull();
+  });
+
+  it("returns a reason when the target itself is a symlink", async () => {
+    const real = path.join(tmp, "real.json");
+    await fsp.writeFile(real, "{}", "utf8");
+    const link = path.join(tmp, "mcp.json");
+    await fsp.symlink(real, link);
+    expect(await refuseSymlink(vscode.Uri.file(link))).toMatch(/symlink/);
+  });
+
+  it("returns a reason when the parent directory (e.g. .cursor/ or .codex/) is a symlink", async () => {
+    const realDir = path.join(tmp, "real-dot-cursor");
+    await fsp.mkdir(realDir);
+    const linkedDir = path.join(tmp, ".cursor");
+    await fsp.symlink(realDir, linkedDir);
+    expect(await refuseSymlink(vscode.Uri.file(path.join(linkedDir, "mcp.json")))).toMatch(/symlink/);
+  });
+});
+
+// Regression guard: every writer/remover this finding named calls the
+// symlink check before it touches vscode.workspace.fs. A source-text
+// assertion, like the other host-wiring checks this codebase already uses
+// (see commentOnSelection.test.ts / hostSources.ts) where a real integration
+// test would need infrastructure this suite doesn't have.
+describe("agentConnections.ts: every writer/remover is guarded (L5)", () => {
+  it("writeCursorCliConfig, writeCodexConfig, removeClaudeMcpJson, removeCursorCliConfig, removeCodexConfig, and reconcileCodexConfig all call the guard", () => {
+    const src = readHostFile("mcpServer/agentConnections.ts");
+    for (const fn of [
+      "writeCursorCliConfig",
+      "writeCodexConfig",
+      "removeClaudeMcpJson",
+      "removeCursorCliConfig",
+      "removeCodexConfig",
+      "reconcileCodexConfig",
+    ]) {
+      const start = src.indexOf(`function ${fn}(`);
+      expect(start, fn).toBeGreaterThan(-1);
+      const end = src.indexOf("\n}\n", start);
+      const body = src.slice(start, end);
+      expect(body, fn).toMatch(/guardAgainstSymlink\(|refuseSymlink\(/);
+    }
   });
 });

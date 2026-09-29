@@ -104,6 +104,18 @@ describe("the skill and the server agree on the tool names", () => {
 
 describe("the MCP write path goes through the editor", () => {
   const host = read("mcpServer/index.ts");
+  // Scoped to applyDocumentEdit itself, not the whole file (security review
+  // L1/L2/L5): the file also uses Node's `fs/promises` directly now, for
+  // `resolveWorkspaceFile`'s symlink-realpath check and the tool-server
+  // descriptor's 0600 permissions and symlink refusal — none of that is a
+  // *document* write, and `vscode.workspace.fs` exposes neither `realpath`
+  // nor file permissions nor `lstat`, so there is no way to implement those
+  // checks without Node's fs somewhere in this file. What must never touch it
+  // is the document edit path specifically.
+  const applyDocumentEditFn = host.slice(
+    host.indexOf("async function applyDocumentEdit("),
+    host.indexOf("\n}\n", host.indexOf("async function applyDocumentEdit(")),
+  );
 
   // The whole point of hosting the server in the extension. A raw write here
   // would type-check, pass every unit test, and quietly restore all three of
@@ -111,10 +123,24 @@ describe("the MCP write path goes through the editor", () => {
   // The undo half can only be observed in a host that delivers the undo
   // command, so this is the deterministic half of that assertion.
   it("applies a WorkspaceEdit and saves, rather than writing the file", () => {
-    expect(host).toMatch(/new vscode\.WorkspaceEdit\(\)/);
-    expect(host).toMatch(/vscode\.workspace\.applyEdit\(/);
-    expect(host).toMatch(/\.save\(\)/);
-    expect(host).not.toMatch(/writeFileSync|fs\.promises\.writeFile|fs\/promises/);
+    expect(applyDocumentEditFn.length).toBeGreaterThan(0);
+    expect(applyDocumentEditFn).toMatch(/new vscode\.WorkspaceEdit\(\)/);
+    expect(applyDocumentEditFn).toMatch(/vscode\.workspace\.applyEdit\(/);
+    expect(applyDocumentEditFn).toMatch(/\.save\(\)/);
+    expect(applyDocumentEditFn).not.toMatch(/writeFileSync|fs\.promises\.writeFile|fs\/promises/);
+  });
+
+  // The narrowing above must not become a hole: the tools' document writer is
+  // applyDocumentEdit, and the file's only raw writes are the descriptor and
+  // the `.markdown-collab/.gitignore` beside it — a third would be new and has
+  // to be looked at.
+  it("routes every tool document write through applyDocumentEdit, and writes nothing else raw", () => {
+    expect(host).toMatch(/writeDoc:\s*async\s*\([^)]*\)\s*=>\s*applyDocumentEdit\(/);
+    expect(host).not.toMatch(/writeFileSync|fs\.promises\.writeFile/);
+    const rawWrites = host.match(/fsp\.writeFile\(/g) ?? [];
+    expect(rawWrites).toHaveLength(2);
+    expect(host).toMatch(/fsp\.writeFile\(gitignore,/);
+    expect(host).toMatch(/fsp\.writeFile\(filePath, body, \{[^}]*mode: 0o600/);
   });
 
   it("narrows the rewrite to the span that changed", () => {

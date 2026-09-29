@@ -4,6 +4,12 @@
 // action at all. GitHub's own enrichment (from the `reviewThreads` GraphQL
 // query) is covered in prResolvedThreads.test.ts alongside the rest of that
 // fetch; this file is the mutation/PUT side plus GitLab's parallel fetch.
+//
+// Also covers the id-format hardening added alongside this: `gh api -F`
+// coerces its value into a number/boolean/`@file` before sending it, so a
+// GraphQL node id has to go through `-f` instead, and GitLab's discussion id
+// lands directly in a REST path segment, so it has to look like one before
+// it ever gets there.
 
 import { afterEach, describe, expect, it } from "vitest";
 import { getCliRunner, setCliRunner, type RunCliResult } from "../pr/cli";
@@ -40,8 +46,20 @@ const glabCtx = (o: Partial<PrContext> = {}) =>
     ...o,
   });
 
+/** A realistic-shaped GitLab discussion id — 40 hex chars, like a SHA1. */
+const DISC_ID = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
+
+/** A GitLab "resolve" response that confirms the discussion landed at `resolved`. */
+function resolvedResponse(resolved: boolean): RunCliResult {
+  return {
+    code: 0,
+    stdout: JSON.stringify({ id: DISC_ID, notes: [{ id: 1, resolved }] }),
+    stderr: "",
+  };
+}
+
 describe("githubPlatform.resolveThread", () => {
-  it("issues the resolveReviewThread mutation with the thread node id", async () => {
+  it("issues the resolveReviewThread mutation with the thread node id, via -f (not -F)", async () => {
     const calls: { args: string[] }[] = [];
     setCliRunner(async (_bin, args) => {
       calls.push({ args });
@@ -53,7 +71,9 @@ describe("githubPlatform.resolveThread", () => {
     });
     await githubPlatform.resolveThread(ctx(), "PRRT_x", true);
     expect(calls).toHaveLength(1);
-    expect(calls[0].args).toEqual(["api", "graphql", "-f", expect.stringContaining("resolveReviewThread"), "-F", "threadId=PRRT_x"]);
+    // `-f`, not `-F`: threadId is a GraphQL `ID!` (a string), and `-F` would
+    // sniff it into a number/boolean/`@file` before sending it.
+    expect(calls[0].args).toEqual(["api", "graphql", "-f", expect.stringContaining("resolveReviewThread"), "-f", "threadId=PRRT_x"]);
     const query = calls[0].args.find((a) => a.startsWith("query="))!;
     // Exactly "resolveReviewThread", not "unresolveReviewThread" — the two
     // mutation names are substrings of each other, so this has to be a
@@ -101,43 +121,124 @@ describe("githubPlatform.resolveThread", () => {
       /unresolveReviewThread failed/,
     );
   });
+
+  it("refuses an @/etc/passwd-shaped id before any spawn", async () => {
+    const calls: unknown[] = [];
+    setCliRunner(async (...args) => {
+      calls.push(args);
+      return { code: 0, stdout: "{}", stderr: "" } as RunCliResult;
+    });
+    await expect(githubPlatform.resolveThread(ctx(), "@/etc/passwd", true)).rejects.toThrow(
+      /doesn't look like one/,
+    );
+    // The whole point of validating up front: `gh api -F` reads a value
+    // starting with `@` as a file path and would have sent its contents.
+    expect(calls).toHaveLength(0);
+  });
+
+  it("refuses an id with shell/path metacharacters before any spawn", async () => {
+    const calls: unknown[] = [];
+    setCliRunner(async (...args) => {
+      calls.push(args);
+      return { code: 0, stdout: "{}", stderr: "" } as RunCliResult;
+    });
+    await expect(githubPlatform.resolveThread(ctx(), "../x", true)).rejects.toThrow(/doesn't look like one/);
+    expect(calls).toHaveLength(0);
+  });
 });
 
 describe("gitlabPlatform.resolveThread", () => {
-  it("PUTs the discussion with a JSON resolved:true body", async () => {
+  it("PUTs the discussion with a JSON resolved:true body and ?resolved=true in the path", async () => {
     const calls: { args: string[]; stdin?: string }[] = [];
     setCliRunner(async (_bin, args, opts) => {
       calls.push({ args, stdin: opts?.stdin });
-      return { code: 0, stdout: "{}", stderr: "" } as RunCliResult;
+      return resolvedResponse(true);
     });
-    await gitlabPlatform.resolveThread(glabCtx(), "disc99", true);
+    await gitlabPlatform.resolveThread(glabCtx(), DISC_ID, true);
     expect(calls).toHaveLength(1);
-    expect(calls[0].args).toContain("projects/o%2Fr/merge_requests/7/discussions/disc99");
+    expect(calls[0].args).toContain(`projects/o%2Fr/merge_requests/7/discussions/${DISC_ID}?resolved=true`);
     expect(calls[0].args).toContain("PUT");
     expect(JSON.parse(calls[0].stdin!)).toEqual({ resolved: true });
   });
 
   it("PUTs resolved:false when unresolving", async () => {
-    const calls: { stdin?: string }[] = [];
-    setCliRunner(async (_bin, _args, opts) => {
-      calls.push({ stdin: opts?.stdin });
-      return { code: 0, stdout: "{}", stderr: "" } as RunCliResult;
+    const calls: { args: string[]; stdin?: string }[] = [];
+    setCliRunner(async (_bin, args, opts) => {
+      calls.push({ args, stdin: opts?.stdin });
+      return resolvedResponse(false);
     });
-    await gitlabPlatform.resolveThread(glabCtx(), "disc99", false);
+    await gitlabPlatform.resolveThread(glabCtx(), DISC_ID, false);
+    expect(calls[0].args).toContain(`projects/o%2Fr/merge_requests/7/discussions/${DISC_ID}?resolved=false`);
     expect(JSON.parse(calls[0].stdin!)).toEqual({ resolved: false });
   });
 
   it("throws when projectId is missing", async () => {
     await expect(
-      gitlabPlatform.resolveThread(glabCtx({ projectId: undefined }), "disc99", true),
+      gitlabPlatform.resolveThread(glabCtx({ projectId: undefined }), DISC_ID, true),
     ).rejects.toThrow(/projectId/);
   });
 
   it("throws when glab exits non-zero", async () => {
     setCliRunner(async () => ({ code: 1, stdout: "", stderr: "404 Not Found" }) as RunCliResult);
-    await expect(gitlabPlatform.resolveThread(glabCtx(), "disc99", true)).rejects.toThrow(
+    await expect(gitlabPlatform.resolveThread(glabCtx(), DISC_ID, true)).rejects.toThrow(
       /discussion resolve failed/,
     );
+  });
+
+  it("refuses a ../x id before any spawn", async () => {
+    const calls: unknown[] = [];
+    setCliRunner(async (...args) => {
+      calls.push(args);
+      return resolvedResponse(true);
+    });
+    await expect(gitlabPlatform.resolveThread(glabCtx(), "../x", true)).rejects.toThrow(/isn't a discussion id/);
+    // The whole point: a path-traversal-shaped id must never reach the URL
+    // glab is told to PUT to.
+    expect(calls).toHaveLength(0);
+  });
+
+  it("refuses a query-string-injection-shaped id (?resolved=false) before any spawn", async () => {
+    const calls: unknown[] = [];
+    setCliRunner(async (...args) => {
+      calls.push(args);
+      return resolvedResponse(true);
+    });
+    await expect(
+      gitlabPlatform.resolveThread(glabCtx(), `${DISC_ID}?resolved=false`, true),
+    ).rejects.toThrow(/isn't a discussion id/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("treats exit 0 with a response that doesn't confirm the resolved state as a failure", async () => {
+    // This is the bug: the old code only checked `res.code`, so a stub (or a
+    // proxy, or a future glab bug) returning `{}` on success used to pass.
+    setCliRunner(async () => ({ code: 0, stdout: "{}", stderr: "" }) as RunCliResult);
+    await expect(gitlabPlatform.resolveThread(glabCtx(), DISC_ID, true)).rejects.toThrow(
+      /did not confirm/,
+    );
+  });
+
+  it("treats a response confirming the opposite state as a failure", async () => {
+    setCliRunner(async () => resolvedResponse(false));
+    await expect(gitlabPlatform.resolveThread(glabCtx(), DISC_ID, true)).rejects.toThrow(
+      /did not confirm/,
+    );
+  });
+
+  it("treats an unparseable response body as a failure with a clear message", async () => {
+    setCliRunner(async () => ({ code: 0, stdout: "<html>gateway timeout</html>", stderr: "" }) as RunCliResult);
+    await expect(gitlabPlatform.resolveThread(glabCtx(), DISC_ID, true)).rejects.toThrow(
+      /unexpected response/,
+    );
+  });
+
+  it("confirms via the discussion-level resolved field when notes is absent", async () => {
+    setCliRunner(async () => ({
+      code: 0,
+      stdout: JSON.stringify({ id: DISC_ID, resolved: true }),
+      stderr: "",
+    }) as RunCliResult);
+    await expect(gitlabPlatform.resolveThread(glabCtx(), DISC_ID, true)).resolves.toBeUndefined();
   });
 });
 

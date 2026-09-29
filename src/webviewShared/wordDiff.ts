@@ -95,12 +95,31 @@ const MAX_INLINE_LEN = 600;
 const MAX_CHANGE_RATIO = 0.6;
 
 /**
+ * Hard cap on tokens per side for `diffTokens`' O(n·m) table (round-9 P1.1,
+ * security review — a pasted-in rewrite big enough on both sides froze the
+ * webview: 8k words/side took 1.15s and ~800MB, ~100KB/side needed gigabytes).
+ * In practice `MAX_INLINE_LEN` already keeps any single side under 600
+ * characters — well under this many tokens — before `diffTokens` ever runs,
+ * so this mostly documents the boundary explicitly and gives `commentUi.ts`
+ * a cheap, direct answer to "is it even safe to offer the inline toggle",
+ * independent of that length guard's exact value.
+ */
+export const MAX_DIFF_TOKENS = 2000;
+
+/** `tokenize(text).length > MAX_DIFF_TOKENS` — cheap (one regex pass, no
+ * LCS) so callers can check it before ever building an inline diff. */
+export function exceedsTokenCap(text: string): boolean {
+  return tokenize(text).length > MAX_DIFF_TOKENS;
+}
+
+/**
  * Should the suggestion card fall back to the whole-block old/new view
  * instead of one inline sentence? True once either side is long, or once
  * more of the longer side's tokens differ than match it.
  */
 export function isBulkRewrite(original: string, proposed: string): boolean {
   if (original.length > MAX_INLINE_LEN || proposed.length > MAX_INLINE_LEN) return true;
+  if (exceedsTokenCap(original) || exceedsTokenCap(proposed)) return true;
   const ops = diffTokens(tokenize(original), tokenize(proposed));
   const longer = Math.max(countMeaningful(tokenize(original)), countMeaningful(tokenize(proposed)), 1);
   let equalCount = 0;

@@ -32,6 +32,7 @@ import {
   type ReviewCheckpoint,
 } from "../inlineComments/format";
 import { opOpenAt } from "../inlineComments/docOps";
+import { checkIntegrity } from "../inlineComments/integrity";
 import { isThreadStale } from "../inlineComments/staleness";
 import {
   collapseWs,
@@ -42,9 +43,11 @@ import {
 import type { BlockEdit } from "./blockEdits";
 import {
   editorBlockCount,
+  editorRangeToSource,
   markdownBlocks,
   spliceMarkdownBlocks,
   type BlockSplice,
+  type EditorPoint,
   type MarkdownBlock,
 } from "./sourcePositions";
 
@@ -493,13 +496,19 @@ export function addThreadAtOffsets(
  * record. Every other byte — prose, other markers, suggestions, the
  * checkpoint — stays as it was.
  *
- * `range.text` is the prose the editor saw under the selection. If the file
- * has changed since, the offsets would land on other text, so the add is
- * refused rather than placed.
+ * `range.text` is the prose the editor saw under the selection, and
+ * `before` / `after` what it saw around it. If the file has changed since,
+ * the offsets would land on other text, so the add is refused rather than
+ * placed.
+ *
+ * A boundary inside an autolink or a bare URL, or between an intraword
+ * delimiter run and its text, moves to the construct's edge: a marker there
+ * would stop the link being a link, or the run flanking its text, wherever
+ * the raw file is rendered.
  */
 export function addThreadAtProseRange(
   source: string,
-  range: { start: number; end: number; text: string },
+  range: { start: number; end: number; text: string; before?: string; after?: string },
   comment: { author: string; body: string; ts?: string },
 ): { ok: true; source: string } | { ok: false; error: string } {
   const { prose, proseToSrc } = buildBridge(source);
@@ -507,13 +516,16 @@ export function addThreadAtProseRange(
   if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > prose.length || end <= start) {
     return { ok: false, error: "The selection is outside the document." };
   }
-  if (prose.slice(start, end) !== range.text) {
+  const changed =
+    prose.slice(start, end) !== range.text ||
+    (range.before !== undefined && prose.slice(Math.max(0, start - range.before.length), start) !== range.before) ||
+    (range.after !== undefined && prose.slice(end, end + range.after.length) !== range.after);
+  if (changed) {
     return { ok: false, error: "The document changed since you selected this text. Select it again." };
   }
-  const srcStart = proseToSrc[start]!;
   // End boundary: just past the last selected character, so a marker that
   // follows it in the file stays outside the new span.
-  const srcEnd = proseToSrc[end - 1]! + 1;
+  const { start: srcStart, end: srcEnd } = widenOverSyntax(source, proseToSrc[start]!, proseToSrc[end - 1]! + 1);
   const ts = comment.ts ?? new Date().toISOString();
   try {
     const { next } = opOpenAt(source, srcStart, srcEnd, comment.body, comment.author, () => ts);
@@ -523,6 +535,73 @@ export function addThreadAtProseRange(
     // integrity gate refuses a write that would break the file.
     return { ok: false, error: (e as Error).message };
   }
+}
+
+const AUTOLINK =
+  /<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*>|<[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*>/y;
+const URL_LITERAL = /(?:https?:\/\/|www\.)[^\s<]*/g;
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+
+/**
+ * `[start, end)` of `source` with each boundary moved out of a construct a
+ * marker would break: an autolink (`<https://…>`), a bare URL, or — for a
+ * boundary between an intraword `*` / `~` run and its text — the run.
+ */
+function widenOverSyntax(source: string, start: number, end: number): { start: number; end: number } {
+  /** The autolink or URL literal `at` falls strictly inside, as `[from, to)`. */
+  const linkAround = (at: number): [number, number] | null => {
+    const from = source.lastIndexOf("\n", at - 1) + 1;
+    const nl = source.indexOf("\n", at);
+    const line = source.slice(from, nl < 0 ? source.length : nl);
+    for (let lt = line.lastIndexOf("<", at - from - 1); lt >= 0; lt = lt > 0 ? line.lastIndexOf("<", lt - 1) : -1) {
+      AUTOLINK.lastIndex = lt;
+      const m = AUTOLINK.exec(line);
+      if (m && from + lt < at && at < from + lt + m[0].length) return [from + lt, from + lt + m[0].length];
+    }
+    URL_LITERAL.lastIndex = 0;
+    for (let m = URL_LITERAL.exec(line); m; m = URL_LITERAL.exec(line)) {
+      // A link's or a definition's destination (`](https://…)`, `[x]: https://…`) isn't a literal.
+      if (/(?:\]\(|\]:[ \t]*)$/.test(line.slice(0, m.index))) continue;
+      // GFM leaves trailing punctuation, and an unbalanced `)`, out of the link.
+      let url = m[0];
+      while (/[?!.,:*_~]$/.test(url) || (url.endsWith(")") && url.split("(").length < url.split(")").length)) {
+        url = url.slice(0, -1);
+      }
+      if (from + m.index < at && at < from + m.index + url.length) return [from + m.index, from + m.index + url.length];
+    }
+    return null;
+  };
+  start = linkAround(start)?.[0] ?? start;
+  end = linkAround(end)?.[1] ?? end;
+  const lineStart = source.lastIndexOf("\n", start - 1) + 1;
+  // An opening run right before the text, with a word character before it.
+  let run = start;
+  while (run > lineStart && (source[run - 1] === "*" || source[run - 1] === "~")) run--;
+  if (run < start && run > lineStart && WORD_CHAR.test(source[run - 1]!)) start = run;
+  // A closing run right after the text, with a word character after it.
+  run = end;
+  while (run < source.length && (source[run] === "*" || source[run] === "~")) run++;
+  if (run > end && run < source.length && WORD_CHAR.test(source[run]!)) end = run;
+  return { start, end };
+}
+
+/**
+ * Add a thread on an edit-mode selection: its first and last characters,
+ * named by structure (`EditorPoint`) — edit mode's document carries no source
+ * positions. They're found in the file's own bytes by the alignment the
+ * read-only editor uses, and the add goes through `addThreadAtProseRange`:
+ * two markers and the record, nothing re-serialized. Refused when the file's
+ * bytes there don't explain what the editor showed.
+ */
+export function addThreadAtEditorRange(
+  source: string,
+  range: { first: EditorPoint; last: EditorPoint },
+  comment: { author: string; body: string; ts?: string },
+): { ok: true; source: string } | { ok: false; error: string } {
+  const prose = proseOf(source);
+  const span = editorRangeToSource(prose, range.first, range.last);
+  if (!span) return { ok: false, error: "The document changed since you selected this text. Select it again." };
+  return addThreadAtProseRange(source, { start: span.start, end: span.end, text: prose.slice(span.start, span.end) }, comment);
 }
 
 /** Append a reply to a thread. Returns the rewritten source, or null if the thread is gone. */
@@ -940,8 +1019,6 @@ export type BlockEditResult =
       /** The new prose and its block table, the base for the next edit. */
       prose: string;
       blocks: MarkdownBlock[];
-      /** The new text parses into other blocks than the editor shows: re-render it from the file. */
-      restructured: boolean;
       /** Anchors inside a changed block whose text couldn't be found again; their markers are gone. */
       unanchored: string[];
     }
@@ -1009,12 +1086,67 @@ function mapMarker(edit: EditEnvelope, at: number, isOpen: boolean, length: numb
   return Math.max(0, Math.min(length, mapped));
 }
 
-/** Whether `text` has `<!--mc:` outside code, where the format would read it as a marker. */
+// What the format reads as its own wherever it isn't in code (format.ts): an
+// anchor marker, a threads region fence, a thread / suggestion / checkpoint line.
+const FORMAT_CONSTRUCTS = [
+  /<!--mc:a:[a-z0-9]{1,12}-->/g,
+  /<!--mc:\/a:[a-z0-9]{1,12}-->/g,
+  /<!--mc:threads:(?:begin|end)-->/g,
+  /<!--mc:(?:t|s|rev)\s+\{[\s\S]*?\}\s*-->/g,
+];
+
+/**
+ * Whether `text` has, outside code, something the format would read as a
+ * marker or a record. Any other `<!--mc:` — typed as prose, which the
+ * serializer writes as `\<!--mc:` — is text. (A backslash doesn't stop the
+ * format reading a whole marker, so an escaped one still counts.)
+ */
 function carriesMarker(text: string): boolean {
-  for (let at = text.indexOf("<!--mc:"); at >= 0; at = text.indexOf("<!--mc:", at + 1)) {
-    if (!isInCode(text, at, at + 7)) return true;
+  for (const re of FORMAT_CONSTRUCTS) {
+    re.lastIndex = 0;
+    for (let m = re.exec(text); m; m = re.exec(text)) {
+      if (!isInCode(text, m.index, m.index + m[0].length)) return true;
+    }
   }
   return false;
+}
+
+/**
+ * Whether `full` — a parse of the new prose — is `blocks` with `splices`
+ * applied: every other block where it was, shifted, and each splice's new
+ * blocks, of the sent types, inside its new text.
+ */
+function sameStructure(full: readonly MarkdownBlock[], blocks: readonly MarkdownBlock[], splices: readonly BlockSplice[]): boolean {
+  type Expected = { at: [number, number]; type: string; placeholder: boolean; within?: boolean };
+  const expected: Expected[] = [];
+  let shift = 0;
+  let k = 0;
+  const keep = (b: MarkdownBlock): void => {
+    expected.push({ at: [b.start + shift, b.end + shift], type: b.type, placeholder: !!b.placeholder });
+  };
+  for (const s of splices) {
+    for (; k < s.from; k++) keep(blocks[k]!);
+    const at = s.start + shift;
+    for (const type of s.types) expected.push({ at: [at, at + s.length], type, placeholder: false, within: true });
+    shift += s.length - (s.end - s.start);
+    k = s.to;
+  }
+  for (; k < blocks.length; k++) keep(blocks[k]!);
+  if (full.length !== expected.length) return false;
+  return full.every((b, i) => {
+    const x = expected[i]!;
+    if (b.type !== x.type) return false;
+    return x.within ? b.start >= x.at[0] && b.end <= x.at[1] : b.start === x.at[0] && b.end === x.at[1] && !!b.placeholder === x.placeholder;
+  });
+}
+
+/** Integrity issues of `source` other than a thread without markers, as `kind:id` keys. */
+function damageOf(source: string): Set<string> {
+  return new Set(
+    checkIntegrity(source)
+      .issues.filter((i) => i.kind !== "unanchored-thread" && i.kind !== "unanchored-suggestion")
+      .map((i) => `${i.kind}:${i.threadId ?? ""}`),
+  );
 }
 
 // Words, runs of whitespace, and single other characters: re-padding a table
@@ -1169,20 +1301,60 @@ export function applyBlockEdits(
   const bodyStart = parsed.frontmatter?.end ?? 0;
   const fenced = [parsed.frontmatter, parsed.threadsRegion].filter((r): r is { start: number; end: number } => !!r);
 
+  // VS Code keeps a document's line endings uniform, so the first one is the file's.
+  const eol = /\r\n?|\n/.exec(source)?.[0] ?? "\n";
+  const lineEndings = (text: string): number => (text.match(/\r\n?|\n/g) ?? []).length;
+  const isBlank = (c: string | undefined): boolean => c === " " || c === "\t" || c === "\n" || c === "\r";
+  /** Just past the last non-blank character before `at` — a block's or a definition's — or -1. */
+  const contentEndBefore = (at: number): number => {
+    let j = at;
+    while (j > 0 && isBlank(prose[j - 1])) j--;
+    return j > 0 ? j : -1;
+  };
+  /** The first non-blank character from `at`, or -1. */
+  const contentStartFrom = (at: number): number => {
+    let j = at;
+    while (j < prose.length && isBlank(prose[j])) j++;
+    return j < prose.length ? j : -1;
+  };
+  /**
+   * What lies between blocks `[from, to)` besides blank lines: link reference
+   * definitions, which are no block of the editor's (milkdown inlines their
+   * links and drops them). A splice over those blocks carries them through.
+   */
+  const definitionsIn = (from: number, to: number): string[] => {
+    const out: string[] = [];
+    for (let k = from; k + 1 < to; k++) {
+      const gap = prose.slice(blocks[k]!.end, blocks[k + 1]!.start).trim();
+      if (gap) out.push(gap);
+    }
+    return out;
+  };
+
   const planned: PlannedSplice[] = [];
   for (const e of request.edits) {
     let ps: number;
     let pe: number;
-    let text = e.markdown;
+    let text = [e.markdown, ...(e.from < e.to ? definitionsIn(e.from, e.to) : [])].filter((t) => t !== "").join("\n\n");
     let after = false;
+    // Where the new text meets a neighbour no block of its type met before —
+    // an insertion, a deletion, a split or merge that changed the type at an
+    // edge — it gets a blank line: a paragraph line runs on into whatever
+    // paragraph precedes it, and a list, heading or fence may follow one
+    // directly. Where the type is unchanged, so is the gap.
+    const typeChangedBefore = e.from === e.to || text === "" || e.types[0] !== blocks[e.from]!.type;
+    const typeChangedAfter = e.from === e.to || text === "" || e.types[e.types.length - 1] !== blocks[e.to - 1]!.type;
     if (e.from < e.to) {
       ps = lineStartOf(prose, blocks[e.from]!.start);
       pe = lineEndOf(prose, blocks[e.to - 1]!.end);
       if (text === "") {
         // A deletion takes one separator with it, or the blank lines around
-        // the gap would pile up.
-        if (e.from > 0) ps = lineEndOf(prose, blocks[e.from - 1]!.end);
-        else if (e.to < blocks.length) pe = lineStartOf(prose, blocks[e.to]!.start);
+        // the gap would pile up — but no more than a separator: it stops at
+        // the nearest text, which may be a definition rather than a block.
+        const before = contentEndBefore(ps);
+        const next = contentStartFrom(pe);
+        if (before >= 0) ps = lineEndOf(prose, before);
+        else if (next >= 0) pe = lineStartOf(prose, next);
       } else if (e.to === e.from + 1 && e.types.length === 1 && e.types[0] === blocks[e.from]!.type) {
         if (e.types[0] === "bullet_list" || e.types[0] === "ordered_list") text = keepListMarker(prose, blocks[e.from]!, text);
       }
@@ -1196,6 +1368,20 @@ export function applyBlockEdits(
     } else {
       ps = pe = 0; // an empty document
     }
+    const left = contentEndBefore(ps);
+    const right = contentStartFrom(pe);
+    if (text.trim() === "") {
+      // A deletion: what's left between the two neighbours is a blank line at least.
+      const have = lineEndings(prose.slice(left, ps) + text + prose.slice(pe, right));
+      if (left >= 0 && right >= 0 && have < 2) text += "\n".repeat(2 - have);
+    } else {
+      const lead = lineEndings(prose.slice(Math.max(left, 0), ps) + /^\s*/.exec(text)![0]);
+      const trail = lineEndings(/\s*$/.exec(text)![0] + prose.slice(pe, Math.max(right, pe)));
+      if (typeChangedBefore && left >= 0 && lead < 2) text = "\n".repeat(2 - lead) + text;
+      if (typeChangedAfter && right >= 0 && trail < 2) text += "\n".repeat(2 - trail);
+    }
+    // The serializer writes `\n`; the new text takes the file's line ending.
+    text = text.replace(/\r\n?|\n/g, eol);
     let ss: number;
     let se: number;
     if (ps < pe) {
@@ -1217,15 +1403,19 @@ export function applyBlockEdits(
     newProse = newProse.slice(0, p.ps) + p.text + newProse.slice(p.pe);
   }
 
-  // Threads and suggestions without markers, for recovery by quote.
-  const loose: Array<{ id: string; quote: string }> = [
-    ...parsed.threads.filter((t) => !parsed.anchors.has(t.id)).map((t) => ({ id: t.id, quote: t.quote })),
-    ...parsed.suggestions.filter((s) => !parsed.anchors.has(s.anchorId)).map((s) => ({ id: s.anchorId, quote: s.original })),
-  ];
-  const recovered = new Set<string>();
-
-  const unanchored: string[] = [];
-  const marked: string[] = [];
+  // Every marker a splice writes. `outer` orders markers at one position: an
+  // opening by its span's end, a closing by its span's start, so the
+  // enclosing span opens first and closes last. A marker whose partner lies
+  // outside the block encloses everything in it.
+  type Point = { at: number; close: boolean; outer: number; marker: string };
+  type Span = { id: string; start: number; end: number };
+  const placing: Array<{ p: PlannedSplice; spans: Span[]; points: Point[]; blockStart: number }> = [];
+  // Threads and suggestions to recover by a unique quote: those the file has
+  // without markers, and those a splice here loses (below).
+  const candidates = new Map<string, string>();
+  for (const t of parsed.threads) if (!parsed.anchors.has(t.id)) candidates.set(t.id, t.quote);
+  for (const sg of parsed.suggestions) if (!parsed.anchors.has(sg.anchorId)) candidates.set(sg.anchorId, sg.original);
+  const lost: string[] = [];
   let shift = 0;
   for (const p of planned) {
     const oldText = prose.slice(p.ps, p.pe);
@@ -1235,12 +1425,8 @@ export function applyBlockEdits(
     const aligned = oldText.length > 0 ? alignTexts(oldText, p.text) : null;
     let collapsedNew: { normalized: string; map: number[] } | null = null;
     const collapsed = (): { normalized: string; map: number[] } => (collapsedNew ??= collapseWs(p.text));
-    const spans: Array<{ id: string; start: number; end: number }> = [];
-    // Every marker to write. `outer` orders markers at one position: an
-    // opening by its span's end, a closing by its span's start, so the
-    // enclosing span opens first and closes last. A marker whose partner lies
-    // outside the block encloses everything in it.
-    const points: Array<{ at: number; close: boolean; outer: number; marker: string }> = [];
+    const spans: Span[] = [];
+    const points: Point[] = [];
     for (const [id, r] of parsed.anchors) {
       const openIn = r.openStart >= p.ss && r.openEnd <= p.se;
       const closeIn = r.closeStart >= p.ss && r.closeEnd <= p.se;
@@ -1255,7 +1441,11 @@ export function applyBlockEdits(
           loc = s0 >= 0 && e0 >= s0 ? { start: s0, end: e0 + 1 } : reanchorThreadByText(oldText, p.text, collapsed, edit, local);
         }
         if (loc) spans.push({ id, start: startPastHeadingPrefix(p.text, loc.start, loc.end), end: loc.end });
-        else unanchored.push(id);
+        else {
+          // Its text left this block — perhaps for another block of this edit.
+          lost.push(id);
+          if (local.proseEnd > local.proseStart) candidates.set(id, oldText.slice(local.proseStart, local.proseEnd));
+        }
       } else if (openIn) {
         const s0 = aligned?.[local.proseStart] ?? -1;
         const at = s0 >= 0 ? s0 : mapMarker(edit, local.proseStart, true, p.text.length);
@@ -1266,28 +1456,45 @@ export function applyBlockEdits(
         points.push({ at, close: true, outer: -Infinity, marker: closeMarker(id) });
       }
     }
-    const blockStart = p.ps + shift;
-    for (const l of loose) {
-      if (recovered.has(l.id)) continue;
-      const hit = recoverUnanchoredByQuote(newProse, l.quote);
-      if (!hit || hit.start < blockStart || hit.end > blockStart + p.text.length) continue;
-      spans.push({ id: l.id, start: hit.start - blockStart, end: hit.end - blockStart });
-      recovered.add(l.id);
+    placing.push({ p, spans, points, blockStart: p.ps + shift });
+    shift += p.text.length - (p.pe - p.ps);
+  }
+
+  // Recovery, once every splice has said what it lost: a block dragged
+  // elsewhere arrives as a deletion and an insertion, and its threads go with
+  // it only if the insertion may take what the deletion dropped.
+  const recovered = new Set<string>();
+  for (const pl of placing) {
+    for (const [id, quote] of candidates) {
+      if (recovered.has(id)) continue;
+      const hit = recoverUnanchoredByQuote(newProse, quote);
+      if (!hit || hit.start < pl.blockStart || hit.end > pl.blockStart + pl.p.text.length) continue;
+      pl.spans.push({ id, start: hit.start - pl.blockStart, end: hit.end - pl.blockStart });
+      recovered.add(id);
     }
+  }
+  const unanchored = lost.filter((id) => !recovered.has(id));
+
+  const marked: string[] = [];
+  for (const { p, spans, points } of placing) {
     // Markers must nest: a span may sit inside another (the file had it so),
-    // but one that crosses a kept span's edge loses its markers.
+    // but one that crosses a kept span's edge — or the marker of a thread
+    // that runs on past the block — loses its markers.
+    const oneSided = points.map((m) => m.at);
     spans.sort((a, b) => a.start - b.start || b.end - a.end);
     const open: number[] = [];
-    for (const s of spans) {
-      while (open.length > 0 && open[open.length - 1]! <= s.start) open.pop();
-      if (s.end <= s.start || (open.length > 0 && s.end > open[open.length - 1]!)) {
-        unanchored.push(s.id);
+    for (const sp of spans) {
+      while (open.length > 0 && open[open.length - 1]! <= sp.start) open.pop();
+      const crosses =
+        (open.length > 0 && sp.end > open[open.length - 1]!) || oneSided.some((at) => sp.start < at && at < sp.end);
+      if (sp.end <= sp.start || crosses) {
+        unanchored.push(sp.id);
         continue;
       }
-      open.push(s.end);
+      open.push(sp.end);
       points.push(
-        { at: s.start, close: false, outer: s.end, marker: openMarker(s.id) },
-        { at: s.end, close: true, outer: s.start, marker: closeMarker(s.id) },
+        { at: sp.start, close: false, outer: sp.end, marker: openMarker(sp.id) },
+        { at: sp.end, close: true, outer: sp.start, marker: closeMarker(sp.id) },
       );
     }
     // At one position: closing markers first (adjacent spans don't swallow
@@ -1301,7 +1508,6 @@ export function applyBlockEdits(
       cursor = m.at;
     }
     marked.push(out + p.text.slice(cursor));
-    shift += p.text.length - (p.pe - p.ps);
   }
 
   let next = source;
@@ -1327,15 +1533,30 @@ export function applyBlockEdits(
     types: p.edit.types,
   }));
   let table = spliceMarkdownBlocks(blocks, newProse, splices);
-  let restructured = false;
   if (!table) {
-    table = markdownBlocks(newProse);
-    const expected = [...request.baseTypes];
-    for (let i = request.edits.length - 1; i >= 0; i--) {
-      const e = request.edits[i]!;
-      expected.splice(e.from, e.to - e.from, ...e.types);
+    // Read back, the file must be what the editor shows: every other block
+    // where it was, and the new ones as sent. Anything else — new text that
+    // merged with a neighbour, a fence that swallowed the rest — is never
+    // written; the editor re-reads the file instead.
+    const full = markdownBlocks(newProse);
+    if (!sameStructure(full, blocks, splices)) {
+      return { ok: false, error: "the new text would read as other blocks than the editor shows" };
     }
-    restructured = firstDifference(table.slice(0, editorBlockCount(table)).map((b) => b.type), expected) !== null;
+    table = full;
   }
-  return { ok: true, source: next, range, prose: newProse, blocks: table, restructured, unanchored };
+  // Nor may it change what the rest of the file is: a `---` left at the top
+  // opens frontmatter, and markers must still read as the prose written.
+  const written = buildBridge(next);
+  const frontmatter = (d: ParsedDocument): string => (d.frontmatter ? d.source.slice(d.frontmatter.start, d.frontmatter.end) : "");
+  if (frontmatter(written.parsed) !== frontmatter(parsed)) {
+    return { ok: false, error: "the edit would turn the top of the file into frontmatter" };
+  }
+  if (written.prose !== newProse) return { ok: false, error: "the file wouldn't read back as the edited text" };
+  // And the review markers come out no worse than they went in.
+  if (placing.some((pl) => pl.points.length > 0) || unanchored.length > 0) {
+    const before = damageOf(source);
+    const fresh = [...damageOf(next)].filter((k) => !before.has(k));
+    if (fresh.length > 0) return { ok: false, error: `the edit would damage the review markers (${fresh.join(", ")})` };
+  }
+  return { ok: true, source: next, range, prose: newProse, blocks: table, unanchored };
 }

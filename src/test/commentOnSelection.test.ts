@@ -6,9 +6,11 @@
 // one specific range, where "that text appears three times" would be a nonsense
 // answer.
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import * as vscode from "vscode";
 import { DocOpError, opOpenAt } from "../inlineComments/docOps";
 import { parse } from "../inlineComments/format";
+import { safeHoverTargetUri } from "../commands/comments";
 import { readHostSources } from "./hostSources";
 
 const DOC = `---
@@ -126,6 +128,53 @@ describe("opOpenAt", () => {
     const parsed = parse(second.next);
     expect(parsed.threads).toHaveLength(2);
     expect(parsed.unanchoredThreadIds).toEqual([]);
+  });
+});
+
+// M1: the three commands a hover's command: link can reach — resolveThread,
+// replyToThread, revealThread — must refuse an argument that doesn't name a
+// real Markdown file inside the workspace, since any extension (or a
+// malicious webview) can invoke a VS Code command with any argument it likes,
+// hover escaping notwithstanding.
+describe("safeHoverTargetUri (M1)", () => {
+  const WS_ROOT = "/workspace/proj";
+
+  beforeEach(() => {
+    (vscode.workspace as unknown as { workspaceFolders: unknown }).workspaceFolders = [
+      { uri: vscode.Uri.file(WS_ROOT), name: "proj", index: 0 },
+    ];
+  });
+
+  afterEach(() => {
+    (vscode.workspace as unknown as { workspaceFolders: unknown }).workspaceFolders = undefined;
+  });
+
+  it("accepts a file: URI of a .md file inside the workspace", () => {
+    const uri = safeHoverTargetUri(`file://${WS_ROOT}/notes.md`);
+    expect(uri?.fsPath).toBe(`${WS_ROOT}/notes.md`);
+  });
+
+  it("accepts .markdown too", () => {
+    expect(safeHoverTargetUri(`file://${WS_ROOT}/notes.markdown`)).not.toBeNull();
+  });
+
+  it("refuses a non-file scheme", () => {
+    expect(safeHoverTargetUri(`command:markdownCollab.resolveThread?evil`)).toBeNull();
+    expect(safeHoverTargetUri(`http://evil.example.com/notes.md`)).toBeNull();
+  });
+
+  it("refuses a path outside the workspace", () => {
+    expect(safeHoverTargetUri(`file:///etc/notes.md`)).toBeNull();
+  });
+
+  it("refuses a non-.md file", () => {
+    expect(safeHoverTargetUri(`file://${WS_ROOT}/notes.txt`)).toBeNull();
+    expect(safeHoverTargetUri(`file://${WS_ROOT}/.git/config`)).toBeNull();
+  });
+
+  it("refuses undefined and an unparseable URI", () => {
+    expect(safeHoverTargetUri(undefined)).toBeNull();
+    expect(safeHoverTargetUri("not a uri at all")).toBeNull();
   });
 });
 

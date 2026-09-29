@@ -124,7 +124,7 @@ For an agent that can call MCP tools, **Connect an Agent…** hooks the review t
 | GitHub Copilot, agent mode | Nothing on disk. Enable the Markdown Collab tools in Copilot's tool picker. |
 | Anything else | A scratch document with the address, the token, and a snippet to copy. |
 
-No token is ever written to a file. Comments written by another agent are credited to it: the sidebar says *"3 new from Codex"*, and the card says who replied.
+The token is never written to `.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, or any file you'd commit — those carry only environment references, or (Codex) the name of the environment variable that holds it. It is written to one file, `.markdown-collab/.mcp-server.json`, at permissions only your OS user can read, git-ignored, and deleted when the window closes. Comments written by another agent are credited to it: the sidebar says *"3 new from Codex"*, and the card says who replied.
 
 Connecting is always your call — the three steps above work with no MCP registration at all.
 
@@ -184,6 +184,10 @@ A few commands still exist but are hidden from the palette, now that Connect an 
 | `markdownCollab.classicReviewView` | `false` | Use the previous Markdown Collab view, a rendered preview without editing. A fallback for one release; the next removes it. |
 | `markdownCollab.plantuml.serverUrl` | `https://www.plantuml.com/plantuml` | The server that renders `plantuml` fences. Diagram source is sent to it, so point it at your own server for private documents. |
 | `markdownCollab.plantuml.format` | `svg` | `svg` or `png`. |
+
+### Privacy
+
+A `plantuml` fence is rendered by sending its diagram source to `markdownCollab.plantuml.serverUrl` — public plantuml.com by default, including when you're just viewing a colleague's PR. An `http://` server sees that source in plaintext on the wire. Point the setting at your own server for anything private.
 
 ## What's in your files
 

@@ -46,16 +46,21 @@ export interface BlockNodeLike {
 }
 
 /**
- * The top-level nodes that stand for Markdown blocks: all of them except a
- * trailing empty paragraph. That one is milkdown's placeholder — an empty
+ * The top-level nodes that stand for Markdown blocks: all of them except the
+ * empty paragraphs at the end. One is milkdown's placeholder — an empty
  * document gets one, and so does Enter at the end — and the serializer writes
  * the document's last empty paragraph as nothing, so it has no bytes to map.
+ * Enter twice leaves two: the host's table leaves out the run of `<br />` they
+ * would be written as (`editorBlockCount`), so this leaves out the run too.
  */
 export function markdownBlockNodes<N extends BlockNodeLike>(doc: { childCount: number; child(i: number): N }): N[] {
   const nodes: N[] = [];
   for (let i = 0; i < doc.childCount; i++) nodes.push(doc.child(i));
-  const last = nodes[nodes.length - 1];
-  if (last && last.type.name === "paragraph" && last.content.size === 0) nodes.pop();
+  while (nodes.length > 0) {
+    const last = nodes[nodes.length - 1]!;
+    if (last.type.name !== "paragraph" || last.content.size !== 0) break;
+    nodes.pop();
+  }
   return nodes;
 }
 

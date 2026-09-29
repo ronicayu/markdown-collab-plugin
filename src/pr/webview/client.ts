@@ -129,10 +129,27 @@ const dom = {
 let totalDraftCount = 0;
 let existingComments: ExistingPrComment[] | null = null;
 
+/**
+ * `vscode.getState()`'s blob round-trips through `history.state` across
+ * reloads — a stale extension version, a corrupted profile, or a future
+ * field this build doesn't know about can hand back something that isn't an
+ * object at all (or throw outright). Every reader goes through here so a bad
+ * blob degrades to "nothing was saved" instead of throwing at module load
+ * and blanking the whole webview before a single message is handled.
+ */
+function safeGetState(): Record<string, unknown> {
+  try {
+    const s = vscode.getState();
+    return s !== null && typeof s === "object" && !Array.isArray(s) ? (s as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
 type ExistingFilter = "all" | "open" | "resolved";
 /** Restored from webview state so the choice survives tab switches/reloads. */
 let existingFilter: ExistingFilter = (() => {
-  const saved = (vscode.getState() as { existingFilter?: unknown } | undefined)?.existingFilter;
+  const saved = safeGetState().existingFilter;
   return saved === "open" || saved === "resolved" ? saved : "all";
 })();
 
@@ -150,13 +167,12 @@ let existingFilter: ExistingFilter = (() => {
 // `existingFilter` above.
 
 const collapsedCards: Set<string> = (() => {
-  const saved = (vscode.getState() as { collapsedCardIds?: unknown } | undefined)?.collapsedCardIds;
+  const saved = safeGetState().collapsedCardIds;
   return new Set(Array.isArray(saved) ? saved.filter((x): x is string => typeof x === "string") : []);
 })();
 
 function persistCollapsedCards(): void {
-  const prev = (vscode.getState() as Record<string, unknown> | undefined) ?? {};
-  vscode.setState({ ...prev, collapsedCardIds: Array.from(collapsedCards) });
+  vscode.setState({ ...safeGetState(), collapsedCardIds: Array.from(collapsedCards) });
 }
 
 function draftKey(id: string): string {
@@ -629,8 +645,7 @@ function revealComments(targets: MarkerTarget[]): void {
   );
   if (hidden) {
     existingFilter = "all";
-    const prev = (vscode.getState() as Record<string, unknown> | undefined) ?? {};
-    vscode.setState({ ...prev, existingFilter });
+    vscode.setState({ ...safeGetState(), existingFilter });
     renderExisting();
   }
   const cards: HTMLElement[] = [];
@@ -1012,8 +1027,7 @@ function renderExistingFilterChips(total: number, resolved: number): void {
     btn.addEventListener("click", () => {
       if (existingFilter === chip.key) return;
       existingFilter = chip.key;
-      const prev = (vscode.getState() as Record<string, unknown> | undefined) ?? {};
-      vscode.setState({ ...prev, existingFilter });
+      vscode.setState({ ...safeGetState(), existingFilter });
       renderExisting();
     });
     dom.existingFilter.appendChild(btn);

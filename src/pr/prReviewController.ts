@@ -66,6 +66,12 @@ interface ActiveSession {
   existingComments: ExistingPrComment[] | null;
   /** In-flight fetch promise; subsequent callers await this instead of double-fetching. */
   existingCommentsLoading: Promise<ExistingPrComment[]> | null;
+  /**
+   * Has the "some existing comments couldn't be loaded" notice already fired
+   * for this session? Shown once, not on every fetch that still has stale
+   * pages — a refresh that fixes itself just stops re-triggering it.
+   */
+  warnedPartialLoad: boolean;
 }
 
 /**
@@ -237,6 +243,7 @@ export class PrReviewController implements vscode.Disposable {
         threadsByDraft: new Map(),
         existingComments: null,
         existingCommentsLoading: null,
+        warnedPartialLoad: false,
       };
       await this.rehydrateDrafts();
       this.treeProvider.setFiles(changed);
@@ -396,6 +403,15 @@ export class PrReviewController implements vscode.Disposable {
     const promise = (async () => {
       try {
         const comments = await session.platform.listExistingComments(session.ctx);
+        const warning = (comments as ExistingPrComment[] & { partialLoadWarning?: string }).partialLoadWarning;
+        if (warning && !session.warnedPartialLoad) {
+          session.warnedPartialLoad = true;
+          void vscode.window
+            .showWarningMessage("Some existing comments couldn't be loaded — see Show Logs.", "Show Logs")
+            .then((action) => {
+              if (action === "Show Logs") this.log.show();
+            });
+        }
         session.existingComments = comments;
         return comments;
       } catch (e) {
@@ -422,8 +438,8 @@ export class PrReviewController implements vscode.Disposable {
     deleteDraft: (id: string) => Promise<void>;
     submit: (verdict: ReviewVerdict, body: string | undefined) => Promise<void>;
     getExistingCommentsFor: (rel: string) => Promise<ExistingPrComment[]>;
-    replyToExisting: (threadId: string, body: string) => Promise<{ url: string }>;
-    resolveThread: (resolveId: string, resolved: boolean) => Promise<void>;
+    replyToExisting: (rel: string, threadId: string, body: string) => Promise<{ url: string }>;
+    resolveThread: (rel: string, resolveId: string, resolved: boolean) => Promise<void>;
   } {
     if (!this.session) throw new Error("PR review session not active");
     const session = this.session;
@@ -454,7 +470,20 @@ export class PrReviewController implements vscode.Disposable {
         const all = await this.getExistingComments();
         return all.filter((c) => c.path === rel);
       },
-      replyToExisting: async (threadId, body) => {
+      replyToExisting: async (rel, threadId, body) => {
+        // Only ever send back an id this session itself handed the webview,
+        // for this exact file, in the most recent existing-comments fetch —
+        // never whatever string a (possibly compromised or buggy) webview
+        // message happens to name. Independent of, and in addition to, the
+        // format checks each platform adapter runs before it ever shells
+        // out; this one is about provenance, not shape.
+        const existing = await this.getExistingComments();
+        const known = existing.some((c) => c.path === rel && (c.threadId ?? c.id) === threadId);
+        if (!known) {
+          throw new Error(
+            `Refusing to reply: that id wasn't among the comments last fetched for ${rel}.`,
+          );
+        }
         const result = await session.platform.replyToComment(session.ctx, threadId, body);
         // Drop the cache so the next existing-comments read includes the
         // reply we just posted (the panel re-fetches right after).
@@ -462,7 +491,17 @@ export class PrReviewController implements vscode.Disposable {
         session.existingCommentsLoading = null;
         return result;
       },
-      resolveThread: async (resolveId, resolved) => {
+      resolveThread: async (rel, resolveId, resolved) => {
+        // Same provenance check as replyToExisting above, gated additionally
+        // on `resolvable` — a comment whose thread can't be resolved never
+        // offered a `resolveId` to the webview in the first place.
+        const existing = await this.getExistingComments();
+        const known = existing.some((c) => c.path === rel && c.resolvable && c.resolveId === resolveId);
+        if (!known) {
+          throw new Error(
+            `Refusing to ${resolved ? "resolve" : "unresolve"}: that id wasn't among the comments last fetched for ${rel}.`,
+          );
+        }
         await session.platform.resolveThread(session.ctx, resolveId, resolved);
         // Same cache-drop as replyToExisting — the panel re-fetches right
         // after so the webview sees the confirmed resolved state.

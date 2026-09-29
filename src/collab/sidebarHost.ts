@@ -11,9 +11,11 @@
 //
 // Nothing here reads the editor's serialization: a mutation parses
 // `document.getText()`, rewrites it, and hands the whole new source back to the
-// provider to write — in read-only mode and in edit mode alike.
+// provider to write — in read-only mode and in edit mode alike, where it takes
+// its turn with the editor's queued block edits (`exclusive`).
 
 import * as os from "os";
+import * as path from "path";
 import * as vscode from "vscode";
 import { parse } from "../inlineComments/format";
 import { applyClientMutation } from "../inlineComments/mutations";
@@ -31,8 +33,18 @@ export interface SidebarHostContext {
    * provider owns this because it owns the echo guard.
    */
   applySource(next: string): Promise<boolean>;
-  /** Flush the editor's unsaved edits, so an agent reads the latest text. */
-  flush(): Promise<void>;
+  /**
+   * Flush the editor's unsaved edits, so an agent reads the latest text.
+   * False when the file couldn't be saved: what's on disk is older than what
+   * the editor shows.
+   */
+  flush(): Promise<boolean>;
+  /**
+   * Run `job` in turn with the editor's own writes — after every edit queued
+   * before it, before any queued after — so the text it reads is the text it
+   * writes over.
+   */
+  exclusive<T>(job: () => Promise<T>): Promise<T>;
   /** Re-push the sidebar's state (after a setting the webview shows changed). */
   refresh(): void;
   post(msg: unknown): void;
@@ -89,16 +101,14 @@ export async function handleSidebarMessage(msg: SidebarMessage, ctx: SidebarHost
     case "accept-suggestion":
     case "reject-suggestion":
     case "accept-all-suggestions":
-      return applySidebarMutation(msg, ctx);
+      // Read, rewritten and written with no edit of the editor's landing in
+      // between: one would be overwritten by (or spliced into the middle of)
+      // a source computed without it.
+      return ctx.exclusive(() => applySidebarMutation(msg, ctx));
     case "send-to-claude":
-      // The agent reads the file from disk, so the editor's latest goes first.
-      await ctx.flush();
-      await vscode.commands.executeCommand("markdownCollab.sendAllToClaude", uri);
-      return;
+      return send(ctx, "markdownCollab.sendAllToClaude", uri);
     case "send-to-claude-comment":
-      await ctx.flush();
-      await vscode.commands.executeCommand("markdownCollab.sendThreadToClaude", uri, msg.threadId);
-      return;
+      return send(ctx, "markdownCollab.sendThreadToClaude", uri, msg.threadId);
     case "copy-prompt":
       await ctx.flush();
       return copyAllPrompt(ctx.document);
@@ -127,7 +137,7 @@ export async function handleSidebarMessage(msg: SidebarMessage, ctx: SidebarHost
     case "empty-state-review":
       // The same ask-review flow as the title-bar entry point: the remembered
       // send mode, or the picker when there isn't one yet.
-      await ctx.flush();
+      if (!(await savedForAgent(ctx))) return;
       await vscode.commands.executeCommand("markdownCollab.askClaudeToReview", uri);
       return;
     case "install-skill":
@@ -138,6 +148,29 @@ export async function handleSidebarMessage(msg: SidebarMessage, ctx: SidebarHost
       // The provider's to handle; `isSidebarMessage` never admits it here.
       return;
   }
+}
+
+/**
+ * Hand the document to the agent: only once the file on disk has the editor's
+ * text, since the agent reads the file — a send after a failed save would
+ * give it the old version. The webview's "Sent" notice waits for the answer.
+ */
+async function send(ctx: SidebarHostContext, command: string, ...args: unknown[]): Promise<void> {
+  if (!(await savedForAgent(ctx))) {
+    ctx.post({ type: "send-result", ok: false, saved: false });
+    return;
+  }
+  await vscode.commands.executeCommand(command, ...args);
+  ctx.post({ type: "send-result", ok: true, saved: true });
+}
+
+/** Flush the editor to disk for an agent; false, having said so, when the save failed. */
+async function savedForAgent(ctx: SidebarHostContext): Promise<boolean> {
+  if (await ctx.flush()) return true;
+  void vscode.window.showWarningMessage(
+    `Not sent: ${path.basename(ctx.document.uri.fsPath)} couldn't be saved, so your agent would read the old version.`,
+  );
+  return false;
 }
 
 async function applySidebarMutation(msg: SidebarMutation, ctx: SidebarHostContext): Promise<void> {

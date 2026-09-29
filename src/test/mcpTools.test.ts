@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import * as fsp from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import * as vscode from "vscode";
 import {
   HELP_HINT,
   SUGGESTION_MAX_MULTIPLE_OF_QUOTE,
@@ -8,9 +12,11 @@ import {
   suggestionTooLarge,
   type ToolDeps,
 } from "../mcpServer/tools";
+import { ensureMarkdownCollabDir, resolveWorkspaceFile, writeDescriptorFile } from "../mcpServer/index";
 import { renderSkill } from "../skillText";
 import { addThread, parse } from "../inlineComments/format";
 import { checkIntegrity } from "../inlineComments/integrity";
+import { readHostFile } from "./hostSources";
 
 const DOC = `# Guide
 
@@ -516,5 +522,185 @@ describe("mc_suggest size guard (10x-plan-6 P2.3)", () => {
       with: "x".repeat(SUGGESTION_MIN_CHARS),
     });
     expect(r.isError).toBeUndefined();
+  });
+});
+
+// L1: resolveWorkspaceFile is the boundary a tool call reachable from a model
+// actually crosses — the fake resolveFile above (used everywhere else in this
+// file) is a stand-in for it, not the real thing, so these tests exercise it
+// directly against real files on disk.
+describe("resolveWorkspaceFile (L1: workspace-file boundary)", () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await fsp.mkdtemp(path.join(os.tmpdir(), "mc-resolve-"));
+    (vscode.workspace as unknown as { workspaceFolders: unknown }).workspaceFolders = [
+      { uri: vscode.Uri.file(root), name: "ws", index: 0 },
+    ];
+    // The stub has no workspace.fs / FileType at all — wire a minimal, real
+    // one backed by Node's fs so resolveWorkspaceFile's stat call has
+    // something to answer it.
+    (vscode as unknown as { FileType: { File: number; Directory: number } }).FileType = { File: 1, Directory: 2 };
+    (vscode.workspace as unknown as { fs: unknown }).fs = {
+      stat: async (uri: { fsPath: string }) => {
+        const s = await fsp.stat(uri.fsPath);
+        return { type: s.isDirectory() ? 2 : 1 };
+      },
+    };
+  });
+
+  afterEach(async () => {
+    (vscode.workspace as unknown as { workspaceFolders: unknown }).workspaceFolders = undefined;
+    await fsp.rm(root, { recursive: true, force: true });
+  });
+
+  it("resolves a plain markdown file inside the workspace", async () => {
+    await fsp.writeFile(path.join(root, "notes.md"), "# hi\n", "utf8");
+    const uri = await resolveWorkspaceFile("notes.md");
+    expect(uri.fsPath).toBe(path.join(root, "notes.md"));
+  });
+
+  it("resolves a .markdown file too", async () => {
+    await fsp.writeFile(path.join(root, "notes.markdown"), "# hi\n", "utf8");
+    const uri = await resolveWorkspaceFile("notes.markdown");
+    expect(uri.fsPath).toBe(path.join(root, "notes.markdown"));
+  });
+
+  it("refuses .git/config even though it's lexically inside the workspace", async () => {
+    await fsp.mkdir(path.join(root, ".git"), { recursive: true });
+    await fsp.writeFile(path.join(root, ".git", "config"), "[core]\n", "utf8");
+    await expect(resolveWorkspaceFile(".git/config")).rejects.toMatchObject({ code: "not_markdown" });
+  });
+
+  it("refuses .vscode/tasks.json", async () => {
+    await fsp.mkdir(path.join(root, ".vscode"), { recursive: true });
+    await fsp.writeFile(path.join(root, ".vscode", "tasks.json"), "{}", "utf8");
+    await expect(resolveWorkspaceFile(".vscode/tasks.json")).rejects.toMatchObject({ code: "not_markdown" });
+  });
+
+  it("refuses a non-markdown file with no suspicious directory involved", async () => {
+    await fsp.writeFile(path.join(root, "notes.txt"), "hi", "utf8");
+    await expect(resolveWorkspaceFile("notes.txt")).rejects.toMatchObject({ code: "not_markdown" });
+  });
+
+  it("refuses a symlink whose real target resolves outside the workspace", async () => {
+    const outside = await fsp.mkdtemp(path.join(os.tmpdir(), "mc-outside-"));
+    try {
+      const target = path.join(outside, "secret.md");
+      await fsp.writeFile(target, "# secret\n", "utf8");
+      await fsp.symlink(target, path.join(root, "linked.md"));
+      await expect(resolveWorkspaceFile("linked.md")).rejects.toMatchObject({ code: "outside_workspace" });
+    } finally {
+      await fsp.rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a symlink whose real target is inside the workspace but not markdown", async () => {
+    await fsp.writeFile(path.join(root, "real.txt"), "hi", "utf8");
+    await fsp.symlink(path.join(root, "real.txt"), path.join(root, "alias.md"));
+    await expect(resolveWorkspaceFile("alias.md")).rejects.toMatchObject({ code: "not_markdown" });
+  });
+
+  it("accepts a symlink whose real path still lands inside the workspace as an editable file", async () => {
+    await fsp.writeFile(path.join(root, "real.md"), "# real\n", "utf8");
+    await fsp.symlink(path.join(root, "real.md"), path.join(root, "alias.md"));
+    const uri = await resolveWorkspaceFile("alias.md");
+    expect(uri.fsPath).toBe(path.join(root, "alias.md"));
+  });
+
+  it("still reports file_not_found for a path lexically outside every workspace folder", async () => {
+    // Unchanged from before L1 (mdc.ts's forwarder falls back to a direct
+    // write on exactly this code) — a non-existent absolute path outside the
+    // workspace is "not ours", not "wrong kind".
+    await expect(resolveWorkspaceFile("/definitely/not/in/the/workspace.md")).rejects.toMatchObject({
+      code: "file_not_found",
+    });
+  });
+});
+
+// L2a: the descriptor's directory and file, tested directly against real
+// temp files rather than through startMcpServer (which needs a full
+// vscode.ExtensionContext this suite has no stand-in for).
+describe("ensureMarkdownCollabDir (L2a)", () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await fsp.mkdtemp(path.join(os.tmpdir(), "mc-dir-"));
+  });
+
+  afterEach(async () => {
+    await fsp.rm(root, { recursive: true, force: true });
+  });
+
+  it("creates the directory and a .gitignore that keeps out everything but conventions.md", async () => {
+    const dir = path.join(root, ".markdown-collab");
+    await ensureMarkdownCollabDir(dir);
+    expect((await fsp.stat(dir)).isDirectory()).toBe(true);
+    const gitignore = await fsp.readFile(path.join(dir, ".gitignore"), "utf8");
+    expect(gitignore).toContain("*");
+    expect(gitignore).toContain("!conventions.md");
+    expect(gitignore).toContain("!.gitignore");
+  });
+
+  it("refuses when .markdown-collab is itself a symlink", async () => {
+    const real = path.join(root, "elsewhere");
+    await fsp.mkdir(real);
+    const dir = path.join(root, ".markdown-collab");
+    await fsp.symlink(real, dir);
+    await expect(ensureMarkdownCollabDir(dir)).rejects.toThrow(/symlink/);
+  });
+
+  it("doesn't overwrite an existing .gitignore", async () => {
+    const dir = path.join(root, ".markdown-collab");
+    await fsp.mkdir(dir);
+    await fsp.writeFile(path.join(dir, ".gitignore"), "custom\n", "utf8");
+    await ensureMarkdownCollabDir(dir);
+    expect(await fsp.readFile(path.join(dir, ".gitignore"), "utf8")).toBe("custom\n");
+  });
+
+  it("is a no-op on a second call against an already-set-up directory", async () => {
+    const dir = path.join(root, ".markdown-collab");
+    await ensureMarkdownCollabDir(dir);
+    await expect(ensureMarkdownCollabDir(dir)).resolves.toBeUndefined();
+  });
+});
+
+describe("writeDescriptorFile (L2a: 0600)", () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await fsp.mkdtemp(path.join(os.tmpdir(), "mc-descriptor-"));
+  });
+
+  afterEach(async () => {
+    await fsp.rm(root, { recursive: true, force: true });
+  });
+
+  it("writes at mode 0600, not the process umask's default", async () => {
+    const file = path.join(root, ".mcp-server.json");
+    await writeDescriptorFile(file, '{"token":"x"}');
+    const stat = await fsp.stat(file);
+    expect(stat.mode & 0o777).toBe(0o600);
+    expect(await fsp.readFile(file, "utf8")).toBe('{"token":"x"}');
+  });
+
+  it("tightens an existing file's mode to 0600, even if it was left looser", async () => {
+    const file = path.join(root, ".mcp-server.json");
+    await fsp.writeFile(file, "stale", { mode: 0o644 });
+    await writeDescriptorFile(file, '{"token":"y"}');
+    const stat = await fsp.stat(file);
+    expect(stat.mode & 0o777).toBe(0o600);
+    expect(await fsp.readFile(file, "utf8")).toBe('{"token":"y"}');
+  });
+});
+
+// L2b: no dedicated test harness exists for startMcpServer itself (it needs a
+// full vscode.ExtensionContext), so this is the same source-text guard the
+// codebase already uses for host-side wiring that isn't otherwise unit
+// testable (see commentOnSelection.test.ts / hostSources.ts).
+describe("environmentVariableCollection (L2b)", () => {
+  it("is set non-persistent, so the token doesn't survive in VS Code's own terminal-env cache", () => {
+    const src = readHostFile("mcpServer/index.ts");
+    expect(src).toMatch(/environmentVariableCollection\.persistent\s*=\s*false/);
   });
 });

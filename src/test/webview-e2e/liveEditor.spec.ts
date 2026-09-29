@@ -92,11 +92,13 @@ test("selecting text and adding a comment posts add-comment with the selected an
   expect(msg.author).toBe("ronica");
   const anchor = msg.anchor as { text: string; contextBefore: string; contextAfter: string };
   expect(anchor.text).toBe("Suggest");
-  expect(anchor.contextAfter).toContain(" mode ships");
-  // The host places the marker at these offsets in `fullMd` instead of
-  // re-finding the text, so an off-by-one here anchors the wrong span.
-  const fullMd = msg.fullMd as string;
-  expect(fullMd.slice(msg.selStart as number, msg.selEnd as number)).toBe("Suggest");
+  // Edit mode names the selection by structure for the host to find in the
+  // file's own bytes (docs/one-view-design.md) — its first and last
+  // characters, so an off-by-one here anchors the wrong span. Nothing the
+  // editor serialized goes with it.
+  expect(msg.fullMd).toBeUndefined();
+  const range = msg.editRange as { first: { offset: number; text: string }; last: { offset: number; text: string } };
+  expect(range.first.text.slice(range.first.offset, range.last.offset + 1)).toBe("Suggest");
 });
 
 test("Resolve and \"Send this thread\" post the thread-scoped messages", async ({ page }) => {

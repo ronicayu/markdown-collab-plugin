@@ -206,6 +206,28 @@ describe("engines.vscode", () => {
   });
 });
 
+// L2c: the "Other agent…" scratch document DOES carry the token (in memory,
+// hot-exit-backed) — "nothing written to disk" overclaimed that. Both the
+// pre-consent question and the toast after saying yes made the same claim; a
+// source-text check because `registerWithClient`'s "other" branch isn't
+// exported (invoking it needs a live McpServerHandle and a real document).
+describe("the generic scratch-document copy doesn't overclaim 'nothing on disk' (L2c)", () => {
+  const src = readFileSync(resolve(__dirname, "../commands/setup.ts"), "utf8");
+
+  it("the pre-consent question says the token lives only in this session", () => {
+    expect(mcpOfferFor("other").question).toMatch(/lives only in this session/);
+    expect(mcpOfferFor("other").question).not.toMatch(/nothing on disk/);
+  });
+
+  it("the post-consent toast says the same, and tells the user not to save the document", () => {
+    // The source wraps the string across lines, so match its two halves
+    // rather than the exact concatenated sentence.
+    expect(src).toContain("the token lives only in");
+    expect(src).toContain("this session; don't save this document.");
+    expect(src).not.toMatch(/session token — nothing written to disk/);
+  });
+});
+
 describe("package.json contributions", () => {
   it("declares the Connect an Agent command", () => {
     const command = pkg.contributes.commands.find(

@@ -471,7 +471,7 @@ const MCP_OFFERS: Record<FormatFirstAgentId, McpOffer> = {
   },
   other: {
     question:
-      "Also connect your agent to the review tools so its edits are undoable? (opens a scratch document with the URL and a session token — nothing on disk)",
+      "Also connect your agent to the review tools so its edits are undoable? (opens a scratch document with the URL and a session token — lives only in this session)",
     accept: "Show connection details",
   },
 };
@@ -603,7 +603,8 @@ async function registerWithClient(
     case "other":
       await openGenericSnippetDocument(handle);
       void vscode.window.showInformationMessage(
-        "Markdown Collab: opened a scratch document with the URL and a session token — nothing written to disk.",
+        "Markdown Collab: opened a scratch document with the URL and a session token — the token lives only in " +
+          "this session; don't save this document.",
       );
       return;
   }

@@ -5,12 +5,12 @@
 // pieces on documents small enough to reason about.
 
 import { describe, expect, it } from "vitest";
-import { applyBlockEdits, proseOf } from "../collab/inlineBridge";
+import { addThreadAtProseRange, applyBlockEdits, proseOf } from "../collab/inlineBridge";
 import { diffBlocks, markdownBlockNodes } from "../collab/blockEdits";
 import type { BlockEdit } from "../collab/blockEdits";
 import { editorBlockCount, markdownBlocks, spliceMarkdownBlocks } from "../collab/sourcePositions";
 import { checkpointFor } from "../inlineComments/deltaReview";
-import { addSuggestion, addThread, parse, withThreads } from "../inlineComments/format";
+import { addSuggestion, addThread, parse, replaceThread, withThreads } from "../inlineComments/format";
 import { oneViewCorpus } from "./support/oneViewCorpus";
 
 const TS = "2026-09-29T00:00:00.000Z";
@@ -71,7 +71,6 @@ describe("applyBlockEdits: a keystroke changes its own block only", () => {
       end: DOC.indexOf("lists.") + "lists.".length,
       text: "The parser handles nested lists!",
     });
-    expect(r.restructured).toBe(false);
     expect(r.blocks).toEqual(markdownBlocks(proseOf(r.source)));
   });
 
@@ -185,7 +184,6 @@ describe("applyBlockEdits: a keystroke changes its own block only", () => {
     expect(first.source).toBe(DOC.replace("---\n# Notes", "---\nIntro.\n\n# Notes"));
     const last = ok(splice(DOC, [{ from: 4, to: 4, markdown: "Appendix.", types: ["paragraph"] }]));
     expect(last.source).toBe(DOC.replace("here.\n", "here.\n\nAppendix.\n"));
-    for (const r of [between, first, last]) expect(r.restructured).toBe(false);
   });
 
   it("deletes a block with one separator, so blank lines don't pile up", () => {
@@ -212,6 +210,175 @@ describe("applyBlockEdits: a keystroke changes its own block only", () => {
   });
 });
 
+// The serializer writes `\n`; the file may not. VS Code keeps a document's
+// line endings uniform, so new text takes the file's, or every multi-line
+// block typed into a CRLF file would come back with bare LFs in it (and the
+// document, normalizing them, would no longer be the source the host wrote).
+describe("applyBlockEdits: the file's line endings", () => {
+  const corpus = new Map(oneViewCorpus().map((d) => [d.name, d.source]));
+  const crlf = (s: string): string => s.replace(/\r?\n/g, "\r\n");
+  const lf = (s: string): string => s.replace(/\r\n?/g, "\n");
+  // Line endings of the other kind: a LF without its CR, a CR without its LF.
+  const strays = (s: string): number => (s.match(/(?<!\r)\n|\r(?!\n)/g) ?? []).length;
+  const variants: Array<[string, string]> = [
+    ...["rt-tables", "rt-frontmatter-lists", "rt-code-and-markers", "README"].map(
+      (name): [string, string] => [`${name}, CRLF`, crlf(corpus.get(name)!)],
+    ),
+    ...["embeds", "int-sample", "probe-syntax"].map(
+      (name): [string, string] => [`${name}, no final newline`, corpus.get(name)!.replace(/\n+$/, "")],
+    ),
+    ["int-sample, CRLF and no final newline", crlf(corpus.get("int-sample")!).replace(/(\r\n)+$/, "")],
+  ];
+
+  it.each(variants)("%s: a block re-sent unchanged, a block inserted and a block deleted keep every other byte", (_name, source) => {
+    const eol = source.includes("\r\n") ? "\r\n" : "\n";
+    const prose = proseOf(source);
+    const blocks = markdownBlocks(prose);
+    const count = editorBlockCount(blocks);
+    const baseTypes = blocks.slice(0, count).map((b) => b.type);
+    const apply = (edit: BlockEdit) => ok(applyBlockEdits(source, { baseTypes, edits: [edit] }, blocks));
+    const failures: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const label = `block ${i + 1} (${blocks[i]!.type})`;
+      // What the serializer sends for a block it writes as it was: the same text, `\n` line endings.
+      const same = apply({ from: i, to: i + 1, markdown: lf(prose.slice(blocks[i]!.start, blocks[i]!.end)), types: [blocks[i]!.type] });
+      if (same.source !== source) failures.push(`${label} re-sent unchanged changed the file: ${JSON.stringify(same.range)}`);
+      const inserted = apply({ from: i, to: i, markdown: "Inserted.\nOn two lines.", types: ["paragraph"] });
+      if (inserted.source.replace(`Inserted.${eol}On two lines.${eol}${eol}`, "") !== source) {
+        failures.push(`${label}: an insertion before it isn't the new text with the file's line endings: ${JSON.stringify(inserted.range)}`);
+      }
+      const deleted = apply({ from: i, to: i + 1, markdown: "", types: [] });
+      if (eol === "\r\n" && strays(deleted.source) > strays(source)) failures.push(`${label}: deleting it split a CRLF`);
+    }
+    const appended = apply({ from: count, to: count, markdown: "Appendix.", types: ["paragraph"] });
+    if (appended.range.text !== `${eol}${eol}Appendix.` || appended.source.replace(appended.range.text, "") !== source) {
+      failures.push(`appending changed more than the new block: ${JSON.stringify(appended.range)}`);
+    }
+    expect(failures, failures.slice(0, 6).join("\n")).toEqual([]);
+  });
+});
+
+// The safety net, shaken: random insertions, deletions, splits, merges, type
+// changes and edits in place over every corpus document (a fixed seed, so a
+// failure reproduces), some with a thread in the edited block and some over
+// CRLF. Whatever the host is sent, it either writes a file that reads back as
+// the editor's document — the base blocks with the edit applied, the new
+// ones as sent, every other block and the threads region untouched — or it
+// refuses and writes nothing.
+describe("applyBlockEdits: random edits over the corpus", () => {
+  it("either writes what the editor shows, or refuses", () => {
+    let seed = 20260930;
+    const rand = (): number => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)]!;
+    const lf = (text: string): string => text.replace(/\r\n?/g, "\n");
+    // Bullets and ordered delimiters: keepListMarker gives a list its own back.
+    const markers = (text: string): string => text.replace(/^(\s*)(?:[-+*]|(\d+)[.)])(?=[ \t]|$)/gm, (_m, ind, n) => `${ind}${n ?? ""}*`);
+    const blockTexts = (md: string): string[] => markdownBlocks(md).map((b) => markers(lf(md.slice(b.start, b.end))));
+    const SNIPPETS = [
+      "New paragraph.",
+      "# New heading",
+      "* one\n* two",
+      "1. first\n2. second",
+      "> quoted",
+      "```\ncode\n```",
+      "***",
+      "| a | b |\n| - | - |\n| 1 | 2 |",
+      "Text with *emphasis*, `code` and [a link](https://example.com).",
+      "<br />",
+      "Two lines\nof one paragraph.",
+    ];
+    const docs = oneViewCorpus().filter((d) => d.name !== "CHANGELOG"); // same shapes as README, 17× the blocks
+    const tally = { written: 0, refused: 0 };
+    const failures: string[] = [];
+    for (let n = 0; n < 400; n++) {
+      const doc = pick(docs);
+      const crlf = rand() < 0.2;
+      let source = doc.source;
+      let prose = proseOf(source);
+      let blocks = markdownBlocks(prose);
+      const count = editorBlockCount(blocks);
+      if (count < 2) continue;
+      const i = Math.floor(rand() * (count - 1));
+      if (rand() < 0.5) {
+        // A thread in the block the edit lands on, so the splice has markers to carry.
+        const word = /[A-Za-z]{4,}/.exec(prose.slice(blocks[i]!.start, blocks[i]!.end));
+        if (word) {
+          const at = blocks[i]!.start + word.index;
+          const r = addThreadAtProseRange(source, { start: at, end: at + word[0].length, text: word[0] }, { author: "ronica", body: "fuzz", ts: TS });
+          if (r.ok) source = r.source;
+        }
+      }
+      // As VS Code would hold the file: one line ending throughout, threads region included.
+      if (crlf) source = source.replace(/\r?\n/g, "\r\n");
+      prose = proseOf(source);
+      blocks = markdownBlocks(prose);
+      const types = blocks.slice(0, editorBlockCount(blocks)).map((b) => b.type);
+      const own = (k: number): string => lf(prose.slice(blocks[k]!.start, blocks[k]!.end));
+      const typed = (markdown: string): string[] => markdownBlocks(markdown).map((b) => b.type);
+      const kind = pick(["type", "insert", "delete", "split", "merge", "retype"] as const);
+      let edit: BlockEdit;
+      if (kind === "type") edit = { from: i, to: i + 1, markdown: `${own(i)}Z`, types: [types[i]!] };
+      else if (kind === "insert") {
+        const markdown = pick(SNIPPETS);
+        edit = { from: i + 1, to: i + 1, markdown, types: typed(markdown) };
+      } else if (kind === "delete") edit = { from: i, to: i + 1, markdown: "", types: [] };
+      else if (kind === "split") {
+        const text = own(i);
+        const cut = text.indexOf(" ", Math.floor(rand() * text.length));
+        const markdown = cut > 0 ? `${text.slice(0, cut)}\n\n${text.slice(cut + 1)}` : text;
+        edit = { from: i, to: i + 1, markdown, types: typed(markdown) };
+      } else if (kind === "merge") {
+        const markdown = `${own(i)}${own(i + 1)}`;
+        edit = { from: i, to: i + 2, markdown, types: typed(markdown) };
+      } else {
+        const markdown = pick(SNIPPETS);
+        edit = { from: i, to: i + 1, markdown, types: typed(markdown) };
+      }
+      if (edit.markdown !== "" && edit.types.length === 0) continue; // nothing the editor could have made
+      const label = `#${n} ${doc.name} ${kind} ${JSON.stringify(edit)}`;
+      let r: ReturnType<typeof applyBlockEdits>;
+      try {
+        r = applyBlockEdits(source, { baseTypes: types, edits: [edit] }, blocks);
+      } catch (e) {
+        failures.push(`${label}: threw ${(e as Error).message}`);
+        continue;
+      }
+      if (!r.ok) {
+        tally.refused++;
+        continue;
+      }
+      tally.written++;
+      const back = markdownBlocks(proseOf(r.source));
+      const backProse = proseOf(r.source);
+      const expected = [...types];
+      expected.splice(edit.from, edit.to - edit.from, ...edit.types);
+      const got = back.slice(0, editorBlockCount(back));
+      if (JSON.stringify(got.map((b) => b.type)) !== JSON.stringify(expected)) {
+        failures.push(`${label}: reads back as ${JSON.stringify(got.map((b) => b.type))}`);
+        continue;
+      }
+      const text = (k: number): string => markers(lf(backProse.slice(got[k]!.start, got[k]!.end)));
+      const sent = blockTexts(edit.markdown);
+      for (let k = 0; k < edit.types.length; k++) {
+        if (text(edit.from + k) !== sent[k]) failures.push(`${label}: block ${edit.from + k} reads ${JSON.stringify(text(edit.from + k))}`);
+      }
+      for (let k = 0; k < edit.from; k++) {
+        if (text(k) !== markers(own(k))) failures.push(`${label}: block ${k} before the edit changed`);
+      }
+      for (let k = edit.to; k < types.length; k++) {
+        const at = k - edit.to + edit.from + edit.types.length;
+        if (text(at) !== markers(own(k))) failures.push(`${label}: block ${k} after the edit changed`);
+      }
+      if (regionOf(r.source) !== regionOf(source)) failures.push(`${label}: the threads region changed`);
+      if (crlf && /(?<!\r)\n/.test(r.source)) failures.push(`${label}: a bare LF in a CRLF file`);
+    }
+    expect(failures, failures.slice(0, 6).join("\n")).toEqual([]);
+    expect(tally.written + tally.refused).toBeGreaterThan(300);
+    // Refusal is the net, not the rule: ordinary edits are written.
+    expect(tally.written).toBeGreaterThan(tally.refused * 3);
+  });
+});
+
 describe("applyBlockEdits: list markers", () => {
   it("keeps a list's own bullet instead of the serializer's `*`", () => {
     const r = ok(splice(DOC, [{ from: 2, to: 3, markdown: "* one\n* twos", types: ["bullet_list"] }]));
@@ -222,7 +389,6 @@ describe("applyBlockEdits: list markers", () => {
     const source = "1) paren\n2) second\n\n3. three\n4. four\n";
     const r = ok(splice(source, [{ from: 0, to: 1, markdown: "1. paren\n2. secondZ", types: ["ordered_list"] }]));
     expect(r.source).toBe("1) paren\n2) secondZ\n\n3. three\n4. four\n");
-    expect(r.restructured).toBe(false);
   });
 });
 
@@ -258,12 +424,123 @@ describe("applyBlockEdits: refusals and restructuring", () => {
     expect(r).toEqual({ ok: false, error: expect.stringContaining("comment threads") });
   });
 
-  it("writes an edit that merges with a neighbour, and says the editor must re-read the file", () => {
+  it("refuses an edit whose text would merge with a neighbour: a structure the editor doesn't show never reaches the file", () => {
     const source = "Intro.\n\n- a\n- b\n";
-    const r = ok(splice(source, [{ from: 0, to: 1, markdown: "- x", types: ["bullet_list"] }]));
-    expect(r.source).toBe("- x\n\n- a\n- b\n");
-    expect(r.restructured).toBe(true);
-    expect(r.blocks.map((b) => b.type)).toEqual(["bullet_list"]);
+    const r = splice(source, [{ from: 0, to: 1, markdown: "- x", types: ["bullet_list"] }]);
+    expect(r).toEqual({ ok: false, error: expect.stringContaining("would read as") });
+  });
+
+  it("refuses a splice that would turn the top of the file into frontmatter", () => {
+    const source = "Intro.\n\n---\n\nPart one.\n\n---\n\nPart two.\n";
+    const r = splice(source, [{ from: 0, to: 1, markdown: "", types: [] }]);
+    expect(r).toEqual({ ok: false, error: expect.stringContaining("frontmatter") });
+  });
+});
+
+// Bytes between blocks that are no block of the editor's: link reference
+// definitions (milkdown inlines their links and drops them). A splice never
+// deletes them.
+describe("applyBlockEdits: link reference definitions", () => {
+  it("deleting a block keeps a definition before it", () => {
+    const source = "See [the docs][docs].\n\n[docs]: https://example.com\n\n## Next\n";
+    const r = ok(splice(source, [{ from: 1, to: 2, markdown: "", types: [] }]));
+    expect(r.source).toBe("See [the docs][docs].\n\n[docs]: https://example.com\n");
+  });
+
+  it("deleting the first block keeps a definition after it", () => {
+    const source = "Intro.\n\n[docs]: https://example.com\n\nSee [the docs][docs].\n";
+    const r = ok(splice(source, [{ from: 0, to: 1, markdown: "", types: [] }]));
+    expect(r.source).toBe("[docs]: https://example.com\n\nSee [the docs][docs].\n");
+  });
+
+  it("merging two blocks carries the definition between them through", () => {
+    const source = "Para A.\n\n[docs]: https://example.com\n\nPara B [x][docs].\n";
+    // Backspace at the start of B: one paragraph over the union, its link inlined by milkdown.
+    const r = ok(splice(source, [{ from: 0, to: 2, markdown: "Para A.Para B [x](https://example.com).", types: ["paragraph"] }]));
+    expect(r.source).toBe("Para A.Para B [x](https://example.com).\n\n[docs]: https://example.com\n");
+  });
+});
+
+// CommonMark lets a list, a heading or a fence follow a paragraph line with no
+// blank line, and a paragraph line continue whatever paragraph precedes it.
+// New text, a deletion, or a block whose type changed must not fuse with a
+// neighbour it only had a single newline between.
+describe("applyBlockEdits: a blank line between new text and its neighbours", () => {
+  it.each<[string, string, BlockEdit[], string]>([
+    ["Enter after a paragraph a list interrupts, then typing", "Intro:\n- one\n", [{ from: 1, to: 1, markdown: "New para", types: ["paragraph"] }], "Intro:\n\nNew para\n\n- one\n"],
+    ["lifting the first item out of such a list", "Intro:\n- one\n- two\n", [{ from: 1, to: 2, markdown: "one\n\n* two", types: ["paragraph", "bullet_list"] }], "Intro:\n\none\n\n* two\n"],
+    ["deleting a heading a paragraph follows directly", "Alpha.\n\n## Heading\nText.\n", [{ from: 1, to: 2, markdown: "", types: [] }], "Alpha.\n\nText.\n"],
+    ["a heading made a paragraph", "## H\nText\n", [{ from: 0, to: 1, markdown: "H", types: ["paragraph"] }], "H\n\nText\n"],
+    ["inserting before a fence that follows a paragraph", "Para\n```\ncode\n```\n", [{ from: 1, to: 1, markdown: "New", types: ["paragraph"] }], "Para\n\nNew\n\n```\ncode\n```\n"],
+  ])("%s", (_name, source, edits, expected) => {
+    const r = ok(splice(source, edits));
+    expect(r.source).toBe(expected);
+    expect(r.blocks.slice(0, editorBlockCount(r.blocks)).map((b) => b.type)).toEqual(typesOf(expected));
+  });
+
+  it("leaves a single-newline gap alone when the block keeps its type", () => {
+    const r = ok(splice("Intro:\n- one\n", [{ from: 0, to: 1, markdown: "Intro, edited:", types: ["paragraph"] }]));
+    expect(r.source).toBe("Intro, edited:\n- one\n");
+  });
+});
+
+describe("applyBlockEdits: more than one splice in a message", () => {
+  const MOVE = "Alpha para.\n\nBeta para.\n\nGamma para.\n";
+
+  it("a block dragged up keeps its thread (the insertion comes first)", () => {
+    const source = withThread(MOVE, "Beta");
+    const id = parse(source).threads[0]!.id;
+    // [A, B*, C] → [B*, A, C], as the diff reports it: B inserted before A, deleted where it was.
+    const r = ok(
+      splice(source, [
+        { from: 0, to: 0, markdown: "Beta para.", types: ["paragraph"] },
+        { from: 1, to: 2, markdown: "", types: [] },
+      ]),
+    );
+    expect(proseOf(r.source)).toBe("Beta para.\n\nAlpha para.\n\nGamma para.\n");
+    expect(anchored(r.source, id)).toBe("Beta");
+    expect(r.unanchored).toEqual([]);
+  });
+
+  it("a block dragged down keeps its thread (the deletion comes first)", () => {
+    const source = withThread(MOVE, "Alpha");
+    const id = parse(source).threads[0]!.id;
+    const r = ok(
+      splice(source, [
+        { from: 0, to: 1, markdown: "", types: [] },
+        { from: 2, to: 2, markdown: "Alpha para.", types: ["paragraph"] },
+      ]),
+    );
+    expect(proseOf(r.source)).toBe("Beta para.\n\nAlpha para.\n\nGamma para.\n");
+    expect(anchored(r.source, id)).toBe("Alpha");
+    expect(r.unanchored).toEqual([]);
+  });
+});
+
+describe("applyBlockEdits: text that only looks like a marker", () => {
+  it("takes a typed `<!--mc:` that the format wouldn't read as a marker as text, escaped or not", () => {
+    for (const typed of ["Markers start with \\<!--mc: and more.", "Write <!--mc:a:ID--> by hand."]) {
+      const r = ok(splice(DOC, [{ from: 1, to: 2, markdown: typed, types: ["paragraph"] }]));
+      expect(r.source).toContain(typed);
+    }
+  });
+});
+
+describe("applyBlockEdits: markers still nest", () => {
+  it("doesn't recover a thread whose quote straddles a marker of a thread crossing the block's edge", () => {
+    // `cross` runs from the heading into the paragraph; `loose` lost its markers
+    // and its quote, "handles nested", spans the point where `cross` closes.
+    const at = DOC.indexOf("Notes");
+    const end = DOC.indexOf("handles") + "handl".length;
+    const { source: crossed, thread: cross } = addThread(DOC, at, end, { author: "ronica", body: "x", ts: TS });
+    const q = crossed.indexOf("es nested");
+    const withLoose = addThread(crossed, q + 3, q + 9, { author: "ronica", body: "y", ts: TS });
+    const loose = withLoose.thread.id;
+    const stripped = withLoose.source.replace(`<!--mc:a:${loose}-->`, "").replace(`<!--mc:/a:${loose}-->`, "");
+    const source = replaceThread(stripped, loose, { ...parse(stripped).threads.find((t) => t.id === loose)!, quote: "handles nested" });
+    const r = ok(splice(source, [{ from: 1, to: 2, markdown: "The parser handles nested lists!", types: ["paragraph"] }]));
+    expect(parse(r.source).anchors.has(cross.id)).toBe(true);
+    expect(parse(r.source).anchors.has(loose)).toBe(false);
   });
 });
 
@@ -320,6 +597,8 @@ describe("the block table", () => {
     // The trailing `<br />` is milkdown's empty-paragraph placeholder, which the editor doesn't count.
     expect(blocks[blocks.length - 1]!.placeholder).toBe(true);
     expect(editorBlockCount(blocks)).toBe(blocks.length - 1);
+    // Nor any run of them at the end.
+    expect(editorBlockCount(markdownBlocks("P\n\n<br />\n\n<br />\n"))).toBe(1);
     expect(md.slice(blocks[4]!.start, blocks[4]!.end)).toBe("```js\ncode\n```");
   });
 
@@ -418,6 +697,12 @@ describe("diffBlocks", () => {
   it("leaves out a trailing empty paragraph, milkdown's placeholder", () => {
     const nodes = [node("a"), node("")];
     const doc = { childCount: 2, child: (i: number) => nodes[i]! };
+    expect(markdownBlockNodes(doc)).toEqual([nodes[0]]);
+  });
+
+  it("leaves out every trailing empty paragraph (Enter twice at the end)", () => {
+    const nodes = [node("a"), node(""), node("")];
+    const doc = { childCount: 3, child: (i: number) => nodes[i]! };
     expect(markdownBlockNodes(doc)).toEqual([nodes[0]]);
   });
 });

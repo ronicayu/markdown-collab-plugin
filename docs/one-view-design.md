@@ -102,13 +102,16 @@ pointer. With no editing host to clamp it, Chrome extended the native selection 
 DOM position after the sidebar; ProseMirror ignores a selection leaving `view.dom` and kept "Su".
 Fix (both modes): the button stays hidden while the primary button is held.
 
-## Edit mode (unchanged this phase; its edits are phase B's since)
+## Edit mode
 
-Edit mode keeps `locateNthOccurrence`/`locateAnchorInLiveText` for highlights and
-`collectAnchors` + `placeAnchorsInProse`/`mergeProseEdit` for edits. It adds comments with
-`addThreadAtOffsets`/`addThreadFromAnchor` against the serialized body. The schema extension
-isn't installed there, because a split or join copies attrs, which would go stale on the first
-keystroke. Step 7 (block-splice write-back) is where edit mode can adopt these positions.
+Edit mode keeps `locateNthOccurrence`/`locateAnchorInLiveText` for highlights. The schema
+extension isn't installed there, because a split or join copies attrs, which would go stale on
+the first keystroke. Its edits are phase B's block splices (below). Since 0.35.18 its comments
+no longer adopt the serialized body: the webview names the selection's first and last characters
+structurally (top-level block, text container, character offset, the container's text), the host
+finds them in the file's own bytes with the same alignment read-only mode uses, and
+`addThreadAtProseRange` writes two markers. The provider accepts only a read-only prose range or
+an edit-mode structural range, each from the current epoch.
 
 ## Gates (tests)
 
@@ -152,32 +155,59 @@ serialized together, their types. Runs of equal length are split pair by pair; a
 serializes identically is no change. A split (Enter mid-paragraph) or merge (Backspace at a block
 start) is an unequal run, so one splice over the union. Posted as `edit-blocks` with an `epoch`.
 
-**Host.** Stale epoch (a re-render crossed the edit): dropped. Each change's prose range
-`[start(from), end(to-1))` becomes a source range widened over markers glued to its edges; a
-deletion takes the separator before it, an insertion adds `\n\n`. Anchors with both markers in
+**Host.** Every write to the document — block edits, sidebar mutations, accept/reject,
+add-comment, autosave, the mode switch — runs in one queue, so nothing reads the text between
+another write's read and its apply. Stale epoch (a re-render crossed the edit): never dropped
+silently — the view is re-rendered from the file with a toast; the one exception is an edit from
+the epoch just before a mode switch that re-sent identical text, which is applied. An external
+change that arrives while the webview is building its editor is queued behind the build, so the
+build can't reset the base to an older epoch. Each change's prose range
+`[start(from), end(to-1))` becomes a source range widened over markers glued to its edges. A
+deletion never takes bytes that belong to no edited block — link reference definitions between
+blocks are kept, and a merged range carries its definitions through. Wherever a splice inserts,
+deletes or changes a block's type, a blank line separates the new text from both neighbours, and
+new text takes the file's line ending (CRLF files stay CRLF). Anchors with both markers in
 the range are re-placed in the new text: first by a token diff of the block (words the edit and
 the serializer's normalization left alone map exactly — `**a `b` c**` becoming
 `**a** **`b`** **c**` moves them), then by `reanchorThreadByText` on block-local strings, else
 dropped (unanchored). Nested anchors stay nested. An anchor crossing the edge keeps its outside
 marker and maps the inside one; a marker-less thread whose quote is unique and lands in the
 block is recovered (undo). A list replaced 1:1 keeps its marker (`-`, `+`, `1)`): the
-serializer's `*` or `1.` would merge it with an adjacent list using that marker. Bytes outside
-the ranges — frontmatter, threads region, other blocks — are untouched; the write is a range edit.
+serializer's `*` or `1.` would merge it with an adjacent list using that marker; a tight list
+stays tight (milkdown's list serializers pass `spread` as a string, which the webview corrects).
+Recovery runs after every splice in a message, so a block dragged elsewhere within one debounce
+takes its threads with it. Bytes outside the ranges — frontmatter, threads region, other blocks —
+are untouched; the write is a range edit.
 
-**After the splice** the host re-parses from the block before to the block after. Block parsing
-runs left to right and the window starts fresh at an unchanged block, so if it reproduces both
-neighbours and the sent types, the table is updated in place. Otherwise a full parse decides; if
-the types still differ (the text merged with a neighbour, an unclosed fence swallowed the rest)
-the write stands and the editor re-renders.
+**After the splice, before the write** the host checks the result: it must re-parse to the block
+types the editor now shows, its prose and frontmatter must read back as computed (a leading `---`
+can't turn text into frontmatter), and the review markers must gain no new integrity issue. The
+table is updated in place from a windowed re-parse (block before to block after) when that
+reproduces both neighbours, else from a full parse. **A result that fails any check is never
+written**: the editor re-renders from the file and a toast says why. Earlier builds wrote such a
+result and then re-rendered.
 
 **Refusals** (no write; the editor re-reads the file, a toast says why): base types differ from
-the table, a bad index, a range reaching frontmatter or threads, `<!--mc:` outside code.
+the table, a bad index, a range reaching frontmatter or threads, a real `<!--mc:` marker outside
+code (typed text that the format wouldn't read as a marker is allowed), and any failed check
+above. An exception anywhere in the splice is treated as a refusal, not just logged.
 
 **Mode toggle.** On `set-read-only` the host flips the panel's mode (the setting only seeds new
 panels), waits for queued edits and re-sends `init`; the webview rebuilds just the editor,
 read-only with the source-position schema or edit without it. A read-only panel's edits are ignored.
 
-**Gate** (`blockSplice.spec.ts`, 17 documents, a thread in every block with a word): one character
-typed at the end of each of 1,596 top-level blocks (a rule is selected and typed over) through the
+**Gates.** (1) `blockSplice.spec.ts`: 24 documents — the 17-document corpus plus CRLF and
+no-trailing-newline variants — with a thread in every block that has a word; one character typed
+at the end of each of 1,754 top-level blocks (a rule is selected and typed over) through the
 bundle's diff and the host splice: every line outside the block, the threads region and
 `stripAllInlineMarkup` outside it unchanged, no anchor lost. 0 failures, none excluded.
+(2) A seeded fuzz test (`blockSplice.test.ts`): 400 random insert/delete/split/merge/type-change
+edits over the corpus, some on CRLF copies and some with threads; each either re-parses to the
+editor's document or is refused with the file byte-identical. It had 52 failures before 0.35.18.
+(3) Real-keystroke e2e (`modeToggle.spec.ts`): whole-block delete, typing in a non-last list
+item, pasting two paragraphs, undo, and the Edit ↔ Read switch.
+
+**Known.** An outside change applied to the document between the host reading its text and the
+host's `applyEdit` landing can still make a splice use stale offsets; the post-write check
+catches it and re-renders, but the bytes are already written. Closing it needs versioned edits.
+`withThreads` writes the threads region with LF into a CRLF file (the host tolerates it).

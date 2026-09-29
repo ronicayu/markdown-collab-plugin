@@ -36,8 +36,8 @@ interface DraftHost {
   deleteDraft(id: string): Promise<void>;
   submit(verdict: ReviewVerdict, body: string | undefined): Promise<void>;
   getExistingCommentsFor(relPath: string): Promise<ExistingPrComment[]>;
-  replyToExisting(threadId: string, body: string): Promise<{ url: string }>;
-  resolveThread(resolveId: string, resolved: boolean): Promise<void>;
+  replyToExisting(relPath: string, threadId: string, body: string): Promise<{ url: string }>;
+  resolveThread(relPath: string, resolveId: string, resolved: boolean): Promise<void>;
 }
 
 interface InitMessage {
@@ -293,7 +293,7 @@ export class PrReviewPanel {
    */
   private async handleReply(threadId: string, body: string): Promise<void> {
     try {
-      await this.host.replyToExisting(threadId, body);
+      await this.host.replyToExisting(this.relPath, threadId, body);
       const comments = await this.host.getExistingCommentsFor(this.relPath);
       const m: ExistingCommentsMessage = { type: "existing-comments", comments };
       await this.panel.webview.postMessage(m);
@@ -314,7 +314,7 @@ export class PrReviewPanel {
    */
   private async handleResolveThread(resolveId: string, resolved: boolean): Promise<void> {
     try {
-      await this.host.resolveThread(resolveId, resolved);
+      await this.host.resolveThread(this.relPath, resolveId, resolved);
       const comments = await this.host.getExistingCommentsFor(this.relPath);
       const m: ExistingCommentsMessage = { type: "existing-comments", comments };
       await this.panel.webview.postMessage(m);

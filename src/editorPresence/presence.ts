@@ -169,6 +169,21 @@ function gist(body: string, max = 220): string {
 }
 
 /**
+ * Escape Markdown syntax characters in text that came from the document
+ * itself — a comment's author or body — so it renders as plain text inside
+ * the trusted `MarkdownString` `index.ts` builds, rather than becoming a
+ * link, an image, emphasis, or a heading (M1). A comment body of
+ * `[Mark reviewed](command:markdownCollab.resolveThread?…)` must read as
+ * exactly that string; only the extension's own links, appended after this
+ * escaping runs, are ever live. Escaping `!` alongside `[`, `]`, `(`, and `)`
+ * together also keeps a `![alt](http://…)` from being interpreted as an
+ * image — nothing built from document text ever loads a remote image.
+ */
+function escapeMarkdown(text: string): string {
+  return text.replace(/[`*_()[\]!<>#|]/g, (c) => `\\${c}`);
+}
+
+/**
  * Hover markdown for the thread at `offset`, or null when there is none.
  *
  * `commandLinks` is off for the tests and on in the editor: a `command:` URI
@@ -190,7 +205,12 @@ export function hoverFor(
   const badges: string[] = [];
   if (thread.status === "resolved") badges.push("resolved");
   else if (isClaudeUnread(thread)) {
-    badges.push(`new from ${agentGroupLabel([unreadAgentSlug(thread) ?? "claude"]).noun}`);
+    // `unreadAgentSlug` falls back to the comment's own `author` field when it
+    // isn't one of the known slugs (any string is legal there once `agent:
+    // true` is set) — document-derived like everything else here, so it gets
+    // the same escaping before it can reach the badge.
+    const noun = agentGroupLabel([unreadAgentSlug(thread) ?? "claude"]).noun;
+    badges.push(`new from ${escapeMarkdown(noun)}`);
   }
   if (parsed.suggestions.some((s) => s.threadId === thread.id)) badges.push("has a suggestion");
   lines.push(
@@ -201,9 +221,9 @@ export function hoverFor(
   if (latest) {
     lines.push("");
     const when = formatRelativeTime(latest.ts, opts.now);
-    lines.push(`**${latest.author}**${when ? ` · ${when}` : ""}`);
+    lines.push(`**${escapeMarkdown(latest.author)}**${when ? ` · ${when}` : ""}`);
     lines.push("");
-    lines.push(gist(latest.body));
+    lines.push(escapeMarkdown(gist(latest.body)));
   }
 
   if (live.length > 1) {

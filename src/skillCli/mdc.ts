@@ -408,12 +408,45 @@ async function forward(
   return { kind: "applied", result: isObject(payload) ? payload : {} };
 }
 
-/** Both env vars, or null — and null under `--direct`. */
+/** Hosts that can ever be "the running extension" (L3). The port varies; the
+ *  loopback address doesn't. */
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+/** The one path the extension's tool server answers on (httpServer.ts's
+ *  `serveMcp` default `path`, which `startMcpServer` never overrides). */
+const MCP_PATH = "/mcp";
+
+/**
+ * Both env vars, or null — null under `--direct`, and null when the URL
+ * doesn't point at the local tool server (L3). `MARKDOWN_COLLAB_MCP_URL` is
+ * meant to come only from a VS Code terminal's environment, but anything that
+ * can set an env var (a poisoned shell rc file, a compromised `.env`, a
+ * misconfigured devcontainer) can set it to any `http://` URL — and every
+ * mutating verb otherwise POSTs the document's own text there, with the
+ * bearer token in the header. Forwarding only to `127.0.0.1`/`::1`/
+ * `localhost` on the server's own path keeps a document (and the token) from
+ * ever leaving the machine through this path; anything else falls back to a
+ * direct local write, exactly like an unreachable server does.
+ */
 function extensionFromEnv(flags: Args["flags"]): Extension | null {
   if (flags.direct === true) return null;
   const url = process.env[ENV_URL];
   const token = process.env[ENV_TOKEN];
-  return url && token ? { url, token } : null;
+  if (!url || !token) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    writeSync(2, `mdc: ${ENV_URL} is not a valid URL (${JSON.stringify(url)}) — writing directly\n`);
+    return null;
+  }
+  // URL.hostname keeps IPv6 addresses bracketed ("[::1]"); strip that to
+  // compare against the plain form.
+  const host = parsed.hostname.replace(/^\[|\]$/g, "");
+  if (!LOOPBACK_HOSTS.has(host) || parsed.pathname !== MCP_PATH) {
+    writeSync(2, `mdc: ${ENV_URL} does not point at the local tool server (${url}) — writing directly\n`);
+    return null;
+  }
+  return { url, token };
 }
 
 /** Re-read after a forwarded write, for the same `integrityOk` a direct write reports. */

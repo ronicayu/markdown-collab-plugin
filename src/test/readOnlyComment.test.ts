@@ -61,8 +61,13 @@ describe("read-only add-comment writes only its markers", () => {
           expect(trimEof(stripAllInlineMarkup(after))).toBe(trimEof(stripAllInlineMarkup(before)));
         }
         expect(trimEof(proseOf(after))).toBe(trimEof(prose));
-        // It landed on the selected text.
-        expect(thread.quote).toBe(prose.slice(sel.start, sel.end));
+        // It landed on the selected text — widened to the edges of a URL a
+        // boundary fell inside, which a marker there would break.
+        const selected = prose.slice(sel.start, sel.end);
+        if (thread.quote !== selected) {
+          expect(thread.quote).toMatch(/https?:\/\/|www\./);
+          expect(thread.quote).toContain(selected);
+        }
         expect(parsedAfter.anchors.has(thread.id)).toBe(true);
         // Pending suggestions and the review checkpoint are untouched.
         expect(parsedAfter.suggestions).toEqual(parsedBefore.suggestions);

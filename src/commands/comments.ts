@@ -4,8 +4,10 @@
 
 import * as os from "os";
 import * as path from "path";
+import { fileURLToPath } from "node:url";
 import * as vscode from "vscode";
 import type { Logger } from "../logging";
+import { isInsideRoot } from "../pathUtils";
 import { repairIntegrity } from "../inlineComments/integrity";
 import { parse as parseInline } from "../inlineComments/format";
 import {
@@ -321,10 +323,43 @@ async function invokeRepairInlineComments(
   );
 }
 
-/** Resolve a `fileArg` command argument the way `revealThread` already does — a URI or its string form, whichever the caller has on hand. */
-function uriFromArg(fileArg: string | vscode.Uri): vscode.Uri {
-  return fileArg instanceof vscode.Uri ? fileArg : vscode.Uri.parse(fileArg);
+/**
+ * Validate a `fileArg` the way every command a hover's `command:` link can
+ * reach must (M1): a `file:` URI naming a `.md`/`.markdown` file inside an
+ * open workspace folder, or null when it's anything else. The hover's own
+ * markdown is now escaped so the extension's own links are the only ones
+ * that can ever fire, but `resolveThread`/`replyToThread`/`revealThread` are
+ * ordinary VS Code commands — anything on the machine can invoke them with
+ * any argument — so the handlers refuse on their own rather than trust the
+ * caller.
+ *
+ * `fileURLToPath` decodes the URI directly instead of going through
+ * `vscode.Uri.parse`: it throws on anything that isn't a `file:` URL, which
+ * is exactly the first refusal this needs, and its result doesn't vary
+ * across hosts the way a Uri implementation's `.fsPath` can.
+ */
+export function safeHoverTargetUri(fileArg: string | vscode.Uri | undefined): vscode.Uri | null {
+  if (!fileArg) return null;
+  let fsPath: string;
+  if (typeof fileArg === "string") {
+    try {
+      fsPath = fileURLToPath(fileArg);
+    } catch {
+      return null;
+    }
+  } else {
+    if (fileArg.scheme !== "file") return null;
+    fsPath = fileArg.fsPath;
+  }
+  const ext = path.extname(fsPath).toLowerCase();
+  if (ext !== ".md" && ext !== ".markdown") return null;
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  if (!folders.some((f) => isInsideRoot(fsPath, f.uri.fsPath))) return null;
+  return vscode.Uri.file(fsPath);
 }
+
+const NOT_A_SAFE_TARGET =
+  "Markdown Collab: that link doesn't point at a Markdown file in this workspace.";
 
 /**
  * Resolve a thread from outside the review view (3.7) — today, the source
@@ -341,7 +376,11 @@ async function invokeResolveThread(
   log: Logger,
 ): Promise<void> {
   if (!fileArg || !threadId) return;
-  const uri = uriFromArg(fileArg);
+  const uri = safeHoverTargetUri(fileArg);
+  if (!uri) {
+    void vscode.window.showWarningMessage(NOT_A_SAFE_TARGET);
+    return;
+  }
   let doc: vscode.TextDocument;
   try {
     doc = await vscode.workspace.openTextDocument(uri);
@@ -400,7 +439,11 @@ async function invokeReplyToThread(
   log: Logger,
 ): Promise<void> {
   if (!fileArg || !threadId) return;
-  const uri = uriFromArg(fileArg);
+  const uri = safeHoverTargetUri(fileArg);
+  if (!uri) {
+    void vscode.window.showWarningMessage(NOT_A_SAFE_TARGET);
+    return;
+  }
   let doc: vscode.TextDocument;
   try {
     doc = await vscode.workspace.openTextDocument(uri);
@@ -536,7 +579,11 @@ export function registerCommentsCommands(deps: CommandDeps): void {
       "markdownCollab.revealThread",
       async (uriArg?: string | vscode.Uri, threadId?: string) => {
         if (!uriArg || !threadId) return;
-        const uri = uriArg instanceof vscode.Uri ? uriArg : vscode.Uri.parse(uriArg);
+        const uri = safeHoverTargetUri(uriArg);
+        if (!uri) {
+          void vscode.window.showWarningMessage(NOT_A_SAFE_TARGET);
+          return;
+        }
         try {
           await openReviewView(uri, { revealThreadId: threadId });
         } catch (e) {

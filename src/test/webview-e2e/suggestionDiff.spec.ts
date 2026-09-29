@@ -72,3 +72,39 @@ test("the toggle switches a small change between the inline and old/new views", 
   await expect(card.locator(".mc-suggestion__diff")).toBeHidden();
   await expect(toggle).toHaveText("Show old / new");
 });
+
+// Security review: `buildSuggestionDiff` used to build the inline word diff
+// unconditionally, even when the block view was the one actually shown —
+// `diffWords`' O(n·m) LCS table on a 100KB-per-side suggestion is seconds
+// and gigabytes, freezing the webview on every render. Past
+// `exceedsTokenCap` the inline view is never built at all, not even lazily
+// on a click, so the toggle itself is disabled.
+test("a 100KB-per-side suggestion renders fast, with the inline toggle disabled instead of ever diffing word by word", async ({
+  page,
+}) => {
+  const original = "lorem ipsum dolor sit amet ".repeat(3800); // ~100KB
+  const proposed = "consectetur adipiscing elit sed do ".repeat(2900); // ~100KB
+  expect(original.length).toBeGreaterThan(100_000);
+  expect(proposed.length).toBeGreaterThan(100_000);
+
+  const start = Date.now();
+  await bootWithSuggestion(page, original, proposed);
+  const card = page.locator(".mc-suggestion");
+  const toggle = card.locator(".mc-suggestion__toggle");
+  // A generous bound, not the unit test's tight one (webview boot + IPC
+  // overhead dominates here) — the unfixed bug froze the page for seconds at
+  // far smaller inputs than this, so this still fails hard on a regression.
+  await expect(toggle).toBeVisible({ timeout: 2000 });
+  expect(Date.now() - start).toBeLessThan(2000);
+
+  await expect(card.locator(".mc-suggestion__diff")).toBeVisible();
+  await expect(card.locator(".mc-suggestion__sentence")).toHaveCount(0);
+  await expect(toggle).toBeDisabled();
+  await expect(toggle).toHaveText("Show inline");
+  await expect(toggle).toHaveAttribute("title", /too large to diff word by word/);
+
+  // Clicking a disabled button fires no handler either way, but make the
+  // intent explicit: there is truly no way to reach the inline view here.
+  await toggle.click({ force: true });
+  await expect(card.locator(".mc-suggestion__sentence")).toHaveCount(0);
+});

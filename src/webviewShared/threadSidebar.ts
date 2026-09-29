@@ -171,7 +171,12 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
 
   // Every preference goes through one merge, so a key another part of the
   // page persists is never dropped by this module's write, or vice versa.
-  const saved = (): Record<string, unknown> => (host.getState() as Record<string, unknown> | undefined) ?? {};
+  // The state outlives the build that wrote it, so nothing read from it is
+  // trusted: a value of the wrong shape reads as unset.
+  const saved = (): Record<string, unknown> => {
+    const state = host.getState();
+    return state && typeof state === "object" && !Array.isArray(state) ? (state as Record<string, unknown>) : {};
+  };
   const persist = (patch: Record<string, unknown>): void => host.setState({ ...saved(), ...patch });
 
   // --- "…" overflow menus ----------------------------------------------------
@@ -271,9 +276,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   // start collapsed, everything else starts expanded. Persisted so a manual
   // toggle wins for the rest of the session, across both a host `update` and
   // a Reading/Editing re-init.
-  const manualCollapse = new Map<string, boolean>(
-    (saved().collapseOverrides as [string, boolean][] | undefined) ?? [],
-  );
+  const manualCollapse = new Map<string, boolean>(collapseOverridesOf(saved().collapseOverrides));
   const saveManualCollapse = (): void => persist({ collapseOverrides: Array.from(manualCollapse.entries()) });
   const isCollapsedCard = (card: CollapsibleCard): boolean => initialCollapsed(card, manualCollapse);
   /** Every card the "Collapse all" toggle and its label cover. */
@@ -308,8 +311,8 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   // then. On the next render where a new unread thread appears, scroll to the
   // first one and clear the snapshot. Survives a webview reload via state.
   let pendingReviewSnapshot: Set<string> | null = ((): Set<string> | null => {
-    const ids = saved().pendingReviewIds as string[] | null | undefined;
-    return ids ? new Set(ids) : null;
+    const ids = saved().pendingReviewIds;
+    return Array.isArray(ids) ? new Set(ids.filter((id): id is string => typeof id === "string")) : null;
   })();
   const savePendingReviewSnapshot = (): void =>
     persist({ pendingReviewIds: pendingReviewSnapshot ? Array.from(pendingReviewSnapshot) : null });
@@ -1111,6 +1114,10 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
       renderedThreadLimit = Math.ceil((index + 1) / THREAD_RENDER_CHUNK) * THREAD_RENDER_CHUNK;
       renderThreads(currentState);
     }
+    // Landing on a card folded to its quote (a resolved thread starts so)
+    // opens it — as a click on its chevron would, for the rest of the session.
+    const card: CollapsibleCard = { kind: "thread", id: threadId, status: target.status };
+    if (isCollapsedCard(card)) setCardCollapsed(card, false);
     scrollToCard();
   }
 
@@ -1137,6 +1144,15 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
       updateKeysHint();
     },
   };
+}
+
+/** The stored `[cardKey, collapsed]` pairs that are pairs of those types; anything else is dropped. */
+function collapseOverridesOf(value: unknown): Array<[string, boolean]> {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (e): e is [string, boolean] =>
+      Array.isArray(e) && e.length === 2 && typeof e[0] === "string" && typeof e[1] === "boolean",
+  );
 }
 
 /**

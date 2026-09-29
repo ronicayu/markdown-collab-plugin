@@ -28,6 +28,8 @@
 // port, and only because `bearer_token_env_var` is the one part of its config
 // Codex is willing to read from the environment instead.
 
+import { lstat } from "node:fs/promises";
+import * as path from "node:path";
 import * as vscode from "vscode";
 import type { Logger } from "../logging";
 import type { McpServerHandle } from "./index";
@@ -154,6 +156,34 @@ export function currentCopilotProvider(): CopilotMcpProvider | null {
 
 export type FileWriteOutcome = "written" | "unchanged";
 
+/**
+ * Refuse to write through a symlink (L5): `lstat` the target itself (if it
+ * exists) and its parent directory, following neither. A symlinked
+ * `.cursor/`, `.codex/`, or `.mcp.json` could otherwise land one of the
+ * writers/removers below somewhere outside the workspace the human never
+ * agreed to touch. Duplicated (rather than shared) in `agents.ts` and
+ * `mcpServer/index.ts`, which guard the same class of write for AGENTS.md and
+ * `.mcp.json`'s own create path — each is small and self-contained, and none
+ * of the three otherwise depends on the others.
+ */
+export async function refuseSymlink(targetUri: vscode.Uri): Promise<string | null> {
+  for (const p of [path.dirname(targetUri.fsPath), targetUri.fsPath]) {
+    try {
+      const st = await lstat(p);
+      if (st.isSymbolicLink()) return `${p} is a symlink`;
+    } catch {
+      /* doesn't exist yet — nothing to refuse there */
+    }
+  }
+  return null;
+}
+
+/** Throw when `refuseSymlink` finds one — the shared refusal every writer/remover below opens with. */
+async function guardAgainstSymlink(targetUri: vscode.Uri): Promise<void> {
+  const reason = await refuseSymlink(targetUri);
+  if (reason) throw new Error(`refusing to write through a symlink: ${reason}`);
+}
+
 async function readWorkspaceFile(uri: vscode.Uri): Promise<string | null> {
   try {
     return Buffer.from(await vscode.workspace.fs.readFile(uri)).toString("utf8");
@@ -169,6 +199,7 @@ async function readWorkspaceFile(uri: vscode.Uri): Promise<string | null> {
 export async function writeCursorCliConfig(folder: vscode.Uri): Promise<FileWriteOutcome> {
   const dir = vscode.Uri.joinPath(folder, ".cursor");
   const uri = vscode.Uri.joinPath(dir, "mcp.json");
+  await guardAgainstSymlink(uri);
   const existing = await readWorkspaceFile(uri);
   const merged = mergeCursorMcpJson(existing);
   if (merged.text === null) return "unchanged";
@@ -183,6 +214,7 @@ export async function writeCursorCliConfig(folder: vscode.Uri): Promise<FileWrit
 export async function writeCodexConfig(folder: vscode.Uri, port: number): Promise<FileWriteOutcome> {
   const dir = vscode.Uri.joinPath(folder, ".codex");
   const uri = vscode.Uri.joinPath(dir, "config.toml");
+  await guardAgainstSymlink(uri);
   const existing = await readWorkspaceFile(uri);
   const merged = mergeCodexToml(existing, port);
   if (merged.text === null) return "unchanged";
@@ -200,6 +232,7 @@ export async function writeCodexConfig(folder: vscode.Uri, port: number): Promis
 /** Remove the `markdown-collab` entry from the workspace's `.mcp.json`, leaving every other server untouched. */
 export async function removeClaudeMcpJson(folder: vscode.Uri): Promise<FileWriteOutcome> {
   const uri = vscode.Uri.joinPath(folder, ".mcp.json");
+  await guardAgainstSymlink(uri);
   const existing = await readWorkspaceFile(uri);
   const outcome = removeMcpJsonEntry(existing);
   if (outcome.text === null) return "unchanged";
@@ -210,6 +243,7 @@ export async function removeClaudeMcpJson(folder: vscode.Uri): Promise<FileWrite
 /** Remove the `markdown-collab` entry from `.cursor/mcp.json`, leaving every other server untouched. */
 export async function removeCursorCliConfig(folder: vscode.Uri): Promise<FileWriteOutcome> {
   const uri = vscode.Uri.joinPath(folder, ".cursor", "mcp.json");
+  await guardAgainstSymlink(uri);
   const existing = await readWorkspaceFile(uri);
   const outcome = removeCursorMcpEntry(existing);
   if (outcome.text === null) return "unchanged";
@@ -220,6 +254,7 @@ export async function removeCursorCliConfig(folder: vscode.Uri): Promise<FileWri
 /** Remove the `[mcp_servers.markdown-collab]` table from `.codex/config.toml`, leaving every other table untouched. */
 export async function removeCodexConfig(folder: vscode.Uri): Promise<FileWriteOutcome> {
   const uri = vscode.Uri.joinPath(folder, ".codex", "config.toml");
+  await guardAgainstSymlink(uri);
   const existing = await readWorkspaceFile(uri);
   const outcome = removeCodexTable(existing);
   if (outcome.text === null) return "unchanged";
@@ -241,6 +276,7 @@ export async function reconcileCodexConfig(folder: vscode.Uri, port: number): Pr
   if (existing === null || !codexTablePresent(existing)) return;
   const merged = mergeCodexToml(existing, port);
   if (merged.text === null) return;
+  await guardAgainstSymlink(uri);
   await vscode.workspace.fs.writeFile(uri, Buffer.from(merged.text, "utf8"));
 }
 

@@ -31,7 +31,7 @@ interface FakeHost {
   calls: string[];
 }
 
-function fakeHost(source: string): FakeHost {
+function fakeHost(source: string, saves = true): FakeHost {
   const written: string[] = [];
   const calls: string[] = [];
   let text = source;
@@ -44,6 +44,11 @@ function fakeHost(source: string): FakeHost {
     },
     flush: async () => {
       calls.push("flush");
+      return saves;
+    },
+    exclusive: async (job) => {
+      calls.push("exclusive");
+      return job();
     },
     refresh: () => calls.push("refresh"),
     post: (msg) => calls.push(`post:${(msg as { type: string }).type}`),
@@ -139,6 +144,15 @@ describe("handleSidebarMessage: document operations", () => {
     expect(parse(host.written[0]).suggestions).toEqual([]);
   });
 
+  it("every document operation takes its turn with the editor's queued edits", async () => {
+    const { source, threadId } = reviewed();
+    const host = fakeHost(source);
+    await handleSidebarMessage({ type: "toggle-resolve", threadId }, host.ctx);
+    await handleSidebarMessage({ type: "accept-all-suggestions" }, host.ctx);
+    expect(host.calls).toEqual(["exclusive", "exclusive"]);
+    expect(host.written).toHaveLength(2);
+  });
+
   it("a stale thread id writes nothing", async () => {
     const { source } = reviewed();
     const host = fakeHost(source);
@@ -148,16 +162,17 @@ describe("handleSidebarMessage: document operations", () => {
 });
 
 describe("handleSidebarMessage: sends and settings", () => {
-  const cases: Array<[SidebarMessage, string, unknown[]]> = [
-    [{ type: "send-to-claude" }, "markdownCollab.sendAllToClaude", []],
-    [{ type: "send-to-claude-comment", threadId: "t1" }, "markdownCollab.sendThreadToClaude", ["t1"]],
-    [{ type: "copy-claude-comment", threadId: "t1" }, "markdownCollab.copyThreadToClaude", ["t1"]],
-    [{ type: "remove-resolved" }, "markdownCollab.removeResolvedComments", []],
-    [{ type: "finalize" }, "markdownCollab.finalizeDocument", []],
-    [{ type: "empty-state-review" }, "markdownCollab.askClaudeToReview", []],
+  // The last column: what the webview is told afterwards (the sends' "Sent" notice waits on it).
+  const cases: Array<[SidebarMessage, string, unknown[], string[]]> = [
+    [{ type: "send-to-claude" }, "markdownCollab.sendAllToClaude", [], ["post:send-result"]],
+    [{ type: "send-to-claude-comment", threadId: "t1" }, "markdownCollab.sendThreadToClaude", ["t1"], ["post:send-result"]],
+    [{ type: "copy-claude-comment", threadId: "t1" }, "markdownCollab.copyThreadToClaude", ["t1"], []],
+    [{ type: "remove-resolved" }, "markdownCollab.removeResolvedComments", [], []],
+    [{ type: "finalize" }, "markdownCollab.finalizeDocument", [], []],
+    [{ type: "empty-state-review" }, "markdownCollab.askClaudeToReview", [], []],
   ];
 
-  it.each(cases)("%o flushes the editor, then runs %s on the document", async (msg, command, extra) => {
+  it.each(cases)("%o flushes the editor, then runs %s on the document", async (msg, command, extra, after) => {
     const host = fakeHost(DOC);
     const exec = vi.spyOn(vscode.commands, "executeCommand").mockImplementation(async () => {
       host.calls.push(`exec:${command}`);
@@ -165,8 +180,26 @@ describe("handleSidebarMessage: sends and settings", () => {
     });
     await handleSidebarMessage(msg, host.ctx);
     expect(exec).toHaveBeenCalledWith(command, host.ctx.document.uri, ...extra);
-    expect(host.calls).toEqual(["flush", `exec:${command}`]);
+    expect(host.calls).toEqual(["flush", `exec:${command}`, ...after]);
     exec.mockRestore();
+  });
+
+  it.each<[SidebarMessage, string]>([
+    [{ type: "send-to-claude" }, "markdownCollab.sendAllToClaude"],
+    [{ type: "send-to-claude-comment", threadId: "t1" }, "markdownCollab.sendThreadToClaude"],
+    [{ type: "empty-state-review" }, "markdownCollab.askClaudeToReview"],
+  ])("%o is not dispatched when the save fails — the agent would read the old file", async (msg, command) => {
+    const host = fakeHost(DOC, false);
+    const sent: unknown[] = [];
+    host.ctx.post = (m) => sent.push(m);
+    const exec = vi.spyOn(vscode.commands, "executeCommand").mockResolvedValue(undefined);
+    const warn = vi.spyOn(vscode.window, "showWarningMessage");
+    await handleSidebarMessage(msg, host.ctx);
+    expect(exec).not.toHaveBeenCalledWith(command, expect.anything(), ...(msg.type === "send-to-claude-comment" ? ["t1"] : []));
+    expect(warn).toHaveBeenCalledWith("Not sent: doc.md couldn't be saved, so your agent would read the old version.");
+    expect(sent).toEqual(msg.type === "empty-state-review" ? [] : [{ type: "send-result", ok: false, saved: false }]);
+    exec.mockRestore();
+    warn.mockRestore();
   });
 
   it("toggle-suggest-mode flips the setting through the command, then re-pushes", async () => {

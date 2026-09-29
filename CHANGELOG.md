@@ -1,5 +1,116 @@
 # Changelog
 
+## 0.35.18 — 2026-09-30 (GitHub only)
+
+A code review of everything since 0.35.15 — correctness, silent failures,
+test coverage and security, each by a separate reviewer — and the fixes.
+Every bug below got a test that failed before its fix. 0.35.17 was never
+tagged; this release includes it.
+
+### Fixed: Editing mode could lose typing or change text you didn't touch
+
+These were all in 0.35.16's Editing mode. Reading mode, the default, was
+not affected.
+
+- **Lost typing.** If the file changed on disk while the view was switching
+  to Editing, every later keystroke was discarded without a word. An
+  outside change now waits for the editor to finish building, and an edit
+  the extension can't place re-renders the view with a notice instead of
+  being dropped.
+- **Paragraphs fusing.** Pressing Enter after "Intro:" above a list, lifting
+  a list item out, or deleting a heading with text right under it merged
+  the new text into its neighbour. A blank line now separates the new text
+  from both sides.
+- **Link definitions deleted.** Deleting or merging blocks removed
+  `[docs]: https://…` definitions between them. They are kept.
+- **Text turned into frontmatter.** Deleting the first paragraph of a
+  document with two `---` rules made the text between them frontmatter.
+  Refused.
+- **Comments rewrote the file.** A comment added in Editing mode rewrote
+  the whole file in the editor's Markdown style. It now adds two markers,
+  as in Reading mode.
+- **Tight lists went loose** on every edit (milkdown's list serializers pass
+  `spread` as a string). They stay tight.
+- **CRLF files** got LF line endings in edited blocks. They keep CRLF.
+- A drag-and-drop move lost the moved block's comments; two Enters at the
+  end of the file broke the next edit; keystrokes typed during the switch
+  back to Reading were dropped. All fixed.
+
+Underneath all of it, a safety net: before any edit is written, the result
+must read back as the blocks the editor shows, the frontmatter must be
+unchanged, and the comment markers must gain no new problem. An edit that
+fails is refused and the view reloaded — it no longer reaches the file. A
+seeded test of 400 random edits across the test documents had 52 failures
+before this release and none now; the block-by-block gate grew to 1,754
+blocks over 24 documents, including CRLF and no-final-newline files.
+
+### Fixed: failures that only reached the log
+
+An error while saving an edit, a failed save, a failed sidebar action, and
+a view that failed to load all used to be logged and nothing else. Each now
+tells you, with Show Logs or Reload. A failed save also stops Send: "Not
+sent: guide.md couldn't be saved, so your agent would read the old
+version." The "Sent to Claude" notice waits for the extension to confirm.
+Every write to the document — edits, sidebar actions, comments, autosave —
+now runs one at a time, which closes the race 0.35.16 listed as known: a
+reply sent while a keystroke was pending lost the keystroke. A save that
+format-on-save rewrites is sent back to the view.
+
+### Fixed: draw.io diagrams rendered empty
+
+0.35.14 said draw.io "renders again". It stopped crashing, but mxgraph
+could not find its own classes, so every diagram rendered as an empty
+image, and the test only checked that an image existed. Diagrams render
+now, in both views, and the test checks their labels. The decoder can only
+build the few parts a diagram needs, script evaluation is off, and labels
+are plain text, so a `.drawio` file can't run script or load anything.
+
+### Security
+
+- **Hover links.** Text from a document is escaped in the hover, so a
+  comment can't plant a working `command:` link or a remote image. Reply,
+  Resolve and Reveal act only on a `.md` file inside the workspace.
+- **Review tools.** The MCP tools edit only `.md` files, never inside `.git`
+  or `.vscode`, and never through a symlink out of the workspace. `mdc`
+  forwards only to the local tool server.
+- **The token.** It is written to one file,
+  `.markdown-collab/.mcp-server.json`, readable only by you, git-ignored,
+  and deleted when the window closes. It is no longer kept in VS Code's
+  terminal-environment cache. The README said it was never written to a
+  file; the README is corrected.
+- **PR review.** A thread id from the page must be one the extension just
+  fetched and must have the right format before it reaches `gh` or `glab`;
+  text values go with `-f`, so a value starting with `@` is never read as a
+  file.
+- **Config files.** Writes to `AGENTS.md`, `.mcp.json`, `.cursor/mcp.json`
+  and `.codex/config.toml` refuse symlinks. The Codex TOML edit handles a
+  commented header and multi-line strings and keeps keys you added.
+- **Large suggestions** no longer freeze the view: the word diff is capped
+  at 2,000 words per side and built only when shown.
+- **PlantUML** waits for a 1-second pause before sending an edited diagram
+  to the server, instead of sending every keystroke. The README has a
+  privacy note: diagram source goes to plantuml.com by default.
+
+### Fixed: PR review
+
+A thread with more than 100 comments lost its Resolve button. A GitLab
+resolve is now checked against the response instead of trusting exit 0.
+Comment pages that fail to load are logged and flagged once.
+
+### Tests
+
+New: the Uncommitted Markdown tree, Next Unread landing on each file in a
+real VS Code, the headless "done" toast, walkthrough links, the renamed
+titles, the mermaid theme, and malformed saved sidebar state in both
+views.
+
+### Known
+
+An outside change applied between the extension reading the document and
+its edit landing can still make a block edit use stale offsets. The check
+after the write catches it and reloads, but the bytes are already written.
+The threads block is written with LF in a CRLF file.
+
 ## 0.35.17 — 2026-09-29 (GitHub only)
 
 ### Changed: the view is called Markdown Collab

@@ -192,6 +192,14 @@ P0, P1, P2.1–2.3, P3 and P5 shipped in 0.35.13. Deviations:
   retired. Open: edit-mode add-comment still adopts the editor's
   serialization; the classic panel's removal; hand testing of reveal in a
   real window.
+- **0.35.17–0.35.18.** The view is named Markdown Collab (Reading ·
+  Editing); PR review resolves threads; every card collapses. A four-way
+  code review then found Editing mode could lose typing, fuse paragraphs,
+  delete link definitions and create frontmatter, and that draw.io had been
+  rendering empty since 0.35.14; all fixed test-first, with a write-time
+  safety net and a 400-case fuzz test (see `docs/one-view-design.md`).
+  Edit-mode comments are byte-exact now. Still open: the classic panel's
+  removal; versioned edits for the outside-change window.
 - **P5.2** The "New from Claude" filter chip already derived its name
   per thread; only the Send button, switch and pending text changed.
 - **Not done:** question 5 (marketplace description) — untouched.

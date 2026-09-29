@@ -21,6 +21,9 @@ import {
   type HeadlessState,
 } from "../transports/headless";
 import { parseClaudeVersion } from "../transports/claudeBinary";
+import { runHeadless, type HeadlessDelivery } from "../transports/headlessHost";
+import { Uri, commands, window, workspace as vscodeWorkspace } from "./vscode-stub";
+import type { Logger } from "../logging";
 
 const STUB = path.resolve(__dirname, "integration", "fixtures", "fake-claude.mjs");
 const TOKEN = "a1".repeat(32);
@@ -246,5 +249,92 @@ describe.skipIf(process.platform === "win32")("HeadlessRun against a stub claude
     await run.finished;
     expect(activeHeadlessRun(workspace)).toBeUndefined();
     expect(lastHeadlessRun()?.run).toBe(run);
+  });
+
+  // -------------------------------------------------------------------
+  // headlessHost.ts's onFinished — the "done" toast. Reuses the same real
+  // stub-claude process and real MCP server as the tests above (mode "ok"
+  // is the one that reaches `final.kind === "done"`), plus the repo's
+  // vscode stub for the host-side pieces `runHeadless` touches
+  // (workspace.getConfiguration, window.showInformationMessage,
+  // commands.executeCommand). `HeadlessRun` defaults to `process.env` when
+  // `runHeadless` doesn't pass its own `env` (it doesn't), so the mode is
+  // selected by setting `FAKE_CLAUDE_MODE` on `process.env` itself.
+  // -------------------------------------------------------------------
+  it("routes the done toast's 'Open in Markdown Collab' action to openReviewView with focusNewFromAgent", async () => {
+    fs.writeFileSync(path.join(workspace, "notes.md"), DOC, "utf8");
+
+    const executeCalls: unknown[][] = [];
+    let openInlineResolve: (() => void) | undefined;
+    const openInlineCalled = new Promise<void>((res) => {
+      openInlineResolve = res;
+    });
+    (vscodeWorkspace as any).getConfiguration = () => ({
+      get: (_key: string, def?: unknown) => def,
+    });
+    // The stub doesn't carry Uri.joinPath — patched on for this test only,
+    // the same non-invasive way the other vscode-stub gaps here are.
+    (Uri as any).joinPath = (base: { fsPath: string }, ...segments: string[]) =>
+      Uri.file(path.join(base.fsPath, ...segments));
+    (window as any).showInformationMessage = async (_message: string, ..._actions: string[]) =>
+      "Open in Markdown Collab";
+    (commands as any).executeCommand = async (...args: unknown[]) => {
+      executeCalls.push(args);
+      if (args[0] === "markdownCollab.openInlineCommentsView") openInlineResolve?.();
+      return undefined;
+    };
+
+    const silentLog: Logger = {
+      trace: () => undefined,
+      info: () => undefined,
+      warn: () => undefined,
+      error: () => undefined,
+      scope: () => silentLog,
+      time: (_l, fn) => fn(),
+      show: () => undefined,
+    };
+    const memento = { get: (_k: string, def?: unknown) => def, update: async () => undefined, keys: () => [] };
+
+    const prevMode = process.env.FAKE_CLAUDE_MODE;
+    process.env.FAKE_CLAUDE_MODE = "ok";
+    try {
+      const delivery = {
+        payload: { prompt: "p", file: "notes.md", unresolvedCount: 0, comments: [] },
+        prompt: "Follow the Markdown Collab review workflow in Review Mode on `notes.md`.",
+        folder: { uri: Uri.file(workspace), name: "ws", index: 0 },
+        log: silentLog,
+        workspaceState: memento,
+        ready: {
+          ok: true as const,
+          claude: {
+            path: wrapper,
+            version: parseClaudeVersion("2.1.283 (Claude Code)")!,
+            source: "path" as const,
+          },
+          server: { url: server.url, token: TOKEN },
+        },
+        fallbackToTerminal: async () => undefined,
+        startTerminal: () => undefined,
+      } as unknown as HeadlessDelivery;
+
+      const outcome = await runHeadless(delivery);
+      expect(outcome).toBe("started");
+
+      // The toast fires after the (real, async) run finishes — not part of
+      // runHeadless's own returned promise.
+      await openInlineCalled;
+    } finally {
+      if (prevMode === undefined) delete process.env.FAKE_CLAUDE_MODE;
+      else process.env.FAKE_CLAUDE_MODE = prevMode;
+      delete (Uri as any).joinPath;
+      (window as any).showInformationMessage = async () => undefined;
+      (commands as any).executeCommand = async () => undefined;
+      (vscodeWorkspace as any).getConfiguration = undefined;
+    }
+
+    const call = executeCalls.find((c) => c[0] === "markdownCollab.openInlineCommentsView");
+    expect(call).toBeDefined();
+    expect(call![1]).toMatchObject({ fsPath: path.join(workspace, "notes.md") });
+    expect(call![2]).toEqual({ focusNewFromAgent: true });
   });
 });

@@ -250,6 +250,7 @@ describe("hoverFor", () => {
       commandLinks: true,
       file: "file:///w/a.md",
     })!;
+    expect(linked.markdown).toContain("[Open in Markdown Collab](command:markdownCollab.revealThread?");
     expect(linked.markdown).toContain("[Reply](command:markdownCollab.replyToThread?");
     expect(linked.markdown).toContain("[Resolve](command:markdownCollab.resolveThread?");
     expect(linked.markdown).not.toContain("Reopen");
@@ -285,6 +286,71 @@ describe("hoverFor", () => {
   it("returns null where there is no thread", () => {
     const { source } = withThread();
     expect(hoverFor(parse(source), 0, { now: NOW })).toBeNull();
+  });
+
+  // M1: a comment body is untrusted document text rendered inside a trusted
+  // MarkdownString. Without escaping, `[label](command:…)` in a body becomes
+  // a working link — including one aimed at markdownCollab.resolveThread,
+  // which needs no further human input to mutate and save the file.
+  describe("a malicious comment can't add a working command: link (M1)", () => {
+    it("escapes the body so an attacker-authored link renders as text, leaving only the extension's own links live", () => {
+      const at = DOC.indexOf("Tokenizers");
+      const evilBody = "[Mark reviewed](command:markdownCollab.resolveThread?evilargs)";
+      const r = addThread(DOC, at, at + 10, { author: "attacker", body: evilBody, ts: T1 });
+      const parsed = parse(r.source);
+      const linked = hoverFor(parsed, parsed.anchors.get(r.thread.id)!.openEnd, {
+        now: NOW,
+        commandLinks: true,
+        file: "file:///w/a.md",
+      })!;
+      // The extension's own three links (Open/Reply/Resolve) are the only
+      // live "](command:" pairs in the hover.
+      expect(linked.markdown.match(/\]\(command:/g)).toHaveLength(3);
+      // The attacker's text is still visible...
+      expect(linked.markdown).toContain("evilargs");
+      // ...but never as the working link it tried to become.
+      expect(linked.markdown).not.toContain(evilBody);
+    });
+
+    it("escapes a malicious author name too", () => {
+      const at = DOC.indexOf("Tokenizers");
+      const evilAuthor = "[click me](command:markdownCollab.resolveThread?evilargs)";
+      const r = addThread(DOC, at, at + 10, { author: evilAuthor, body: "hi", ts: T1 });
+      const parsed = parse(r.source);
+      const linked = hoverFor(parsed, parsed.anchors.get(r.thread.id)!.openEnd, {
+        now: NOW,
+        commandLinks: true,
+        file: "file:///w/a.md",
+      })!;
+      expect(linked.markdown.match(/\]\(command:/g)).toHaveLength(3);
+      expect(linked.markdown).not.toContain(evilAuthor);
+    });
+
+    it("escapes a malicious agent slug surfaced in the 'new from X' badge", () => {
+      // unreadAgentSlug falls back to the comment's own author when it isn't
+      // one of the known slugs — legal once agent:true is set — and that
+      // string reaches agentGroupLabel's noun unescaped unless this path is
+      // guarded too.
+      const at = DOC.indexOf("Tokenizers");
+      const r = addThread(DOC, at, at + 10, {
+        author: "[pwn](command:markdownCollab.resolveThread?x)",
+        body: "look at this",
+        ts: T1,
+        agent: true,
+      });
+      const parsed = parse(r.source);
+      const hover = hoverFor(parsed, parsed.anchors.get(r.thread.id)!.openEnd, { now: NOW })!;
+      expect(hover.markdown).toContain("new from");
+      expect(hover.markdown).not.toContain("[pwn](command:");
+    });
+
+    it("neutralizes a markdown image so no remote image can load from a comment body", () => {
+      const at = DOC.indexOf("Tokenizers");
+      const evilBody = "![track](http://evil.example.com/pixel.png)";
+      const r = addThread(DOC, at, at + 10, { author: "attacker", body: evilBody, ts: T1 });
+      const hover = hoverFor(parse(r.source), parse(r.source).anchors.get(r.thread.id)!.openEnd, { now: NOW })!;
+      expect(hover.markdown).not.toContain(evilBody);
+    });
   });
 });
 

@@ -3,9 +3,8 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import {
-  addThreadAtOffsets,
+  addThreadAtEditorRange,
   addThreadAtProseRange,
-  addThreadFromAnchor,
   applyBlockEdits,
   commentsOf,
   deleteThread,
@@ -26,7 +25,7 @@ import { proseRefreshMessage, summarizeChange } from "./changeSummary";
 import { sourceLineForProseLine } from "../inlineComments/proseMapping";
 import { runDrawioRead, type DrawioReadResult } from "./drawioService";
 import type { BlockEditsMessage } from "./blockEdits";
-import { markdownBlocks, type MarkdownBlock } from "./sourcePositions";
+import { markdownBlocks, type EditorPoint, type MarkdownBlock } from "./sourcePositions";
 
 export type { DrawioReadResult };
 import { claudePending, onPendingChanged } from "../claudePendingService";
@@ -103,6 +102,25 @@ interface SidebarFields extends SidebarDocumentFields {
   /** Whether a headless run is available now — the empty state's button label. */
   headlessAvailable: boolean;
 }
+
+/** Said when an edit threw instead of being written or refused. */
+const EDIT_LOST = "Markdown Collab couldn't save your last edit — the view was reloaded from the file.";
+
+/** Said when an edit arrives made on text the editor has since been sent something else in place of. */
+const STALE_EDIT = "Your last edit wasn't saved: the file changed while you were typing. The editor now shows the file.";
+
+/** Said when saving rewrote the prose (a format-on-save participant) and the editor was sent the result. */
+const REWRITTEN_ON_SAVE = "Saving changed the file's text (a formatter?) — the editor now shows what was saved.";
+
+/** Said when any other queued write or sidebar action threw. */
+const ACTION_FAILED = "Markdown Collab: that action failed — see Show Logs.";
+
+/** The webview failures that leave the panel blank or wrong, and what the person is told. */
+const SHOWN_WEBVIEW_FAILURES = new Map<string, (file: string) => string>([
+  ["init", (file) => `Markdown Collab couldn't display ${file}.`],
+  ["reinit", (file) => `Markdown Collab couldn't switch ${file} between Reading and Editing.`],
+  ["reveal-thread", (file) => `Markdown Collab couldn't show that comment in ${file}.`],
+]);
 
 /** Whether a newly opened live editor starts read-only. Never written: the in-view switch is per panel. */
 function readOnlySetting(): boolean {
@@ -184,26 +202,20 @@ interface AddCommentMessage {
   body: string;
   /** Author name from the webview (defaults to extension's userName setting). */
   author?: string;
-  /** Editor's current body markdown — the offsets index into this exact string. */
-  fullMd?: string;
-  /** Exact selection offsets into `fullMd`; -1 when the webview couldn't resolve them. */
-  selStart?: number;
-  selEnd?: number;
   /**
-   * Which occurrence of `anchor.text` (0-based, in the editor's rendered text)
-   * was selected. Lets the text-anchored fallback place the marker on the right
-   * occurrence in structural markdown (table cells, duplicate values) where
-   * context matching fails. -1 when unknown.
-   */
-  anchorOrdinal?: number;
-  /**
-   * Read-only mode only: the selection as a prose span (`proseOf` offsets) and
-   * the prose the editor saw there. Present means "place exactly here or
-   * refuse" — none of the fields above is consulted.
+   * Read-only mode: the selection as a prose span (`proseOf` offsets) and
+   * the prose the editor saw there. Place exactly here or refuse.
    */
   proseStart?: number;
   proseEnd?: number;
   proseText?: string;
+  /**
+   * Edit mode: the selection's first and last characters, named by structure
+   * (`EditorPoint`), and the epoch the editor named them in. Found in the
+   * file's own bytes or refused — nothing the editor serialized is adopted.
+   */
+  editRange?: { first: EditorPoint; last: EditorPoint };
+  epoch?: number;
 }
 
 interface ReplyCommentMessage {
@@ -442,13 +454,15 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     const userName = config.get<string>("collab.userName", "") || os.userInfo().username;
     const user = { name: userName, color: pickColor(userName) };
 
-    // This panel's mode. The setting seeds it when the panel opens; the in-view
-    // switch (`set-read-only`) flips it for this panel only.
-    let readOnly = readOnlySetting();
-
     // What `open` asked of this panel before it existed, taken as it's created.
     const openRequest = pendingOpens.get(document.uri.toString());
     pendingOpens.delete(document.uri.toString());
+
+    // This panel's mode. The setting seeds it when the panel opens; the in-view
+    // switch (`set-read-only`) flips it for this panel only. A panel opened for
+    // the uncommitted diff reads: its stripes are placed by source position,
+    // which only Reading has.
+    let readOnly = readOnlySetting() || openRequest?.diff === true;
 
     // Uncommitted-diff overlay (10x-plan-6 P4 phase B): on from the start when
     // the Uncommitted Markdown tree opened the panel, and turned on later by
@@ -502,79 +516,124 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     // so one that crossed a push in flight is dropped instead of being spliced
     // into a file the editor no longer shows (docs/one-view-design.md, "Phase B").
     let editEpoch = 0;
+    // The oldest epoch whose edits still apply. A push of other text moves it
+    // up; one that re-sends the same text (a mode switch) doesn't, so an edit
+    // typed as the switch went out is written rather than lost.
+    let validFrom = 0;
     const pushDocument = <T extends { type: "externalChange"; text: string }>(msg: T): void => {
       editEpoch++;
+      validFrom = editEpoch;
       void panel.webview.postMessage({ ...msg, epoch: editEpoch });
     };
 
-    /** Persist the file. Guards against echo, then re-seeds the editor if a
-     * save participant rewrote the prose. */
-    const saveDocument = async (): Promise<void> => {
-      if (!document.isDirty) return;
-      try {
-        await document.save();
-      } catch (e) {
-        this.log.error("save failed", e);
-        return;
+    /**
+     * After a write or a save the echo guard hid from the change handler: if
+     * the file's prose is no longer what the editor shows — a save participant
+     * rewrote it, or another write landed meanwhile — send the editor the file,
+     * under a new epoch so an edit made on the old text isn't spliced into the
+     * new. `toast` says why; without one it's announced as an outside edit.
+     */
+    const catchUp = (toast?: string): void => {
+      const source = document.getText();
+      const prose = proseOf(source);
+      // Line endings the document normalized (VS Code keeps one kind), or blank
+      // lines at the end, change nothing the editor shows: no re-render for them.
+      const shown = (text: string): string => text.replace(/\r\n?/g, "\n").trimEnd();
+      if (prose !== lastWebviewProse && shown(prose) === shown(lastWebviewProse)) lastWebviewProse = prose;
+      if (prose !== lastWebviewProse) {
+        const changed = summarizeChange(lastWebviewProse, prose);
+        lastWebviewProse = prose;
+        pushDocument(toast ? { type: "externalChange", text: prose, toast } : { type: "externalChange", text: prose, changed });
       }
+      const frontmatter = frontmatterOf(source);
+      if (frontmatter !== lastFrontmatter) {
+        lastFrontmatter = frontmatter;
+        void panel.webview.postMessage({ type: "frontmatter", frontmatter } satisfies FrontmatterChangedPayload);
+      }
+    };
+
+    // A failed save is said once per run of them — autosave retries after
+    // every pause in typing — and logged every time.
+    let saveFailureShown = false;
+    /**
+     * `document.save()`, which resolves false (a save participant or the user
+     * vetoed it, the file changed on disk, a read-only file) as well as
+     * throwing. Either way the file on disk is behind the editor.
+     */
+    const save = async (): Promise<boolean> => {
+      let error: unknown;
+      let saved = false;
+      try {
+        saved = await document.save();
+      } catch (e) {
+        error = e;
+      }
+      if (saved) {
+        saveFailureShown = false;
+        return true;
+      }
+      this.log.warn("save failed", { file: document.uri.fsPath, error: error instanceof Error ? error.message : error });
+      if (!saveFailureShown) {
+        saveFailureShown = true;
+        const why = error instanceof Error ? ` (${error.message})` : "";
+        void vscode.window.showWarningMessage(
+          `Markdown Collab: ${path.basename(document.uri.fsPath)} couldn't be saved${why} — the latest changes aren't on disk.`,
+        );
+      }
+      return false;
+    };
+
+    /** Persist the file. Guards against echo, then re-seeds the editor if a
+     * save participant rewrote the prose. False when the save failed. */
+    const saveDocument = async (): Promise<boolean> => {
+      if (!document.isDirty) return true;
+      if (!(await save())) return false;
       // A save participant (format-on-save, trim-trailing-whitespace,
       // insert-final-newline) may have rewritten the prose. The editor still
       // shows the pre-save text, so push the saved version back — otherwise a
       // just-added comment's anchor (which `commentsOf` derives from the saved
       // `.md`) won't locate in the editor and its highlight won't appear until
       // the next external change.
-      const savedProse = proseOf(document.getText());
-      if (savedProse !== lastWebviewProse) {
-        lastWebviewProse = savedProse;
-        pushDocument({ type: "externalChange", text: savedProse });
-      }
-      const savedFrontmatter = frontmatterOf(document.getText());
-      if (savedFrontmatter !== lastFrontmatter) {
-        lastFrontmatter = savedFrontmatter;
-        void panel.webview.postMessage({
-          type: "frontmatter",
-          frontmatter: savedFrontmatter,
-        } satisfies FrontmatterChangedPayload);
-      }
+      catchUp(REWRITTEN_ON_SAVE);
+      return true;
     };
 
     // Autosave-through. Claude reads the .md from disk, so the human's edits
     // have to reach disk for Claude to see them — and the longer the in-editor
     // buffer stays unsaved, the bigger the window where a Claude write and the
     // human's edits can collide. So we flush to disk shortly after the human
-    // stops typing. The save is echo-guarded (pendingApply) so its own change —
-    // including any format-on-save rewrite — isn't mistaken for an external
-    // (Claude) edit and bounced back into the editor; afterwards we re-baseline
-    // `lastWebviewProse` to whatever actually landed on disk.
+    // stops typing. The save is echo-guarded (pendingApply) so its own change
+    // isn't announced as an external (Claude) edit; a format-on-save rewrite
+    // still reaches the editor, under a new epoch (`catchUp`) — its later
+    // edits would otherwise be spliced into text it doesn't show.
     let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
-    const performAutosave = async (): Promise<void> => {
-      if (!document.isDirty) return;
+    /** False when the file couldn't be saved. */
+    const performAutosave = async (): Promise<boolean> => {
+      if (!document.isDirty) return true;
       pendingApply = true;
       try {
-        await document.save();
-      } catch (e) {
-        this.log.error("autosave failed", e);
+        return await save();
       } finally {
-        lastWebviewProse = proseOf(document.getText());
-        lastFrontmatter = frontmatterOf(document.getText());
         pendingApply = false;
+        catchUp(REWRITTEN_ON_SAVE);
       }
     };
     const scheduleAutosave = (): void => {
       if (autosaveTimer) clearTimeout(autosaveTimer);
       autosaveTimer = setTimeout(() => {
         autosaveTimer = null;
-        void performAutosave();
+        // In turn with the writes, so the echo guard it raises covers only its own save.
+        void exclusive(performAutosave);
       }, 800);
     };
     // Force the pending autosave now — used at hand-off so Claude reads the
-    // human's latest the instant they ask for a review.
-    const flushAutosave = async (): Promise<void> => {
+    // human's latest the instant they ask for a review. False when it failed.
+    const flushAutosave = async (): Promise<boolean> => {
       if (autosaveTimer) {
         clearTimeout(autosaveTimer);
         autosaveTimer = null;
       }
-      await performAutosave();
+      return performAutosave();
     };
 
     // `opts.save` persists the file after writing. Comment ops (add / reply /
@@ -608,6 +667,8 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         return false;
       } finally {
         pendingApply = false;
+        // Another write that landed while the guard was up reached the file, not the editor.
+        catchUp();
       }
     };
 
@@ -636,12 +697,35 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       pushComments();
     };
 
-    // Edit mode's writes (docs/one-view-design.md, "Phase B"), one at a time:
-    // each is spliced into the file the previous one produced, and a mode
-    // switch waits for them.
+    // Every write to the document, one at a time (docs/one-view-design.md,
+    // "Phase B"): each edit is spliced into the file the previous write
+    // produced, a sidebar or comment write reads the text it writes over with
+    // no edit landing in between, and a mode switch waits for all of them.
     let editQueue: Promise<void> = Promise.resolve();
+    const exclusive = <T>(job: () => Promise<T>): Promise<T> => {
+      const run = editQueue.then(job);
+      editQueue = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      return run;
+    };
+    /** Queue a write whose own result the webview is told; one that throws is said, not just logged. */
+    const queued = (what: string, job: () => Promise<void>): void => {
+      void exclusive(job).catch((e) => {
+        this.log.error(`${what} failed`, e);
+        this.showErrorWithLogs(ACTION_FAILED);
+      });
+    };
+    /** Queue one of edit mode's writes; one that throws re-renders the editor (`editFailed`). */
     const enqueueEdit = (job: () => Promise<void>): Promise<void> =>
-      (editQueue = editQueue.then(job).catch((e) => this.log.error("live edit failed", e)));
+      exclusive(async () => {
+        try {
+          await job();
+        } catch (e) {
+          editFailed(e);
+        }
+      });
     // The block table of the file's prose, kept from the last write while the prose is unchanged.
     let blockTable: { prose: string; blocks: MarkdownBlock[] } | null = null;
 
@@ -653,17 +737,41 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     };
 
     /**
+     * An edit threw — in the splice here, or in the webview's diff. The webview
+     * took its edit as the new base when it posted it, so the editor would go
+     * on showing text the file doesn't have: re-render it from the file (a new
+     * epoch, so nothing built on the lost edit lands after it) and say so.
+     */
+    const editFailed = (e: unknown): void => {
+      this.log.error(`live edit failed in ${document.uri.fsPath}`, e);
+      try {
+        rerender(EDIT_LOST);
+      } catch (again) {
+        this.log.error("re-render after a failed edit failed", again);
+      }
+      this.showErrorWithLogs(EDIT_LOST);
+    };
+
+    /**
      * Splice the blocks an edit changed into the file's own bytes. Never
      * adopts a serialization of the whole document: when the editor's blocks
      * and the file's disagree, the edit is refused and the editor re-reads
      * the file.
      */
     const applyBlockEditMessage = async (msg: BlockEditsMessage): Promise<void> => {
-      // A push replaced the editor's document after this edit was made. The
-      // editor already shows (or is about to show) the file; splicing an edit
-      // made against another version would put it in the wrong place.
-      if (msg.epoch !== editEpoch) {
-        this.log.info(`CollabEditor: dropped an edit made before the last reload of ${document.uri.fsPath}`);
+      // Made against text the editor has since been sent something else in
+      // place of: splicing it would put it in the wrong place. The editor
+      // already shows the file, but the keystrokes are gone from it — say so.
+      if (msg.epoch < validFrom || msg.epoch > editEpoch) {
+        this.log.warn("live edit made on text the editor no longer shows", { file: document.uri.fsPath, epoch: msg.epoch });
+        rerender(STALE_EDIT);
+        return;
+      }
+      const current = msg.epoch === editEpoch;
+      // A read-only editor makes no edits; one claiming its epoch is refused.
+      // (An older epoch is edit mode's, typed as the switch went out.)
+      if (readOnly && current) {
+        this.log.warn("ignored an edit from a read-only editor", { file: document.uri.fsPath });
         return;
       }
       const source = document.getText();
@@ -698,17 +806,14 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       }
       blockTable = { prose: result.prose, blocks: result.blocks };
       lastWebviewProse = result.prose;
+      // Typed as the editor was rebuilt on the same text (a mode switch): the
+      // rebuilt editor doesn't have it. It does now, quietly — nothing to announce.
+      if (!current) pushDocument({ type: "externalChange", text: result.prose, quiet: true });
       if (result.unanchored.length > 0) {
         this.log.info(`CollabEditor: an edit removed the text of ${result.unanchored.join(", ")} in ${document.uri.fsPath}`);
       }
       scheduleAutosave(); // flush the edit to disk, where the agent reads it
-      if (result.restructured) {
-        // The new text joined a neighbouring block (or swallowed the rest, like
-        // an unclosed fence): the editor's blocks no longer match the file's.
-        rerender("That edit changed how the Markdown around it reads, so the editor was reloaded from the file.");
-      } else {
-        pushComments();
-      }
+      pushComments();
       pushLineMap();
     };
 
@@ -749,7 +854,19 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         if (diffMode) return;
         diffMode = true;
         headProse = undefined;
-        pushComments();
+        if (readOnly) {
+          pushComments();
+          return;
+        }
+        // Editing has no source positions to place the stripes by: switch to
+        // Reading, after any edit still being written, and say why.
+        queued("switch to Reading for the diff", async () => {
+          readOnly = true;
+          sendInit();
+        });
+        void vscode.window.showInformationMessage(
+          "Markdown Collab switched to Reading to show the uncommitted changes. Switch back to Editing to edit.",
+        );
       },
       refreshDiff: () => {
         if (!diffMode) return;
@@ -807,10 +924,8 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         return true;
       },
       // Edit mode's queued writes land before the save the agent will read.
-      flush: async () => {
-        await editQueue;
-        await flushAutosave();
-      },
+      flush: () => exclusive(flushAutosave),
+      exclusive,
       refresh: () => pushComments(),
       post: (m) => void panel.webview.postMessage(m),
     };
@@ -838,13 +953,16 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     const sendInit = (): void => {
       const source = document.getText();
       const text = proseOf(source);
+      // The same text re-sent (a mode switch, a reload): edits made on it still apply.
+      const sameText = text === lastWebviewProse;
       lastWebviewProse = text;
       lastFrontmatter = frontmatterOf(source);
       const docDirUri = vscode.Uri.file(path.dirname(document.uri.fsPath));
       const wsFolder = vscode.workspace.getWorkspaceFolder(document.uri);
       const waiting = claudePending.status(document.uri.toString(), parseInline(source).threads);
-      // A new document in the editor: edits made against the old one are stale.
+      // A new document in the editor: edits made against other text are stale.
       const epoch = ++editEpoch;
+      if (!sameText) validFrom = epoch;
       initPosted = (async () => {
         const payload: InitPayload = {
           type: "init",
@@ -878,7 +996,10 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       // The sidebar's messages (10x-plan-6 P4) go to sidebarHost.ts, ahead of
       // the chain below: its older `delete-comment` means a whole thread.
       if (isSidebarMessage(raw)) {
-        void handleSidebarMessage(raw, sidebarHost).catch((e) => this.log.error("sidebar message failed", e));
+        void handleSidebarMessage(raw, sidebarHost).catch((e) => {
+          this.log.error(`sidebar ${raw.type} failed`, e);
+          this.showErrorWithLogs(ACTION_FAILED);
+        });
         return;
       }
       // The skill banner is read off the disk; it follows `init` rather than
@@ -892,16 +1013,15 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         // A read-only editor never edits; anything claiming to be an edit from
         // one would rewrite the file from its serialization — refuse it.
         if (readOnly) return;
-        void applyProseEdit(msg.text, msg.anchors);
+        queued("live edit", () => applyProseEdit(msg.text, msg.anchors));
       } else if (msg.type === "edit-blocks") {
-        // Same rule for edit mode's block edits.
-        if (readOnly) return;
+        // In turn, and checked against the mode and epoch when its turn comes.
         void enqueueEdit(() => applyBlockEditMessage(msg));
       } else if (msg.type === "set-read-only") {
         // Per panel, never written to the setting. The editor is rebuilt from
         // the file in the new mode, after any edit still being written.
         const next = msg.readOnly === true;
-        void enqueueEdit(async () => {
+        queued("mode switch", async () => {
           readOnly = next;
           sendInit();
         });
@@ -920,40 +1040,60 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         this.log.info(
           `CollabEditor: webview error for ${document.uri.fsPath} (${msg.stage}): ${msg.message}`,
         );
+        if (msg.stage === "edit-blocks") {
+          // The webview couldn't diff an edit it had already taken as its base.
+          void exclusive(async () => editFailed(new Error(`the webview couldn't report an edit: ${msg.message}`)));
+        } else {
+          // The editor didn't come up, or didn't land where it was sent: the
+          // panel is blank or wrong until it's rebuilt. Anything else (a
+          // diagram that didn't render) stays in the log.
+          const shown = SHOWN_WEBVIEW_FAILURES.get(msg.stage);
+          if (shown) {
+            void vscode.window.showErrorMessage(shown(path.basename(document.uri.fsPath)), "Reload").then((choice) => {
+              if (choice === "Reload") queued("reload", async () => sendInit());
+            });
+          }
+        }
       } else if (msg.type === "add-comment") {
-        void (async () => {
+        queued("add comment", async () => {
+          // Named in text the editor has since been sent something else in place of.
+          if (msg.editRange && typeof msg.epoch === "number" && msg.epoch < validFrom) {
+            const error = "The document changed since you selected this text. Select it again.";
+            void panel.webview.postMessage({ type: "add-comment-result", ok: false, error });
+            return;
+          }
           const result = await this.addComment(document, msg, writeDocument);
           void panel.webview.postMessage(result);
           if (result.ok) pushComments();
-        })();
+        });
       } else if (msg.type === "reply-comment") {
-        void (async () => {
+        queued("reply", async () => {
           const result = await this.replyComment(document, msg, writeDocument);
           void panel.webview.postMessage(result);
           if (result.ok) pushComments();
-        })();
+        });
       } else if (msg.type === "toggle-resolve-comment") {
-        void (async () => {
+        queued("resolve", async () => {
           const result = await this.toggleResolve(document, msg, writeDocument);
           void panel.webview.postMessage(result);
           if (result.ok) pushComments();
-        })();
+        });
       } else if (msg.type === "delete-comment") {
-        void (async () => {
+        queued("delete", async () => {
           const result = await this.deleteComment(document, msg, writeDocument);
           void panel.webview.postMessage(result);
           if (result.ok) pushComments();
-        })();
+        });
       } else if (msg.type === "delete-single-comment") {
-        void (async () => {
+        queued("delete", async () => {
           const result = await this.deleteSingleComment(document, msg, writeDocument);
           void panel.webview.postMessage(result);
           if (result.ok) pushComments();
-        })();
+        });
       } else if (msg.type === "accept-suggestion" || msg.type === "reject-suggestion") {
         const anchorId = msg.anchorId;
         const mode = msg.type === "accept-suggestion" ? "accept" : "reject";
-        void (async () => {
+        queued(`${mode} suggestion`, async () => {
           const source = document.getText();
           const parsed = parseInline(source);
           const found = parsed.suggestions.some((s) => s.anchorId === anchorId);
@@ -978,15 +1118,20 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
             pushDocument(refresh);
           }
           pushComments();
-        })();
+        });
       } else if (msg.type === "open-link") {
         void this.handleOpenLink(msg, panel, document);
       } else if (msg.type === "invoke-command") {
         // Flush any unsaved edits before handing off so Claude reads the
         // human's latest, not a stale on-disk copy.
         void (async () => {
-          await editQueue;
-          await flushAutosave();
+          const saved = await exclusive(flushAutosave);
+          if (!saved && (msg.command === "send-to-claude" || msg.command === "send-thread-claude")) {
+            void vscode.window.showWarningMessage(
+              `Not sent: ${path.basename(document.uri.fsPath)} couldn't be saved, so your agent would read the old version.`,
+            );
+            return;
+          }
           await this.handleInvokeCommand(msg, document);
         })();
       } else if (msg.type === "drawio-read") {
@@ -1054,6 +1199,13 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     });
   }
 
+  /** An error notification whose one action opens the log. */
+  private showErrorWithLogs(message: string): void {
+    void vscode.window.showErrorMessage(message, "Show Logs").then((choice) => {
+      if (choice === "Show Logs") this.log.show();
+    });
+  }
+
   // --- comment handlers ---------------------------------------------------
   // Each rewrites the .md source via the inline bridge and writes it back
   // through `writeDocument`. Returning the exact payload the webview expects
@@ -1083,36 +1235,29 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     }
     const author = (msg.author && msg.author.trim()) || resolveAuthorFromConfig();
     const newComment = { author, body: msg.body, ts: new Date().toISOString() };
+    // The markers go exactly where the editor's selection is in the file's
+    // own bytes, or the add is refused: nothing is searched for, and nothing
+    // the editor serialized is adopted as the body.
     let result: { ok: true; source: string } | { ok: false; error: string };
     if (typeof msg.proseStart === "number" || typeof msg.proseEnd === "number") {
-      // Read-only editor: the selection arrives as a span of the file's own
-      // prose. The markers go exactly there or the add is refused — no
-      // fallback, since every fallback below rewrites the body.
+      // Read-only editor: the selection arrives as a span of the file's own prose.
+      // In read-only mode the anchor's context is the prose around the selection.
       result = addThreadAtProseRange(
         document.getText(),
-        { start: msg.proseStart ?? -1, end: msg.proseEnd ?? -1, text: msg.proseText ?? "" },
+        {
+          start: msg.proseStart ?? -1,
+          end: msg.proseEnd ?? -1,
+          text: msg.proseText ?? "",
+          before: msg.anchor.contextBefore,
+          after: msg.anchor.contextAfter,
+        },
         newComment,
       );
+    } else if (msg.editRange) {
+      // Edit mode: named by structure, found by the same alignment.
+      result = addThreadAtEditorRange(document.getText(), msg.editRange, newComment);
     } else {
-      // Preferred path: place the marker at the exact selection offsets the
-      // editor reported, against the editor's own body markdown — no text search,
-      // so a doc that's drifted from the editor's serialization can't cause a
-      // "could not locate the text" failure. Fall back to text-anchoring only
-      // when the editor couldn't resolve offsets (selStart/selEnd === -1).
-      const useOffsets =
-        typeof msg.fullMd === "string" &&
-        Number.isInteger(msg.selStart) &&
-        Number.isInteger(msg.selEnd) &&
-        (msg.selStart as number) >= 0 &&
-        (msg.selEnd as number) >= 0;
-      const ordinal = Number.isInteger(msg.anchorOrdinal) ? (msg.anchorOrdinal as number) : -1;
-      result = useOffsets
-        ? addThreadAtOffsets(document.getText(), msg.fullMd!, msg.selStart!, msg.selEnd!, newComment)
-        : addThreadFromAnchor(document.getText(), anchor, newComment, ordinal);
-      if (!result.ok && useOffsets) {
-        // Offsets were rejected (out of range) — fall back to the text anchor.
-        result = addThreadFromAnchor(document.getText(), anchor, newComment, ordinal);
-      }
+      result = { ok: false, error: "The editor didn't say where the selection is. Select the text again." };
     }
     if (!result.ok) {
       this.log.warn("addComment refused", { file: document.uri.fsPath, error: result.error });

@@ -3,7 +3,7 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { existsSync, readFileSync } from "fs";
-import { AGENTS_SENTINEL, AGENTS_SNIPPET, FORMAT_SPEC_URL, ensureAgentsSnippet, sectionHash } from "../agents";
+import { AGENTS_SENTINEL, AGENTS_SNIPPET, FORMAT_SPEC_URL, ensureAgentsSnippet, refuseSymlink, sectionHash } from "../agents";
 
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"));
 
@@ -188,5 +188,61 @@ describe("ensureAgentsSnippet", () => {
     await fs.writeFile(target, edited, "utf8");
     expect(await ensureAgentsSnippet(tmpDir)).toBe("customized");
     expect(await fs.readFile(target, "utf8")).toBe(edited);
+  });
+
+  // L5: a symlinked AGENTS.md, or a symlinked workspace folder, could
+  // otherwise send this write somewhere the human never agreed to.
+  describe("refuses to write through a symlink (L5)", () => {
+    it("refuses when AGENTS.md itself is a symlink", async () => {
+      const real = path.join(tmpDir, "real-agents.md");
+      await fs.writeFile(real, "# elsewhere\n", "utf8");
+      await fs.symlink(real, path.join(tmpDir, "AGENTS.md"));
+      await expect(ensureAgentsSnippet(tmpDir)).rejects.toThrow(/symlink/);
+      // Nothing was written through the link.
+      expect(await fs.readFile(real, "utf8")).toBe("# elsewhere\n");
+    });
+
+    it("refuses when the workspace folder itself is a symlink", async () => {
+      const real = path.join(tmpDir, "real-workspace");
+      await fs.mkdir(real);
+      const linked = path.join(tmpDir, "linked-workspace");
+      await fs.symlink(real, linked);
+      await expect(ensureAgentsSnippet(linked)).rejects.toThrow(/symlink/);
+      await expect(fs.access(path.join(real, "AGENTS.md"))).rejects.toThrow();
+    });
+
+    it("still works normally when neither is a symlink", async () => {
+      expect(await ensureAgentsSnippet(tmpDir)).toBe("created");
+    });
+  });
+});
+
+describe("refuseSymlink", () => {
+  let tmp: string;
+  beforeEach(async () => {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), "mdcollab-refuse-symlink-"));
+  });
+  afterEach(async () => {
+    await fs.rm(tmp, { recursive: true, force: true });
+  });
+
+  it("returns null for a path that doesn't exist yet, and its parent isn't a symlink", async () => {
+    expect(await refuseSymlink(path.join(tmp, "not-there.md"))).toBeNull();
+  });
+
+  it("returns a reason when the target itself is a symlink", async () => {
+    const real = path.join(tmp, "real.md");
+    await fs.writeFile(real, "hi", "utf8");
+    const link = path.join(tmp, "link.md");
+    await fs.symlink(real, link);
+    expect(await refuseSymlink(link)).toMatch(/symlink/);
+  });
+
+  it("returns a reason when the parent directory is a symlink", async () => {
+    const realDir = path.join(tmp, "real-dir");
+    await fs.mkdir(realDir);
+    const linkedDir = path.join(tmp, "linked-dir");
+    await fs.symlink(realDir, linkedDir);
+    expect(await refuseSymlink(path.join(linkedDir, "file.md"))).toMatch(/symlink/);
   });
 });

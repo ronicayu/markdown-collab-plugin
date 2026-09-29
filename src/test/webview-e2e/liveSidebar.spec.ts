@@ -458,6 +458,27 @@ test.describe("with the review fixture", () => {
     await expect(page.locator(`.thread-card[data-thread="${answered.id}"]`)).toHaveClass(/highlighted/);
   });
 
+  test("reveal-thread opens a card that starts collapsed, and it stays open for the session", async ({ page }) => {
+    const answered = parse(fixture.source).threads.find((t) => t.id === fixture.answeredThreadId)!;
+    const resolvedSrc = replaceThread(fixture.source, answered.id, {
+      ...answered,
+      status: "resolved",
+      resolvedBy: "ronica",
+      resolvedTs: "2026-07-02T09:00:00.000Z",
+    });
+    await pushSidecar(page, resolvedSrc);
+    await pushToWebview(page, { type: "reveal-thread", threadId: answered.id });
+    const card = page.locator(`.thread-card[data-thread="${answered.id}"]`);
+    await expect(card).toHaveClass(/highlighted/);
+    await expect(card).not.toHaveClass(/collapsed/);
+    await expect(card.locator(".thread-collapse")).toHaveAttribute("aria-expanded", "true");
+    // As if the chevron had been clicked: a host update doesn't fold it again.
+    await pushSidecar(page, resolvedSrc);
+    await expect(card).not.toHaveClass(/collapsed/);
+    const state = (await getState(page)) as { collapseOverrides?: [string, boolean][] };
+    expect(state.collapseOverrides).toContainEqual([`thread:${answered.id}`, false]);
+  });
+
   // --- n/p/r/e/o ---------------------------------------------------------------
 
   test("n moves the highlight to the next thread card, p to the previous, wrapping at both ends", async ({ page }) => {
@@ -641,4 +662,92 @@ test("a reveal-thread right behind init waits for the editor, then lands on the 
   await expect(
     page.locator(`.mdc-anchor-highlight[data-comment-id="${fixture.openThreadId}"]`).first(),
   ).toHaveClass(/mdc-anchor-highlight--pulse/);
+});
+
+// The sidebar's preferences live in the webview's state, which outlives the
+// build that wrote it and isn't validated by anyone else: whatever shape it
+// comes back in, the sidebar boots, reads what's well-formed, and drops the rest.
+test.describe("persisted state in the wrong shape", () => {
+  test("every key of the wrong type falls back to its default, and other keys are kept", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true }, {
+      state: { collapseOverrides: "thread:x", pendingReviewIds: 7, threadFilter: 3, hintDismissed: "yes", outlineVisible: true },
+    });
+    await expect(page.locator(".thread-card")).toHaveCount(2);
+    await expect(page.locator('input[name="filter"][value="open"]')).toBeChecked();
+    await expect(page.locator("#keys-hint")).toBeVisible();
+    await expect(page.locator(".thread-card.collapsed")).toHaveCount(0);
+
+    // The next write keeps only what's well-formed, and what it wrote.
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await card.locator(".thread-collapse").click();
+    const state = (await getState(page)) as Record<string, unknown>;
+    expect(state.collapseOverrides).toEqual([[`thread:${fixture.openThreadId}`, true]]);
+    expect(state.outlineVisible).toBe(true);
+  });
+
+  test("the well-formed entries of a list survive its malformed ones", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true }, {
+      state: {
+        collapseOverrides: [[`thread:${fixture.openThreadId}`, true], ["thread:x"], [1, true], "junk", null, ["thread:y", "no"]],
+        pendingReviewIds: ["a", 2, null],
+      },
+    });
+    await expect(page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`)).toHaveClass(/collapsed/);
+    await expect(page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`)).not.toHaveClass(/collapsed/);
+  });
+
+  for (const state of ["garbage", [1, 2], 42, null]) {
+    test(`a state that isn't an object (${JSON.stringify(state)}) is treated as empty`, async ({ page }) => {
+      await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true }, { state });
+      await expect(page.locator(".thread-card")).toHaveCount(2);
+      await page.locator('input[name="filter"][value="all"]').click();
+      expect(await getState(page)).toEqual({ threadFilter: "all" });
+    });
+  }
+});
+
+test.describe("sending from the sidebar", () => {
+  test("the notice waits for the host, and claims the file is saved only when the host says so", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(fixture.source), epoch: 1 });
+    await page.locator("#send-to-claude").click();
+    await awaitPosted(page, "send-to-claude");
+    await page.waitForTimeout(100);
+    // Counted now, not polled: a notice shown on the click would still be up.
+    expect(await page.locator(".mdc-banner").count()).toBe(0);
+
+    await pushToWebview(page, { type: "send-result", ok: false, saved: false });
+    await page.waitForTimeout(100);
+    expect(await page.locator(".mdc-banner").count()).toBe(0);
+
+    await pushToWebview(page, { type: "send-result", ok: true, saved: true });
+    await expect(page.locator(".mdc-banner")).toHaveText("Sent to Claude — your edits are saved to disk");
+  });
+
+  test("read-only, a confirmed send says only that it was sent", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
+    await page.locator("#send-to-claude").click();
+    await pushToWebview(page, { type: "send-result", ok: true, saved: true });
+    await expect(page.locator(".mdc-banner")).toHaveText("Sent to Claude");
+  });
+});
+
+test("in edit mode, an edit still in the debounce is posted before any sidebar message", async ({ page }) => {
+  await bootLiveEditor(page, { ...liveInit(fixture.source), epoch: 1 });
+  await page.locator(".milkdown .ProseMirror").focus();
+  await page.evaluate(() => {
+    const root = document.querySelector(".milkdown .ProseMirror")!;
+    const p = Array.from(root.querySelectorAll("p")).find((el) => el.textContent!.includes("correctly"))!;
+    const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+    let last: Text | null = null;
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) last = n as Text;
+    const r = document.createRange();
+    r.setStart(last!, last!.data.length);
+    r.collapse(true);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(r);
+  });
+  await page.keyboard.type("!");
+  const actions = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"] .thread-actions`);
+  await actions.getByRole("button", { name: "Resolve", exact: true }).click();
+  await expect.poll(async () => (await posted(page)).map((m) => m.type)).toEqual(["edit-blocks", "toggle-resolve"]);
 });

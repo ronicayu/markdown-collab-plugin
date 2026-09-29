@@ -52,6 +52,40 @@ async function bootPrReviewShell(page: Page): Promise<void> {
   await clearPosted(page);
 }
 
+/**
+ * Same boot as above, but `vscode.getState()` already returns a blob a
+ * corrupted profile or a stale/newer build could plausibly have left behind:
+ * `collapsedCardIds` isn't an array, `existingFilter` isn't one of the known
+ * strings, and there's a field this build has never heard of. The client
+ * must validate and fall back to defaults for each, not throw at module load
+ * — which would blank the whole webview before `ready` ever posts.
+ */
+async function bootPrReviewShellWithMalformedState(page: Page): Promise<void> {
+  page.on("pageerror", (err) => {
+    throw new Error(`uncaught error in webview: ${err.message}`);
+  });
+  await page.setContent(
+    `<!doctype html><html><head><meta charset="utf-8"></head><body>${prReviewAppBody()}</body></html>`,
+  );
+  await page.addStyleTag({ path: outFile("pr", "webview", "comments-shared.css") });
+  await page.addStyleTag({ path: outFile("pr", "webview", "client.css") });
+  const malformedStateStub = `
+window.__mcPosted = [];
+window.__mcState = { collapsedCardIds: "not-an-array", existingFilter: 42, someFutureField: { nested: true } };
+window.acquireVsCodeApi = function () {
+  return {
+    postMessage: function (msg) { window.__mcPosted.push(msg); },
+    setState: function (s) { window.__mcState = s; },
+    getState: function () { return window.__mcState; },
+  };
+};
+`;
+  await page.addScriptTag({ content: malformedStateStub });
+  await page.addScriptTag({ path: outFile("pr", "webview", "client.js") });
+  await awaitPosted(page, "ready");
+  await clearPosted(page);
+}
+
 function baseInit(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     type: "init",
@@ -294,4 +328,24 @@ test("a manual toggle survives an unrelated existing-comments refresh", async ({
     ],
   });
   await expect(page.locator(".existing-card").first()).toHaveClass(/collapsed/);
+});
+
+test("malformed persisted state doesn't break rendering, and collapse still works", async ({ page }) => {
+  await bootPrReviewShellWithMalformedState(page);
+  await pushToWebview(page, baseInit());
+  await expect(page.locator("#preview")).not.toBeEmpty();
+
+  await pushToWebview(page, { type: "existing-comments", comments: [githubComment()] });
+  const card = page.locator(".existing-card").first();
+  // Falls back to the default (expanded, unresolved thread) rather than
+  // reflecting the malformed `collapsedCardIds` / `existingFilter` values.
+  await expect(card).not.toHaveClass(/collapsed/);
+  await expect(page.locator(".existing-head")).toHaveAttribute("aria-expanded", "true");
+
+  // And collapse still works from here — the malformed seed didn't leave
+  // the toggle machinery in a broken state.
+  await card.locator(".existing-head").click();
+  await expect(card).toHaveClass(/collapsed/);
+  await card.locator(".existing-head").click();
+  await expect(card).not.toHaveClass(/collapsed/);
 });

@@ -85,7 +85,16 @@ export async function pushToWebview(page: Page, msg: unknown): Promise<void> {
   await page.evaluate((m) => window.postMessage(m, "*"), msg);
 }
 
-async function bootPage(page: Page, body: string, styles: string[], script: string): Promise<void> {
+/** What a boot can set up before the bundle runs. */
+export interface BootOptions {
+  /**
+   * What `getState()` returns from the start — the state a reloaded webview
+   * finds, including state an older build (or a corrupted store) left behind.
+   */
+  state?: unknown;
+}
+
+async function bootPage(page: Page, body: string, styles: string[], script: string, opts: BootOptions = {}): Promise<void> {
   page.on("pageerror", (err) => {
     throw new Error(`uncaught error in webview: ${err.message}`);
   });
@@ -94,6 +103,7 @@ async function bootPage(page: Page, body: string, styles: string[], script: stri
   // Order matters: the stub must exist before the bundle's top-level
   // `acquireVsCodeApi()` call runs.
   await page.addScriptTag({ content: VSCODE_API_STUB });
+  if ("state" in opts) await page.addScriptTag({ content: `window.__mcState = ${JSON.stringify(opts.state)};` });
   await page.addScriptTag({ path: script });
 }
 
@@ -128,12 +138,13 @@ export async function bootInlineView(page: Page, init: Record<string, unknown>):
  * Boot the live editor's page (the provider's pre-init shell + client bundle)
  * without pushing an `init` yet, so a spec can assert the "Loading…" state.
  */
-export async function bootLiveEditorShell(page: Page): Promise<void> {
+export async function bootLiveEditorShell(page: Page, opts: BootOptions = {}): Promise<void> {
   await bootPage(
     page,
     liveEditorShellBody(),
     [outFile("webview", "comments-shared.css"), outFile("webview", "client.css")],
     outFile("webview", "client.js"),
+    opts,
   );
   await awaitPosted(page, "ready");
   await clearPosted(page);
@@ -144,8 +155,8 @@ export async function bootLiveEditorShell(page: Page): Promise<void> {
  * has mounted and reported its post-init content back to the host — the same
  * signal the integration suite waits on.
  */
-export async function bootLiveEditor(page: Page, init: Record<string, unknown>): Promise<void> {
-  await bootLiveEditorShell(page);
+export async function bootLiveEditor(page: Page, init: Record<string, unknown>, opts: BootOptions = {}): Promise<void> {
+  await bootLiveEditorShell(page, opts);
   await pushToWebview(page, { type: "init", ...init });
   await awaitPosted(page, "ready-with-content");
   await expect(page.locator(".mdc-editor-root .milkdown")).toBeVisible();

@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { diffWords, isBulkRewrite, suggestionGist, tokenize } from "../webviewShared/wordDiff";
+import {
+  diffTokens,
+  diffWords,
+  exceedsTokenCap,
+  isBulkRewrite,
+  MAX_DIFF_TOKENS,
+  suggestionGist,
+  tokenize,
+} from "../webviewShared/wordDiff";
 
 describe("tokenize", () => {
   it("splits into words, whitespace, and single punctuation marks", () => {
@@ -69,6 +77,73 @@ describe("isBulkRewrite", () => {
   it("is true once either side is longer than the length guard, even for a small edit", () => {
     const long = "word ".repeat(150); // 750 chars, well past the 600-char guard
     expect(isBulkRewrite(long, long + "!")).toBe(true);
+  });
+});
+
+describe("exceedsTokenCap", () => {
+  it("is false under the cap", () => {
+    expect(exceedsTokenCap("word ".repeat(100))).toBe(false);
+  });
+
+  it("is true once a side tokenizes to more than MAX_DIFF_TOKENS tokens", () => {
+    const huge = "word ".repeat(MAX_DIFF_TOKENS + 1); // one "word" + one space token each
+    expect(exceedsTokenCap(huge)).toBe(true);
+  });
+});
+
+// Security review (round-9 P1.1): a suggestion with tens of thousands of
+// words per side, or ~100KB per side, must never reach `diffTokens`' O(n·m)
+// table — that's what froze the webview (seconds and hundreds of MB at 8k
+// words/side; gigabytes at 100KB/side). `isBulkRewrite` is the one function
+// on the hot path that every render calls unconditionally (`commentUi.ts`
+// checks it before ever building an inline diff), so pinning its time here
+// is what stands in for "never calls the LCS" — an O(n·m) table for 100,000
+// tokens couldn't finish anywhere near this budget, let alone allocate.
+describe("isBulkRewrite / exceedsTokenCap never run the O(n·m) diff on huge input", () => {
+  it("resolves a 100KB-per-side suggestion in well under 200ms", () => {
+    const original = "lorem ipsum dolor sit amet ".repeat(3800); // ~100KB
+    const proposed = "consectetur adipiscing elit sed do ".repeat(2900); // ~100KB, different words
+    expect(original.length).toBeGreaterThan(100_000);
+    expect(proposed.length).toBeGreaterThan(100_000);
+
+    const start = performance.now();
+    const bulk = isBulkRewrite(original, proposed);
+    const capped = exceedsTokenCap(original) || exceedsTokenCap(proposed);
+    const elapsed = performance.now() - start;
+
+    expect(bulk).toBe(true);
+    expect(capped).toBe(true);
+    expect(elapsed).toBeLessThan(200);
+  });
+
+  it("resolves an 8k-word-per-side suggestion (the reviewer's freeze case) in well under 200ms", () => {
+    const original = "alpha beta gamma delta epsilon ".repeat(1600); // 8k words
+    const proposed = "zeta eta theta iota kappa ".repeat(1600); // 8k words, all different
+    const start = performance.now();
+    const bulk = isBulkRewrite(original, proposed);
+    const elapsed = performance.now() - start;
+    expect(bulk).toBe(true);
+    expect(elapsed).toBeLessThan(200);
+  });
+
+  // Control: shows the thing being guarded against is genuinely expensive
+  // relative to the guarded path, so the fast times above are the guard
+  // working rather than `diffTokens` secretly being cheap at this scale — a
+  // fixed millisecond threshold here would be flaky across machines, so this
+  // compares the guarded call against a real (smaller, to keep the suite's
+  // own memory/CPU use sane) quadratic call on the same run's hardware.
+  it("diffTokens grows quadratically — the guard's cost doesn't scale the same way", () => {
+    const guardedStart = performance.now();
+    isBulkRewrite("lorem ipsum dolor sit amet ".repeat(3800), "consectetur adipiscing elit sed do ".repeat(2900));
+    const guardedElapsed = performance.now() - guardedStart;
+
+    const a = tokenize("word ".repeat(3000));
+    const b = tokenize("term ".repeat(3000));
+    const unguardedStart = performance.now();
+    diffTokens(a, b);
+    const unguardedElapsed = performance.now() - unguardedStart;
+
+    expect(unguardedElapsed).toBeGreaterThan(guardedElapsed * 5);
   });
 });
 

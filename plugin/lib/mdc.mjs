@@ -1567,11 +1567,28 @@ async function forward(ext, tool, args, author) {
   }
   return { kind: "applied", result: isObject(payload) ? payload : {} };
 }
+var LOOPBACK_HOSTS = /* @__PURE__ */ new Set(["127.0.0.1", "::1", "localhost"]);
+var MCP_PATH = "/mcp";
 function extensionFromEnv(flags) {
   if (flags.direct === true) return null;
   const url = process.env[ENV_URL];
   const token = process.env[ENV_TOKEN];
-  return url && token ? { url, token } : null;
+  if (!url || !token) return null;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    writeSync(2, `mdc: ${ENV_URL} is not a valid URL (${JSON.stringify(url)}) \u2014 writing directly
+`);
+    return null;
+  }
+  const host = parsed.hostname.replace(/^\[|\]$/g, "");
+  if (!LOOPBACK_HOSTS.has(host) || parsed.pathname !== MCP_PATH) {
+    writeSync(2, `mdc: ${ENV_URL} does not point at the local tool server (${url}) \u2014 writing directly
+`);
+    return null;
+  }
+  return { url, token };
 }
 function integrityOkOnDisk(absPath) {
   try {

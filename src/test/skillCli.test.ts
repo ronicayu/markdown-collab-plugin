@@ -1044,3 +1044,86 @@ describe("mdc CLI: writes go through the running extension", () => {
     }
   });
 });
+
+// L3: MARKDOWN_COLLAB_MCP_URL is meant to come only from a VS Code terminal's
+// environment, but anything that can set an env var can point it anywhere —
+// and every mutating verb would otherwise POST the document's text, plus the
+// bearer token, there. Forwarding must stay confined to the local tool
+// server: a loopback host, on exactly the path it serves.
+describe("mdc CLI: forwards only to the local tool server (L3)", () => {
+  it("refuses a non-loopback host, writing directly with no request attempted", async () => {
+    const doc = writeDoc("a.md", DOC);
+    // 203.0.113.0/24 is reserved for documentation (RFC 5737) — never dialed.
+    const r = await runAsync(
+      ["open", doc, "--quote", "bearer token", "--body", "q"],
+      cliEnv({ url: "http://203.0.113.5:9999/mcp", token: TOKEN }),
+    );
+    expect(r.status).toBe(0);
+    expect(r.stderr).toBe(
+      `mdc: ${ENV_URL} does not point at the local tool server (http://203.0.113.5:9999/mcp) — writing directly\n`,
+    );
+    expect(parse(fs.readFileSync(doc, "utf8")).threads).toHaveLength(1);
+  });
+
+  it("refuses a loopback host on the wrong path", async () => {
+    const doc = writeDoc("a.md", DOC);
+    const r = await runAsync(
+      ["open", doc, "--quote", "bearer token", "--body", "q"],
+      cliEnv({ url: "http://127.0.0.1:9999/not-mcp", token: TOKEN }),
+    );
+    expect(r.status).toBe(0);
+    expect(r.stderr).toContain("does not point at the local tool server");
+    expect(parse(fs.readFileSync(doc, "utf8")).threads).toHaveLength(1);
+  });
+
+  it("refuses an unparseable URL", async () => {
+    const doc = writeDoc("a.md", DOC);
+    const r = await runAsync(
+      ["open", doc, "--quote", "bearer token", "--body", "q"],
+      cliEnv({ url: "not a url", token: TOKEN }),
+    );
+    expect(r.status).toBe(0);
+    expect(r.stderr).toContain(`${ENV_URL} is not a valid URL`);
+    expect(parse(fs.readFileSync(doc, "utf8")).threads).toHaveLength(1);
+  });
+
+  it("treats ::1 as an allowed host — falls back only because nothing answers there, not because the host is refused", async () => {
+    const doc = writeDoc("a.md", DOC);
+    const r = await runAsync(
+      ["open", doc, "--quote", "bearer token", "--body", "q"],
+      cliEnv({ url: "http://[::1]:9999/mcp", token: TOKEN }),
+    );
+    expect(r.status).toBe(0);
+    // The existing "not reachable" message, not the new host-refusal one —
+    // proves ::1 passed the host check and only failed to connect.
+    expect(r.stderr).toBe("mdc: extension not reachable at http://[::1]:9999/mcp — writing directly\n");
+  });
+
+  it("still forwards to 127.0.0.1 on /mcp — the allowed case is unaffected", async () => {
+    const doc = writeDoc("a.md", DOC);
+    const fake = await fakeExtension(tools((msg) => toolResult(msg, { action: "open", threadId: "t1" })));
+    try {
+      const r = await runAsync(["open", doc, "--quote", "bearer token", "--body", "q"], cliEnv(fake.ext));
+      expect(r.status).toBe(0);
+      expect(fake.seen).toHaveLength(2);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  it("accepts 'localhost' as a loopback host", async () => {
+    const doc = writeDoc("a.md", DOC);
+    const fake = await fakeExtension(tools((msg) => toolResult(msg, { action: "open", threadId: "t1" })));
+    try {
+      const asLocalhost = fake.ext.url.replace("127.0.0.1", "localhost");
+      const r = await runAsync(
+        ["open", doc, "--quote", "bearer token", "--body", "q"],
+        cliEnv({ url: asLocalhost, token: fake.ext.token }),
+      );
+      expect(r.status).toBe(0);
+      expect(fake.seen).toHaveLength(2);
+    } finally {
+      await fake.close();
+    }
+  });
+});

@@ -75,6 +75,27 @@ export type AgentsSnippetOutcome =
   | "customized";
 
 /**
+ * Refuse to write through a symlink (L5): `lstat` the target itself (if it
+ * exists) and its parent directory, following neither. A symlinked
+ * workspace folder or a symlinked AGENTS.md could otherwise send this write
+ * somewhere the human never agreed to. Duplicated (rather than shared) in
+ * `mcpServer/agentConnections.ts` and `mcpServer/index.ts`, which guard the
+ * same class of write for the other agent-connection files — each is small
+ * and self-contained, and none of the three otherwise depends on the others.
+ */
+export async function refuseSymlink(targetPath: string): Promise<string | null> {
+  for (const p of [path.dirname(targetPath), targetPath]) {
+    try {
+      const st = await fs.lstat(p);
+      if (st.isSymbolicLink()) return `${p} is a symlink`;
+    } catch {
+      /* doesn't exist yet — nothing to refuse there */
+    }
+  }
+  return null;
+}
+
+/**
  * Write the snippet into the workspace's AGENTS.md, or bring an earlier
  * version of it up to date (10x-plan-6 P1.1 runs this first for every agent
  * that isn't Claude Code). Never overwrites a section someone edited: that is
@@ -82,6 +103,8 @@ export type AgentsSnippetOutcome =
  */
 export async function ensureAgentsSnippet(workspaceRoot: string): Promise<AgentsSnippetOutcome> {
   const target = path.join(workspaceRoot, "AGENTS.md");
+  const symlink = await refuseSymlink(target);
+  if (symlink) throw new Error(`refusing to write through a symlink: ${symlink}`);
   let existing: string | null = null;
   try {
     existing = await fs.readFile(target, "utf8");
