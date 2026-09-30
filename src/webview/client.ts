@@ -697,6 +697,15 @@ async function reinitEditor(msg: InitMessage): Promise<void> {
   const previous = editor;
   editor = null;
   editBaseDoc = null;
+  // Milkdown's listener debounces `markdownUpdated` by 200 ms and does not
+  // cancel it on destroy. Fired on a destroyed editor, its serializer reads a
+  // context that is gone and throws from a timer nothing can catch — which
+  // the window error handler then reports to the user as a failure. The edit
+  // it would report was flushed just above, so unsubscribe before teardown:
+  // the pending handler finds no listener and serializes nothing.
+  previous?.action((ctx) => {
+    ctx.get(listenerCtx).listeners.markdownUpdated.length = 0;
+  });
   await previous?.destroy();
   if (editorContainer) editorContainer.innerHTML = "";
   readOnly = msg.readOnly === true;

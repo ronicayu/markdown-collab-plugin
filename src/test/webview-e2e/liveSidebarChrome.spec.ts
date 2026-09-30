@@ -231,6 +231,66 @@ test.describe("suggest mode shows in the Send label", () => {
   });
 });
 
+test.describe("card actions (phase 2)", () => {
+  test("the thread action row's \"…\" is the rightmost control", async ({ page }) => {
+    const fixture = reviewFixture();
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
+    const actions = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"] .thread-actions`);
+    const [replyBox, resolveBox, menuBox] = await Promise.all([
+      actions.locator(".thread-reply-toggle").boundingBox(),
+      actions.getByRole("button", { name: "Resolve", exact: true }).boundingBox(),
+      actions.locator(".thread-menu-btn").boundingBox(),
+    ]);
+    expect(menuBox!.x).toBeGreaterThan(replyBox!.x);
+    expect(menuBox!.x).toBeGreaterThan(resolveBox!.x);
+  });
+
+  test("no class-less button anywhere in .mc-thread-sidebar with threads, a suggestion, an open composer, and an editing comment", async ({
+    page,
+  }) => {
+    const fixture = reviewFixture();
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
+
+    // A suggestion is already in the fixture. Open a reply composer on one
+    // thread and start editing a comment on the other, so every button kind
+    // the card module builds is on screen at once.
+    const answeredCard = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    await answeredCard.locator(".thread-reply-toggle").click();
+    await expect(answeredCard.locator(".reply-box")).toHaveClass(/open/);
+
+    const openCard = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await openCard.getByRole("button", { name: "Edit", exact: true }).click();
+    // Every thread card carries its own (normally hidden) reply composer, so
+    // `.mc-composer` alone is ambiguous here — the edit-in-place composer is
+    // the one that also carries `.mc-card__body` (it replaces the comment's
+    // body element in place).
+    await expect(openCard.locator(".mc-composer.mc-card__body")).toBeVisible();
+
+    const classless = await page
+      .locator(".mc-thread-sidebar button")
+      .evaluateAll((els) => els.filter((el) => el.className.trim() === "").map((el) => el.outerHTML));
+    expect(classless).toEqual([]);
+  });
+
+  test("the collapse chevron keeps aria-expanded and rotates", async ({ page }) => {
+    const fixture = reviewFixture();
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
+    const card = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    const chevron = card.locator(".thread-collapse");
+    const svgRotation = () => chevron.locator("svg").evaluate((el) => getComputedStyle(el).transform);
+
+    await expect(chevron).toHaveAttribute("aria-expanded", "true");
+    expect(await svgRotation()).toBe("none");
+
+    await chevron.click();
+    await expect(card).toHaveClass(/collapsed/);
+    await expect(chevron).toHaveAttribute("aria-expanded", "false");
+    // "rotates" is a CSS transform keyed off `aria-expanded`, not a swapped
+    // glyph — the computed transform actually changing is what to prove.
+    expect(await svgRotation()).not.toBe("none");
+  });
+});
+
 test.describe("shortcut hint waits for the first thread", () => {
   test("hidden with no threads, and the menu item is disabled; both come back with the first thread", async ({
     page,

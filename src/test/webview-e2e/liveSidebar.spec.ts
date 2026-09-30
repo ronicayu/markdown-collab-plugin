@@ -398,13 +398,17 @@ test.describe("with the review fixture", () => {
   }) => {
     const card = page.locator("#threads-list .mc-suggestion");
     const chevron = card.locator(".mc-suggestion__collapse");
+    const chevronRotation = () => chevron.locator("svg").evaluate((el) => getComputedStyle(el).transform);
     await expect(card).not.toHaveClass(/collapsed/);
     await expect(chevron).toHaveAttribute("aria-expanded", "true");
+    expect(await chevronRotation()).toBe("none");
 
     await chevron.click();
     await expect(card).toHaveClass(/collapsed/);
     await expect(chevron).toHaveAttribute("aria-expanded", "false");
-    await expect(chevron).toHaveText("▸");
+    // The chevron is one SVG that CSS rotates off `aria-expanded` now, rather
+    // than swapping ▾/▸ glyphs — the rotation itself is the thing to prove.
+    expect(await chevronRotation()).not.toBe("none");
     await expect(card.locator(".mc-suggestion__summary")).toHaveText('Suggestion · Claude · "notes" → "highlights"');
     await expect(card.locator(".mc-suggestion__diffwrap")).toBeHidden();
 

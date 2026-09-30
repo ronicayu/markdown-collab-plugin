@@ -405,6 +405,12 @@ test("a keystroke still in the debounce when the host rebuilds the editor is pos
   expect(edit.epoch).toBe(1);
   expect(edit.edits).toEqual([{ from: 1, to: 2, markdown: "The parser handles nested lists correctly.!", types: ["paragraph"] }]);
   await expect(editable(page)).toHaveAttribute("contenteditable", "false");
+  // Outlive the destroyed editor's own 200 ms listener debounce: it used to
+  // fire on the dead editor and throw from a timer ("editorView not found"),
+  // which the harness turns into a failure — but only when the test was still
+  // running, so it passed on a quiet machine and failed on a busy one.
+  await page.waitForTimeout(350);
+  expect((await posted(page)).filter((m) => m.type === "webview-error")).toEqual([]);
 });
 
 test("a quiet push replaces the text without announcing an outside edit", async ({ page }) => {

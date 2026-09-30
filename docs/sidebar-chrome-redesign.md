@@ -224,12 +224,82 @@ New e2e, in `liveSidebarChrome.spec.ts`:
   on the hint hides it and unchecks the item;
 - header height budget (≤ 80 px with threads and no contextual rows).
 
+## Phase 2 — card actions (0.35.20)
+
+After phase 1 the header and footer used the new language while every
+button inside a card still used the old one: bordered `Reply` `Resolve`
+`…` boxes on thread cards, a bordered `Reject` and `Cancel`, accent-blue
+`Edit` links, and a bare `▾` for collapse. Those buttons come from the
+shared card module (`commentUi.ts`, `comments.css`), which the PR review
+webview also renders, so the restyle reaches it too — deliberately: one
+card look everywhere.
+
+### One more control kind: the quiet text button
+
+`.mc-btn--quiet` in `comments.css`: transparent, no border, muted
+foreground, 24 px tall, `padding: 0 8px`, radius `--mc-radius`, 12 px type;
+hover and `:focus-visible` give it the foreground colour on
+`--vscode-toolbar-hoverBackground`; `.mc-btn--danger` on it colours the text
+`--mc-danger` (destructive actions stay red — a stronger convention than
+uniformity). In-card actions are quiet text; the one decision a card asks
+for (Accept, or a composer's submit) is primary; "…" is a ghost icon button.
+
+### Where each button lands
+
+| control | was | now |
+| --- | --- | --- |
+| thread `Reply`, `Resolve` / `Reopen` | `btn-ghost` (bordered) | `mc-btn mc-btn--quiet` |
+| thread `…` | `btn-ghost thread-menu-btn` | `mc-icon-btn thread-menu-btn`, `⋯` glyph, `aria-label` unchanged ("More actions for this thread" — a page has one per card, so the label stays specific), pushed to the row's right (`margin-left: auto`) |
+| thread action row `.thread-actions` | inline buttons | `display: flex; align-items: center; gap: 2px` |
+| collapse `▾`/`▸` (`.thread-collapse`, and the suggestion card's equivalent) | text glyph, unstyled | `mc-icon-btn mc-icon-btn--sm` (20 px), one chevron SVG rotated −90° via CSS when collapsed, `aria-expanded` kept |
+| suggestion `Accept` | primary | primary (unchanged) |
+| suggestion `Reject` | `mc-btn--ghost` | `mc-btn--quiet` |
+| composer submit / `Cancel` | primary / `mc-btn--ghost` | primary / `mc-btn--quiet` |
+| comment `Edit`, `Delete` | `mc-btn--link` (accent) / `--danger` | `mc-btn--quiet` / `mc-btn--quiet mc-btn--danger` |
+| comment `Cancel` (edit mode) | `mc-btn--link` | `mc-btn--quiet` |
+| "Show old / new" (`mc-suggestion__toggle`) | `mc-btn--link` | unchanged — a disclosure inside prose reads as a link |
+| Claude summary `Next`, `Install skill` | `btn-link` | `mc-btn mc-btn--link` (the shared class; the sidebar's own `btn-link` rule goes) |
+| `Show N more` (`mc-show-more`) | `btn-ghost mc-show-more` (dashed) | `mc-btn mc-btn--quiet mc-show-more`, still full-width and dashed |
+
+`threadSidebar.css` loses its generic `button { … }` rule (which painted
+any class-less button primary blue), `button.btn-ghost`, `button.btn-link`
+and their `.danger` variants. Every button the sidebar creates carries an
+explicit `mc-*` class afterwards, and a test asserts no class-less `<button>`
+is rendered. `.mc-btn--ghost` is removed from `comments.css` only if nothing
+(PR review and classic webviews included) still uses it.
+
+As built: `.mc-icon-btn` moved from `controls.css` into `comments.css`,
+because the card module's chevron needs it in every webview that renders a
+card and only the live editor loads `controls.css`. Menu items, which had no
+class at all, carry `mc-menuitem`. "Accept all N" is a quiet button too.
+
+### Unchanged
+
+Element ids, data attributes, posted messages, `aria-expanded` on the
+collapse and reply toggles, the two-step Delete confirm, and every label
+string tests click by (`Reply`, `Resolve`, `Reopen`, `Accept`, `Reject`,
+`Edit`, `Delete`, `Confirm`, `Cancel`).
+
+### Tests
+
+Migrate any locator on `.btn-ghost`, `.btn-link`, `.mc-btn--ghost`,
+`.mc-btn--link` (grep `src/test`; `gifRecording.record.ts` too). Add to
+`liveSidebarChrome.spec.ts`: the thread action row's `…` is the rightmost
+control; no class-less button anywhere in `.mc-thread-sidebar` after a
+render with threads, a suggestion, an open composer and an editing comment;
+the collapse chevron keeps `aria-expanded` and rotates (class or attribute
+observable). Screenshots of the live sidebar and of the PR review webview
+before and after.
+
 ## Out of scope
 
 - The classic review view (`classicReviewView`) — removed next release.
-- The PR review webview's own chrome — align in a later pass.
+- The PR review webview's own header chrome — align in a later pass (its
+  cards pick up phase 2 through the shared module).
 - A floating "+ comment" affordance at the selection (Google-Docs style) —
   worth doing, separate change.
+- The card-in-card nesting (a bordered reply card inside a bordered thread
+  card) — a deeper restyle of the card module, separate change.
 
 ## Gates
 

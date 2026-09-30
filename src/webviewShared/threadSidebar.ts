@@ -35,7 +35,14 @@ import {
   type EmptyState,
   type ThreadFilter,
 } from "./threadListState";
-import { buildComposer, buildCommentBody, buildCommentCard, buildSuggestionCard, type CardAction } from "./commentUi";
+import {
+  buildComposer,
+  buildCommentBody,
+  buildCommentCard,
+  buildCollapseToggle,
+  buildSuggestionCard,
+  type CardAction,
+} from "./commentUi";
 import { smoothScrollIntoView } from "./scrollIntoView";
 import type {
   SidebarComment,
@@ -90,11 +97,11 @@ const SHELL = `<header id="threads-header">
       <span class="mc-menu-wrap">
         <button id="overflow-menu-btn" type="button" class="mc-icon-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="overflow-menu" aria-label="More actions" title="More actions">⋯</button>
         <div id="overflow-menu" class="mc-menu" role="menu" aria-label="More actions" hidden>
-          <button id="collapse-all" type="button" role="menuitem" title="Collapse / expand every comment thread and suggestion">Collapse all</button>
-          <button id="hint-toggle" type="button" role="menuitemcheckbox" aria-checked="false" title="Show keyboard shortcuts">Keyboard shortcuts</button>
+          <button id="collapse-all" type="button" role="menuitem" class="mc-menuitem" title="Collapse / expand every comment thread and suggestion">Collapse all</button>
+          <button id="hint-toggle" type="button" role="menuitemcheckbox" class="mc-menuitem" aria-checked="false" title="Show keyboard shortcuts">Keyboard shortcuts</button>
           <hr role="separator">
-          <button id="remove-resolved" type="button" role="menuitem" class="danger" hidden title="Delete every resolved comment from this file. Open comments and pending suggestions are kept.">Remove resolved</button>
-          <button id="finalize-doc" type="button" role="menuitem" class="danger" hidden title="Remove ALL review data — every comment, marker, and pending suggestion — leaving clean markdown ready to commit.">Remove all review data</button>
+          <button id="remove-resolved" type="button" role="menuitem" class="mc-menuitem danger" hidden title="Delete every resolved comment from this file. Open comments and pending suggestions are kept.">Remove resolved</button>
+          <button id="finalize-doc" type="button" role="menuitem" class="mc-menuitem danger" hidden title="Remove ALL review data — every comment, marker, and pending suggestion — leaving clean markdown ready to commit.">Remove all review data</button>
         </div>
       </span>
     </span>
@@ -107,12 +114,12 @@ const SHELL = `<header id="threads-header">
   </div>
   <div id="claude-summary" hidden>
     <span id="claude-summary-text" role="status" aria-live="polite"></span>
-    <button id="claude-next" class="btn-link" title="Jump to the next unread thread from Claude.">Next</button>
+    <button id="claude-next" class="mc-btn mc-btn--link" title="Jump to the next unread thread from Claude.">Next</button>
   </div>
   <div id="keys-hint"><span id="keys-hint-text">n / p to move between threads · r reply · e resolve · o open in editor</span><button id="keys-hint-dismiss" type="button" class="mc-icon-btn" aria-label="Hide shortcuts">×</button></div>
   <div id="skill-warning" class="skill-warning" hidden>
     <span id="skill-warning-text"></span>
-    <button id="skill-install" class="btn-link"></button>
+    <button id="skill-install" class="mc-btn mc-btn--link"></button>
   </div>
 </header>
 <div id="threads-list" role="feed"><p class="mc-loading">Loading…</p></div>
@@ -121,8 +128,8 @@ const SHELL = `<header id="threads-header">
   <span class="mc-menu-wrap">
     <button id="send-options-btn" type="button" class="mc-btn mc-btn--primary" aria-haspopup="menu" aria-expanded="false" aria-controls="send-options-menu" aria-label="Send options" title="Send options"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5l4 4 4-4"/></svg></button>
     <div id="send-options-menu" class="mc-menu mc-menu--up" role="menu" aria-label="Send options" hidden>
-      <button id="suggest-mode-toggle" type="button" role="menuitemcheckbox" aria-checked="false" title="When on, Send to Claude asks Claude to propose edits as suggestions you accept or reject.">Ask for suggestions instead of edits</button>
-      <button id="copy-prompt" type="button" role="menuitem" title="Copy the prompt to your clipboard.">Copy prompt instead</button>
+      <button id="suggest-mode-toggle" type="button" role="menuitemcheckbox" class="mc-menuitem" aria-checked="false" title="When on, Send to Claude asks Claude to propose edits as suggestions you accept or reject.">Ask for suggestions instead of edits</button>
+      <button id="copy-prompt" type="button" role="menuitem" class="mc-menuitem" title="Copy the prompt to your clipboard.">Copy prompt instead</button>
     </div>
   </span>
 </footer>`;
@@ -242,7 +249,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     const btn = document.createElement("button");
     btn.type = "button";
     btn.setAttribute("role", "menuitem");
-    if (opts.danger) btn.classList.add("danger");
+    btn.className = opts.danger ? "mc-menuitem danger" : "mc-menuitem";
     btn.textContent = label;
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -307,11 +314,10 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
         ? cardFor(card.id)
         : dom.threadsList.querySelector<HTMLElement>(`[data-suggestion-id="${cssEscape(card.id)}"]`);
     el?.classList.toggle("collapsed", collapsed);
+    // The glyph itself never changes — it's one chevron SVG that CSS rotates
+    // off `aria-expanded` — so a repaint only has that attribute to touch.
     const chevron = el?.querySelector<HTMLButtonElement>(".thread-collapse");
-    if (chevron) {
-      chevron.textContent = collapsed ? "▸" : "▾";
-      chevron.setAttribute("aria-expanded", String(!collapsed));
-    }
+    chevron?.setAttribute("aria-expanded", String(!collapsed));
     updateCollapseAllLabel();
   }
 
@@ -713,7 +719,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     }
     if (chunk.moreLabel) {
       const more = document.createElement("button");
-      more.className = "btn-ghost mc-show-more";
+      more.className = "mc-btn mc-btn--quiet mc-show-more";
       more.textContent = chunk.moreLabel;
       more.addEventListener("click", () => {
         renderedThreadLimit += THREAD_RENDER_CHUNK;
@@ -752,7 +758,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     const row = document.createElement("div");
     row.className = "accept-all-row";
     const btn = document.createElement("button");
-    btn.className = "btn-ghost";
+    btn.className = "mc-btn mc-btn--quiet";
     btn.textContent = acceptAllArmed ? `Accept all ${count}? Click again` : `Accept all ${count}`;
     if (acceptAllArmed) btn.classList.add("armed");
     btn.title = "Apply every pending suggestion in this file. One undo step.";
@@ -847,16 +853,15 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     head.className = "thread-head";
     const headRow = document.createElement("div");
     headRow.className = "thread-head-row";
-    const chevron = document.createElement("button");
-    chevron.type = "button";
-    chevron.className = "thread-collapse";
-    chevron.textContent = isCollapsedCard(cardKey) ? "▸" : "▾";
-    chevron.title = "Collapse / expand this thread";
-    chevron.setAttribute("aria-label", "Collapse or expand this comment thread");
-    chevron.setAttribute("aria-expanded", String(!isCollapsedCard(cardKey)));
-    chevron.addEventListener("click", (e) => {
-      e.stopPropagation();
-      setCardCollapsed(cardKey, !isCollapsedCard(cardKey));
+    const chevron = buildCollapseToggle({
+      extraClass: "thread-collapse",
+      ariaLabel: "Collapse or expand this comment thread",
+      title: "Collapse / expand this thread",
+      expanded: !isCollapsedCard(cardKey),
+      onToggle: (e) => {
+        e.stopPropagation();
+        setCardCollapsed(cardKey, !isCollapsedCard(cardKey));
+      },
     });
     headRow.appendChild(chevron);
     const quote = document.createElement("blockquote");
@@ -919,7 +924,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     const replyOpenNow = replyShouldBeOpen(t.id);
     const replyToggleBtn = document.createElement("button");
     replyToggleBtn.type = "button";
-    replyToggleBtn.className = "btn-ghost thread-reply-toggle";
+    replyToggleBtn.className = "mc-btn mc-btn--quiet thread-reply-toggle";
     replyToggleBtn.textContent = "Reply";
     replyToggleBtn.setAttribute("aria-expanded", String(replyOpenNow));
     replyToggleBtn.addEventListener("click", (e) => {
@@ -928,7 +933,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     });
 
     const resolveBtn = document.createElement("button");
-    resolveBtn.className = "btn-ghost";
+    resolveBtn.className = "mc-btn mc-btn--quiet";
     resolveBtn.textContent = t.status === "resolved" ? "Reopen" : "Resolve";
     resolveBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -939,8 +944,8 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     menuWrap.className = "mc-menu-wrap";
     const menuBtn = document.createElement("button");
     menuBtn.type = "button";
-    menuBtn.className = "btn-ghost thread-menu-btn";
-    menuBtn.textContent = "…";
+    menuBtn.className = "mc-icon-btn thread-menu-btn";
+    menuBtn.textContent = "⋯";
     menuBtn.title = "More thread actions";
     menuBtn.setAttribute("aria-haspopup", "menu");
     menuBtn.setAttribute("aria-expanded", "false");

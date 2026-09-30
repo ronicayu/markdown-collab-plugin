@@ -78,7 +78,7 @@ export function buildComposer(opts: ComposerOptions): ComposerHandle {
 
   const cancel = opts.onCancel ? document.createElement("button") : null;
   if (cancel) {
-    cancel.className = "mc-btn mc-btn--ghost";
+    cancel.className = "mc-btn mc-btn--quiet";
     cancel.textContent = opts.cancelLabel ?? "Cancel";
     cancel.addEventListener("click", () => opts.onCancel?.());
   }
@@ -287,7 +287,7 @@ export function buildCommentCard(opts: CommentCardOptions): HTMLElement {
     row.className = "mc-card__actions";
     for (const a of opts.actions) {
       const btn = document.createElement("button");
-      btn.className = a.variant === "danger" ? "mc-btn mc-btn--link mc-btn--danger" : "mc-btn mc-btn--link";
+      btn.className = a.variant === "danger" ? "mc-btn mc-btn--quiet mc-btn--danger" : "mc-btn mc-btn--quiet";
       btn.textContent = a.label;
       if (a.title) btn.title = a.title;
       btn.addEventListener("click", (e) => {
@@ -376,16 +376,15 @@ export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
     // fold the thread card does, so the two read as one system.
     const headRow = document.createElement("div");
     headRow.className = "mc-suggestion__head";
-    const chevron = document.createElement("button");
-    chevron.type = "button";
-    chevron.className = "mc-suggestion__collapse thread-collapse";
-    chevron.title = "Collapse / expand this suggestion";
-    chevron.setAttribute("aria-label", "Collapse or expand this suggestion");
-    chevron.setAttribute("aria-expanded", String(!opts.collapsed));
-    chevron.textContent = opts.collapsed ? "▸" : "▾";
-    chevron.addEventListener("click", (e) => {
-      e.stopPropagation();
-      opts.onToggleCollapse!();
+    const chevron = buildCollapseToggle({
+      extraClass: "mc-suggestion__collapse thread-collapse",
+      ariaLabel: "Collapse or expand this suggestion",
+      title: "Collapse / expand this suggestion",
+      expanded: !opts.collapsed,
+      onToggle: (e) => {
+        e.stopPropagation();
+        opts.onToggleCollapse!();
+      },
     });
     headRow.appendChild(chevron);
     headRow.appendChild(meta);
@@ -432,7 +431,7 @@ export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
     opts.onAccept();
   });
   const reject = document.createElement("button");
-  reject.className = "mc-btn mc-btn--ghost";
+  reject.className = "mc-btn mc-btn--quiet";
   reject.textContent = "Reject";
   reject.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -563,6 +562,42 @@ function diffRow(kind: "del" | "ins", text: string, pre: number, suf: number): H
   }
   if (suffix) row.appendChild(document.createTextNode(suffix));
   return row;
+}
+
+/**
+ * Chevron markup for every card's collapse toggle — points down; CSS
+ * (comments.css) rotates it −90° when the button's `aria-expanded` is
+ * false, so the caller only has to keep that attribute current, the same
+ * contract the old ▾/▸ text glyph had.
+ */
+const COLLAPSE_CHEVRON_SVG =
+  '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5l4 4 4-4"/></svg>';
+
+/**
+ * Build the collapse-toggle button used by a thread card (threadSidebar.ts)
+ * and this module's own suggestion card — one shared icon and
+ * `.mc-icon-btn`/`.mc-icon-btn--sm` styling (comments.css), so every card's
+ * fold control reads as the same control regardless of which webview mounts
+ * it (round-8 P1 → phase 2 of the chrome redesign).
+ */
+export function buildCollapseToggle(opts: {
+  /** Extra class(es) the caller still keys its own CSS/selectors off (e.g. "thread-collapse"). */
+  extraClass: string;
+  ariaLabel: string;
+  title: string;
+  expanded: boolean;
+  onToggle(e: MouseEvent): void;
+}): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = `mc-icon-btn mc-icon-btn--sm ${opts.extraClass}`;
+  btn.title = opts.title;
+  btn.setAttribute("aria-label", opts.ariaLabel);
+  btn.setAttribute("aria-expanded", String(opts.expanded));
+  btn.innerHTML = COLLAPSE_CHEVRON_SVG;
+  btn.addEventListener("click", opts.onToggle);
+  return btn;
 }
 
 /**

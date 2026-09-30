@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.35.20 — 2026-09-30 (GitHub only)
+
+### Changed: the buttons inside comment cards
+
+0.35.19 restyled the sidebar's header and footer and left every button
+inside a card in the old style. Phase 2 of
+`docs/sidebar-chrome-redesign.md`:
+
+- **Reply, Resolve / Reopen, Reject, Edit and Cancel are quiet text
+  buttons.** Delete stays red. Accept, and a composer's submit, are the only
+  primary buttons inside a card.
+- **The per-thread "…" is an icon button** at the right end of the action
+  row.
+- **Collapse is one chevron icon that rotates,** on threads and suggestions,
+  instead of a text triangle.
+- "Accept all N", "Show N more" and the menu items use the shared classes
+  too. The sidebar's generic `button` rule, which painted any class-less
+  button primary blue, is gone, and a test asserts the sidebar renders no
+  button without a class.
+- The restyle is in the shared card module, so the PR review view's draft
+  Edit / Delete buttons pick it up. The rest of that view is a separate
+  redesign, not in this release.
+
+### Fixed: switching to Reading right after typing showed an error
+
+In Editing mode, switching to Reading within about 200 ms of a keystroke
+raised "Context editorView not found" in the view, which 0.35.18 then
+reported as a failure notice. The edit itself was saved. The editor
+library's change listener keeps a pending timer after the editor is
+destroyed; the view now unsubscribes before tearing the editor down.
+Reproduced in 0.35.18 and 0.35.19. The test that covers it only failed on a busy machine
+(16 of 40 runs); it now waits past the timer and passes 40 of 40 under load.
+
+### Tests
+
+- Three new cases in `liveSidebarChrome.spec.ts`; `liveSidebar` and
+  `modeToggle` migrated. Playwright 347; vitest 129 files / 2,391 tests.
+
 ## 0.35.19 — 2026-09-30 (GitHub only)
 
 ### Changed: the comment sidebar's chrome

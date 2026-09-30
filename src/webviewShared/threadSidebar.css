@@ -334,18 +334,13 @@
   flex: 1;
   min-width: 0;
 }
+/* Sizing/colour/hover/focus all come from `.mc-icon-btn`/`.mc-icon-btn--sm`
+   (comments.css) now; only the flex-item behaviour inside `.thread-head-row`
+   is specific to this context. */
 :where(.mc-thread-sidebar) .thread-collapse {
   flex: 0 0 auto;
-  background: none;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 0 2px;
   margin-top: 1px;
-  font-size: 10px;
-  line-height: 1.4;
 }
-:where(.mc-thread-sidebar) .thread-collapse:hover { color: var(--fg); }
 :where(.mc-thread-sidebar) .thread-quote {
   margin: 0;
   padding: 0 0 0 8px;
@@ -357,9 +352,17 @@
 }
 :where(.mc-thread-sidebar) .thread-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  align-items: center;
+  gap: 2px;
   padding-left: 8px;
+}
+/* The "…" menu trigger is the row's rightmost control (phase 2); wrapped in
+   `.mc-menu-wrap` for its popover, so the auto margin goes on the wrapper —
+   the flex item `.thread-actions` actually lays out — not the button inside
+   it. Scoped to this row so the header's and footer's own `.mc-menu-wrap`
+   (already positioned by their own flex context) aren't affected. */
+:where(.mc-thread-sidebar) .thread-actions .mc-menu-wrap {
+  margin-left: auto;
 }
 
 :where(.mc-thread-sidebar) .badge {
@@ -398,24 +401,12 @@
 }
 :where(.mc-thread-sidebar) .mdc-composer-slot:empty { display: none; }
 
-:where(.mc-thread-sidebar) button {
-  font: inherit;
-  font-size: 12px;
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  background: var(--vscode-button-background, #0e639c);
-  color: var(--vscode-button-foreground, #fff);
-  border-radius: 3px;
-  cursor: pointer;
-}
-:where(.mc-thread-sidebar) button:hover:not(:disabled) { filter: brightness(1.1); }
-:where(.mc-thread-sidebar) button:disabled { opacity: 0.45; cursor: not-allowed; }
-:where(.mc-thread-sidebar) button.btn-ghost {
-  background: transparent;
-  color: var(--fg);
-}
-:where(.mc-thread-sidebar) button.btn-ghost.danger { color: var(--mc-danger, #e08080); }
-:where(.mc-thread-sidebar) button.mc-show-more {
+/* Every button the sidebar creates now carries an explicit `mc-*` class
+   (comments.css: `.mc-btn`/`.mc-btn--quiet`/`.mc-icon-btn`), so there's no
+   bare `button` rule left to paint a class-less button primary blue. The one
+   thing still worth re-expressing on the new classes is `mc-show-more`'s
+   full-width dashed look, which `.mc-btn--quiet` alone doesn't give it. */
+:where(.mc-thread-sidebar) .mc-show-more {
   display: block;
   width: 100%;
   margin: 8px 0 4px;
@@ -423,15 +414,6 @@
   border: 1px dashed var(--border, rgba(128, 128, 128, 0.4));
   border-radius: 4px;
 }
-:where(.mc-thread-sidebar) button.btn-link {
-  background: transparent;
-  border: none;
-  padding: 0;
-  font-size: 11px;
-  color: var(--accent);
-  cursor: pointer;
-}
-:where(.mc-thread-sidebar) button.btn-link.danger { color: var(--mc-danger, #e08080); }
 
 /* "Accept all N" sits above the suggestion cards, deliberately quiet. */
 :where(.mc-thread-sidebar) .accept-all-row {
