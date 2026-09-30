@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.35.19 — 2026-09-30 (GitHub only)
+
+### Changed: the comment sidebar's chrome
+
+The live editor's sidebar header was five rows of controls before the first
+comment, mixed four button styles, and held two controls that act on the
+document rather than the comments. Redesigned per
+`docs/sidebar-chrome-redesign.md`:
+
+- **Header is two rows.** Title row: `Comments`, `+ Add comment`, `⋯`. The
+  filter is a row of tabs that carry their counts (Open 2 · All 2 ·
+  Resolved 0). Both the tabs and the counts are hidden when there are no
+  threads.
+- **Reading/Editing and Outline moved to a document toolbar** above the
+  editor. The mode can now be switched while the sidebar is hidden. The
+  floating collapse arrow is gone; a comments toggle in the toolbar hides
+  and shows the sidebar and carries the open count while it is hidden.
+- **Send is a footer split button that names what it sends:** "Send 2
+  comments to Claude". Suggest mode and Copy prompt moved into its ▾ menu,
+  next to the action they modify; with suggest mode on the label ends "as
+  suggestions", so the setting is never on silently. The footer is hidden
+  when nothing is open to send.
+- **The keyboard-shortcut hint** shows on first run only, with an ×.
+  "Keyboard shortcuts" in the ⋯ menu brings it back. It stays hidden until
+  the first thread exists, since the keys act on threads.
+- **One control style** for the toolbar and the header — ghost icon button,
+  segmented control, primary button — in a new `controls.css`. Dead sidebar
+  and host CSS removed.
+- Unchanged: every element id, every sidebar-to-host message, and the
+  persisted filter/collapse/hint state. No extension-host changes. The
+  classic review view and the PR review webview keep their own chrome.
+
+### Tests
+
+- New `liveSidebarChrome.spec.ts`, 20 cases, including a guard that the
+  header stays at most 80 px tall with threads showing. `liveSidebarToolbar`,
+  `liveSidebar`, `modeToggle` and `liveEditorDiff` migrated to the new DOM.
+  Playwright 344 (was 325); vitest 129 files / 2,391 tests.
+
 ## 0.35.18 — 2026-09-30 (GitHub only)
 
 A code review of everything since 0.35.15 — correctness, silent failures,

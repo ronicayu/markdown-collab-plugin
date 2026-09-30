@@ -185,8 +185,12 @@ test.describe("change navigation", () => {
   });
 
   test("nav stays visible after scrolling", async ({ page }) => {
-    // A document tall enough to actually scroll .mdc-editor-pane — the fixed
-    // three-paragraph DOC above doesn't overflow the viewport.
+    // A document tall enough to actually scroll .mdc-editor-scroll — the fixed
+    // three-paragraph DOC above doesn't overflow the viewport. (The scrolling
+    // element used to be `.mdc-editor-pane` itself; the redesign split the
+    // pane's padding and scrolling into this inner wrapper so the document
+    // toolbar above it can span the pane's full width and stay put —
+    // docs/sidebar-chrome-redesign.md.)
     const longDoc =
       "# Title\n\n" + Array.from({ length: 40 }, (_, i) => `Paragraph ${i}.`).join("\n\n") + "\n";
     await bootLiveEditor(page, {
@@ -195,7 +199,7 @@ test.describe("change navigation", () => {
       diff: { addedRanges: [{ start: 3, end: 3 }], removed: [], isNew: false },
     });
     await page.evaluate(() => {
-      const pane = document.querySelector(".mdc-editor-pane")!;
+      const pane = document.querySelector(".mdc-editor-scroll")!;
       pane.scrollTop = pane.scrollHeight;
     });
     const toolbar = page.locator("#mdc-diff-toolbar");

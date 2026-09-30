@@ -42,6 +42,26 @@ export function threadCountLabel(threads: ListThread[]): string {
 }
 
 /**
+ * Per-tab counts for the live editor's filter row (sidebar-chrome-redesign):
+ * each tab reads its own count instead of one combined header line.
+ */
+export interface FilterCounts {
+  open: number;
+  all: number;
+  resolved: number;
+}
+
+export function filterCounts(threads: ListThread[]): FilterCounts {
+  let open = 0;
+  let resolved = 0;
+  for (const t of threads) {
+    if (t.status === "open") open++;
+    else resolved++;
+  }
+  return { open, all: threads.length, resolved };
+}
+
+/**
  * The live editor's filter-button label, which doubles as its counter: it
  * names the filter's effect when filtering, and the counts when not.
  */

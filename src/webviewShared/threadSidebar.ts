@@ -15,6 +15,7 @@
 // highlight, stepping change stripes — belongs to the host, via callbacks.
 
 import "./threadSidebar.css";
+import "./controls.css";
 import { isAgentComment } from "../agentIdentity";
 import { isClaudeUnread } from "../inlineComments/claudeUnread";
 import { isNavKeyContext } from "./diffNav";
@@ -25,11 +26,11 @@ import {
   claudeSummary,
   collapseKey,
   emptyState,
+  filterCounts,
   filterThreads,
   initialCollapsed,
   nextCollapseAllAction,
   nextUnreadThreadId,
-  threadCountLabel,
   type CollapsibleCard,
   type EmptyState,
   type ThreadFilter,
@@ -59,7 +60,7 @@ export interface ThreadSidebarHandle {
   /** The sidebar root: header, then the thread list. */
   el: HTMLElement;
   headerEl: HTMLElement;
-  /** A slot in the title row for the host's own buttons (outline, add comment). */
+  /** A slot in the title row for the host's own "+ Add comment" button. */
   titleActionsEl: HTMLElement;
   listEl: HTMLElement;
   render(state: SidebarState): void;
@@ -85,51 +86,46 @@ const THREAD_FILTERS: readonly ThreadFilter[] = ["open", "all", "resolved", "cla
 const SHELL = `<header id="threads-header">
   <div class="title-row">
     <h2>Comments</h2>
-    <span id="thread-count"></span>
-    <span class="mc-title-actions"></span>
+    <span class="mc-title-actions">
+      <span class="mc-menu-wrap">
+        <button id="overflow-menu-btn" type="button" class="mc-icon-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="overflow-menu" aria-label="More actions" title="More actions">⋯</button>
+        <div id="overflow-menu" class="mc-menu" role="menu" aria-label="More actions" hidden>
+          <button id="collapse-all" type="button" role="menuitem" title="Collapse / expand every comment thread and suggestion">Collapse all</button>
+          <button id="hint-toggle" type="button" role="menuitemcheckbox" aria-checked="false" title="Show keyboard shortcuts">Keyboard shortcuts</button>
+          <hr role="separator">
+          <button id="remove-resolved" type="button" role="menuitem" class="danger" hidden title="Delete every resolved comment from this file. Open comments and pending suggestions are kept.">Remove resolved</button>
+          <button id="finalize-doc" type="button" role="menuitem" class="danger" hidden title="Remove ALL review data — every comment, marker, and pending suggestion — leaving clean markdown ready to commit.">Remove all review data</button>
+        </div>
+      </span>
+    </span>
+  </div>
+  <div class="filter-row" role="radiogroup" aria-label="Filter comment threads">
+    <label class="segment"><input type="radio" name="filter" value="open" checked><span>Open <span id="filter-count-open" class="count"></span></span></label>
+    <label class="segment"><input type="radio" name="filter" value="all"><span>All <span id="filter-count-all" class="count"></span></span></label>
+    <label class="segment"><input type="radio" name="filter" value="resolved"><span>Resolved <span id="filter-count-resolved" class="count"></span></span></label>
+    <label id="filter-claude-label" class="segment" hidden><input type="radio" name="filter" value="claude-unread"><span id="filter-claude-label-text">New from Claude</span></label>
   </div>
   <div id="claude-summary" hidden>
     <span id="claude-summary-text" role="status" aria-live="polite"></span>
     <button id="claude-next" class="btn-link" title="Jump to the next unread thread from Claude.">Next</button>
   </div>
-  <div class="filter-row" role="radiogroup" aria-label="Filter comment threads">
-    <label class="segment"><input type="radio" name="filter" value="open" checked><span>Open</span></label>
-    <label class="segment"><input type="radio" name="filter" value="all"><span>All</span></label>
-    <label class="segment"><input type="radio" name="filter" value="resolved"><span>Resolved</span></label>
-    <label id="filter-claude-label" class="segment" hidden><input type="radio" name="filter" value="claude-unread"><span id="filter-claude-label-text">New from Claude</span></label>
-  </div>
-  <div class="actions-row">
-    <button id="send-to-claude" class="mc-btn mc-btn--primary" title="Send the prompt to a running Claude terminal (or your configured send mode).">Send to Claude</button>
-    <span class="switch-row">
-      <label id="suggest-mode-label" for="suggest-mode-toggle">Suggest mode</label>
-      <button id="suggest-mode-toggle" type="button" class="switch" role="switch" aria-checked="false" aria-labelledby="suggest-mode-label" title="When on, Send to Claude asks Claude to propose edits as suggestions you accept or reject."></button>
-    </span>
-    <span class="switch-row">
-      <div id="edit-mode-toggle" class="mode-toggle" role="radiogroup" aria-label="Editing mode" data-mode="read" title="Reading is read-only — only comments change the file. Editing lets you edit the text in place.">
-        <label class="segment"><input type="radio" name="edit-mode" value="read" checked><span>Reading</span></label>
-        <label class="segment"><input type="radio" name="edit-mode" value="edit"><span>Editing</span></label>
-      </div>
-    </span>
-    <span class="actions-end">
-      <span class="mc-menu-wrap">
-        <button id="overflow-menu-btn" type="button" class="btn-ghost" aria-haspopup="menu" aria-expanded="false" aria-controls="overflow-menu" aria-label="More actions" title="More actions">…</button>
-        <div id="overflow-menu" class="mc-menu" role="menu" aria-label="More actions" hidden>
-          <button id="copy-prompt" type="button" role="menuitem" title="Copy the prompt to your clipboard.">Copy prompt</button>
-          <button id="collapse-all" type="button" role="menuitem" title="Collapse / expand every comment thread and suggestion">Collapse all</button>
-          <button id="remove-resolved" type="button" role="menuitem" class="danger" hidden title="Delete every resolved comment from this file. Open comments and pending suggestions are kept.">Remove resolved</button>
-          <button id="finalize-doc" type="button" role="menuitem" class="danger" hidden title="Remove ALL review data — every comment, marker, and pending suggestion — leaving clean markdown ready to commit.">Remove all review data</button>
-        </div>
-      </span>
-      <button id="hint-toggle" class="btn-link" title="Show keyboard shortcuts" aria-pressed="false">?</button>
-    </span>
-  </div>
-  <div id="keys-hint">n / p to move between threads · r reply · e resolve · o open in editor</div>
+  <div id="keys-hint"><span id="keys-hint-text">n / p to move between threads · r reply · e resolve · o open in editor</span><button id="keys-hint-dismiss" type="button" class="mc-icon-btn" aria-label="Hide shortcuts">×</button></div>
   <div id="skill-warning" class="skill-warning" hidden>
     <span id="skill-warning-text"></span>
     <button id="skill-install" class="btn-link"></button>
   </div>
 </header>
-<div id="threads-list" role="feed"><p class="mc-loading">Loading…</p></div>`;
+<div id="threads-list" role="feed"><p class="mc-loading">Loading…</p></div>
+<footer class="mc-sidebar-footer" hidden>
+  <button id="send-to-claude" class="mc-btn mc-btn--primary" title="Send the prompt to a running Claude terminal (or your configured send mode).">Send to Claude</button>
+  <span class="mc-menu-wrap">
+    <button id="send-options-btn" type="button" class="mc-btn mc-btn--primary" aria-haspopup="menu" aria-expanded="false" aria-controls="send-options-menu" aria-label="Send options" title="Send options"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5l4 4 4-4"/></svg></button>
+    <div id="send-options-menu" class="mc-menu mc-menu--up" role="menu" aria-label="Send options" hidden>
+      <button id="suggest-mode-toggle" type="button" role="menuitemcheckbox" aria-checked="false" title="When on, Send to Claude asks Claude to propose edits as suggestions you accept or reject.">Ask for suggestions instead of edits</button>
+      <button id="copy-prompt" type="button" role="menuitem" title="Copy the prompt to your clipboard.">Copy prompt instead</button>
+    </div>
+  </span>
+</footer>`;
 
 /**
  * Build the sidebar. Call once: it installs document-level listeners (the
@@ -144,14 +140,18 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   const dom = {
     header: byId<HTMLElement>("threads-header"),
     titleActions: root.querySelector<HTMLElement>(".mc-title-actions")!,
-    threadCount: byId<HTMLElement>("thread-count"),
+    footer: root.querySelector<HTMLElement>(".mc-sidebar-footer")!,
+    filterRow: root.querySelector<HTMLElement>(".filter-row")!,
+    filterCountOpen: byId<HTMLElement>("filter-count-open"),
+    filterCountAll: byId<HTMLElement>("filter-count-all"),
+    filterCountResolved: byId<HTMLElement>("filter-count-resolved"),
     threadsList: byId<HTMLElement>("threads-list"),
     filterRadios: root.querySelectorAll<HTMLInputElement>('input[name="filter"]'),
     sendToClaude: byId<HTMLButtonElement>("send-to-claude"),
+    sendOptionsBtn: byId<HTMLButtonElement>("send-options-btn"),
+    sendOptionsMenu: byId<HTMLElement>("send-options-menu"),
     copyPrompt: byId<HTMLButtonElement>("copy-prompt"),
     suggestModeToggle: byId<HTMLButtonElement>("suggest-mode-toggle"),
-    editModeGroup: byId<HTMLElement>("edit-mode-toggle"),
-    editModeRadios: root.querySelectorAll<HTMLInputElement>('input[name="edit-mode"]'),
     removeResolved: byId<HTMLButtonElement>("remove-resolved"),
     finalizeDoc: byId<HTMLButtonElement>("finalize-doc"),
     skillWarning: byId<HTMLElement>("skill-warning"),
@@ -167,6 +167,8 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     overflowMenu: byId<HTMLElement>("overflow-menu"),
     hintToggle: byId<HTMLButtonElement>("hint-toggle"),
     keysHint: byId<HTMLElement>("keys-hint"),
+    keysHintText: byId<HTMLElement>("keys-hint-text"),
+    keysHintDismiss: byId<HTMLButtonElement>("keys-hint-dismiss"),
   };
 
   // Every preference goes through one merge, so a key another part of the
@@ -227,6 +229,12 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   dom.overflowMenuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     toggleMenuAt(dom.overflowMenuBtn, dom.overflowMenu);
+  });
+  // Bottom-anchored (opens upward) but the same trigger/panel pair and the
+  // same one-open-at-a-time tracking as the "…" menu above.
+  dom.sendOptionsBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleMenuAt(dom.sendOptionsBtn, dom.sendOptionsMenu);
   });
 
   /** One `role="menuitem"` button for a "…" menu — the toolbar's or a card's. */
@@ -320,25 +328,20 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   // --- Toolbar -------------------------------------------------------------------
 
   dom.sendToClaude.addEventListener("click", () => host.post({ type: "send-to-claude" }));
-  // The rest of the overflow menu's items close it after each click: every one
-  // of them is a one-shot action, not a toggle.
+  // Every item in the send-options and "…" menus closes it after each click:
+  // even the two menuitemcheckbox toggles (suggest mode, the keys hint) are
+  // one action per click here, not a multi-select list to leave open.
   dom.copyPrompt.addEventListener("click", () => {
     host.post({ type: "copy-prompt" });
     closeOpenMenu(false);
   });
-  // The suggest-mode switch doesn't flip itself: the setting is the host's,
-  // and the switch only reflects what comes back — anything else would show
-  // "on" after a write that failed.
-  dom.suggestModeToggle.addEventListener("click", () => host.post({ type: "toggle-suggest-mode" }));
-  // The mode control is a native radiogroup (arrow keys move the selection for
-  // free), so a click or an arrow key checks a radio immediately; the next
-  // render still corrects it to whatever the host actually landed on, the way
-  // updateModeSegments below always repaints from `state.readOnly`.
-  dom.editModeRadios.forEach((r) =>
-    r.addEventListener("change", () => {
-      if (r.checked) host.post({ type: "set-read-only", readOnly: r.value === "read" });
-    }),
-  );
+  // The suggest-mode toggle doesn't flip itself: the setting is the host's,
+  // and it only reflects what comes back — anything else would show "on"
+  // after a write that failed.
+  dom.suggestModeToggle.addEventListener("click", () => {
+    host.post({ type: "toggle-suggest-mode" });
+    closeOpenMenu(false);
+  });
   // The host owns the confirm and the write for both bulk deletes: a webview
   // can't show a modal, and a two-click arm is too quiet for something that
   // removes many threads at once.
@@ -368,35 +371,38 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     if (nextId) focusThread(nextId);
   });
 
-  /**
-   * Repaint the Reading/Editing control from `readOnly`, the way
-   * `updateFilterSegments` repaints the filter row from `filter`: the radio's
-   * own `checked` and the segment's `.active` background both follow it, so a
-   * render always shows the mode the editor is actually in, even when it
-   * differs from whatever was last clicked.
-   */
-  function updateModeSegments(readOnly: boolean): void {
-    dom.editModeGroup.dataset.mode = readOnly ? "read" : "edit";
-    for (const r of dom.editModeRadios) {
-      r.checked = r.value === (readOnly ? "read" : "edit");
-      r.closest("label")?.classList.toggle("active", r.checked);
-    }
-  }
-
+  // `#edit-mode-toggle` itself lives in the document toolbar now (client.ts) —
+  // the sidebar no longer builds or repaints it. `state.readOnly` still
+  // arrives on every `render()` (SidebarState is unchanged), simply unused
+  // here.
   function updateSwitches(state: SidebarState): void {
     dom.suggestModeToggle.setAttribute("aria-checked", String(state.suggestMode));
-    dom.suggestModeToggle.classList.toggle("on", state.suggestMode);
-    updateModeSegments(state.readOnly);
+    // With the menu closed the only trace of suggest mode is the Send label
+    // ("…as suggestions", see updateFooter) and this title.
+    dom.sendOptionsBtn.title = state.suggestMode ? "Suggest mode is on" : "Send options";
   }
 
   /**
    * Put `agentName` wherever there's no per-thread agent to name instead: the
-   * Send button, its title, and the suggest-mode switch title.
+   * Send button's title and the suggest-mode item's title. The Send label
+   * itself is `updateFooter`'s (it also needs the open count).
    */
   function updateAgentUi(): void {
-    dom.sendToClaude.textContent = `Send to ${agentName}`;
     dom.sendToClaude.title = `Send the prompt to a running ${agentName} terminal (or your configured send mode).`;
     dom.suggestModeToggle.title = `When on, Send to ${agentName} asks ${agentName} to propose edits as suggestions you accept or reject.`;
+  }
+
+  /**
+   * The footer: hidden with nothing open to send (the empty-state card covers
+   * the no-threads-at-all case), otherwise the Send label named after the
+   * open count — what a send actually acts on.
+   */
+  function updateFooter(state: SidebarState): void {
+    const openCount = state.threads.filter((t) => t.status === "open").length;
+    dom.footer.hidden = openCount === 0;
+    const what = openCount === 1 ? "1 comment" : `${openCount} comments`;
+    // The label says what the click does, so suggest mode can't be on silently.
+    dom.sendToClaude.textContent = `Send ${what} to ${agentName}${state.suggestMode ? " as suggestions" : ""}`;
   }
 
   function setSkillStatus(status: SkillStatus | undefined): void {
@@ -443,10 +449,14 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   // Shown until n/p/r/e/o is first used, then hidden; "?" brings it back (and
   // hides it again) — a manual override on top of the first-use dismissal.
   let hintDismissed = saved().hintDismissed === true;
+  // n/p/r/e/o act on threads; with none there is nothing for the hint to
+  // explain, so it (and its menu item) wait for the first thread.
+  let hasThreads = false;
 
   function applyHintVisibility(): void {
-    dom.keysHint.hidden = hintDismissed;
-    dom.hintToggle.setAttribute("aria-pressed", String(!hintDismissed));
+    dom.keysHint.hidden = hintDismissed || !hasThreads;
+    dom.hintToggle.disabled = !hasThreads;
+    dom.hintToggle.setAttribute("aria-checked", String(!hintDismissed));
   }
   applyHintVisibility();
 
@@ -461,12 +471,19 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     hintDismissed = !hintDismissed;
     persist({ hintDismissed });
     applyHintVisibility();
+    closeOpenMenu(false);
+  });
+  // The inline "×" on the hint itself: same dismissal, no menu to close.
+  dom.keysHintDismiss.addEventListener("click", () => {
+    hintDismissed = true;
+    persist({ hintDismissed });
+    applyHintVisibility();
   });
 
   /** The hint names what n/p will actually do: step changes while stripes show, walk threads otherwise. */
   function updateKeysHint(): void {
     const target = stepChanges ? "changes" : "threads";
-    dom.keysHint.textContent = `n / p to move between ${target} · r reply · e resolve · o open in editor`;
+    dom.keysHintText.textContent = `n / p to move between ${target} · r reply · e resolve · o open in editor`;
   }
 
   // n/p walk the highlight through the filtered list (or step changes while the
@@ -641,9 +658,21 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     headlessAvailable = state.headlessAvailable;
     updateSwitches(state);
     updateAgentUi();
+    updateFooter(state);
     renderThreads(state);
     updateCollapseAllLabel();
     maybeScrollToNewReview(state);
+  }
+
+  /** Each tab's own count, and the whole row hidden when there's nothing to filter. */
+  function updateFilterCounts(threads: SidebarThread[]): void {
+    const counts = filterCounts(threads);
+    dom.filterCountOpen.textContent = String(counts.open);
+    dom.filterCountAll.textContent = String(counts.all);
+    dom.filterCountResolved.textContent = String(counts.resolved);
+    dom.filterRow.hidden = counts.all === 0;
+    hasThreads = counts.all > 0;
+    applyHintVisibility();
   }
 
   function renderThreads(state: SidebarState): void {
@@ -661,7 +690,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
 
     renderClaudeSummary(state);
     const filtered = filterThreads(state.threads, filter);
-    dom.threadCount.textContent = threadCountLabel(state.threads);
+    updateFilterCounts(state.threads);
     // Offered only when it would do something; its absence says "nothing to
     // clean up" more clearly than a disabled control would.
     const resolvedCount = state.threads.filter((t) => t.status === "resolved").length;
@@ -711,6 +740,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     hint.className = "mc-empty-state__hint";
     hint.textContent = state.hint;
     const action = document.createElement("button");
+    action.className = "mc-btn mc-btn--primary";
     action.textContent = state.action.label;
     action.addEventListener("click", () => host.post(state.action.message));
     card.append(headline, hint, action);

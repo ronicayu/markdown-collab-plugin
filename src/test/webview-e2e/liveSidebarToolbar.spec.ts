@@ -42,11 +42,12 @@ test.describe("with the review fixture, read-only", () => {
   });
 
   test("agentName from the host renames the Send button and its titles", async ({ page }) => {
-    await expect(page.locator("#send-to-claude")).toHaveText("Send to Claude");
+    // The fixture has 2 open threads (neither resolved) — "N comments", not "to Claude" alone.
+    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments to Claude");
     await expect(page.locator("#suggest-mode-toggle")).toHaveAttribute("title", /Claude/);
 
     await pushToWebview(page, { type: "sidecar-changed", ...liveSidecar(fixture.source, { agentName: "Codex" }) });
-    await expect(page.locator("#send-to-claude")).toHaveText("Send to Codex");
+    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments to Codex");
     await expect(page.locator("#send-to-claude")).toHaveAttribute("title", /Codex/);
     await expect(page.locator("#suggest-mode-toggle")).toHaveAttribute("title", /Codex/);
   });
@@ -70,21 +71,22 @@ test.describe("with the review fixture, read-only", () => {
     await expect(btn).toHaveAttribute("aria-expanded", "true");
   });
 
-  test("the overflow menu holds Copy prompt, Collapse all, and — only once resolved — Remove resolved", async ({ page }) => {
+  test("the overflow menu holds Collapse all, Keyboard shortcuts, and — only once resolved — Remove resolved", async ({ page }) => {
     await page.locator("#overflow-menu-btn").click();
     const menu = page.locator("#overflow-menu");
-    await expect(menu.getByRole("menuitem", { name: "Copy prompt" })).toBeVisible();
     await expect(menu.getByRole("menuitem", { name: "Collapse all" })).toBeVisible();
+    await expect(menu.getByRole("menuitemcheckbox", { name: "Keyboard shortcuts" })).toBeVisible();
     await expect(menu.locator("#remove-resolved")).toBeHidden();
     await expect(menu.locator("#finalize-doc")).toHaveText("Remove all review data");
     await expect(menu.locator("#finalize-doc")).toBeVisible();
   });
 
-  test("Copy prompt posts copy-prompt and closes the menu", async ({ page }) => {
-    await page.locator("#overflow-menu-btn").click();
-    await page.locator("#overflow-menu").getByRole("menuitem", { name: "Copy prompt" }).click();
+  test("Copy prompt instead posts copy-prompt and closes the send-options menu", async ({ page }) => {
+    // Moved from the "…" menu into Send's own options menu.
+    await page.locator("#send-options-btn").click();
+    await page.locator("#send-options-menu").getByRole("menuitem", { name: "Copy prompt instead" }).click();
     expect(await awaitPosted(page, "copy-prompt")).toEqual({ type: "copy-prompt" });
-    await expect(page.locator("#overflow-menu")).toBeHidden();
+    await expect(page.locator("#send-options-menu")).toBeHidden();
   });
 
   test("Collapse all folds every card kind, including the pending suggestion, then reads Expand all", async ({
@@ -198,16 +200,31 @@ test.describe("with the review fixture, read-only", () => {
       expect(state?.hintDismissed).toBe(true);
     });
 
-    test("the \"?\" button brings the hint back, and toggles it off again", async ({ page }) => {
+    test("the \"…\" menu's Keyboard shortcuts item brings the hint back, and toggles it off again", async ({ page }) => {
       await page.keyboard.press("e");
       await expect(page.locator("#keys-hint")).toBeHidden();
       const toggle = page.locator("#hint-toggle");
+      await expect(toggle).toHaveAttribute("role", "menuitemcheckbox");
+
+      await page.locator("#overflow-menu-btn").click();
       await toggle.click();
       await expect(page.locator("#keys-hint")).toBeVisible();
-      await expect(toggle).toHaveAttribute("aria-pressed", "true");
+      await expect(toggle).toHaveAttribute("aria-checked", "true");
+      // Every menu item closes the menu after its click, including this checkbox.
+      await expect(page.locator("#overflow-menu")).toBeHidden();
+
+      await page.locator("#overflow-menu-btn").click();
       await toggle.click();
       await expect(page.locator("#keys-hint")).toBeHidden();
-      await expect(toggle).toHaveAttribute("aria-pressed", "false");
+      await expect(toggle).toHaveAttribute("aria-checked", "false");
+    });
+
+    test("the inline × on the hint dismisses it and unchecks the menu item", async ({ page }) => {
+      await expect(page.locator("#keys-hint")).toBeVisible();
+      await page.locator("#keys-hint-dismiss").click();
+      await expect(page.locator("#keys-hint")).toBeHidden();
+      await page.locator("#overflow-menu-btn").click();
+      await expect(page.locator("#hint-toggle")).toHaveAttribute("aria-checked", "false");
     });
   });
 

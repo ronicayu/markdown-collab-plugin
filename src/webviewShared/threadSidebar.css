@@ -29,7 +29,7 @@
 :where(.mc-thread-sidebar) * { box-sizing: border-box; }
 
 :where(.mc-thread-sidebar) #threads-header {
-  padding: 12px 16px 8px;
+  padding: 10px 16px 6px;
   border-bottom: 1px solid var(--border);
 }
 :where(.mc-thread-sidebar) #threads-header .title-row {
@@ -37,50 +37,46 @@
   align-items: center;
   gap: 8px;
 }
-:where(.mc-thread-sidebar) #threads-header .title-row #thread-count { margin-left: auto; }
 :where(.mc-thread-sidebar) #threads-header h2 {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
 }
-:where(.mc-thread-sidebar) #thread-count {
-  font-size: 11px;
-  color: var(--muted);
-}
-/* The host's own title-row buttons (the live editor's outline and add-comment). */
+/* The host's own "+ Add comment" and the sidebar's own "…" menu trigger. */
 :where(.mc-thread-sidebar) .mc-title-actions {
+  margin-left: auto;
   display: inline-flex;
   gap: 4px;
 }
-:where(.mc-thread-sidebar) .mc-title-actions:empty { display: none; }
 
-/* --- Toolbar row 1: filter segmented control --------------------------------- */
+/* --- Filter tabs: text + underline, not a bordered segmented box ------------- */
 :where(.mc-thread-sidebar) .filter-row {
-  margin-top: 8px;
+  margin-top: 6px;
   display: flex;
-  gap: 2px;
+  gap: 14px;
   font-size: 12px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 2px;
-  width: fit-content;
-  max-width: 100%;
 }
+:where(.mc-thread-sidebar) .filter-row[hidden] { display: none; }
 :where(.mc-thread-sidebar) .filter-row .segment {
   position: relative;
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px 10px;
-  border-radius: 4px;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 0 6px;
   color: var(--muted);
   cursor: pointer;
   white-space: nowrap;
   user-select: none;
+  border-bottom: 2px solid transparent;
 }
 :where(.mc-thread-sidebar) .filter-row .segment.active {
-  background: var(--vscode-button-secondaryBackground, color-mix(in srgb, var(--accent) 22%, transparent));
   color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+:where(.mc-thread-sidebar) .filter-row .segment .count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
 }
 /* The radio stays in the DOM (native radiogroup semantics and arrow keys),
    invisible but covering the segment and stacked above its text, so it takes
@@ -99,104 +95,46 @@
 }
 :where(.mc-thread-sidebar) .filter-row .segment[hidden] { display: none; }
 
-/* --- Toolbar row 2: Send + switches + overflow menu -------------------------- */
-:where(.mc-thread-sidebar) .actions-row {
-  margin-top: 8px;
+/* --- Sidebar footer: Send + its options menu --------------------------------- */
+:where(.mc-thread-sidebar) .mc-sidebar-footer {
+  flex: 0 0 auto;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  align-items: stretch;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
 }
-:where(.mc-thread-sidebar) .actions-row #send-to-claude { font-size: 11px; padding: 4px 10px; }
-/* The "…" menu and "?" stay together at the row's end. With the mode control
-   the row is wider than the sidebar, and when it wraps they go to the right of
-   the second line — so the menu, which opens right-aligned under "…", never
-   runs off the sidebar's left edge. */
-:where(.mc-thread-sidebar) .actions-row .actions-end {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
+:where(.mc-thread-sidebar) .mc-sidebar-footer[hidden] { display: none; }
+/* One split button: Send fills the row, the chevron shares its colour and
+   height, a hairline divider between the two halves. */
+:where(.mc-thread-sidebar) .mc-sidebar-footer #send-to-claude {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: var(--mc-radius, 4px) 0 0 var(--mc-radius, 4px);
 }
-
-:where(.mc-thread-sidebar) .switch-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--muted);
-}
-:where(.mc-thread-sidebar) button.switch {
-  position: relative;
-  width: 30px;
-  height: 17px;
-  padding: 0;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--card-bg);
-  flex-shrink: 0;
-}
-:where(.mc-thread-sidebar) button.switch::before {
-  content: "";
-  position: absolute;
-  top: 1px;
-  left: 1px;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: var(--muted);
-  transition: transform 150ms ease, background 150ms ease;
-}
-:where(.mc-thread-sidebar) button.switch[aria-checked="true"] {
-  background: color-mix(in srgb, var(--accent) 35%, transparent);
-  border-color: var(--accent);
-}
-:where(.mc-thread-sidebar) button.switch[aria-checked="true"]::before {
-  transform: translateX(13px);
-  background: var(--accent);
-}
-@media (prefers-reduced-motion: reduce) {
-  :where(.mc-thread-sidebar) button.switch::before { transition: none; }
-}
-
-/* The Reading/Editing mode control: the same segmented look as the filter row
-   above, duplicated rather than shared so the two can drift independently.
-   Native radios under the hidden inputs give it arrow-key navigation for free. */
-:where(.mc-thread-sidebar) .mode-toggle {
-  display: inline-flex;
-  gap: 2px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 2px;
-  flex-shrink: 0;
-}
-:where(.mc-thread-sidebar) .mode-toggle .segment {
-  position: relative;
+:where(.mc-thread-sidebar) #send-options-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 4px 10px;
-  border-radius: 4px;
-  color: var(--muted);
-  cursor: pointer;
-  white-space: nowrap;
-  user-select: none;
+  width: 28px;
+  padding: 0;
+  border-radius: 0 var(--mc-radius, 4px) var(--mc-radius, 4px) 0;
+  border-left: 1px solid color-mix(in srgb, var(--vscode-button-foreground, #fff) 30%, transparent);
 }
-:where(.mc-thread-sidebar) .mode-toggle .segment.active {
-  background: var(--vscode-button-secondaryBackground, color-mix(in srgb, var(--accent) 22%, transparent));
-  color: var(--fg);
+:where(.mc-thread-sidebar) #send-options-btn svg { display: block; }
+:where(.mc-thread-sidebar) #send-options-btn[aria-expanded="true"] {
+  background: var(--vscode-button-hoverBackground, var(--accent));
 }
-:where(.mc-thread-sidebar) .mode-toggle .segment input {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  margin: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-:where(.mc-thread-sidebar) .mode-toggle .segment:has(input:focus-visible) {
-  outline: 2px solid var(--vscode-focusBorder, var(--accent));
-  outline-offset: 1px;
+/* Bottom-anchored (the footer sits at the sidebar's bottom edge), so its menu
+   opens upward — the only `.mc-menu` that does. Compound selector so this
+   beats the base `.mc-menu` rule (below) on specificity, not source order —
+   the two have equal specificity otherwise, and this file defines `.mc-menu`
+   itself later. */
+:where(.mc-thread-sidebar) .mc-menu.mc-menu--up {
+  top: auto;
+  bottom: calc(100% + 4px);
 }
 
 /* --- "…" overflow menus: the toolbar's and each thread card's ---------------- */
@@ -233,16 +171,36 @@
 :where(.mc-thread-sidebar) .mc-menu button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15)); filter: none; }
 :where(.mc-thread-sidebar) .mc-menu button.danger { color: var(--mc-danger, #e08080); }
 :where(.mc-thread-sidebar) .mc-menu button[hidden] { display: none; }
+:where(.mc-thread-sidebar) .mc-menu hr {
+  margin: 4px 2px;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+/* Keyboard shortcuts / suggest mode: a checkmark, not a switch, since both
+   live as ordinary items in a menu now. */
+:where(.mc-thread-sidebar) .mc-menu button[role="menuitemcheckbox"] {
+  position: relative;
+  padding-left: 26px;
+}
+:where(.mc-thread-sidebar) .mc-menu button[role="menuitemcheckbox"][aria-checked="true"]::before {
+  content: "✓";
+  position: absolute;
+  left: 8px;
+}
 
 /* One muted line naming the keys: shown until one of n/p/r/e/o is used, then
-   hidden; "?" brings it back. */
+   hidden; the "…" menu's "Keyboard shortcuts" item, or the inline "×", bring
+   it back / dismiss it again. */
 :where(.mc-thread-sidebar) #keys-hint {
   margin-top: 6px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   font-size: 11px;
   color: var(--muted);
 }
 :where(.mc-thread-sidebar) #keys-hint[hidden] { display: none; }
-:where(.mc-thread-sidebar) #hint-toggle[aria-pressed="true"] { color: var(--fg); }
+:where(.mc-thread-sidebar) #keys-hint-text { flex: 1; padding-top: 3px; }
 
 :where(.mc-thread-sidebar) .skill-warning {
   display: flex;
@@ -301,13 +259,11 @@
   margin: 0;
 }
 
-/* First-run empty state: a small card that teaches how to start a thread. */
+/* First-run empty state: no card, no border — the only thing in this region,
+   so it reads as a centred message rather than a boxed-in widget. */
 :where(.mc-thread-sidebar) .mc-empty-state {
-  margin: 16px 8px;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
+  margin: 48px 16px 16px;
+  text-align: center;
 }
 :where(.mc-thread-sidebar) .mc-empty-state__headline {
   font-size: 13px;
@@ -531,19 +487,7 @@ body.vscode-high-contrast :where(.mc-thread-sidebar) .filter-row .segment.active
 body.vscode-high-contrast-light :where(.mc-thread-sidebar) .filter-row .segment.active {
   outline: 1px solid var(--vscode-contrastActiveBorder, currentColor);
 }
-body.vscode-high-contrast :where(.mc-thread-sidebar) .mode-toggle,
-body.vscode-high-contrast-light :where(.mc-thread-sidebar) .mode-toggle {
-  outline: 1px solid var(--vscode-contrastBorder, currentColor);
-}
-body.vscode-high-contrast :where(.mc-thread-sidebar) .mode-toggle .segment.active,
-body.vscode-high-contrast-light :where(.mc-thread-sidebar) .mode-toggle .segment.active {
-  outline: 1px solid var(--vscode-contrastActiveBorder, currentColor);
-}
 body.vscode-high-contrast :where(.mc-thread-sidebar) .mc-menu,
 body.vscode-high-contrast-light :where(.mc-thread-sidebar) .mc-menu {
-  outline: 1px solid var(--vscode-contrastBorder, currentColor);
-}
-body.vscode-high-contrast :where(.mc-thread-sidebar) button.switch,
-body.vscode-high-contrast-light :where(.mc-thread-sidebar) button.switch {
   outline: 1px solid var(--vscode-contrastBorder, currentColor);
 }

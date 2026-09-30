@@ -6,6 +6,7 @@ import {
   collapseKey,
   emptyListMessage,
   emptyState,
+  filterCounts,
   filterThreads,
   initialCollapsed,
   matchesFilter,
@@ -85,6 +86,18 @@ describe("threadCountLabel", () => {
 
   it("reads sensibly with nothing to count", () => {
     expect(threadCountLabel([])).toBe("0 open · 0 total");
+  });
+});
+
+describe("filterCounts", () => {
+  it("counts each tab independently", () => {
+    expect(
+      filterCounts([thread("a"), thread("b"), thread("c", { status: "resolved" })]),
+    ).toEqual({ open: 2, all: 3, resolved: 1 });
+  });
+
+  it("reads sensibly with nothing to count", () => {
+    expect(filterCounts([])).toEqual({ open: 0, all: 0, resolved: 0 });
   });
 });
 

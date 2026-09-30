@@ -171,6 +171,23 @@ test("an edit still in the debounce is posted before the mode switch", async ({ 
   await expect.poll(async () => (await posted(page)).map((m) => m.type)).toEqual(["edit-blocks", "set-read-only"]);
 });
 
+// sidebar-chrome-redesign: #edit-mode-toggle moved into the document toolbar,
+// specifically so the mode switch stays reachable with the sidebar collapsed
+// (the old floating .mdc-sidebar-toggle left no way to switch mode once
+// collapsed).
+test("the mode control is still visible and clickable with the sidebar collapsed", async ({ page }) => {
+  const { source } = fixture();
+  await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
+  await page.locator("#mdc-comments-toggle").click();
+  await expect(page.locator(".mdc-layout")).toHaveClass(/mdc-layout--collapsed/);
+
+  const group = page.locator("#edit-mode-toggle");
+  await expect(group).toBeVisible();
+  // The fixture boots in edit mode (no `readOnly` in the init payload); switch to Reading.
+  await page.locator('input[name="edit-mode"][value="read"]').click();
+  expect(await awaitPosted(page, "set-read-only")).toEqual({ type: "set-read-only", readOnly: true });
+});
+
 test("the mode control rebuilds the editor read-only and back; a read-only comment adds only its markers", async ({ page }) => {
   const { source } = fixture();
   await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });

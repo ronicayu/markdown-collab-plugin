@@ -44,7 +44,7 @@ import { Decoration, DecorationSet } from "prosemirror-view";
 import type { Node as PmDocNode } from "prosemirror-model";
 import { buildComposer, type ComposerHandle } from "../webviewShared/commentUi";
 import { createThreadSidebar } from "../webviewShared/threadSidebar";
-import type { SidebarState, SidebarThread, SkillStatus } from "../webviewShared/sidebarProtocol";
+import type { SidebarMessage, SidebarState, SidebarThread, SkillStatus } from "../webviewShared/sidebarProtocol";
 import { matchesFilter, type ThreadFilter } from "../webviewShared/threadListState";
 import { locateAnchorInLiveText, locateNthOccurrence } from "../collab/liveAnchorLocator";
 import { renderedRangeToPmRange, renderedTextOf } from "../collab/pmPositionMapper";
@@ -334,14 +334,22 @@ const sidebarPush: Omit<SidebarState, "readOnly"> = {
   headlessAvailable: false,
 };
 
+/**
+ * The one path every sidebar-protocol message goes out through, whether it
+ * comes from the sidebar itself or from the document toolbar's mode switch
+ * (client.ts owns `#edit-mode-toggle` now, but posts `set-read-only` the same
+ * way the sidebar always did).
+ */
+function postSidebarMessage(msg: SidebarMessage): void {
+  // Edits still in the debounce go first, whatever the message: the host
+  // writes a reply or an accepted suggestion over the file as it has it,
+  // the mode switch re-reads the file, and the agent reads it from disk.
+  flushBlockEdits();
+  vscode.postMessage(msg);
+}
+
 const threadSidebar = createThreadSidebar({
-  post: (msg) => {
-    // Edits still in the debounce go first, whatever the message: the host
-    // writes a reply or an accepted suggestion over the file as it has it,
-    // the mode switch re-reads the file, and the agent reads it from disk.
-    flushBlockEdits();
-    vscode.postMessage(msg);
-  },
+  post: postSidebarMessage,
   getState: () => vscode.getState(),
   setState: (state) => {
     const before = threadFilter();
@@ -366,7 +374,16 @@ let composerEl: HTMLElement | null = null;
 let editorContainer: HTMLElement | null = null;
 let frontmatterEl: HTMLElement | null = null;
 let layoutEl: HTMLElement | null = null;
-let collapseToggleEl: HTMLButtonElement | null = null;
+// The padded, `overflow: auto` wrapper inside `.mdc-editor-pane` — the pane
+// itself is a plain flex column now, so the document toolbar above this can
+// span its full width and never scroll (docs/sidebar-chrome-redesign.md).
+let editorScrollEl: HTMLElement | null = null;
+// The document toolbar's own controls: built once in `buildLayout`, repainted
+// from `readOnly` (the mode switch) and from `sidebarState`/`sidebarPush` (the
+// comments toggle's pressed state and open-count badge) on every render.
+let commentsToggleBtn: HTMLButtonElement | null = null;
+let modeToggleGroupEl: HTMLElement | null = null;
+let modeToggleRadios: NodeListOf<HTMLInputElement> | null = null;
 
 let cachedMarkdown = "";
 
@@ -808,65 +825,147 @@ function buildLayout(): void {
   editorPane.className = "mdc-editor-pane";
   layoutEl.appendChild(editorPane);
 
+  // Document toolbar: outline, the Reading/Editing switch, the comments
+  // toggle. A fixed-height sibling of the scrolling content below (not a
+  // child of it), so it spans the pane's full width and never scrolls with
+  // the document (docs/sidebar-chrome-redesign.md).
+  editorPane.appendChild(buildDocToolbar());
+
+  const editorScroll = document.createElement("div");
+  editorScroll.className = "mdc-editor-scroll";
+  editorPane.appendChild(editorScroll);
+  editorScrollEl = editorScroll;
+
   // Uncommitted-diff toolbar (10x-plan-6 P4 phase B): badge + prev/next
-  // arrows, sticky above everything else in the pane. Hidden by
+  // arrows, sticky above everything else in the scrolling content. Hidden by
   // `buildChangeNav` until a diff actually shows something.
   changeNav = buildChangeNav();
-  editorPane.appendChild(changeNav.el);
+  editorScroll.appendChild(changeNav.el);
 
   // Frontmatter panel sits above the Milkdown body. The body editor mounts
   // into its own element so ProseMirror never touches the frontmatter DOM.
   frontmatterEl = document.createElement("div");
   frontmatterEl.className = "mdc-frontmatter";
   frontmatterEl.hidden = true;
-  editorPane.appendChild(frontmatterEl);
+  editorScroll.appendChild(frontmatterEl);
 
   editorContainer = document.createElement("div");
   editorContainer.className = "mdc-editor-root";
-  editorPane.appendChild(editorContainer);
-
-  collapseToggleEl = document.createElement("button");
-  collapseToggleEl.type = "button";
-  collapseToggleEl.className = "mdc-sidebar-toggle";
-  collapseToggleEl.addEventListener("click", () => {
-    sidebarState.collapsed = !sidebarState.collapsed;
-    syncCollapsedClass();
-  });
-  layoutEl.appendChild(collapseToggleEl);
+  editorScroll.appendChild(editorContainer);
 
   sidebarEl = document.createElement("aside");
   sidebarEl.className = "mdc-sidebar";
+  sidebarEl.id = "mdc-sidebar";
   sidebarEl.setAttribute("aria-label", "Review comments");
   layoutEl.appendChild(sidebarEl);
 
   syncCollapsedClass();
 }
 
+/**
+ * Outline toggle, the Reading/Editing switch, and the comments toggle — see
+ * `buildLayout`. Built once; `updateDocToolbarMode` and `syncCollapsedClass`
+ * repaint the pieces that follow `readOnly` / `sidebarState.collapsed`.
+ */
+function buildDocToolbar(): HTMLElement {
+  const bar = document.createElement("div");
+  bar.className = "mdc-doc-toolbar";
+  bar.appendChild(buildOutlineToggle());
+
+  const right = document.createElement("div");
+  right.className = "mdc-doc-toolbar__right";
+  right.appendChild(buildModeToggle());
+  right.appendChild(buildCommentsToggle());
+  bar.appendChild(right);
+  return bar;
+}
+
+/** The Reading/Editing radiogroup — moved here from the sidebar, DOM and ids unchanged. */
+function buildModeToggle(): HTMLElement {
+  const group = document.createElement("div");
+  group.id = "edit-mode-toggle";
+  group.className = "mc-segmented";
+  group.setAttribute("role", "radiogroup");
+  group.setAttribute("aria-label", "Editing mode");
+  group.dataset.mode = "read";
+  group.title = "Reading is read-only — only comments change the file. Editing lets you edit the text in place.";
+  group.innerHTML =
+    '<label class="segment"><input type="radio" name="edit-mode" value="read" checked><span>Reading</span></label>' +
+    '<label class="segment"><input type="radio" name="edit-mode" value="edit"><span>Editing</span></label>';
+  modeToggleGroupEl = group;
+  modeToggleRadios = group.querySelectorAll<HTMLInputElement>('input[name="edit-mode"]');
+  // The mode is the host's to change (it rebuilds the editor); `updateDocToolbarMode`
+  // repaints this from `readOnly` on every render, same as the sidebar always did.
+  modeToggleRadios.forEach((r) =>
+    r.addEventListener("change", () => {
+      if (r.checked) postSidebarMessage({ type: "set-read-only", readOnly: r.value === "read" });
+    }),
+  );
+  return group;
+}
+
+/** Repaint `#edit-mode-toggle` from `readOnly` — called on every `renderSidebar()`. */
+function updateDocToolbarMode(readOnlyNow: boolean): void {
+  if (!modeToggleGroupEl || !modeToggleRadios) return;
+  modeToggleGroupEl.dataset.mode = readOnlyNow ? "read" : "edit";
+  for (const r of modeToggleRadios) {
+    r.checked = r.value === (readOnlyNow ? "read" : "edit");
+    r.closest("label")?.classList.toggle("active", r.checked);
+  }
+}
+
+/** Replaces the old floating `.mdc-sidebar-toggle`: reachable with the sidebar collapsed. */
+function buildCommentsToggle(): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "mc-icon-btn";
+  btn.id = "mdc-comments-toggle";
+  btn.setAttribute("aria-controls", "mdc-sidebar");
+  // `.mc-badge` is comments.css's card-tag pill; the `--count` modifier
+  // (controls.css) shrinks it to a number beside the glyph without restyling
+  // those tags, since this page loads both files.
+  btn.innerHTML =
+    '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M2 2.5A1.5 1.5 0 0 1 3.5 1h9A1.5 1.5 0 0 1 14 2.5v6A1.5 1.5 0 0 1 12.5 10H8l-3.2 2.8a.5.5 0 0 1-.8-.38V10h-.5A1.5 1.5 0 0 1 2 8.5v-6z"/></svg>' +
+    '<span class="mc-badge mc-badge--count" hidden></span>';
+  btn.addEventListener("click", () => {
+    sidebarState.collapsed = !sidebarState.collapsed;
+    syncCollapsedClass();
+  });
+  commentsToggleBtn = btn;
+  return btn;
+}
+
 function syncCollapsedClass(): void {
   if (!layoutEl) return;
-  layoutEl.classList.toggle("mdc-layout--collapsed", sidebarState.collapsed);
-  if (collapseToggleEl) {
-    const collapsed = sidebarState.collapsed;
+  const collapsed = sidebarState.collapsed;
+  layoutEl.classList.toggle("mdc-layout--collapsed", collapsed);
+  if (commentsToggleBtn) {
     const label = collapsed ? "Show comments" : "Hide comments";
-    collapseToggleEl.title = label;
-    collapseToggleEl.setAttribute("aria-label", label);
-    collapseToggleEl.setAttribute("aria-expanded", collapsed ? "false" : "true");
-    const arrow = collapsed
-      ? '<path d="M10.5 3L5 8l5.5 5 .9-.95L6.85 8l4.55-4.05z"/>'
-      : '<path d="M5.5 3L11 8l-5.5 5-.9-.95L9.15 8 4.6 3.95z"/>';
-    collapseToggleEl.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">${arrow}</svg>`;
+    commentsToggleBtn.title = label;
+    commentsToggleBtn.setAttribute("aria-label", label);
+    commentsToggleBtn.setAttribute("aria-pressed", String(!collapsed));
+    // The open count is never lost when the sidebar (and its own counts) are hidden.
+    const openCount = sidebarPush.threads.filter((t) => t.status === "open").length;
+    const badge = commentsToggleBtn.querySelector<HTMLElement>(".mc-badge");
+    if (badge) {
+      const show = collapsed && openCount > 0;
+      badge.hidden = !show;
+      badge.textContent = show ? String(openCount) : "";
+    }
   }
 }
 
 /**
  * Render the thread sidebar from the latest push. The first call mounts it:
  * the notice banner above it, the add-comment composer under its header, and
- * this editor's own buttons (outline, add comment) in its title row.
+ * this editor's own "+ Add comment" button in its title row (the toolbar's
+ * own controls — outline, mode, comments — are built once in `buildLayout`).
  */
 function renderSidebar(): void {
   if (!sidebarEl) return;
   syncCollapsedClass();
   if (threadSidebar.el.parentElement !== sidebarEl) mountSidebar(sidebarEl);
+  updateDocToolbarMode(readOnly);
   threadSidebar.render({ ...sidebarPush, readOnly });
 }
 
@@ -876,7 +975,9 @@ function mountSidebar(host: HTMLElement): void {
   const composerSlot = document.createElement("div");
   composerSlot.className = "mdc-composer-slot";
   threadSidebar.headerEl.after(composerSlot);
-  threadSidebar.titleActionsEl.replaceChildren(buildOutlineToggle(), buildAddCommentButton());
+  // The sidebar's own "…" menu already lives in `.mc-title-actions` (its
+  // SHELL); prepend so the order reads "+ Add comment" then "…", as specced.
+  threadSidebar.titleActionsEl.prepend(buildAddCommentButton());
   host.replaceChildren(banner, threadSidebar.el);
   composerEl = composerSlot;
 }
@@ -884,7 +985,7 @@ function mountSidebar(host: HTMLElement): void {
 function buildOutlineToggle(): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.type = "button";
-  btn.className = "mdc-icon-btn";
+  btn.className = "mc-icon-btn";
   btn.dataset.action = "toggle-outline";
   btn.title = "Show or hide the document outline";
   btn.setAttribute("aria-label", "Outline");
@@ -905,7 +1006,7 @@ function buildOutlineToggle(): HTMLButtonElement {
 function buildAddCommentButton(): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.type = "button";
-  btn.className = "mdc-icon-btn mdc-icon-btn--primary";
+  btn.className = "mc-icon-btn";
   btn.dataset.action = "add-comment";
   btn.title = "Add a comment on the current selection (Cmd/Ctrl+Shift+M)";
   btn.setAttribute("aria-label", "Add comment");
@@ -2141,7 +2242,7 @@ function applyExternalChange(
   // view back to the top and drops the cursor. Capture the scroll position
   // and selection first, then restore them — so an external edit, or a
   // format-on-save echo right after you typed, doesn't jump to the file head.
-  const scroller = editorContainer?.parentElement ?? null; // .mdc-editor-pane (overflow:auto)
+  const scroller = editorScrollEl; // .mdc-editor-scroll (overflow:auto) — see buildLayout
   const prevScrollTop = scroller?.scrollTop ?? 0;
   let prevFrom = -1;
   editor.action((ctx) => {

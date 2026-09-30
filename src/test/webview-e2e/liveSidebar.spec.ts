@@ -39,7 +39,10 @@ test.describe("with the review fixture", () => {
     await expect(sentence).toBeVisible();
     await expect(sentence.locator("del")).toHaveText("notes");
     await expect(sentence.locator("ins")).toHaveText("highlights");
-    await expect(page.locator("#thread-count")).toHaveText("2 open · 2 total");
+    // #thread-count is gone; each tab reads its own count now.
+    await expect(page.locator('.filter-row .segment:has(input[value="open"]) .count')).toHaveText("2");
+    await expect(page.locator('.filter-row .segment:has(input[value="all"]) .count')).toHaveText("2");
+    await expect(page.locator('.filter-row .segment:has(input[value="resolved"]) .count')).toHaveText("0");
   });
 
   test("Send to Claude posts send-to-claude", async ({ page }) => {
@@ -47,19 +50,27 @@ test.describe("with the review fixture", () => {
     expect(await awaitPosted(page, "send-to-claude")).toEqual({ type: "send-to-claude" });
   });
 
-  test("the suggest-mode switch posts toggle-suggest-mode and follows the host's answer", async ({ page }) => {
+  test("suggest mode posts toggle-suggest-mode, follows the host's answer, and shows in the Send label", async ({ page }) => {
+    const sendOptionsBtn = page.locator("#send-options-btn");
     const toggle = page.locator("#suggest-mode-toggle");
-    await expect(toggle).toHaveAttribute("role", "switch");
-    await expect(page.locator("#suggest-mode-label")).toHaveText("Suggest mode");
+    await sendOptionsBtn.click();
+    await expect(toggle).toHaveAttribute("role", "menuitemcheckbox");
+    await expect(toggle).toHaveText("Ask for suggestions instead of edits");
     await expect(toggle).toHaveAttribute("aria-checked", "false");
+    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments to Claude");
 
     await toggle.click();
     expect(await awaitPosted(page, "toggle-suggest-mode")).toEqual({ type: "toggle-suggest-mode" });
-    // The setting is the host's: the switch only shows what comes back.
-    await expect(toggle).toHaveAttribute("aria-checked", "false");
+    // The setting is the host's: the item only shows what comes back. Every
+    // menu item closes the menu after its click, so this also checks that.
+    await expect(page.locator("#send-options-menu")).toBeHidden();
 
     await pushSidecar(page, fixture.source, { suggestMode: true });
+    await sendOptionsBtn.click();
     await expect(toggle).toHaveAttribute("aria-checked", "true");
+    // The Send label keeps the setting visible with the menu closed.
+    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments to Claude as suggestions");
+    await expect(sendOptionsBtn).toHaveAttribute("title", "Suggest mode is on");
   });
 
   test("replying in a thread posts the reply with its thread id and body", async ({ page }) => {
@@ -544,7 +555,9 @@ test.describe("with the review fixture", () => {
   });
 
   test("the keys hint lists every key", async ({ page }) => {
-    await expect(page.locator("#keys-hint")).toHaveText(
+    // #keys-hint also holds the inline "×" dismiss button now; its own text
+    // sits in the #keys-hint-text child.
+    await expect(page.locator("#keys-hint-text")).toHaveText(
       "n / p to move between threads · r reply · e resolve · o open in editor",
     );
   });
