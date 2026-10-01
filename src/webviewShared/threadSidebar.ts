@@ -19,6 +19,7 @@ import "./controls.css";
 import { isAgentComment } from "../agentIdentity";
 import { isClaudeUnread } from "../inlineComments/claudeUnread";
 import { isNavKeyContext } from "./diffNav";
+import { createMenuController } from "./menu";
 import {
   THREAD_RENDER_CHUNK,
   adjacentThreadId,
@@ -190,73 +191,20 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
 
   // --- "…" overflow menus ----------------------------------------------------
   // One trigger/panel pair at a time is open — the toolbar's or a single
-  // thread card's — tracked here rather than per-menu, so a click anywhere
-  // else (another trigger, the document) closes whatever was open first. Escape
-  // closes and returns focus to the trigger; an outside click closes without
-  // stealing focus back from wherever the user clicked next.
-  let openMenu: { trigger: HTMLButtonElement; panel: HTMLElement } | null = null;
-
-  function closeOpenMenu(returnFocus: boolean): void {
-    if (!openMenu) return;
-    const { trigger, panel } = openMenu;
-    panel.hidden = true;
-    trigger.setAttribute("aria-expanded", "false");
-    openMenu = null;
-    if (returnFocus && trigger.isConnected) trigger.focus();
-  }
-
-  function openMenuAt(trigger: HTMLButtonElement, panel: HTMLElement): void {
-    closeOpenMenu(false);
-    panel.hidden = false;
-    trigger.setAttribute("aria-expanded", "true");
-    openMenu = { trigger, panel };
-    panel.querySelector<HTMLElement>('[role="menuitem"]:not([hidden])')?.focus();
-  }
-
-  function toggleMenuAt(trigger: HTMLButtonElement, panel: HTMLElement): void {
-    if (openMenu?.panel === panel) closeOpenMenu(false);
-    else openMenuAt(trigger, panel);
-  }
-
-  document.addEventListener("click", (e) => {
-    if (!openMenu) return;
-    const target = e.target as Node;
-    if (openMenu.panel.contains(target) || openMenu.trigger.contains(target)) return;
-    closeOpenMenu(false);
-  });
-  document.addEventListener("keydown", (e) => {
-    if (!openMenu) return;
-    if (e.key === "Escape") {
-      e.preventDefault();
-      e.stopPropagation();
-      closeOpenMenu(true);
-    }
-  });
+  // thread card's — via the shared controller (webviewShared/menu.ts), which
+  // also the PR review sidebar uses, so the two can never drift apart.
+  const menu = createMenuController();
 
   dom.overflowMenuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    toggleMenuAt(dom.overflowMenuBtn, dom.overflowMenu);
+    menu.toggleMenuAt(dom.overflowMenuBtn, dom.overflowMenu);
   });
   // Bottom-anchored (opens upward) but the same trigger/panel pair and the
   // same one-open-at-a-time tracking as the "…" menu above.
   dom.sendOptionsBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    toggleMenuAt(dom.sendOptionsBtn, dom.sendOptionsMenu);
+    menu.toggleMenuAt(dom.sendOptionsBtn, dom.sendOptionsMenu);
   });
-
-  /** One `role="menuitem"` button for a "…" menu — the toolbar's or a card's. */
-  function buildMenuItem(label: string, onClick: () => void, opts: { danger?: boolean } = {}): HTMLButtonElement {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.setAttribute("role", "menuitem");
-    btn.className = opts.danger ? "mc-menuitem danger" : "mc-menuitem";
-    btn.textContent = label;
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      onClick();
-    });
-    return btn;
-  }
 
   // --- State -------------------------------------------------------------------
 
@@ -339,25 +287,25 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   // one action per click here, not a multi-select list to leave open.
   dom.copyPrompt.addEventListener("click", () => {
     host.post({ type: "copy-prompt" });
-    closeOpenMenu(false);
+    menu.closeOpenMenu(false);
   });
   // The suggest-mode toggle doesn't flip itself: the setting is the host's,
   // and it only reflects what comes back — anything else would show "on"
   // after a write that failed.
   dom.suggestModeToggle.addEventListener("click", () => {
     host.post({ type: "toggle-suggest-mode" });
-    closeOpenMenu(false);
+    menu.closeOpenMenu(false);
   });
   // The host owns the confirm and the write for both bulk deletes: a webview
   // can't show a modal, and a two-click arm is too quiet for something that
   // removes many threads at once.
   dom.removeResolved.addEventListener("click", () => {
     host.post({ type: "remove-resolved" });
-    closeOpenMenu(false);
+    menu.closeOpenMenu(false);
   });
   dom.finalizeDoc.addEventListener("click", () => {
     host.post({ type: "finalize" });
-    closeOpenMenu(false);
+    menu.closeOpenMenu(false);
   });
   dom.skillInstall.addEventListener("click", () => {
     dom.skillInstall.disabled = true;
@@ -369,7 +317,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     const collapsedIds = new Set(cards.filter(isCollapsedCard).map(collapseKey));
     const collapse = nextCollapseAllAction(cards.map(collapseKey), collapsedIds) === "collapse";
     for (const c of cards) setCardCollapsed(c, collapse);
-    closeOpenMenu(false);
+    menu.closeOpenMenu(false);
   });
   dom.claudeNext.addEventListener("click", () => {
     if (!currentState) return;
@@ -477,7 +425,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     hintDismissed = !hintDismissed;
     persist({ hintDismissed });
     applyHintVisibility();
-    closeOpenMenu(false);
+    menu.closeOpenMenu(false);
   });
   // The inline "×" on the hint itself: same dismissal, no menu to close.
   dom.keysHintDismiss.addEventListener("click", () => {
@@ -685,8 +633,8 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     captureReplyState();
     const list = dom.threadsList;
     // A card's "…" menu is about to be torn down with the list; don't leave
-    // `openMenu` pointing at a detached panel. The toolbar's menu is untouched.
-    if (openMenu && list.contains(openMenu.panel)) closeOpenMenu(false);
+    // the controller pointing at a detached panel. The toolbar's menu is untouched.
+    menu.closeMenuWithin(list);
     list.innerHTML = "";
 
     // Pending suggestions render above the threads regardless of the filter —
@@ -950,36 +898,39 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     menuBtn.setAttribute("aria-haspopup", "menu");
     menuBtn.setAttribute("aria-expanded", "false");
     menuBtn.setAttribute("aria-label", "More actions for this thread");
-    const menu = document.createElement("div");
-    menu.className = "mc-menu";
-    menu.setAttribute("role", "menu");
-    menu.hidden = true;
+    // Named `menuPanel`, not `menu` — this function's card-local dropdown
+    // would otherwise shadow the outer `menu` controller (createMenuController())
+    // that `toggleMenuAt`/`closeOpenMenu` below actually belong to.
+    const menuPanel = document.createElement("div");
+    menuPanel.className = "mc-menu";
+    menuPanel.setAttribute("role", "menu");
+    menuPanel.hidden = true;
     menuBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      toggleMenuAt(menuBtn, menu);
+      menu.toggleMenuAt(menuBtn, menuPanel);
     });
 
-    const openInEditorItem = buildMenuItem("Open in editor", () => {
+    const openInEditorItem = menu.buildMenuItem("Open in editor", () => {
       host.post({ type: "open-in-editor", threadId: t.id });
-      closeOpenMenu(false);
+      menu.closeOpenMenu(false);
     });
-    const sendThreadItem = buildMenuItem("Send this thread", () => {
+    const sendThreadItem = menu.buildMenuItem("Send this thread", () => {
       host.post({ type: "send-to-claude-comment", threadId: t.id });
-      closeOpenMenu(false);
+      menu.closeOpenMenu(false);
     });
-    const copyThreadItem = buildMenuItem("Copy prompt", () => {
+    const copyThreadItem = menu.buildMenuItem("Copy prompt", () => {
       host.post({ type: "copy-claude-comment", threadId: t.id });
-      closeOpenMenu(false);
+      menu.closeOpenMenu(false);
     });
     // Two-click confirm, armed in place (no re-render) so the menu stays open
     // across the arm step.
-    const deleteItem = buildMenuItem(
+    const deleteItem = menu.buildMenuItem(
       pendingDeleteThread.has(t.id) ? "Confirm delete" : "Delete",
       () => {
         if (pendingDeleteThread.has(t.id)) {
           pendingDeleteThread.delete(t.id);
           host.post({ type: "delete-thread", threadId: t.id });
-          closeOpenMenu(false);
+          menu.closeOpenMenu(false);
           return;
         }
         pendingDeleteThread.add(t.id);
@@ -991,8 +942,8 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
       },
       { danger: true },
     );
-    menu.append(openInEditorItem, sendThreadItem, copyThreadItem, deleteItem);
-    menuWrap.append(menuBtn, menu);
+    menuPanel.append(openInEditorItem, sendThreadItem, copyThreadItem, deleteItem);
+    menuWrap.append(menuBtn, menuPanel);
 
     actions.append(replyToggleBtn, resolveBtn, menuWrap);
     head.appendChild(actions);

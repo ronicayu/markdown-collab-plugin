@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.35.21 — 2026-10-01 (GitHub only)
+
+### Changed: the PR review view speaks the same language as the comment sidebar
+
+`docs/pr-review-redesign.md`, decided from mockups. The view's own header,
+pill chips, per-comment links and four-row submit bar are gone; it now uses
+the comment sidebar's structure, class names and stylesheets, so the two
+cannot drift apart.
+
+- **One open link per thread.** A single open-in-browser icon at the end
+  of each thread's action row replaces the "↗ Open" under every comment.
+- **One list under tabs.** Open · All · Resolved with counts, Open first,
+  hidden when the file has no threads. The "Drafts" and "Existing
+  comments" sections and the hint line are gone.
+- **Drafts pinned on top** as dashed cards with a `draft` badge, on every
+  tab. Editing a draft keeps its card, quote and badge.
+- **Thread header quotes the commented line** as the reader sees it; click
+  it to jump. The line number (`L3`, `L3–5`) sits at the right. Collapsed,
+  a thread shows the quote, its comment count and the line.
+- **Reply and Resolve together** as quiet text under the header; the reply
+  box opens under the comments.
+- **Submit area in two rows.** Comment · Approve · Request changes as a
+  segmented control, then a button that says what it does: "Submit 2
+  comments", "Approve with 2 comments", "Request changes with 2 comments".
+  "Add summary" opens the summary box, which never hides while it has text.
+  The area is hidden until there is a draft; submitting still needs one.
+- **Toolbar above the preview:** change arrows as icon buttons on the left,
+  and a comments toggle on the right that hides the sidebar and carries the
+  open count while it is hidden. Clicking a line marker brings a hidden
+  sidebar back.
+- The "…" menu holds Collapse all / Expand all; `+` in the title row
+  comments on the current selection.
+- Unchanged: the preview, line markers, every message to and from the
+  extension, GitHub and GitLab calls, which cards you collapsed.
+
+### Fixed
+
+- Menu items in both sidebars show a pointer cursor again (lost in 0.35.20).
+
+### Tests
+
+- `prReview.spec.ts` migrated to the new layout, 12 → 35 cases: the single
+  open link, tabs and default, pinned drafts, the submit area and its
+  labels, the summary toggle, the sidebar toggle and badge, the menu, the
+  quote jump and range label, editing a draft, no class-less button.
+  Playwright 366; vitest 129 files / 2,393 tests.
+
 ## 0.35.20 — 2026-09-30 (GitHub only)
 
 ### Changed: the buttons inside comment cards

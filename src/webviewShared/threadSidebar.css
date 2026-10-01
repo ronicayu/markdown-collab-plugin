@@ -167,7 +167,9 @@
   color: var(--fg);
   font-size: 12px;
   white-space: nowrap;
+  cursor: pointer;
 }
+:where(.mc-thread-sidebar) .mc-menu button:disabled { cursor: default; }
 :where(.mc-thread-sidebar) .mc-menu button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15)); filter: none; }
 :where(.mc-thread-sidebar) .mc-menu button.danger { color: var(--mc-danger, #e08080); }
 :where(.mc-thread-sidebar) .mc-menu button[hidden] { display: none; }
