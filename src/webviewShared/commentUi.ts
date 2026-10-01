@@ -371,11 +371,17 @@ export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
   meta.appendChild(badge);
 
   if (collapsible) {
-    // A chevron + a one-line gist stand in for the meta row while collapsed
-    // (threadSidebar.css swaps the two on `.mc-suggestion.collapsed`) — same
-    // fold the thread card does, so the two read as one system.
+    // A one-line gist stands in for the meta row while collapsed
+    // (threadSidebar.css swaps the two on `.mc-suggestion.collapsed`), with the
+    // chevron at the row's right edge — same fold the thread card does, so the
+    // two read as one system.
     const headRow = document.createElement("div");
     headRow.className = "mc-suggestion__head";
+    headRow.appendChild(meta);
+    const summary = document.createElement("div");
+    summary.className = "mc-suggestion__summary";
+    summary.textContent = `Suggestion · ${authorLabel(opts.author)} · ${suggestionGist(opts.original, opts.proposed)}`;
+    headRow.appendChild(summary);
     const chevron = buildCollapseToggle({
       extraClass: "mc-suggestion__collapse thread-collapse",
       ariaLabel: "Collapse or expand this suggestion",
@@ -387,11 +393,6 @@ export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
       },
     });
     headRow.appendChild(chevron);
-    headRow.appendChild(meta);
-    const summary = document.createElement("div");
-    summary.className = "mc-suggestion__summary";
-    summary.textContent = `Suggestion · ${authorLabel(opts.author)} · ${suggestionGist(opts.original, opts.proposed)}`;
-    headRow.appendChild(summary);
     // While collapsed the header is effectively the whole card, so clicking
     // anywhere in it (the chevron handles its own click) expands — a bigger
     // target than the chevron alone. Expanded, a click here is left to bubble
@@ -566,7 +567,7 @@ function diffRow(kind: "del" | "ins", text: string, pre: number, suf: number): H
 
 /**
  * Chevron markup for every card's collapse toggle — points down; CSS
- * (comments.css) rotates it −90° when the button's `aria-expanded` is
+ * (comments.css) turns it to point left when the button's `aria-expanded` is
  * false, so the caller only has to keep that attribute current, the same
  * contract the old ▾/▸ text glyph had.
  */

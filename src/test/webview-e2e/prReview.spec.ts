@@ -186,6 +186,30 @@ test("the chevron collapses and expands; clicking elsewhere on a collapsed head 
   await expect(chevron).toHaveAttribute("aria-expanded", "true");
 });
 
+test("the chevron ends the card's head row, at its right edge, and points left once collapsed", async ({ page }) => {
+  await bootPrReview(page);
+  await pushToWebview(page, { type: "existing-comments", comments: [githubComment()] });
+  const card = page.locator("#existing-list .thread-card").first();
+  const chevron = card.locator(".thread-collapse");
+  const turn = () => chevron.locator("svg").evaluate((el) => getComputedStyle(el).transform);
+  const [quoteBox, chevronBox, cardBox] = await Promise.all([
+    card.locator(".thread-quote").boundingBox(),
+    chevron.boundingBox(),
+    card.boundingBox(),
+  ]);
+  expect(chevronBox!.x).toBeGreaterThanOrEqual(quoteBox!.x + quoteBox!.width - 1);
+  // 1px border + 12px padding.
+  expect(Math.abs(chevronBox!.x + chevronBox!.width - (cardBox!.x + cardBox!.width - 13))).toBeLessThanOrEqual(3);
+  expect(
+    await card.locator(".thread-head-row").evaluate((row) => row.lastElementChild?.classList.contains("thread-collapse")),
+  ).toBe(true);
+  expect(await turn()).toBe("none");
+
+  await chevron.click();
+  await expect(card).toHaveClass(/collapsed/);
+  await expect.poll(turn).toBe("matrix(0, 1, -1, 0, 0, 0)");
+});
+
 test("Enter and Space on the chevron toggle collapse", async ({ page }) => {
   await bootPrReview(page);
   await pushToWebview(page, { type: "existing-comments", comments: [githubComment()] });

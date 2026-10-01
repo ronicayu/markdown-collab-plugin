@@ -329,6 +329,104 @@ test.describe("card actions (phase 2)", () => {
     // glyph — the computed transform actually changing is what to prove.
     expect(await svgRotation()).not.toBe("none");
   });
+
+  test("a thread card's chevron ends the head row at the card's right edge, level with the first quote line", async ({
+    page,
+  }) => {
+    const fixture = reviewFixture();
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
+    const card = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    const chevron = card.locator(".thread-collapse");
+    const quote = card.locator(".thread-quote");
+    const [chevronBox, quoteBox, cardBox, menuBox] = await Promise.all([
+      chevron.boundingBox(),
+      quote.boundingBox(),
+      card.boundingBox(),
+      card.locator(".thread-menu-btn").boundingBox(),
+    ]);
+    expect(chevronBox!.x).toBeGreaterThanOrEqual(quoteBox!.x + quoteBox!.width - 1);
+    // The card has a 1px border and 12px padding: inner right edge = border box right - 13.
+    expect(Math.abs(chevronBox!.x + chevronBox!.width - (cardBox!.x + cardBox!.width - 13))).toBeLessThanOrEqual(3);
+    expect(Math.abs(chevronBox!.y - quoteBox!.y)).toBeLessThanOrEqual(3);
+    // Same column as the "…" below it, and clear of it vertically.
+    expect(chevronBox!.y + chevronBox!.height).toBeLessThanOrEqual(menuBox!.y);
+    expect(
+      Math.abs(chevronBox!.x + chevronBox!.width / 2 - (menuBox!.x + menuBox!.width / 2)),
+    ).toBeLessThanOrEqual(1);
+    // The chevron is the head row's last child, so Tab order follows the visual one.
+    expect(
+      await card.locator(".thread-head-row").evaluate((row) => row.lastElementChild?.classList.contains("thread-collapse")),
+    ).toBe(true);
+  });
+
+  test("a collapsed thread card reads quote, comment count, chevron, with the chevron pointing left", async ({
+    page,
+  }) => {
+    const fixture = reviewFixture();
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
+    const card = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    const chevron = card.locator(".thread-collapse");
+    const turn = () => chevron.locator("svg").evaluate((el) => getComputedStyle(el).transform);
+    expect(await turn()).toBe("none");
+    await chevron.click();
+    await expect(card).toHaveClass(/collapsed/);
+
+    const [quoteBox, countBox, chevronBox] = await Promise.all([
+      card.locator(".thread-quote").boundingBox(),
+      card.locator(".thread-comment-count").boundingBox(),
+      chevron.boundingBox(),
+    ]);
+    expect(countBox!.x).toBeGreaterThanOrEqual(quoteBox!.x + quoteBox!.width - 1);
+    expect(chevronBox!.x).toBeGreaterThanOrEqual(countBox!.x + countBox!.width - 1);
+    // A 90° turn is matrix(0, 1, -1, 0, 0, 0); a -90° one would be matrix(0, -1, 1, 0, 0, 0).
+    // The transition runs for 120ms, so wait for it to settle first.
+    await expect.poll(turn).toBe("matrix(0, 1, -1, 0, 0, 0)");
+  });
+
+  test("the Reply label's left edge sits on the quote bar's left edge", async ({ page }) => {
+    const fixture = reviewFixture();
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
+    const card = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    const quoteBox = await card.locator(".thread-quote").boundingBox();
+    // The label's own ink, not the button's box: a range over its text node.
+    const labelLeft = await card
+      .locator(".thread-reply-toggle")
+      .evaluate((btn) => {
+        const range = document.createRange();
+        range.selectNodeContents(btn);
+        return range.getBoundingClientRect().left;
+      });
+    expect(Math.abs(labelLeft - quoteBox!.x)).toBeLessThanOrEqual(2);
+  });
+
+  test("a suggestion card's chevron ends its head row at the right edge, and collapsed the row reads summary, chevron", async ({
+    page,
+  }) => {
+    const fixture = reviewFixture();
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
+    const card = page.locator("#threads-list .mc-suggestion");
+    const chevron = card.locator(".mc-suggestion__collapse");
+    const [metaBox, chevronBox, cardBox] = await Promise.all([
+      card.locator(".mc-card__meta").boundingBox(),
+      chevron.boundingBox(),
+      card.boundingBox(),
+    ]);
+    expect(chevronBox!.x).toBeGreaterThanOrEqual(metaBox!.x + metaBox!.width - 1);
+    // 1px border + 10px padding.
+    expect(Math.abs(chevronBox!.x + chevronBox!.width - (cardBox!.x + cardBox!.width - 11))).toBeLessThanOrEqual(3);
+    // The meta row starts at the card's content edge, as Accept does.
+    const acceptBox = await card.getByRole("button", { name: "Accept", exact: true }).boundingBox();
+    expect(Math.abs(metaBox!.x - acceptBox!.x)).toBeLessThanOrEqual(2);
+
+    await chevron.click();
+    await expect(card).toHaveClass(/collapsed/);
+    const summaryBox = await card.locator(".mc-suggestion__summary").boundingBox();
+    const collapsedChevron = await chevron.boundingBox();
+    expect(collapsedChevron!.x).toBeGreaterThanOrEqual(summaryBox!.x + summaryBox!.width - 1);
+    await expect.poll(() => chevron.locator("svg").evaluate((el) => getComputedStyle(el).transform)).toBe(
+      "matrix(0, 1, -1, 0, 0, 0)",
+    );
+  });
 });
 
 test.describe("shortcut hint waits for the first thread", () => {

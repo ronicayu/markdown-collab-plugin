@@ -967,9 +967,10 @@ function openComposer(sel: PendingSelection): void {
 // --- shared card head (draft + existing thread) ----------------------------
 
 /**
- * The `.thread-head-row` every card kind shares: collapse chevron, the
- * quote/jump button, an optional badge, the comment count (shown only
- * collapsed — threadSidebar.css), and the `L3` / `L3–5` line label.
+ * The `.thread-head-row` every card kind shares: the quote/jump button, an
+ * optional badge, the comment count (shown only collapsed —
+ * threadSidebar.css), the `L3` / `L3–5` line label, and the collapse chevron
+ * at the row's right edge.
  * Collapsed, a click anywhere in the row expands it (live sidebar
  * behaviour); the chevron and the quote button stop that bubbling so their
  * own click does only their own thing.
@@ -986,18 +987,6 @@ function buildCardHead(opts: {
 }): HTMLElement {
   const headRow = document.createElement("div");
   headRow.className = "thread-head-row";
-
-  const chevron = buildCollapseToggle({
-    extraClass: "thread-collapse",
-    ariaLabel: opts.toggleAriaLabel,
-    title: opts.toggleTitle,
-    expanded: !opts.collapsed,
-    onToggle: (e) => {
-      e.stopPropagation();
-      opts.onToggleCollapse();
-    },
-  });
-  headRow.appendChild(chevron);
 
   const quote = document.createElement("button");
   quote.type = "button";
@@ -1026,6 +1015,18 @@ function buildCardHead(opts: {
   lineEl.className = "pr-line";
   lineEl.textContent = opts.lineLabel;
   headRow.appendChild(lineEl);
+
+  const chevron = buildCollapseToggle({
+    extraClass: "thread-collapse",
+    ariaLabel: opts.toggleAriaLabel,
+    title: opts.toggleTitle,
+    expanded: !opts.collapsed,
+    onToggle: (e) => {
+      e.stopPropagation();
+      opts.onToggleCollapse();
+    },
+  });
+  headRow.appendChild(chevron);
 
   headRow.addEventListener("click", (e) => {
     if (!opts.collapsed) return;

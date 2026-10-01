@@ -120,9 +120,10 @@
 }
 /* One chevron SVG, rotated instead of swapped — `aria-expanded` (which every
    collapse toggle keeps current) drives the rotation, so JS never touches
-   the icon itself after the button is built. */
+   the icon itself after the button is built. The toggle ends its card's head
+   row: down while expanded, left (towards the folded text) while collapsed. */
 .thread-collapse svg { transition: transform 120ms ease; }
-.thread-collapse[aria-expanded="false"] svg { transform: rotate(-90deg); }
+.thread-collapse[aria-expanded="false"] svg { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) {
   .thread-collapse svg { transition: none; }
 }

@@ -255,7 +255,7 @@ for (Accept, or a composer's submit) is primary; "…" is a ghost icon button.
 | thread `Send` (`.thread-send`) | menu item "Send this thread" | `mc-btn mc-btn--quiet thread-send`, between `Resolve` and `…`; posts `send-to-claude-comment` for that thread, shown whatever its status. The "…" menu keeps Open in editor, Copy prompt, Delete |
 | thread `…` | `btn-ghost thread-menu-btn` | `mc-icon-btn thread-menu-btn`, `⋯` glyph, `aria-label` unchanged ("More actions for this thread" — a page has one per card, so the label stays specific), pushed to the row's right (`margin-left: auto`) |
 | thread action row `.thread-actions` | inline buttons | `display: flex; align-items: center; gap: 2px` |
-| collapse `▾`/`▸` (`.thread-collapse`, and the suggestion card's equivalent) | text glyph, unstyled | `mc-icon-btn mc-icon-btn--sm` (20 px), one chevron SVG rotated −90° via CSS when collapsed, `aria-expanded` kept |
+| collapse `▾`/`▸` (`.thread-collapse`, and the suggestion card's equivalent) | text glyph, unstyled | `mc-icon-btn mc-icon-btn--sm` (20 px), one chevron SVG, last item of the card's head row at its right edge, pointing down expanded and rotated 90° (pointing left) via CSS when collapsed, `aria-expanded` kept |
 | suggestion `Accept` | primary | primary (unchanged) |
 | suggestion `Reject` | `mc-btn--ghost` | `mc-btn--quiet` |
 | composer submit / `Cancel` | primary / `mc-btn--ghost` | primary / `mc-btn--quiet` |

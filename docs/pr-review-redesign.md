@@ -121,14 +121,15 @@ In order: `#drafts-list` (this file's drafts, by line), `#existing-status`
 Drafts are never filtered.
 
 **Card head (`.thread-head-row`), both kinds:**
-`buildCollapseToggle` chevron (`.thread-collapse`, carries `aria-expanded`)
-· `button.thread-quote.pr-jump` (title "Jump to this line in the preview",
+`button.thread-quote.pr-jump` (title "Jump to this line in the preview",
 scrolls the preview) whose text is the commented line as the reader sees it
 — the rendered block's text without the marker button, falling back to the
 raw source line, falling back to `Line N` when the line is gone · badge
 (`mc-badge mc-badge--draft` "draft", or `mc-badge mc-badge--resolved`
 "resolved") · `.thread-comment-count` ("2 comments", visible collapsed, as
-in the live sidebar) · `span.pr-line` (`L3`, or `L3–5` for a range).
+in the live sidebar) · `span.pr-line` (`L3`, or `L3–5` for a range) · `buildCollapseToggle`
+chevron (`.thread-collapse`, carries `aria-expanded`; last, at the right
+edge, pointing left when collapsed).
 Expanded, the quote clamps to two lines; collapsed, to one with an ellipsis.
 Collapsed, a click anywhere on the head expands (live behaviour). The card's
 `aria-label` is "author: gist", as the live sidebar does.

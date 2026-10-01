@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.35.24 — 2026-10-01 (GitHub only)
+
+### Changed: the collapse chevron is at the right end of each card
+
+Decided from mockups. The chevron was the first thing in a card's head row,
+which pushed the quote one step to the right of everything under it.
+
+- **Thread and suggestion cards end their head row with the chevron,** above
+  the card's "…". Expanded it points down; collapsed it points left, at the
+  folded text. A collapsed thread reads: quote · "2 comments" · chevron.
+- **The quote, the Reply row and the comments share one left edge.** Reply
+  was indented to clear the old chevron.
+- Same in the PR review view, which uses the same cards: its head row is
+  quote · badge · count · line label · chevron.
+- Unchanged: what a click does, `aria-expanded`, the saved collapse state,
+  Collapse all. The classic review view keeps its own triangle on the left.
+
+### Tests
+
+- New in `liveSidebarChrome` and `prReview`: the chevron is last in the row
+  and at the card's right edge, on threads, suggestions and PR cards; the
+  collapsed order and rotation; Reply within 2 px of the quote's left edge.
+- Playwright 388; vitest 129 files / 2,407 tests.
+
 ## 0.35.23 — 2026-10-01 (GitHub only)
 
 ### Changed: sending one thread, and copying the prompt, are one click again

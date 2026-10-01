@@ -801,17 +801,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     head.className = "thread-head";
     const headRow = document.createElement("div");
     headRow.className = "thread-head-row";
-    const chevron = buildCollapseToggle({
-      extraClass: "thread-collapse",
-      ariaLabel: "Collapse or expand this comment thread",
-      title: "Collapse / expand this thread",
-      expanded: !isCollapsedCard(cardKey),
-      onToggle: (e) => {
-        e.stopPropagation();
-        setCardCollapsed(cardKey, !isCollapsedCard(cardKey));
-      },
-    });
-    headRow.appendChild(chevron);
     const quote = document.createElement("blockquote");
     quote.className = "thread-quote";
     quote.textContent = t.quote || "(no quote)";
@@ -851,6 +840,19 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     const liveCommentTotal = t.comments.filter((c) => !c.deleted).length;
     commentCount.textContent = liveCommentTotal === 1 ? "1 comment" : `${liveCommentTotal} comments`;
     headRow.appendChild(commentCount);
+    // Last in the row, so the Tab order follows the visual one and the toggle
+    // sits at the card's right edge, above the action row's "…".
+    const chevron = buildCollapseToggle({
+      extraClass: "thread-collapse",
+      ariaLabel: "Collapse or expand this comment thread",
+      title: "Collapse / expand this thread",
+      expanded: !isCollapsedCard(cardKey),
+      onToggle: (e) => {
+        e.stopPropagation();
+        setCardCollapsed(cardKey, !isCollapsedCard(cardKey));
+      },
+    });
+    headRow.appendChild(chevron);
     // While collapsed, clicking anywhere in the header expands it — a bigger
     // target than the chevron alone, since the header is effectively the
     // whole card at that point. Expanded, a click here is left to bubble to

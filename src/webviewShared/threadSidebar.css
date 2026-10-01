@@ -349,11 +349,15 @@
 }
 /* Sizing/colour/hover/focus all come from `.mc-icon-btn`/`.mc-icon-btn--sm`
    (comments.css) now; only the flex-item behaviour inside `.thread-head-row`
-   is specific to this context. */
+   is specific to this context. The chevron ends the row, pinned to its top
+   when the quote wraps; on a thread card it is 4px narrower than the action
+   row's "…" below it, so a 2px right margin centres the two glyphs on one
+   vertical line. */
 :where(.mc-thread-sidebar) .thread-collapse {
   flex: 0 0 auto;
   margin-top: 1px;
 }
+:where(.mc-thread-sidebar) .thread-head-row > .thread-collapse { margin-right: 2px; }
 :where(.mc-thread-sidebar) .thread-quote {
   margin: 0;
   padding: 0 0 0 8px;
@@ -367,7 +371,9 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  padding-left: 8px;
+  /* The quiet buttons carry 8px of their own side padding; pulling the row
+     left by that much puts the "Reply" label on the quote bar's edge. */
+  margin-left: -8px;
 }
 /* The "…" menu trigger is the row's rightmost control (phase 2); wrapped in
    `.mc-menu-wrap` for its popover, so the auto margin goes on the wrapper —
@@ -439,8 +445,9 @@
   color: var(--vscode-foreground);
 }
 
-/* Suggestion cards fold the same way thread cards do (round-8 P1): a chevron
-   + a one-line gist replace the full meta row, the diff and note hide, and
+/* Suggestion cards fold the same way thread cards do (round-8 P1): a one-line
+   gist replaces the full meta row (the chevron stays at the row's right
+   end), the diff and note hide, and
    Accept/Reject — appended after them, untouched — stay visible, so a
    collapsed suggestion is still a one-click Accept. */
 :where(.mc-thread-sidebar) .mc-suggestion__head {
