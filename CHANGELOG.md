@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.35.23 — 2026-10-01 (GitHub only)
+
+### Changed: sending one thread, and copying the prompt, are one click again
+
+Decided from mockups. 0.35.12 moved a thread's own send into its "…" menu,
+and 0.35.19 moved Copy prompt into the Send button's ▾ menu; both are used
+too often for two clicks.
+
+- **Each thread card has a Send button:** Reply · Resolve · Send · "…". It
+  sends that thread alone, the way "Send this thread" in the menu did, and
+  that menu item is gone. The card's "…" menu holds Open in editor, Copy
+  prompt and Delete. Same change in the classic review view.
+- **Copy prompt is its own button in the sidebar footer,** to the right of
+  Send and its ▾. The ▾ menu holds only "Ask for suggestions instead of
+  edits".
+- **The footer's Send label names no agent:** "Send 2 comments", or "Send 2
+  comments as suggestions". The name it carried was whichever agent wrote in
+  the file last, and "Claude" before any had — not who the send goes to, and
+  wrong in Cursor or Windsurf on a new file. The name stays in the tooltip.
+- Unchanged: every element id and every sidebar-to-host message. No
+  extension-host changes. The classic view's header keeps its own "Send to
+  Claude" label and Copy prompt in its "…" menu.
+
+### Tests
+
+- `liveSidebar`, `liveEditor`, `inlineView`, `liveSidebarChrome` and
+  `liveSidebarToolbar` migrated from the menu items to the buttons and to the
+  new label; a card's Send must post exactly one message. New: the footer's
+  three controls share one row and height with suggest mode on.
+- Playwright 383; vitest 129 files / 2,407 tests. `modeToggle.spec.ts:597`
+  (reveal scrolls a change into view, from 0.35.22) fails about 4 runs in 10
+  with two workers, on this release and on 0.35.22 alike; it passes with one.
+
 ## 0.35.22 — 2026-10-01 (GitHub only)
 
 ### Fixed: Cmd+Z scrolled to the end of the document; Cmd+B also toggled the side bar

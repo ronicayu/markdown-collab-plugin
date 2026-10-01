@@ -95,7 +95,7 @@
 }
 :where(.mc-thread-sidebar) .filter-row .segment[hidden] { display: none; }
 
-/* --- Sidebar footer: Send + its options menu --------------------------------- */
+/* --- Sidebar footer: Send, its options menu, Copy prompt ---------------------- */
 :where(.mc-thread-sidebar) .mc-sidebar-footer {
   flex: 0 0 auto;
   display: flex;
@@ -126,6 +126,17 @@
 :where(.mc-thread-sidebar) #send-options-btn svg { display: block; }
 :where(.mc-thread-sidebar) #send-options-btn[aria-expanded="true"] {
   background: var(--vscode-button-hoverBackground, var(--accent));
+}
+/* Copy prompt sits beside the split button as its own bordered square, the
+   same height as Send (the row stretches it); `.mc-icon-btn` supplies the
+   ghost colour, hover and focus ring. */
+:where(.mc-thread-sidebar) .mc-sidebar-footer #copy-prompt {
+  flex: 0 0 auto;
+  width: 28px;
+  height: auto;
+  margin-left: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--mc-radius, 4px);
 }
 /* Bottom-anchored (the footer sits at the sidebar's bottom edge), so its menu
    opens upward — the only `.mc-menu` that does. Compound selector so this

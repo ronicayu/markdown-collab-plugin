@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Claude reviews your Markdown in VS Code — inline comments stored in the file, suggestions you accept or reject, and runs that need no terminal. Works with Cursor, Codex, and Copilot agents too.",
-  "version": "0.35.22",
+  "version": "0.35.23",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",

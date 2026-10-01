@@ -125,14 +125,14 @@ const SHELL = `<header id="threads-header">
 </header>
 <div id="threads-list" role="feed"><p class="mc-loading">Loading…</p></div>
 <footer class="mc-sidebar-footer" hidden>
-  <button id="send-to-claude" class="mc-btn mc-btn--primary" title="Send the prompt to a running Claude terminal (or your configured send mode).">Send to Claude</button>
+  <button id="send-to-claude" class="mc-btn mc-btn--primary" title="Send the prompt to a running Claude terminal (or your configured send mode).">Send</button>
   <span class="mc-menu-wrap">
     <button id="send-options-btn" type="button" class="mc-btn mc-btn--primary" aria-haspopup="menu" aria-expanded="false" aria-controls="send-options-menu" aria-label="Send options" title="Send options"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5l4 4 4-4"/></svg></button>
     <div id="send-options-menu" class="mc-menu mc-menu--up" role="menu" aria-label="Send options" hidden>
-      <button id="suggest-mode-toggle" type="button" role="menuitemcheckbox" class="mc-menuitem" aria-checked="false" title="When on, Send to Claude asks Claude to propose edits as suggestions you accept or reject.">Ask for suggestions instead of edits</button>
-      <button id="copy-prompt" type="button" role="menuitem" class="mc-menuitem" title="Copy the prompt to your clipboard.">Copy prompt instead</button>
+      <button id="suggest-mode-toggle" type="button" role="menuitemcheckbox" class="mc-menuitem" aria-checked="false" title="When on, Send asks Claude to propose edits as suggestions you accept or reject.">Ask for suggestions instead of edits</button>
     </div>
   </span>
+  <button id="copy-prompt" type="button" class="mc-icon-btn" aria-label="Copy prompt" title="Copy the prompt to your clipboard."><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg></button>
 </footer>`;
 
 /**
@@ -282,13 +282,12 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   // --- Toolbar -------------------------------------------------------------------
 
   dom.sendToClaude.addEventListener("click", () => host.post({ type: "send-to-claude" }));
+  // An open menu closes on this click like on any other outside click (the
+  // menu controller's document listener).
+  dom.copyPrompt.addEventListener("click", () => host.post({ type: "copy-prompt" }));
   // Every item in the send-options and "…" menus closes it after each click:
   // even the two menuitemcheckbox toggles (suggest mode, the keys hint) are
   // one action per click here, not a multi-select list to leave open.
-  dom.copyPrompt.addEventListener("click", () => {
-    host.post({ type: "copy-prompt" });
-    menu.closeOpenMenu(false);
-  });
   // The suggest-mode toggle doesn't flip itself: the setting is the host's,
   // and it only reflects what comes back — anything else would show "on"
   // after a write that failed.
@@ -339,11 +338,12 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   /**
    * Put `agentName` wherever there's no per-thread agent to name instead: the
    * Send button's title and the suggest-mode item's title. The Send label
-   * itself is `updateFooter`'s (it also needs the open count).
+   * itself names no agent: `agentName` is whoever wrote here last ("Claude"
+   * before anyone has), which is not necessarily who this send goes to.
    */
   function updateAgentUi(): void {
     dom.sendToClaude.title = `Send the prompt to a running ${agentName} terminal (or your configured send mode).`;
-    dom.suggestModeToggle.title = `When on, Send to ${agentName} asks ${agentName} to propose edits as suggestions you accept or reject.`;
+    dom.suggestModeToggle.title = `When on, Send asks ${agentName} to propose edits as suggestions you accept or reject.`;
   }
 
   /**
@@ -356,7 +356,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     dom.footer.hidden = openCount === 0;
     const what = openCount === 1 ? "1 comment" : `${openCount} comments`;
     // The label says what the click does, so suggest mode can't be on silently.
-    dom.sendToClaude.textContent = `Send ${what} to ${agentName}${state.suggestMode ? " as suggestions" : ""}`;
+    dom.sendToClaude.textContent = `Send ${what}${state.suggestMode ? " as suggestions" : ""}`;
   }
 
   function setSkillStatus(status: SkillStatus | undefined): void {
@@ -864,7 +864,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     });
     head.appendChild(headRow);
 
-    // Visible per-card actions are Reply and Resolve/Reopen; every other
+    // Visible per-card actions are Reply, Resolve/Reopen and Send; every other
     // per-thread action lives in the "…" menu.
     const actions = document.createElement("div");
     actions.className = "thread-actions";
@@ -886,6 +886,18 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     resolveBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       host.post({ type: "toggle-resolve", threadId: t.id });
+    });
+
+    // Named after the current agent: render() sets `agentName` before it
+    // builds the cards.
+    const sendBtn = document.createElement("button");
+    sendBtn.type = "button";
+    sendBtn.className = "mc-btn mc-btn--quiet thread-send";
+    sendBtn.textContent = "Send";
+    sendBtn.title = `Send this thread to ${agentName}`;
+    sendBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      host.post({ type: "send-to-claude-comment", threadId: t.id });
     });
 
     const menuWrap = document.createElement("span");
@@ -914,10 +926,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
       host.post({ type: "open-in-editor", threadId: t.id });
       menu.closeOpenMenu(false);
     });
-    const sendThreadItem = menu.buildMenuItem("Send this thread", () => {
-      host.post({ type: "send-to-claude-comment", threadId: t.id });
-      menu.closeOpenMenu(false);
-    });
     const copyThreadItem = menu.buildMenuItem("Copy prompt", () => {
       host.post({ type: "copy-claude-comment", threadId: t.id });
       menu.closeOpenMenu(false);
@@ -942,10 +950,10 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
       },
       { danger: true },
     );
-    menuPanel.append(openInEditorItem, sendThreadItem, copyThreadItem, deleteItem);
+    menuPanel.append(openInEditorItem, copyThreadItem, deleteItem);
     menuWrap.append(menuBtn, menuPanel);
 
-    actions.append(replyToggleBtn, resolveBtn, menuWrap);
+    actions.append(replyToggleBtn, resolveBtn, sendBtn, menuWrap);
     head.appendChild(actions);
     card.appendChild(head);
 

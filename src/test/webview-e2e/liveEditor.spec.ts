@@ -101,7 +101,7 @@ test("selecting text and adding a comment posts add-comment with the selected an
   expect(range.first.text.slice(range.first.offset, range.last.offset + 1)).toBe("Suggest");
 });
 
-test("Resolve and \"Send this thread\" post the thread-scoped messages", async ({ page }) => {
+test("Resolve and the card's Send post the thread-scoped messages", async ({ page }) => {
   // The review view's messages (10x-plan-6 P4): the sidebar is shared now.
   const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
   await card.locator(".thread-actions").getByRole("button", { name: "Resolve", exact: true }).click();
@@ -110,8 +110,7 @@ test("Resolve and \"Send this thread\" post the thread-scoped messages", async (
     threadId: fixture.openThreadId,
   });
 
-  await card.locator(".thread-menu-btn").click();
-  await card.getByRole("menuitem", { name: "Send this thread" }).click();
+  await card.locator(".thread-actions .thread-send").click();
   expect(await awaitPosted(page, "send-to-claude-comment")).toEqual({
     type: "send-to-claude-comment",
     threadId: fixture.openThreadId,

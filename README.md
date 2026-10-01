@@ -43,7 +43,7 @@ Without the extension, the Claude side is also available on its own: `claude plu
 
 ![A pending suggestion accepted with a click, then a thread resolved](media/gifs/review-loop.gif)
 
-**Suggest mode** is the toggle next to the Send button, or `markdownCollab.proposeEditsAsSuggestions`. Sending one thread from its card works the same way as sending them all.
+**Suggest mode** is the toggle next to the Send button, or `markdownCollab.proposeEditsAsSuggestions`. Each thread card has its own **Send** button, and it works the same way as sending them all. **Copy prompt** is the copy button beside the Send bar.
 
 ## Reviewing a colleague's PR
 
@@ -74,7 +74,7 @@ Afterwards, **Review Session Summary** turns the thread state into a digest for 
 
 ## How your comments reach Claude
 
-The **Send to Claude** button delivers one of three ways. The first click asks, remembers your answer per workspace, and never asks again. **Reset Send Mode** clears it.
+The **Send** button delivers one of three ways. The first click asks, remembers your answer per workspace, and never asks again. **Reset Send Mode** clears it.
 
 **Type into the active terminal** is the recommended, normal path: if a Claude terminal is already open, this is picked for you without asking; otherwise the picker offers to start one. It works with any agent's terminal, not only Claude's.
 

@@ -41,13 +41,15 @@ test.describe("with the review fixture, read-only", () => {
     expect(state?.threadFilter).toBe("all");
   });
 
-  test("agentName from the host renames the Send button and its titles", async ({ page }) => {
-    // The fixture has 2 open threads (neither resolved) — "N comments", not "to Claude" alone.
-    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments to Claude");
+  test("agentName from the host renames the Send button's and suggest item's titles, never the Send label", async ({ page }) => {
+    // The fixture has 2 open threads (neither resolved). The label names the
+    // count and no agent: agentName is who wrote here last, not who a send goes to.
+    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments");
+    await expect(page.locator("#send-to-claude")).toHaveAttribute("title", /Claude/);
     await expect(page.locator("#suggest-mode-toggle")).toHaveAttribute("title", /Claude/);
 
     await pushToWebview(page, { type: "sidecar-changed", ...liveSidecar(fixture.source, { agentName: "Codex" }) });
-    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments to Codex");
+    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments");
     await expect(page.locator("#send-to-claude")).toHaveAttribute("title", /Codex/);
     await expect(page.locator("#suggest-mode-toggle")).toHaveAttribute("title", /Codex/);
   });
@@ -81,10 +83,11 @@ test.describe("with the review fixture, read-only", () => {
     await expect(menu.locator("#finalize-doc")).toBeVisible();
   });
 
-  test("Copy prompt instead posts copy-prompt and closes the send-options menu", async ({ page }) => {
-    // Moved from the "…" menu into Send's own options menu.
+  test("the footer's Copy prompt button posts copy-prompt and closes an open send-options menu", async ({ page }) => {
+    // Out of the send-options menu: a standalone button beside the split button.
     await page.locator("#send-options-btn").click();
-    await page.locator("#send-options-menu").getByRole("menuitem", { name: "Copy prompt instead" }).click();
+    await expect(page.locator("#send-options-menu")).toBeVisible();
+    await page.locator("#copy-prompt").click();
     expect(await awaitPosted(page, "copy-prompt")).toEqual({ type: "copy-prompt" });
     await expect(page.locator("#send-options-menu")).toBeHidden();
   });

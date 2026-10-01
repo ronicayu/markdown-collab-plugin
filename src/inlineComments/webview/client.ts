@@ -1787,9 +1787,9 @@ function renderThreadCard(t: ThreadState, posinset: number, setsize: number): HT
   headRow.appendChild(quote);
   head.appendChild(headRow);
 
-  // Visible per-card actions: Reply and Resolve/Reopen (round-4 P3.2). Every
-  // other per-thread action moves into the "…" menu below — a thirty-thread
-  // review used to put five equal-weight buttons on every one of them.
+  // Visible per-card actions: Reply, Resolve/Reopen and Send. Every other
+  // per-thread action lives in the "…" menu below — a thirty-thread review
+  // would otherwise put six equal-weight buttons on every one of them.
   const actions = document.createElement("div");
   actions.className = "thread-actions";
 
@@ -1810,6 +1810,16 @@ function renderThreadCard(t: ThreadState, posinset: number, setsize: number): HT
   resolveBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     vscode.postMessage({ type: "toggle-resolve", threadId: t.id });
+  });
+
+  const sendBtn = document.createElement("button");
+  sendBtn.type = "button";
+  sendBtn.className = "btn-ghost thread-send";
+  sendBtn.textContent = "Send";
+  sendBtn.title = `Send this thread to ${agentName}`;
+  sendBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    vscode.postMessage({ type: "send-to-claude-comment", threadId: t.id });
   });
 
   const menuWrap = document.createElement("span");
@@ -1833,10 +1843,6 @@ function renderThreadCard(t: ThreadState, posinset: number, setsize: number): HT
 
   const openInEditorItem = buildMenuItem("Open in editor", () => {
     vscode.postMessage({ type: "open-in-editor", threadId: t.id });
-    closeOpenMenu(false);
-  });
-  const sendThreadItem = buildMenuItem("Send this thread", () => {
-    vscode.postMessage({ type: "send-to-claude-comment", threadId: t.id });
     closeOpenMenu(false);
   });
   const copyThreadItem = buildMenuItem("Copy prompt", () => {
@@ -1866,10 +1872,10 @@ function renderThreadCard(t: ThreadState, posinset: number, setsize: number): HT
     },
     { danger: true },
   );
-  menu.append(openInEditorItem, sendThreadItem, copyThreadItem, deleteItem);
+  menu.append(openInEditorItem, copyThreadItem, deleteItem);
   menuWrap.append(menuBtn, menu);
 
-  actions.append(replyToggleBtn, resolveBtn, menuWrap);
+  actions.append(replyToggleBtn, resolveBtn, sendBtn, menuWrap);
   head.appendChild(actions);
   card.appendChild(head);
 

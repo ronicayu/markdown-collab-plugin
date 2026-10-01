@@ -9,7 +9,7 @@
 
 import { expect, test } from "@playwright/test";
 import { parse, replaceThread } from "../../inlineComments/format";
-import { awaitPosted, bootLiveEditor, pushToWebview } from "./harness";
+import { awaitPosted, bootLiveEditor, posted, pushToWebview } from "./harness";
 import { liveInit, liveSidecar, reviewFixture } from "./fixtures";
 
 const RESOLVED_TS = "2026-07-02T09:00:00.000Z";
@@ -30,6 +30,7 @@ test.describe("sidebar footer", () => {
     const EMPTY_DOC = "# Notes\n\nNothing has been reviewed in this file yet.\n";
     await bootLiveEditor(page, { ...liveInit(EMPTY_DOC), readOnly: true });
     await expect(page.locator(".mc-sidebar-footer")).toBeHidden();
+    await expect(page.locator("#copy-prompt")).toBeHidden();
   });
 
   test("hidden once every thread is resolved", async ({ page }) => {
@@ -37,18 +38,20 @@ test.describe("sidebar footer", () => {
     const allResolved = resolveThread(resolveThread(fixture.source, fixture.answeredThreadId), fixture.openThreadId);
     await bootLiveEditor(page, { ...liveInit(allResolved), readOnly: true });
     await expect(page.locator(".mc-sidebar-footer")).toBeHidden();
+    await expect(page.locator("#copy-prompt")).toBeHidden();
   });
 
   test("visible with the open count in the Send label otherwise", async ({ page }) => {
     const fixture = reviewFixture();
     await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
     await expect(page.locator(".mc-sidebar-footer")).toBeVisible();
-    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments to Claude");
+    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments");
+    await expect(page.locator("#copy-prompt")).toBeVisible();
 
     // Resolving one of the two open threads drops the count to a singular label.
     const oneResolved = resolveThread(fixture.source, fixture.answeredThreadId);
     await pushToWebview(page, { type: "sidecar-changed", ...liveSidecar(oneResolved) });
-    await expect(page.locator("#send-to-claude")).toHaveText("Send 1 comment to Claude");
+    await expect(page.locator("#send-to-claude")).toHaveText("Send 1 comment");
   });
 });
 
@@ -58,7 +61,7 @@ test.describe("send options", () => {
     await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
   });
 
-  test("opening the menu shows suggest mode and copy prompt", async ({ page }) => {
+  test("opening the menu shows suggest mode and nothing else", async ({ page }) => {
     const btn = page.locator("#send-options-btn");
     await expect(btn).toHaveAttribute("aria-haspopup", "menu");
     await expect(btn).toHaveAttribute("aria-expanded", "false");
@@ -67,8 +70,11 @@ test.describe("send options", () => {
     await btn.click();
     await expect(page.locator("#send-options-menu")).toBeVisible();
     await expect(btn).toHaveAttribute("aria-expanded", "true");
-    await expect(page.locator("#suggest-mode-toggle")).toBeVisible();
-    await expect(page.locator("#copy-prompt")).toHaveText("Copy prompt instead");
+    await expect(page.locator("#send-options-menu").getByRole("menuitem")).toHaveCount(0);
+    await expect(page.locator("#send-options-menu").getByRole("menuitemcheckbox")).toHaveText([
+      "Ask for suggestions instead of edits",
+    ]);
+    await expect(page.locator("#send-options-menu #copy-prompt")).toHaveCount(0);
   });
 
   test("toggling suggest mode posts toggle-suggest-mode", async ({ page }) => {
@@ -77,10 +83,15 @@ test.describe("send options", () => {
     expect(await awaitPosted(page, "toggle-suggest-mode")).toEqual({ type: "toggle-suggest-mode" });
   });
 
-  test("copy prompt instead posts copy-prompt", async ({ page }) => {
-    await page.locator("#send-options-btn").click();
-    await page.locator("#copy-prompt").click();
-    expect(await awaitPosted(page, "copy-prompt")).toEqual({ type: "copy-prompt" });
+  test("the footer's copy button needs no menu: labelled, visible, one click posts copy-prompt", async ({ page }) => {
+    const copy = page.locator("#copy-prompt");
+    await expect(copy).toBeVisible();
+    await expect(copy).toHaveAttribute("aria-label", "Copy prompt");
+    await expect(copy).toHaveAttribute("title", "Copy the prompt to your clipboard.");
+    await expect(copy).not.toHaveAttribute("role", "menuitem");
+    await expect(page.locator("#send-options-menu")).toBeHidden();
+    await copy.click();
+    expect(await posted(page)).toEqual([{ type: "copy-prompt" }]);
   });
 
   test("Escape closes it and returns focus to its trigger", async ({ page }) => {
@@ -223,26 +234,55 @@ test.describe("suggest mode shows in the Send label", () => {
   test("with the menu closed, the label says the send asks for suggestions", async ({ page }) => {
     const fixture = reviewFixture();
     await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
-    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments to Claude");
+    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments");
 
     await pushToWebview(page, { type: "sidecar-changed", ...liveSidecar(fixture.source, { suggestMode: true }) });
-    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments to Claude as suggestions");
+    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments as suggestions");
     await expect(page.locator("#send-options-btn")).toHaveAttribute("title", "Suggest mode is on");
+  });
+
+  test("Send, the chevron and the copy button share one row and height, Send truncating rather than wrapping", async ({
+    page,
+  }) => {
+    const fixture = reviewFixture();
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
+    await pushToWebview(page, { type: "sidecar-changed", ...liveSidecar(fixture.source, { suggestMode: true }) });
+    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments as suggestions");
+
+    const [send, chevron, copy, footer] = await Promise.all([
+      page.locator("#send-to-claude").boundingBox(),
+      page.locator("#send-options-btn").boundingBox(),
+      page.locator("#copy-prompt").boundingBox(),
+      page.locator(".mc-sidebar-footer").boundingBox(),
+    ]);
+    for (const box of [chevron!, copy!]) {
+      expect(box.y).toBeCloseTo(send!.y, 0);
+      expect(box.height).toBeCloseTo(send!.height, 0);
+    }
+    // Left to right, inside the footer, and the copy button is not squeezed out.
+    expect(chevron!.x).toBeGreaterThanOrEqual(send!.x + send!.width - 1);
+    expect(copy!.x).toBeGreaterThan(chevron!.x + chevron!.width);
+    expect(copy!.x + copy!.width).toBeLessThanOrEqual(footer!.x + footer!.width + 1);
+    expect(copy!.width).toBeGreaterThanOrEqual(24);
+    // Send fills what's left: nothing but the 12px footer padding beside the copy button.
+    expect(copy!.x + copy!.width).toBeGreaterThan(footer!.x + footer!.width - 16);
   });
 });
 
 test.describe("card actions (phase 2)", () => {
-  test("the thread action row's \"…\" is the rightmost control", async ({ page }) => {
+  test("the thread action row reads Reply, Resolve, Send, then \"…\" as the rightmost control", async ({ page }) => {
     const fixture = reviewFixture();
     await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
     const actions = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"] .thread-actions`);
-    const [replyBox, resolveBox, menuBox] = await Promise.all([
+    const [replyBox, resolveBox, sendBox, menuBox] = await Promise.all([
       actions.locator(".thread-reply-toggle").boundingBox(),
       actions.getByRole("button", { name: "Resolve", exact: true }).boundingBox(),
+      actions.locator(".thread-send").boundingBox(),
       actions.locator(".thread-menu-btn").boundingBox(),
     ]);
-    expect(menuBox!.x).toBeGreaterThan(replyBox!.x);
-    expect(menuBox!.x).toBeGreaterThan(resolveBox!.x);
+    expect(resolveBox!.x).toBeGreaterThan(replyBox!.x);
+    expect(sendBox!.x).toBeGreaterThan(resolveBox!.x);
+    expect(menuBox!.x).toBeGreaterThan(sendBox!.x);
   });
 
   test("no class-less button anywhere in .mc-thread-sidebar with threads, a suggestion, an open composer, and an editing comment", async ({

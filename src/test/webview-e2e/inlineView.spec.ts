@@ -141,8 +141,7 @@ test("Resolve posts toggle-resolve for the clicked thread only", async ({ page }
   });
 });
 
-test("the per-card \"…\" menu holds Open in editor, Send this thread, Copy prompt, and Delete", async ({ page }) => {
-  // round-4 P3.2: everything but Reply/Resolve moved off the card face.
+test("the per-card \"…\" menu holds Open in editor, Copy prompt, and Delete", async ({ page }) => {
   const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
   const menuBtn = card.locator(".thread-menu-btn");
   await expect(menuBtn).toHaveAttribute("aria-haspopup", "menu");
@@ -153,12 +152,7 @@ test("the per-card \"…\" menu holds Open in editor, Send this thread, Copy pro
   await menuBtn.click();
   await expect(menu).toBeVisible();
   await expect(menuBtn).toHaveAttribute("aria-expanded", "true");
-  await expect(menu.getByRole("menuitem")).toHaveText([
-    "Open in editor",
-    "Send this thread",
-    "Copy prompt",
-    "Delete",
-  ]);
+  await expect(menu.getByRole("menuitem")).toHaveText(["Open in editor", "Copy prompt", "Delete"]);
 });
 
 test("Escape closes a card's menu and returns focus to its \"…\" button", async ({ page }) => {
@@ -182,21 +176,25 @@ test("a click outside a card's open menu closes it", async ({ page }) => {
   await expect(card.locator(".mc-menu")).toBeHidden();
 });
 
-test("\"Send this thread\" and \"Copy prompt\" in the card menu post the thread-scoped messages", async ({ page }) => {
+test("a card's Send button posts send-to-claude-comment for that thread alone, no menu involved", async ({ page }) => {
   const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
-  await card.locator(".thread-menu-btn").click();
-  await card.getByRole("menuitem", { name: "Send this thread" }).click();
-  expect(await awaitPosted(page, "send-to-claude-comment")).toEqual({
-    type: "send-to-claude-comment",
-    threadId: fixture.openThreadId,
-  });
+  const send = card.locator(".thread-actions .thread-send");
+  await expect(send).toHaveText("Send");
+  await expect(send).toHaveAttribute("title", "Send this thread to Claude");
+  await send.click();
+  expect(await posted(page)).toEqual([{ type: "send-to-claude-comment", threadId: fixture.openThreadId }]);
+  await expect(card.locator(".mc-menu")).toBeHidden();
+});
 
+test("\"Copy prompt\" in the card menu posts the thread-scoped message", async ({ page }) => {
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
   await card.locator(".thread-menu-btn").click();
   await card.getByRole("menuitem", { name: "Copy prompt" }).click();
   expect(await awaitPosted(page, "copy-claude-comment")).toEqual({
     type: "copy-claude-comment",
     threadId: fixture.openThreadId,
   });
+  await expect(card.locator(".mc-menu")).toBeHidden();
 });
 
 test("deleting a thread needs a second click to confirm, inside the card menu", async ({ page }) => {

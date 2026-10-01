@@ -37,7 +37,7 @@ n / p to move between threads · r reply · e resolve · o open in editor
 - **Document controls live with the document. Comment controls live with the
   comments.**
 - **One primary action per region.** The sidebar's is Send. Everything about
-  *how* it sends hangs off Send.
+  *how* it sends hangs off Send, except the copy button beside it.
 - **Header is at most two rows.** Contextual rows (Claude summary, skill
   warning, first-run shortcut hint) appear only when they have something to
   say.
@@ -59,7 +59,7 @@ n / p to move between threads · r reply · e resolve · o open in editor
 │                                                  │ thread cards…                  │
 │                                                  │                                │
 │                                                  │ ────────────────────────────── │
-│                                                  │ [ Send 3 comments to Claude ][▾]│
+│                                                  │ [ Send 3 comments ][▾][⧉]      │
 └──────────────────────────────────────────────────┴────────────────────────────────┘
 ```
 
@@ -120,11 +120,11 @@ Pinned to the bottom of the sidebar (the list scrolls above it), top border.
 own CTA covers the no-threads case.
 
 - `#send-to-claude` — primary, fills the row. Label
-  `Send 3 comments to Claude` / `Send 1 comment to Claude`, with
-  `agentName` substituted as today; with suggest mode on it reads
-  `Send 3 comments to Claude as suggestions`, so the setting is never on
-  silently. The count is open threads, which is what a send acts on.
-  `title` unchanged.
+  `Send 3 comments` / `Send 1 comment`; with suggest mode on it reads
+  `Send 3 comments as suggestions`, so the setting is never on silently.
+  The count is open threads, which is what a send acts on. The label names
+  no agent: `agentName` is whoever wrote in the file last ("Claude" before
+  anyone has), not who the send goes to. It stays in the `title`.
 - `#send-options-btn` — the other half of a split button: same primary
   colour and height as Send, a hairline divider, a chevron glyph.
   `aria-haspopup="menu"`, `aria-expanded`, `aria-controls="send-options-menu"`,
@@ -135,8 +135,11 @@ own CTA covers the no-threads case.
   - `#suggest-mode-toggle` — `role="menuitemcheckbox"`, `aria-checked`,
     label "Ask for suggestions instead of edits". Posts
     `toggle-suggest-mode`; the host still owns the value. Title unchanged.
-  - `#copy-prompt` — `role="menuitem"`, "Copy prompt instead". Posts
-    `copy-prompt`. Moved from the "…" menu.
+- `#copy-prompt` — not in the menu: a standalone `mc-icon-btn` to the right
+  of the split button, a bordered square the same height as Send with a copy
+  glyph (inline SVG). `aria-label="Copy prompt"`, title "Copy the prompt to
+  your clipboard." Posts `copy-prompt`. Moved from the "…" menu; hidden with
+  the footer when nothing is open.
 
 ### "…" menu — `#overflow-menu`, in order
 
@@ -201,7 +204,7 @@ and not deleted:
 
 | spec | what moves |
 | --- | --- |
-| `liveSidebarToolbar.spec.ts` | filter tabs (still radiogroup); Send label; `#suggest-mode-toggle` and `#copy-prompt` now inside `#send-options-menu` (open it first); `#hint-toggle` inside `#overflow-menu`; `#edit-mode-toggle` inside `.mdc-doc-toolbar` |
+| `liveSidebarToolbar.spec.ts` | filter tabs (still radiogroup); Send label; `#suggest-mode-toggle` inside `#send-options-menu` (open it first), `#copy-prompt` a footer button beside it; `#hint-toggle` inside `#overflow-menu`; `#edit-mode-toggle` inside `.mdc-doc-toolbar` |
 | `modeToggle.spec.ts` | `#edit-mode-toggle` in the toolbar; **add**: still visible with the sidebar collapsed |
 | `liveSidebar.spec.ts` | `#thread-count` → `.filter-row .count`; Send label |
 | `liveEditor.spec.ts`, `uncommittedDiff.spec.ts`, `removeResolved.spec.ts`, `finalizeDocument.spec.ts`, `liveSidebarEmptyState.spec.ts`, `highlightFilter.spec.ts`, `outline.spec.ts` | check each locator against the new DOM |
@@ -215,8 +218,8 @@ New e2e, in `liveSidebarChrome.spec.ts`:
 - footer hidden at 0 open threads (both "no threads" and "all resolved");
   visible with the count in the label otherwise;
 - send options: opening the menu, toggling suggest posts
-  `toggle-suggest-mode`, copy posts `copy-prompt`, Escape closes, one menu
-  open at a time with "…";
+  `toggle-suggest-mode`, Escape closes, one menu open at a time with "…";
+  the footer's copy button posts `copy-prompt` without opening anything;
 - filter row hidden at 0 total; tab counts match the threads;
 - comments toggle in the toolbar collapses the sidebar, shows the open-count
   badge, and the mode switch is still clickable while collapsed;
@@ -249,6 +252,7 @@ for (Accept, or a composer's submit) is primary; "…" is a ghost icon button.
 | control | was | now |
 | --- | --- | --- |
 | thread `Reply`, `Resolve` / `Reopen` | `btn-ghost` (bordered) | `mc-btn mc-btn--quiet` |
+| thread `Send` (`.thread-send`) | menu item "Send this thread" | `mc-btn mc-btn--quiet thread-send`, between `Resolve` and `…`; posts `send-to-claude-comment` for that thread, shown whatever its status. The "…" menu keeps Open in editor, Copy prompt, Delete |
 | thread `…` | `btn-ghost thread-menu-btn` | `mc-icon-btn thread-menu-btn`, `⋯` glyph, `aria-label` unchanged ("More actions for this thread" — a page has one per card, so the label stays specific), pushed to the row's right (`margin-left: auto`) |
 | thread action row `.thread-actions` | inline buttons | `display: flex; align-items: center; gap: 2px` |
 | collapse `▾`/`▸` (`.thread-collapse`, and the suggestion card's equivalent) | text glyph, unstyled | `mc-icon-btn mc-icon-btn--sm` (20 px), one chevron SVG rotated −90° via CSS when collapsed, `aria-expanded` kept |
