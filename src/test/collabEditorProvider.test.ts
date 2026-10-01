@@ -74,9 +74,14 @@ class FakeDocument {
   }
 }
 
-type Listener = (e: { document: FakeDocument }) => void;
+type Listener = (e: { document: FakeDocument; reason?: number }) => void;
 
 type AsyncSpy = Mock<unknown[], Promise<unknown>>;
+
+interface FakePanel {
+  active: boolean;
+  visible: boolean;
+}
 
 interface Harness {
   doc: FakeDocument;
@@ -85,6 +90,12 @@ interface Harness {
   log: { [K in "trace" | "info" | "warn" | "error" | "show"]: Mock };
   shown: { error: AsyncSpy; warning: AsyncSpy; info: AsyncSpy };
   exec: AsyncSpy;
+  /** The fake webview panel — tests flip `.active`/`.visible` directly, then fire `viewStateChanged`. */
+  panel: FakePanel;
+  /** Fire `onDidChangeTextDocument` by hand, with an optional `TextDocumentChangeReason`. */
+  changeDoc(reason?: number): void;
+  /** Fire `onDidChangeViewState` with the panel's current `active`/`visible`. */
+  viewStateChanged(): void;
 }
 
 // Every panel a test opened, closed after it: open panels are registered by
@@ -134,6 +145,7 @@ async function openEditor(source: string, opts: { readOnly?: boolean } = {}): Pr
 
   const posted: Array<Record<string, unknown>> = [];
   let receive: (msg: unknown) => void = () => undefined;
+  let viewStateListener: ((e: { webviewPanel: FakePanel }) => void) | null = null;
   const noop = { dispose: () => undefined };
   const panel = {
     webview: {
@@ -150,7 +162,10 @@ async function openEditor(source: string, opts: { readOnly?: boolean } = {}): Pr
         return noop;
       },
     },
-    onDidChangeViewState: () => noop,
+    onDidChangeViewState: (cb: (e: { webviewPanel: FakePanel }) => void) => {
+      viewStateListener = cb;
+      return noop;
+    },
     onDidDispose: (cb: () => void) => {
       disposers.push(cb);
       return noop;
@@ -173,7 +188,19 @@ async function openEditor(source: string, opts: { readOnly?: boolean } = {}): Pr
     panel as unknown as vscode.WebviewPanel,
     {} as vscode.CancellationToken,
   );
-  return { doc, posted, send: (m) => receive(m), log, shown, exec };
+  return {
+    doc,
+    posted,
+    send: (m) => receive(m),
+    log,
+    shown,
+    exec,
+    panel,
+    changeDoc: (reason) => {
+      for (const l of changeListeners) l({ document: doc, reason });
+    },
+    viewStateChanged: () => viewStateListener?.({ webviewPanel: panel }),
+  };
 }
 
 /** The editor's block types for `source` — the `baseTypes` a webview on it sends. */
@@ -322,6 +349,132 @@ describe("epochs: an edit made on text the editor no longer shows", () => {
     h.send(editBlocks(DOC, 0, [{ from: 1, to: 2, markdown: "Alpha?", types: ["paragraph"] }]));
     await vi.waitFor(() => expect(ofType(h, "externalChange")).toHaveLength(2));
     expect(proseOf(h.doc.text)).not.toContain("Alpha?");
+  });
+});
+
+describe("undo and redo messages", () => {
+  it("run after a block edit queued before them has been written", async () => {
+    const h = await openEditor(DOC);
+    h.send(editBlocks(DOC, 0, BETA_BANG));
+    h.send({ type: "undo" });
+    await vi.waitFor(() => expect(h.doc.text).toBe(spliced(DOC, BETA_BANG)));
+    await vi.waitFor(() => expect(h.exec).toHaveBeenCalledWith("undo"));
+  });
+
+  it('redo calls executeCommand("redo")', async () => {
+    const h = await openEditor(DOC);
+    h.send({ type: "redo" });
+    await vi.waitFor(() => expect(h.exec).toHaveBeenCalledWith("redo"));
+  });
+
+  it("does nothing — logged, not shown — when the panel isn't the active editor", async () => {
+    const h = await openEditor(DOC);
+    h.panel.active = false;
+    h.send({ type: "undo" });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(h.exec).not.toHaveBeenCalledWith("undo");
+    expect(h.log.info).toHaveBeenCalledWith(expect.stringContaining("undo"));
+    expect(h.shown.warning).not.toHaveBeenCalled();
+    expect(h.shown.error).not.toHaveBeenCalled();
+  });
+});
+
+describe("a document change with reason Undo/Redo", () => {
+  it("pushes quiet: true, reveal: true instead of a changed summary", async () => {
+    const h = await openEditor(DOC);
+    h.send({ type: "ready" });
+    await vi.waitFor(() => expect(ofType(h, "init")).toHaveLength(1));
+    h.doc.text = DOC.replace("Alpha", "Omega");
+    h.changeDoc(vscode.TextDocumentChangeReason.Undo);
+    await vi.waitFor(() => expect(ofType(h, "externalChange")).toHaveLength(1));
+    const msg = ofType(h, "externalChange")[0]!;
+    expect(msg).toMatchObject({ text: proseOf(h.doc.text), quiet: true, reveal: true });
+    expect(msg.changed).toBeUndefined();
+  });
+
+  it("Redo is treated the same as Undo", async () => {
+    const h = await openEditor(DOC);
+    h.send({ type: "ready" });
+    await vi.waitFor(() => expect(ofType(h, "init")).toHaveLength(1));
+    h.doc.text = DOC.replace("Alpha", "Omega");
+    h.changeDoc(vscode.TextDocumentChangeReason.Redo);
+    await vi.waitFor(() => expect(ofType(h, "externalChange")).toHaveLength(1));
+    expect(ofType(h, "externalChange")[0]).toMatchObject({ quiet: true, reveal: true });
+  });
+
+  it("any other reason still pushes a changed summary — not quiet or reveal", async () => {
+    const h = await openEditor(DOC);
+    h.send({ type: "ready" });
+    await vi.waitFor(() => expect(ofType(h, "init")).toHaveLength(1));
+    h.doc.text = DOC.replace("Alpha", "Omega");
+    h.changeDoc(); // no reason — a programmatic edit, same as before
+    await vi.waitFor(() => expect(ofType(h, "externalChange")).toHaveLength(1));
+    const msg = ofType(h, "externalChange")[0]!;
+    expect(msg.changed).toBeTruthy();
+    expect(msg.quiet).toBeUndefined();
+    expect(msg.reveal).toBeUndefined();
+  });
+});
+
+describe("the markdownCollab.liveEditorTyping context key", () => {
+  const SET = (typing: boolean) => ["setContext", "markdownCollab.liveEditorTyping", typing] as const;
+
+  it("follows editor-focus while the panel is active", async () => {
+    const h = await openEditor(DOC);
+    h.send({ type: "editor-focus", focused: true });
+    await vi.waitFor(() => expect(h.exec).toHaveBeenCalledWith(...SET(true)));
+    h.send({ type: "editor-focus", focused: false });
+    await vi.waitFor(() => expect(h.exec).toHaveBeenCalledWith(...SET(false)));
+  });
+
+  it("ignores focused: true from a panel that isn't the active editor", async () => {
+    const h = await openEditor(DOC);
+    h.panel.active = false;
+    h.send({ type: "editor-focus", focused: true });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(h.exec).not.toHaveBeenCalledWith(...SET(true));
+  });
+
+  it("goes false when the panel stops being the active editor", async () => {
+    const h = await openEditor(DOC);
+    h.send({ type: "editor-focus", focused: true });
+    await vi.waitFor(() => expect(h.exec).toHaveBeenCalledWith(...SET(true)));
+    h.exec.mockClear();
+    h.panel.active = false;
+    h.viewStateChanged();
+    expect(h.exec).toHaveBeenCalledWith(...SET(false));
+  });
+
+  it("goes false on a switch to Reading", async () => {
+    const h = await openEditor(DOC);
+    h.send({ type: "editor-focus", focused: true });
+    await vi.waitFor(() => expect(h.exec).toHaveBeenCalledWith(...SET(true)));
+    h.exec.mockClear();
+    h.send({ type: "set-read-only", readOnly: true });
+    await vi.waitFor(() => expect(h.exec).toHaveBeenCalledWith(...SET(false)));
+  });
+
+  it("clears on dispose", async () => {
+    const h = await openEditor(DOC);
+    h.send({ type: "editor-focus", focused: true });
+    await vi.waitFor(() => expect(h.exec).toHaveBeenCalledWith(...SET(true)));
+    h.exec.mockClear();
+    for (const dispose of disposers.splice(0)) dispose();
+    expect(h.exec).toHaveBeenCalledWith(...SET(false));
+  });
+
+  it("one panel's dispose doesn't clear the context key a different panel still owns", async () => {
+    const h1 = await openEditor(DOC);
+    h1.send({ type: "editor-focus", focused: true });
+    await vi.waitFor(() => expect(h1.exec).toHaveBeenCalledWith(...SET(true)));
+
+    // Opening a second panel re-points vscode.commands.executeCommand at a
+    // fresh mock (this harness's single-mutable-module stand-in for it) —
+    // h2.exec is what both panels' setContext calls land on from here.
+    const h2 = await openEditor("# Other\n\nbody.\n");
+    const h2Dispose = disposers.pop()!;
+    h2Dispose(); // h2 never reported focus — h1 is still the owner.
+    expect(h2.exec).not.toHaveBeenCalledWith(...SET(false));
   });
 });
 

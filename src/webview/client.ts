@@ -33,12 +33,11 @@ import { extendListItemSchemaForTask, gfm } from "@milkdown/preset-gfm";
 import type { Ctx } from "@milkdown/ctx";
 import type { NodeSchema } from "@milkdown/transformer";
 import { listener, listenerCtx } from "@milkdown/plugin-listener";
-import { history } from "@milkdown/plugin-history";
 import { nord } from "@milkdown/theme-nord";
 import "@milkdown/theme-nord/style.css";
 import "./host.css";
 import "./plugins/plugins.css";
-import { NodeSelection, Plugin, PluginKey, TextSelection } from "prosemirror-state";
+import { NodeSelection, Plugin, PluginKey, TextSelection, type Transaction } from "prosemirror-state";
 import { CellSelection } from "@milkdown/prose/tables";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import type { Node as PmDocNode } from "prosemirror-model";
@@ -179,6 +178,11 @@ interface ExternalChangeMessage {
   toast?: string;
   /** The person's own edit, written after the editor was rebuilt without it: nothing to announce. */
   quiet?: boolean;
+  /**
+   * The person's own undo or redo: put the caret at the change and scroll it
+   * into view, instead of restoring the previous scroll position.
+   */
+  reveal?: boolean;
 }
 
 interface FrontmatterMessage {
@@ -627,6 +631,9 @@ async function createEditor(text: string): Promise<Editor> {
           makeLineNumberPlugin(),
           makeClaudeEditPlugin(),
           makeDiffStripesPlugin(() => currentDiff, () => sourceMarkdown),
+          // Editing only: Reading's view is never editable, so there's no
+          // local undo and no caret for the workbench to hand back.
+          ...(readOnly ? [] : [makeUndoRedoKeyPlugin(), makeEditorFocusPlugin()]),
         ]),
       );
       ctx.get(listenerCtx).markdownUpdated((_ctx, markdown, prevMarkdown) => {
@@ -652,9 +659,89 @@ async function createEditor(text: string): Promise<Editor> {
     .use(inlineBreakPlugin)
     .use(commonmark)
     .use(gfm)
-    .use(history)
     .use(listener)
     .create();
+}
+
+const UNDO_REDO_KEY = new PluginKey("mdc-undo-redo");
+
+/**
+ * The file's undo history is the only one (docs/editor-undo-and-keys.md):
+ * there is no local ProseMirror history to run (`@milkdown/plugin-history`
+ * is gone). Mod-z / Mod-Shift-z / Mod-y flush any edit still in the debounce
+ * — so a keystroke reaches the file before the undo does, over the same
+ * message channel — then ask the host to undo or redo the document. They
+ * never touch the document themselves; the file's answer comes back as an
+ * `externalChange` with `reveal`.
+ *
+ * The same plugin cancels the browser's own historyUndo/historyRedo
+ * `beforeinput`, so contenteditable's built-in undo can never rewrite
+ * ProseMirror's DOM out from under its model. It posts nothing for those.
+ */
+function makeUndoRedoKeyPlugin(): Plugin {
+  const ask = (type: "undo" | "redo"): boolean => {
+    flushBlockEdits();
+    vscode.postMessage({ type });
+    return true;
+  };
+  return new Plugin({
+    key: UNDO_REDO_KEY,
+    props: {
+      handleKeyDown(_view, event) {
+        // Not with Alt: on some layouts AltGr (Ctrl+Alt) + a letter types a character.
+        if (!(event.metaKey || event.ctrlKey) || event.altKey) return false;
+        const key = event.key.toLowerCase();
+        if (key === "z") return ask(event.shiftKey ? "redo" : "undo");
+        if (key === "y") return ask("redo");
+        return false;
+      },
+      handleDOMEvents: {
+        beforeinput(_view, event) {
+          const inputType = (event as InputEvent).inputType;
+          if (inputType !== "historyUndo" && inputType !== "historyRedo") return false;
+          event.preventDefault();
+          return true;
+        },
+      },
+    },
+  });
+}
+
+const EDITOR_FOCUS_KEY = new PluginKey("mdc-editor-focus");
+
+// Coalesced across both the DOM focus/blur plugin below and the explicit
+// `reportEditorFocus(false)` a switch to Reading sends (reinitEditor) — only
+// a real change in state is worth a message.
+let lastReportedFocus: boolean | null = null;
+
+function reportEditorFocus(focused: boolean): void {
+  if (lastReportedFocus === focused) return;
+  lastReportedFocus = focused;
+  vscode.postMessage({ type: "editor-focus", focused });
+}
+
+/**
+ * Tells the host where the caret is: `{ type: "editor-focus", focused }` on
+ * every gain/loss of DOM focus. Drives `markdownCollab.liveEditorTyping`
+ * (package.json's keybinding table), which keeps the workbench's own binding
+ * for a key the editor handles from also firing.
+ */
+function makeEditorFocusPlugin(): Plugin {
+  return new Plugin({
+    key: EDITOR_FOCUS_KEY,
+    props: {
+      handleDOMEvents: {
+        focus: () => {
+          reportEditorFocus(true);
+          return false;
+        },
+        blur: () => {
+          reportEditorFocus(false);
+          return false;
+        },
+      },
+    },
+  });
 }
 
 /**
@@ -709,6 +796,11 @@ async function reinitEditor(msg: InitMessage): Promise<void> {
   await previous?.destroy();
   if (editorContainer) editorContainer.innerHTML = "";
   readOnly = msg.readOnly === true;
+  // The view that held the caret is gone, and destroying its container may
+  // not fire a DOM blur. Say so in either mode: a rebuilt Editing view reports
+  // focus again when the caret actually returns to it, and until then the
+  // workbench keeps its own bindings.
+  reportEditorFocus(false);
   cachedMarkdown = msg.text;
   sourceMarkdown = msg.text;
   sourceIndexCache = null;
@@ -2232,12 +2324,45 @@ function reportReady(synced: boolean): void {
   vscode.postMessage({ type: "ready-with-content", length, synced, error });
 }
 
+/**
+ * The fallback behind the character-precise replace in `applyExternalChange`:
+ * replace the run of top-level blocks that differ between `prev` and `next`.
+ * Used when a single content-level `replace` step doesn't land on `next`
+ * exactly (an edit shape it can't express, or one `tr.replace` itself
+ * throws on). Returns the position just past the replaced range in the
+ * resulting document, or null when no top-level block differs.
+ */
+function applyBlockLevelReplacement(tr: Transaction, prev: PmDocNode, next: PmDocNode): number | null {
+  // Common prefix and suffix of top-level blocks; the middle is what changed.
+  let start = 0;
+  while (start < prev.childCount && start < next.childCount && prev.child(start).eq(next.child(start))) start++;
+  let prevEnd = prev.childCount;
+  let nextEnd = next.childCount;
+  while (prevEnd > start && nextEnd > start && prev.child(prevEnd - 1).eq(next.child(nextEnd - 1))) {
+    prevEnd--;
+    nextEnd--;
+  }
+  if (start === prevEnd && start === nextEnd) return null; // the same document
+  const offsetOf = (doc: PmDocNode, index: number): number => {
+    let pos = 0;
+    for (let i = 0; i < index; i++) pos += doc.child(i).nodeSize;
+    return pos;
+  };
+  tr.replaceWith(
+    offsetOf(prev, start),
+    offsetOf(prev, prevEnd),
+    next.content.cut(offsetOf(next, start), offsetOf(next, nextEnd)),
+  );
+  return offsetOf(next, nextEnd);
+}
+
 function applyExternalChange(
   text: string,
   changed?: ChangeSummary | null,
   epoch?: number,
   toast?: string,
   quiet?: boolean,
+  reveal?: boolean,
 ): void {
   if (!editor) return;
   // Cancel a still-pending local edit post. The keystroke that scheduled it
@@ -2247,16 +2372,8 @@ function applyExternalChange(
     clearTimeout(editDebounce);
     editDebounce = null;
   }
-  // `applyTemplate` replaces the whole document, which otherwise snaps the
-  // view back to the top and drops the cursor. Capture the scroll position
-  // and selection first, then restore them — so an external edit, or a
-  // format-on-save echo right after you typed, doesn't jump to the file head.
   const scroller = editorScrollEl; // .mdc-editor-scroll (overflow:auto) — see buildLayout
   const prevScrollTop = scroller?.scrollTop ?? 0;
-  let prevFrom = -1;
-  editor.action((ctx) => {
-    prevFrom = ctx.get(editorViewCtx).state.selection.from;
-  });
 
   cachedMarkdown = text;
   // The source positions in the re-parsed document index this string.
@@ -2264,35 +2381,85 @@ function applyExternalChange(
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     const parser = ctx.get(parserCtx);
-    const doc = parser(text);
-    if (!doc) return;
-    // Replace the whole document with the freshly parsed one. Marked
-    // external so prosemirror-history keeps Claude's disk-side edit out of
-    // the local undo stack — matching the old collab behaviour, where synced
-    // changes weren't locally undoable.
-    const tr = view.state.tr;
-    tr.replaceWith(0, view.state.doc.content.size, doc.content);
+    const next = parser(text);
+    if (!next) return;
+    const prev = view.state.doc;
+
+    const start = prev.content.findDiffStart(next.content);
+    if (start == null) return; // same document: dispatch nothing
+
+    // Replace only what differs, at character precision — not the whole
+    // document, so the cursor stays on its text and the undo history keeps
+    // every keystroke outside the changed span. A whole-document replacement
+    // mapped everything onto the end of the new document — so Cmd+Z after an
+    // agent's edit undid nothing and jumped to the end of the file.
+    let tr = view.state.tr;
+    let revealTo = next.content.size;
+    let landed = false;
+    try {
+      const diffEnd = prev.content.findDiffEnd(next.content);
+      if (diffEnd) {
+        let { a: endA, b: endB } = diffEnd;
+        const overlap = start - Math.min(endA, endB);
+        if (overlap > 0) {
+          endA += overlap;
+          endB += overlap;
+        }
+        tr.replace(start, endA, next.slice(start, endB));
+        if (tr.doc.eq(next)) {
+          revealTo = endB;
+          landed = true;
+        }
+      }
+    } catch {
+      /* falls through to the block-level replacement */
+    }
+
+    if (!landed) {
+      tr = view.state.tr;
+      const blockEnd = applyBlockLevelReplacement(tr, prev, next);
+      if (blockEnd != null && tr.doc.eq(next)) {
+        revealTo = blockEnd;
+        landed = true;
+      }
+    }
+
+    if (!landed) {
+      tr = view.state.tr;
+      tr.replaceWith(0, prev.content.size, next.content);
+      revealTo = next.content.size;
+    }
+
+    // Marked external so prosemirror-history — gone now, but the metas still
+    // matter for every other plugin that watches them — never treats the
+    // agent's disk-side edit as ours.
     tr.setMeta("addToHistory", false);
     tr.setMeta("external", true);
+    if (reveal) {
+      // The person's own undo/redo: land the caret at the end of the
+      // replaced range (the deletion point, for a pure deletion) and scroll
+      // to it, instead of restoring the old scroll position below.
+      const pos = Math.max(0, Math.min(revealTo, tr.doc.content.size));
+      tr.setSelection(TextSelection.near(tr.doc.resolve(pos)));
+      tr.scrollIntoView();
+    }
     view.dispatch(tr);
+    if (reveal && !view.hasFocus()) {
+      // A transaction's scrollIntoView only acts on a view that holds the DOM
+      // selection. An undo made from the sidebar, or in Reading mode, still
+      // has to show what changed.
+      const at = view.domAtPos(view.state.selection.from);
+      const el = at.node.nodeType === Node.ELEMENT_NODE ? (at.node as Element) : at.node.parentElement;
+      el?.scrollIntoView({ block: "nearest" });
+    }
   });
   // Edit mode diffs the next edit against the file's text, not what was typed before it.
   resetEditBase(epoch);
 
-  // Restore the cursor near its old position (clamped to the new doc),
-  // without auto-scrolling — we restore the scroll offset ourselves.
-  if (prevFrom >= 0) {
-    editor.action((ctx) => {
-      const view = ctx.get(editorViewCtx);
-      try {
-        const pos = Math.max(0, Math.min(prevFrom, view.state.doc.content.size));
-        view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(pos))));
-      } catch {
-        /* positions shifted past EOF after the change — leave the default */
-      }
-    });
-  }
-  if (scroller) {
+  // Without `reveal`, keep the viewport where it was — the replacement
+  // doesn't scroll on its own, and the changed blocks may have been above it.
+  // `reveal` already scrolled to the change above, via `tr.scrollIntoView()`.
+  if (!reveal && scroller) {
     requestAnimationFrame(() => {
       scroller.scrollTop = prevScrollTop;
     });
@@ -2470,7 +2637,7 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     // After any `init` still building: applied to no editor, the change and
     // its epoch would be lost, and every later edit would carry the old one.
     initQueue = initQueue
-      .then(() => applyExternalChange(msg.text, msg.changed, msg.epoch, msg.toast, msg.quiet))
+      .then(() => applyExternalChange(msg.text, msg.changed, msg.epoch, msg.toast, msg.quiet, msg.reveal))
       .catch((err) => postError("externalChange", err));
   } else if (msg.type === "frontmatter") {
     renderFrontmatter(msg.frontmatter);

@@ -165,10 +165,12 @@ test("keystrokes post only the blocks they changed, and the host splices those i
 test("an edit still in the debounce is posted before the mode switch", async ({ page }) => {
   const { source } = fixture();
   await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
-  await caretIn(page, "lists correctly.");
+  await caretIn(page, "lists correctly."); // focuses the editor — posts its own editor-focus, filtered below
   await page.keyboard.type("?");
   await page.locator('input[name="edit-mode"][value="read"]').click();
-  await expect.poll(async () => (await posted(page)).map((m) => m.type)).toEqual(["edit-blocks", "set-read-only"]);
+  await expect
+    .poll(async () => (await posted(page)).filter((m) => m.type !== "editor-focus").map((m) => m.type))
+    .toEqual(["edit-blocks", "set-read-only"]);
 });
 
 // sidebar-chrome-redesign: #edit-mode-toggle moved into the document toolbar,
@@ -350,6 +352,9 @@ test("pasting two paragraphs adds exactly them, with a blank line between", asyn
   expect(pasted.message.edits.map((e) => e.types)).toEqual([["paragraph", "paragraph"]]);
 });
 
+// Cmd+Z no longer runs a local ProseMirror undo (docs/editor-undo-and-keys.md)
+// — the file's undo history is the only one. It flushes the keystroke, asks
+// the host to undo the file, and the file's answer puts the document back.
 test("undo after typing puts the file back byte for byte, markers included", async ({ page }) => {
   const { source } = fixture();
   await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
@@ -357,9 +362,19 @@ test("undo after typing puts the file back byte for byte, markers included", asy
   await page.keyboard.type("!");
   const typed = await spliced(page, source);
   expect(typed.source).toBe(source.replace("-->.\n", "-->.!\n"));
+
   await page.keyboard.press("ControlOrMeta+z");
-  const undone = await spliced(page, typed.source);
-  expect(undone.source).toBe(source);
+  expect(await awaitPosted(page, "undo")).toEqual({ type: "undo" });
+  await clearPosted(page);
+  // The host undid the write to the file and pushes the result back.
+  await pushToWebview(page, { type: "externalChange", text: liveProse(source), epoch: 2, quiet: true, reveal: true });
+  await expect(editable(page)).not.toContainText("setting.!");
+
+  // The file is back exactly where it started: the next edit diffs cleanly against it.
+  await caretIn(page, "lists correctly.");
+  await page.keyboard.type("?");
+  const edited = await spliced(page, source);
+  expect(edited.source).toBe(source.replace("correctly.", "correctly.?"));
 });
 
 // Pushes and rebuilds crossing each other: nothing typed or sent may be lost
@@ -477,4 +492,233 @@ test("a keystroke and Enter twice in one debounce, then typing: neither edit is 
   await page.keyboard.type("x");
   const typed = await spliced(page, first.source);
   expect(typed.source).toBe(first.source.replace(/\.!\n/, ".!\n\n<br />\n\nx\n"));
+});
+
+const LONG = Array.from({ length: 60 }, (_, i) => `Paragraph ${i + 1} of a long document that scrolls.`).join("\n\n") + "\n";
+
+// An outside change (an agent's edit, a format-on-save) used to arrive as a
+// whole-document replacement. ProseMirror then mapped every earlier undo step
+// through that replacement — all onto the end of the new document — so Cmd+Z
+// undid nothing and parked the cursor (and the scroll) at the end of the file.
+// Now Cmd+Z has nothing of its own to map: the file's undo history is the
+// only one (docs/editor-undo-and-keys.md), so it undoes whatever changed the
+// file last — the agent's edit, here, not the keystroke typed before it.
+test.describe("undo after an outside change", () => {
+  test("undoes the agent's edit — the file's last change — and reveals it, not the end of the doc", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(LONG), epoch: 1 });
+    await caretIn(page, "Paragraph 1 of");
+    await page.keyboard.type("!");
+    // The host wrote the keystroke; the agent then edits the last paragraph of
+    // that file while the cursor is still at the top. The agent's write is
+    // now the file's last change.
+    const { source: withBang } = await spliced(page, LONG);
+    const scroller = page.locator(".mdc-editor-scroll");
+    expect(await scroller.evaluate((el) => el.scrollTop)).toBe(0);
+    const edited = withBang.replace("Paragraph 60 of", "Paragraph 60 (edited by the agent) of");
+    await pushToWebview(page, { type: "externalChange", text: liveProse(edited), epoch: 2, quiet: true });
+    await expect(editable(page)).toContainText("edited by the agent");
+
+    await page.keyboard.press("ControlOrMeta+z");
+    expect(await awaitPosted(page, "undo")).toEqual({ type: "undo" });
+    await clearPosted(page);
+
+    // The host's answer: the agent's edit undone — the file's last change,
+    // not the user's earlier keystroke — revealed where it happened, neither
+    // left at the top (where the caret was typing) nor jumped to the end.
+    const undone = edited.replace("Paragraph 60 (edited by the agent) of", "Paragraph 60 of");
+    await pushToWebview(page, { type: "externalChange", text: liveProse(undone), epoch: 3, quiet: true, reveal: true });
+    await expect(editable(page)).not.toContainText("edited by the agent");
+    // The keystroke at the top survives: it was never the agent's to undo.
+    await expect(editable(page).locator("p").first()).toHaveText("Paragraph 1 of a long document that scrolls.!");
+    await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  });
+
+  test("the cursor stays on its text when the change is above it", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(LONG), epoch: 1 });
+    await caretIn(page, "Paragraph 60 of", "Paragraph 60 of".length);
+    const above = LONG.replace("Paragraph 1 of", "Paragraph 1 (now much longer after the agent rewrote it) of");
+    await pushToWebview(page, { type: "externalChange", text: liveProse(above), epoch: 2, quiet: true });
+    await expect(editable(page)).toContainText("now much longer");
+    await page.keyboard.type("!");
+    // Before: the old absolute offset was restored, which now fell at the start of the paragraph.
+    await expect(editable(page).locator("p").last()).toHaveText("Paragraph 60 of! a long document that scrolls.");
+  });
+});
+
+// Mod-z/Mod-Shift-z/Mod-y in Editing mode: never a local undo (there is none
+// any more) — they flush the pending edit, ask the host, and wait for its
+// answer (docs/editor-undo-and-keys.md).
+test.describe("undo and redo keys", () => {
+  test("Cmd+Z posts the pending edit still in the debounce, then undo; the document doesn't change until the host answers", async ({
+    page,
+  }) => {
+    const { source } = fixture();
+    await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
+    await caretIn(page, "lists correctly."); // focuses the editor — posts its own editor-focus, filtered below
+    await page.keyboard.type("!");
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect
+      .poll(async () => (await posted(page)).filter((m) => m.type !== "editor-focus").map((m) => m.type))
+      .toEqual(["edit-blocks", "undo"]);
+    // Nothing reverted locally — the file's answer hasn't come back yet.
+    await expect(editable(page)).toContainText("lists correctly.!");
+  });
+
+  test("Cmd+Shift+Z and Ctrl+Y post redo", async ({ page }) => {
+    const { source } = fixture();
+    await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
+    await caretIn(page, "lists correctly.");
+    await page.keyboard.press("ControlOrMeta+Shift+z");
+    expect(await awaitPosted(page, "redo")).toEqual({ type: "redo" });
+    await clearPosted(page);
+    await page.keyboard.press("Control+y");
+    expect(await awaitPosted(page, "redo")).toEqual({ type: "redo" });
+  });
+
+  test("the host's undo answer removes the keystroke, leaves the caret where it was typed, and shows no notice", async ({
+    page,
+  }) => {
+    const { source } = fixture();
+    await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
+    await caretIn(page, "lists correctly.");
+    await page.keyboard.type("!");
+    await page.keyboard.press("ControlOrMeta+z");
+    await awaitPosted(page, "undo");
+    await clearPosted(page);
+    await pushToWebview(page, { type: "externalChange", text: liveProse(source), epoch: 2, quiet: true, reveal: true });
+    await expect(editable(page)).not.toContainText("correctly.!");
+    // The caret lands right where the undone "!" was — typing continues from there.
+    await page.keyboard.type("?");
+    await expect(editable(page)).toContainText("correctly.?");
+    await expect(page.locator(".mdc-banner")).toHaveCount(0);
+    await expect(page.locator(".mdc-toast--visible")).toHaveCount(0);
+  });
+
+  test("a reveal change scrolls it into view; without reveal, the same change leaves scrollTop alone", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(LONG), epoch: 1 });
+    // ProseMirror's own scrollIntoView only moves the viewport when the view
+    // has a real DOM selection to scroll to — exactly the state Cmd+Z is
+    // always pressed from, so this focuses the editor first, as a keystroke
+    // would, rather than asserting on an editor nothing ever put the caret in.
+    await caretIn(page, "Paragraph 60 of");
+    const scroller = page.locator(".mdc-editor-scroll");
+    await scroller.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    const atBottom = await scroller.evaluate((el) => el.scrollTop);
+    expect(atBottom).toBeGreaterThan(0);
+
+    const changedTop = LONG.replace("Paragraph 1 of", "Paragraph 1 (edited) of");
+    await pushToWebview(page, { type: "externalChange", text: liveProse(changedTop), epoch: 2, quiet: true });
+    await expect(editable(page)).toContainText("Paragraph 1 (edited)");
+    expect(await scroller.evaluate((el) => el.scrollTop)).toBe(atBottom);
+
+    const changedTopAgain = changedTop.replace("Paragraph 1 (edited) of", "Paragraph 1 (edited again) of");
+    await pushToWebview(page, {
+      type: "externalChange",
+      text: liveProse(changedTopAgain),
+      epoch: 3,
+      quiet: true,
+      reveal: true,
+    });
+    await expect(editable(page)).toContainText("Paragraph 1 (edited again)");
+    await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeLessThan(atBottom);
+  });
+
+  test("an externalChange with the text the editor already shows dispatches nothing", async ({ page }) => {
+    const { source } = fixture();
+    await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
+    await caretIn(page, "lists correctly.");
+    await pushToWebview(page, { type: "externalChange", text: liveInit(source).text, epoch: 2, quiet: true });
+    // Had anything been dispatched, the caret would no longer be exactly
+    // where it was typed.
+    await page.keyboard.type("!");
+    const typed = await spliced(page, source);
+    expect(typed.source).toBe(source.replace("correctly.", "correctly.!"));
+  });
+});
+
+// For a handful of before/after shapes, the editor's document after
+// `externalChange` serializes to exactly the pushed text — the character-
+// precise replace (or a fallback behind it) always lands on `next`.
+const ROUND_TRIP_CASES: Array<{
+  label: string;
+  before: string;
+  after: string;
+  ready: (page: Page) => Promise<unknown>;
+}> = [
+  {
+    label: "edit inside a paragraph",
+    before: "# T\n\nHello world.\n",
+    after: "# T\n\nHello cruel world.\n",
+    ready: (page) => expect(editable(page)).toContainText("cruel"),
+  },
+  {
+    label: "insert a paragraph",
+    before: "# T\n\nOne.\n",
+    after: "# T\n\nOne.\n\nTwo.\n",
+    ready: (page) => expect(editable(page)).toContainText("Two."),
+  },
+  {
+    label: "delete a list item",
+    before: "# T\n\n- apple\n- banana\n- cherry\n",
+    after: "# T\n\n- apple\n- cherry\n",
+    ready: (page) => expect(editable(page).locator("li")).toHaveCount(2),
+  },
+  {
+    label: "change a table cell",
+    before: "# T\n\n| a   | b   |\n|-----|-----|\n| 1   | 2   |\n",
+    after: "# T\n\n| a   | b   |\n|-----|-----|\n| 1   | 99  |\n",
+    ready: (page) => expect(editable(page)).toContainText("99"),
+  },
+  {
+    label: "change a heading level",
+    before: "# T\n\nBody.\n",
+    after: "## T\n\nBody.\n",
+    ready: (page) => expect(editable(page).locator("h2")).toHaveCount(1),
+  },
+];
+
+for (const { label, before, after, ready } of ROUND_TRIP_CASES) {
+  test(`round trip: ${label}`, async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(before), epoch: 1 });
+    await pushToWebview(page, { type: "externalChange", text: liveProse(after), epoch: 2, quiet: true });
+    await ready(page);
+    await caretIn(page, "T");
+    await page.keyboard.type("!");
+    const result = await spliced(page, after);
+    expect(result.source).toBe(after.replace("T", "T!"));
+  });
+}
+
+test.describe("editor-focus", () => {
+  test("true on focus, false on blur, false on a switch to Reading", async ({ page }) => {
+    const { source } = fixture();
+    await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
+
+    await editable(page).focus();
+    expect(await awaitPosted(page, "editor-focus")).toEqual({ type: "editor-focus", focused: true });
+    await clearPosted(page);
+
+    await page.locator("#mdc-comments-toggle").click();
+    expect(await awaitPosted(page, "editor-focus")).toEqual({ type: "editor-focus", focused: false });
+    await clearPosted(page);
+
+    await editable(page).focus();
+    expect(await awaitPosted(page, "editor-focus")).toEqual({ type: "editor-focus", focused: true });
+    await clearPosted(page);
+
+    // The host switching to Reading rebuilds the editor read-only — focused
+    // goes false even though nothing in the page clicked away first.
+    await pushToWebview(page, { type: "init", ...liveInit(source), readOnly: true, epoch: 2 });
+    expect(await awaitPosted(page, "editor-focus")).toEqual({ type: "editor-focus", focused: false });
+  });
+
+  test("nothing in Reading mode", async ({ page }) => {
+    const { source } = fixture();
+    await bootLiveEditor(page, { ...liveInit(source), readOnly: true, epoch: 1 });
+    await editable(page).focus();
+    await page.waitForTimeout(100);
+    expect((await posted(page)).filter((m) => m.type === "editor-focus")).toEqual([]);
+  });
 });

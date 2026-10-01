@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.35.22 — 2026-10-01 (GitHub only)
+
+### Fixed: Cmd+Z scrolled to the end of the document; Cmd+B also toggled the side bar
+
+One cause (`docs/editor-undo-and-keys.md`). A key pressed in the editor was
+handled by the editor and then forwarded to the workbench, which ran its own
+binding for it too. Cmd+B made text bold and toggled the side bar. Cmd+Z ran
+two undo systems: the editor's own history and VS Code's undo of the file.
+The file undo came back as an "outside change", was announced as "Claude
+updated this document", and was applied by replacing the whole document —
+which moved all remaining undo history to the end of the file, so the next
+Cmd+Z undid nothing and jumped there.
+
+- **One undo history: the file's.** In Editing mode Cmd+Z / Cmd+Shift+Z
+  (Ctrl+Z / Ctrl+Y) undo and redo the last change to the file, in place. The
+  editor's separate history is gone. Keystrokes still in the debounce are
+  written first, the view goes to the change, there is no "Claude updated"
+  notice, and the undo is saved to disk like any edit. Cmd+Z undoes whatever
+  changed the file last — an agent's edit or an accepted suggestion included,
+  as in the text editor.
+- **An outside change replaces only what differs,** at character precision,
+  never the whole document. The cursor stays on its text when an agent edits
+  above it (it used to be restored to its old absolute offset).
+- **Keys the editor handles are the editor's alone** while the caret is in
+  the document in Editing mode: Cmd+B, Cmd+Shift+B, Cmd+I, Cmd+E, Cmd+Z,
+  Cmd+Shift+Z, Ctrl+Y. With the caret anywhere else, or in Reading mode,
+  they keep their workbench meaning. In Cursor this means Cmd+I and Cmd+E
+  are italic and inline code while typing in the document.
+
+### Tests
+
+- `npm run verify:editor-keys` (`scripts/verify-editor-keys.mjs`): a real
+  VS Code driven with real key presses, sixteen steps — bold without the side
+  bar moving, two undos in place with the scroll position unchanged and the
+  file following, redo, and the side bar toggling again outside the document.
+  Opens a window; not part of CI.
+- Page: undo/redo post to the host after the pending edit; the host's answer
+  is applied in place; `reveal` scrolls to the change; an identical document
+  dispatches nothing; five before/after shapes round-trip exactly; focus is
+  reported. Host: undo/redo run in the write queue; a change with reason
+  Undo/Redo is pushed quietly; the typing context follows focus, view state,
+  mode and dispose. Manifest: the no-op command and the seven keybindings.
+- Playwright 380; vitest 129 files / 2,407 tests; integration 64 passing.
+
 ## 0.35.21 — 2026-10-01 (GitHub only)
 
 ### Changed: the PR review view speaks the same language as the comment sidebar

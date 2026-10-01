@@ -43,6 +43,7 @@ const ALL_COMMANDS = [
   "markdownCollab.disconnectAgent",
   "markdownCollab.resolveThread",
   "markdownCollab.replyToThread",
+  "markdownCollab.liveEditor.keyHandledInEditor",
 ];
 
 function fixturePath(name: string): string {

@@ -86,6 +86,9 @@ const CommentMode = { Editing: 0, Preview: 1 } as const;
 const CommentThreadCollapsibleState = { Collapsed: 0, Expanded: 1 } as const;
 const CommentThreadState = { Unresolved: 0, Resolved: 1 } as const;
 const TreeItemCollapsibleState = { None: 0, Collapsed: 1, Expanded: 2 } as const;
+// Real values (vscode.d.ts): Undo = 1, Redo = 2. Change events built by hand
+// in tests just omit `reason`, same as a plain programmatic edit's.
+const TextDocumentChangeReason = { Undo: 1, Redo: 2 } as const;
 
 const noopDisposable = new Disposable();
 
@@ -186,6 +189,7 @@ export {
   CommentThreadCollapsibleState,
   CommentThreadState,
   TreeItemCollapsibleState,
+  TextDocumentChangeReason,
   TreeItem,
   Uri,
   workspace,

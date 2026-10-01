@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Claude reviews your Markdown in VS Code — inline comments stored in the file, suggestions you accept or reject, and runs that need no terminal. Works with Cursor, Codex, and Copilot agents too.",
-  "version": "0.35.21",
+  "version": "0.35.22",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -280,6 +280,10 @@
         "command": "markdownCollab.finalizeDocument",
         "title": "Markdown Collab: Remove All Review Data",
         "category": "Markdown Collab"
+      },
+      {
+        "command": "markdownCollab.liveEditor.keyHandledInEditor",
+        "title": "Key Handled by the Markdown Collab Editor"
       }
     ],
     "configuration": {
@@ -372,6 +376,47 @@
         "key": "ctrl+k ctrl+alt+n",
         "mac": "cmd+k cmd+alt+n",
         "when": "editorLangId == markdown || activeCustomEditorId == 'markdownCollab.collabEditor' || activeWebviewPanelId == 'markdownCollab.inlineCommentsView'"
+      },
+      {
+        "command": "markdownCollab.liveEditor.keyHandledInEditor",
+        "key": "ctrl+z",
+        "mac": "cmd+z",
+        "when": "markdownCollab.liveEditorTyping"
+      },
+      {
+        "command": "markdownCollab.liveEditor.keyHandledInEditor",
+        "key": "ctrl+shift+z",
+        "mac": "cmd+shift+z",
+        "when": "markdownCollab.liveEditorTyping"
+      },
+      {
+        "command": "markdownCollab.liveEditor.keyHandledInEditor",
+        "key": "ctrl+y",
+        "when": "markdownCollab.liveEditorTyping && !isMac"
+      },
+      {
+        "command": "markdownCollab.liveEditor.keyHandledInEditor",
+        "key": "ctrl+b",
+        "mac": "cmd+b",
+        "when": "markdownCollab.liveEditorTyping"
+      },
+      {
+        "command": "markdownCollab.liveEditor.keyHandledInEditor",
+        "key": "ctrl+i",
+        "mac": "cmd+i",
+        "when": "markdownCollab.liveEditorTyping"
+      },
+      {
+        "command": "markdownCollab.liveEditor.keyHandledInEditor",
+        "key": "ctrl+e",
+        "mac": "cmd+e",
+        "when": "markdownCollab.liveEditorTyping"
+      },
+      {
+        "command": "markdownCollab.liveEditor.keyHandledInEditor",
+        "key": "ctrl+shift+b",
+        "mac": "cmd+shift+b",
+        "when": "markdownCollab.liveEditorTyping"
       }
     ],
     "submenus": [
@@ -476,6 +521,10 @@
         },
         {
           "command": "markdownCollab.replyToThread",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.liveEditor.keyHandledInEditor",
           "when": "false"
         }
       ],
@@ -760,6 +809,7 @@
     "build:plugin": "node scripts/build-plugin.mjs",
     "copy:shared-css": "node scripts/copy-shared-css.mjs",
     "verify:keys": "node scripts/verify-webview-keybinding.mjs",
+    "verify:editor-keys": "node scripts/verify-editor-keys.mjs",
     "record:gifs": "node scripts/record-gifs.mjs"
   },
   "devDependencies": {

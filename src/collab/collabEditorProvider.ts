@@ -276,6 +276,26 @@ interface DrawioReadMessage {
   href: string;
 }
 
+/** Mod-z / Mod-Shift-z / Mod-y in Editing mode (docs/editor-undo-and-keys.md) — the file's undo history is the only one. */
+interface UndoMessage {
+  type: "undo";
+}
+
+interface RedoMessage {
+  type: "redo";
+}
+
+/**
+ * Where the caret is, from the page's ProseMirror view: drives
+ * `markdownCollab.liveEditorTyping`, the context key package.json's
+ * keybinding table gates on so the workbench's own binding for a key the
+ * editor handles doesn't also run.
+ */
+interface EditorFocusMessage {
+  type: "editor-focus";
+  focused: boolean;
+}
+
 type ClientMessage =
   | EditMessage
   | ReadyMessage
@@ -293,7 +313,10 @@ type ClientMessage =
   | RejectSuggestionMessage
   | DrawioReadMessage
   | BlockEditsMessage
-  | SetReadOnlyMessage;
+  | SetReadOnlyMessage
+  | UndoMessage
+  | RedoMessage
+  | EditorFocusMessage;
 
 /** The in-view read-only switch (posted by the sidebar's toggle). */
 interface SetReadOnlyMessage {
@@ -358,6 +381,33 @@ function livePanelFor(key: string): LivePanel | undefined {
   return panels.find((p) => p.panel.active) ?? panels[panels.length - 1];
 }
 
+/**
+ * The live-editor panel whose caret last set `markdownCollab.liveEditorTyping`
+ * true. The context key is global — package.json's keybinding table gates
+ * every panel on the same one — so it's tracked here, across documents, and
+ * every "false" site is guarded by it: one panel's dispose (which can land
+ * well after it lost focus) must never clear a context key a different panel
+ * now legitimately holds.
+ */
+let typingContextOwner: vscode.WebviewPanel | null = null;
+
+function setLiveEditorTypingContext(panel: vscode.WebviewPanel, typing: boolean): void {
+  if (typing) {
+    typingContextOwner = panel;
+  } else {
+    if (typingContextOwner !== panel) return;
+    typingContextOwner = null;
+  }
+  void vscode.commands.executeCommand("setContext", "markdownCollab.liveEditorTyping", typing);
+}
+
+/**
+ * Bound by the keybindings table (package.json) while the caret is in the
+ * live editor in Editing mode, so the workbench's own binding for that key
+ * doesn't also run (docs/editor-undo-and-keys.md). Does nothing itself.
+ */
+const KEY_HANDLED_COMMAND = "markdownCollab.liveEditor.keyHandledInEditor";
+
 export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
   static readonly viewType = VIEW_TYPE;
 
@@ -419,10 +469,13 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     log: Logger,
   ): vscode.Disposable {
     const provider = new CollabEditorProvider(context.extensionUri, log, context.workspaceState);
-    return vscode.window.registerCustomEditorProvider(VIEW_TYPE, provider, {
-      webviewOptions: { retainContextWhenHidden: true, enableFindWidget: true },
-      supportsMultipleEditorsPerDocument: true,
-    });
+    return vscode.Disposable.from(
+      vscode.window.registerCustomEditorProvider(VIEW_TYPE, provider, {
+        webviewOptions: { retainContextWhenHidden: true, enableFindWidget: true },
+        supportsMultipleEditorsPerDocument: true,
+      }),
+      vscode.commands.registerCommand(KEY_HANDLED_COMMAND, () => {}),
+    );
   }
 
   async resolveCustomTextEditor(
@@ -862,6 +915,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         // Reading, after any edit still being written, and say why.
         queued("switch to Reading for the diff", async () => {
           readOnly = true;
+          setLiveEditorTypingContext(panel, false);
           sendInit();
         });
         void vscode.window.showInformationMessage(
@@ -941,6 +995,8 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     // just doing something else (like committing in a terminal) — same trick
     // InlineCommentsPanel uses for its diff-mode panels.
     const viewStateSub = panel.onDidChangeViewState((e) => {
+      // The caret can't be in a panel that isn't the active editor.
+      if (!e.webviewPanel.active) setLiveEditorTypingContext(panel, false);
       if (!e.webviewPanel.visible || !diffMode) return;
       headProse = undefined;
       pushComments();
@@ -1023,8 +1079,32 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         const next = msg.readOnly === true;
         queued("mode switch", async () => {
           readOnly = next;
+          if (next) setLiveEditorTypingContext(panel, false);
           sendInit();
         });
+      } else if (msg.type === "undo" || msg.type === "redo") {
+        // Through the same queue as a block edit, so it runs after any edit
+        // still being written reaches the file first. With this custom
+        // editor active, the workbench's undo/redo command undoes/redoes the
+        // text document for it; skipped (and logged, not shown) when this
+        // panel isn't the active editor — the command would act on whatever is.
+        const kind = msg.type;
+        void enqueueEdit(async () => {
+          if (panel.active) {
+            await vscode.commands.executeCommand(kind);
+            // Like any edit: flush it to disk, where the agent reads the file.
+            scheduleAutosave();
+          } else {
+            this.log.info(
+              `CollabEditor: ${kind} skipped — ${path.basename(document.uri.fsPath)} isn't the active editor`,
+            );
+          }
+        });
+      } else if (msg.type === "editor-focus") {
+        // Only the active panel's caret matters — a background panel's view
+        // can't really have focus, but the message is trusted no further.
+        if (msg.focused && !panel.active) return;
+        setLiveEditorTypingContext(panel, msg.focused);
       } else if (msg.type === "ready-with-content") {
         lastReadyByUri.set(document.uri.toString(), msg);
         this.log.info(
@@ -1156,9 +1236,18 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       const source = e.document.getText();
       const newProse = proseOf(source);
       if (newProse !== lastWebviewProse) {
-        const changed = summarizeChange(lastWebviewProse, newProse);
+        // The person's own undo/redo (Cmd+Z in Editing mode, or the text
+        // editor's): no "Claude updated…" notice, no flash, and the view
+        // goes to the change instead of leaving the scroll where it was.
+        const isUndoRedo =
+          e.reason === vscode.TextDocumentChangeReason.Undo || e.reason === vscode.TextDocumentChangeReason.Redo;
+        const changed = isUndoRedo ? null : summarizeChange(lastWebviewProse, newProse);
         lastWebviewProse = newProse;
-        pushDocument({ type: "externalChange", text: newProse, changed });
+        pushDocument(
+          isUndoRedo
+            ? { type: "externalChange", text: newProse, quiet: true, reveal: true }
+            : { type: "externalChange", text: newProse, changed },
+        );
       }
       // Frontmatter lives in its own panel — push it when it changes even if
       // the body prose didn't.
@@ -1188,6 +1277,9 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
 
     panel.onDidDispose(() => {
       disposed = true;
+      // Guarded internally: a no-op unless this panel is the one that last
+      // set the (global) context key true.
+      setLiveEditorTypingContext(panel, false);
       panelsForDoc.delete(livePanel);
       if (panelsForDoc.size === 0) openPanels.delete(document.uri.toString());
       configSub.dispose();

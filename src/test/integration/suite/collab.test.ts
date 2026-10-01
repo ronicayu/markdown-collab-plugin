@@ -197,3 +197,77 @@ suite.skip("Live editor anchor highlight (real Milkdown, needs display)", () => 
     );
   });
 });
+
+// docs/editor-undo-and-keys.md: Editing mode has no undo history of its own.
+// Cmd+Z posts `undo`, and the host runs the workbench's `undo` command, on the
+// assumption that with this custom editor active it undoes the text document.
+// That assumption is the workbench's to keep, so it is checked here, in one.
+suite("Collab editor: the workbench's undo acts on the text document", () => {
+  const tmpPath = path.join(__dirname, "..", "fixtures", `__undo-${Date.now()}.md`);
+  const tmpUri = vscode.Uri.file(tmpPath);
+  const BEFORE = "# Undo\n\nFirst paragraph.\n\nSecond paragraph.\n";
+
+  suiteSetup(async () => {
+    await fsp.writeFile(tmpPath, BEFORE);
+    const ext = vscode.extensions.getExtension(EXT_ID);
+    assert.ok(ext, "extension should be discoverable");
+    if (!ext.isActive) await ext.activate();
+  });
+  suiteTeardown(async () => {
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    try {
+      await fsp.unlink(tmpPath);
+    } catch {
+      /* ignore */
+    }
+  });
+
+  test("undo and redo with the Markdown Collab editor active change the document back and forth", async function () {
+    this.timeout(40000);
+    // Control: can this host undo anything? `undo` needs a focused window,
+    // which a test host doesn't always have. A host that can't undo a plain
+    // text edit proves nothing about the custom editor either way, so say so
+    // and stop rather than fail (or quietly pass).
+    {
+      const control = await vscode.workspace.openTextDocument(tmpUri);
+      const editor = await vscode.window.showTextDocument(control, { preview: false, preserveFocus: false });
+      await editor.edit((b) => b.insert(control.positionAt(0), "control\n"));
+      await vscode.commands.executeCommand("undo");
+      await new Promise((r) => setTimeout(r, 300));
+      if (control.getText() !== BEFORE) {
+        await editor.edit((b) => b.delete(new vscode.Range(control.positionAt(0), control.positionAt(8))));
+        console.log("skipping custom-editor undo assertion: this host does not deliver the undo command");
+        return;
+      }
+      await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    }
+    await vscode.commands.executeCommand("vscode.openWith", tmpUri, VIEW_TYPE);
+    // The active editor being this custom editor is all `undo` looks at; the
+    // page inside it need not have booted (it may not, in a host with no display).
+    await waitFor(
+      () => {
+        const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+        return input instanceof vscode.TabInputCustom && input.viewType === VIEW_TYPE && input.uri.fsPath === tmpUri.fsPath;
+      },
+      20000,
+      "the Markdown Collab editor never became the active editor",
+    );
+    const doc = await vscode.workspace.openTextDocument(tmpUri);
+    assert.strictEqual(doc.getText(), BEFORE);
+
+    const edit = new vscode.WorkspaceEdit();
+    edit.insert(tmpUri, doc.positionAt(BEFORE.indexOf("First")), "Changed ");
+    assert.ok(await vscode.workspace.applyEdit(edit), "the edit was not applied");
+    assert.ok(doc.getText().includes("Changed First paragraph."));
+
+    await vscode.commands.executeCommand("undo");
+    await waitFor(() => doc.getText() === BEFORE, 5000, `undo did not put the text back: ${JSON.stringify(doc.getText())}`);
+
+    await vscode.commands.executeCommand("redo");
+    await waitFor(
+      () => doc.getText().includes("Changed First paragraph."),
+      5000,
+      `redo did not reapply the edit: ${JSON.stringify(doc.getText())}`,
+    );
+  });
+});

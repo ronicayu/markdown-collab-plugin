@@ -49,6 +49,13 @@ describe("the title-bar icon", () => {
   });
 });
 
+// docs/editor-undo-and-keys.md: these shadow the workbench's own single-key
+// bindings (Cmd+Z, Cmd+B, …) on purpose, but only while the caret is in the
+// live editor in Editing mode — the `when` context key is the scoping
+// mechanism here, not a cmd+k prefix. A chord command would miss every one
+// of the keys it exists to intercept.
+const KEY_HANDLED_COMMAND = "markdownCollab.liveEditor.keyHandledInEditor";
+
 describe("contributed keybindings", () => {
   const keybindings = pkg.contributes.keybindings as Array<{
     command: string;
@@ -87,9 +94,45 @@ describe("contributed keybindings", () => {
 
   it("scopes every chord under a cmd+k / ctrl+k prefix — nothing single-key or unscoped", () => {
     for (const kb of keybindings) {
+      if (kb.command === KEY_HANDLED_COMMAND) continue; // single-key by design — see below
       for (const chord of [kb.key, kb.mac].filter((c): c is string => !!c)) {
         expect(chord, `${kb.command}'s chord "${chord}" isn't a two-part chord`).toMatch(/\s/);
       }
     }
+  });
+});
+
+describe("the live-editor key-passthrough keybindings", () => {
+  const keybindings = (
+    pkg.contributes.keybindings as Array<{ command: string; key?: string; mac?: string; when?: string }>
+  ).filter((k) => k.command === KEY_HANDLED_COMMAND);
+
+  const TABLE: Array<{ key: string; mac?: string; when?: string }> = [
+    { key: "ctrl+z", mac: "cmd+z" },
+    { key: "ctrl+shift+z", mac: "cmd+shift+z" },
+    { key: "ctrl+y", when: "markdownCollab.liveEditorTyping && !isMac" },
+    { key: "ctrl+b", mac: "cmd+b" },
+    { key: "ctrl+i", mac: "cmd+i" },
+    { key: "ctrl+e", mac: "cmd+e" },
+    { key: "ctrl+shift+b", mac: "cmd+shift+b" },
+  ];
+
+  it("has exactly the seven chords the spec's table lists, each bound to the no-op command", () => {
+    expect(keybindings).toHaveLength(TABLE.length);
+    for (const row of TABLE) {
+      const match = keybindings.find((k) => k.key === row.key);
+      expect(match, `no keybinding for "${row.key}"`).toBeTruthy();
+      expect(match!.mac).toBe(row.mac);
+      expect(match!.when).toBe(row.when ?? "markdownCollab.liveEditorTyping");
+    }
+  });
+
+  it("is declared, hidden from the Command Palette, and registered nowhere else as a real command", () => {
+    const declared = pkg.contributes.commands.find((c: { command: string }) => c.command === KEY_HANDLED_COMMAND);
+    expect(declared, `${KEY_HANDLED_COMMAND} is not contributed`).toBeTruthy();
+    const paletteEntries = (pkg.contributes.menus.commandPalette ?? []) as Array<{ command: string; when?: string }>;
+    const hidden = paletteEntries.filter((e) => e.command === KEY_HANDLED_COMMAND);
+    expect(hidden).toHaveLength(1);
+    expect(hidden[0]!.when).toBe("false");
   });
 });

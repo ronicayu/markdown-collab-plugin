@@ -766,5 +766,9 @@ test("in edit mode, an edit still in the debounce is posted before any sidebar m
   await page.keyboard.type("!");
   const actions = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"] .thread-actions`);
   await actions.getByRole("button", { name: "Resolve", exact: true }).click();
-  await expect.poll(async () => (await posted(page)).map((m) => m.type)).toEqual(["edit-blocks", "toggle-resolve"]);
+  // Focusing the editor above posts its own editor-focus, filtered out here —
+  // this asserts the edit-blocks/toggle-resolve ordering, not every message.
+  await expect
+    .poll(async () => (await posted(page)).filter((m) => m.type !== "editor-focus").map((m) => m.type))
+    .toEqual(["edit-blocks", "toggle-resolve"]);
 });
