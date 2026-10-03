@@ -7,6 +7,7 @@
 // underlying .md file — there is no in-webview cache of comments.
 
 import { createMarkdownRenderer, ensurePlantuml } from "../../webviewShared/markdownPipeline";
+import { isAgentComment } from "../../agentIdentity";
 import { isClaudeUnread } from "../claudeUnread";
 import { slugifyHeading } from "../linkParse";
 import { findCountLabel, findMatchesIn, stepIndex } from "../../webviewShared/findState";
@@ -14,17 +15,20 @@ import { createDiffNav, isNavKeyContext } from "../../webviewShared/diffNav";
 import { planHighlightSlices } from "../../webviewShared/highlightSlices";
 import {
   THREAD_RENDER_CHUNK,
+  adjacentThreadId,
   chunkThreads,
   claudeSummary,
-  emptyListMessage,
+  emptyState,
   filterThreads,
   matchesFilter,
   nextCollapseAllAction,
   nextUnreadThreadId,
   threadCountLabel,
+  type EmptyState,
   type ThreadFilter,
 } from "../../webviewShared/threadListState";
 import { buildComposer, buildCommentBody, buildCommentCard, buildSuggestionCard, type CardAction } from "../../webviewShared/commentUi";
+import { smoothScrollIntoView } from "../../webviewShared/scrollIntoView";
 import { resolveImageSrc, type ImageBaseUris } from "../../webviewShared/imageSrc";
 import { LINE_ATTR, LINE_ENV_KEY, displayLine } from "../../webviewShared/lineNumbers";
 // Scroll position comes from the DOM, which is what the reader actually sees;
@@ -53,6 +57,15 @@ interface InlineComment {
   id: string;
   parent?: string;
   author: string;
+  /** Set by the tools/CLI on every comment an agent writes (10x-plan-4 P1.2). */
+  agent?: boolean;
+  /**
+   * How this comment reached the file — "tools" (MCP) or "cli" (`mdc`).
+   * Absent means it was typed straight into the file's text, by a human or by
+   * an agent editing directly (round-6 P1.4). Only meaningful on an agent
+   * comment; `renderComment` gates the marker on `isAgentComment` first.
+   */
+  via?: "tools" | "cli";
   ts: string;
   body: string;
   editedTs?: string;
@@ -126,6 +139,17 @@ interface InitMsg {
   pendingThreadIds?: string[];
   /** Host-decided wording for the waiting row (10x-plan-2 P0.2). */
   pendingLabel?: string;
+  /**
+   * Display name of the agent that last wrote to this file (round-6 P5.2) —
+   * "Codex", "Cursor", etc. Absent means Claude: every file this shipped
+   * before had exactly one agent, so an old host (or one that hasn't looked
+   * this up yet) omitting the field must still read as it always has. Used
+   * wherever the UI has no per-thread agent to name instead (the Send
+   * button, its title, the suggest-mode switch title, and the default
+   * pending-row text) — the per-thread "New from X" wording already draws on
+   * each comment's own author and ignores this field.
+   */
+  agentName?: string;
 }
 
 type SkillStatus = "missing" | "outdated" | "current";
@@ -142,6 +166,7 @@ interface UpdateMsg {
   suggestMode?: boolean;
   pendingThreadIds?: string[];
   pendingLabel?: string;
+  agentName?: string;
 }
 
 interface ReviewPendingMsg {
@@ -224,6 +249,11 @@ const dom = {
   claudeNext: document.getElementById("claude-next") as HTMLButtonElement,
   collapseAll: document.getElementById("collapse-all") as HTMLButtonElement,
   claudeFilterLabel: document.getElementById("filter-claude-label") as HTMLLabelElement,
+  claudeFilterLabelText: document.getElementById("filter-claude-label-text") as HTMLElement,
+  overflowMenuBtn: document.getElementById("overflow-menu-btn") as HTMLButtonElement,
+  overflowMenu: document.getElementById("overflow-menu") as HTMLElement,
+  hintToggle: document.getElementById("hint-toggle") as HTMLButtonElement,
+  keysHint: document.getElementById("keys-hint") as HTMLElement,
   findBar: document.getElementById("find-bar") as HTMLElement,
   findInput: document.getElementById("find-input") as HTMLInputElement,
   findCount: document.getElementById("find-count") as HTMLElement,
@@ -236,6 +266,70 @@ const dom = {
   previewPane: document.getElementById("preview-pane") as HTMLElement,
   outlineToggle: document.getElementById("outline-toggle") as HTMLButtonElement,
 };
+
+// --- "…" overflow menus (round-4 P3.1/3.2) ---------------------------------
+// One trigger/panel pair at a time is open — the toolbar's or a single
+// thread card's — tracked here rather than per-menu, so a click anywhere
+// else (another trigger, the document) closes whatever was open first. Escape
+// closes and returns focus to the trigger; an outside click closes without
+// stealing focus back from wherever the user clicked next.
+let openMenu: { trigger: HTMLButtonElement; panel: HTMLElement } | null = null;
+
+function closeOpenMenu(returnFocus: boolean): void {
+  if (!openMenu) return;
+  const { trigger, panel } = openMenu;
+  panel.hidden = true;
+  trigger.setAttribute("aria-expanded", "false");
+  openMenu = null;
+  if (returnFocus && trigger.isConnected) trigger.focus();
+}
+
+function openMenuAt(trigger: HTMLButtonElement, panel: HTMLElement): void {
+  closeOpenMenu(false);
+  panel.hidden = false;
+  trigger.setAttribute("aria-expanded", "true");
+  openMenu = { trigger, panel };
+  panel.querySelector<HTMLElement>('[role="menuitem"]:not([hidden])')?.focus();
+}
+
+function toggleMenuAt(trigger: HTMLButtonElement, panel: HTMLElement): void {
+  if (openMenu?.panel === panel) closeOpenMenu(false);
+  else openMenuAt(trigger, panel);
+}
+
+document.addEventListener("click", (e) => {
+  if (!openMenu) return;
+  const target = e.target as Node;
+  if (openMenu.panel.contains(target) || openMenu.trigger.contains(target)) return;
+  closeOpenMenu(false);
+});
+document.addEventListener("keydown", (e) => {
+  if (!openMenu) return;
+  if (e.key === "Escape") {
+    e.preventDefault();
+    e.stopPropagation();
+    closeOpenMenu(true);
+  }
+});
+
+dom.overflowMenuBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleMenuAt(dom.overflowMenuBtn, dom.overflowMenu);
+});
+
+/** One `role="menuitem"` button for a "…" menu — the toolbar's or a card's. */
+function buildMenuItem(label: string, onClick: () => void, opts: { danger?: boolean } = {}): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.setAttribute("role", "menuitem");
+  if (opts.danger) btn.classList.add("danger");
+  btn.textContent = label;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onClick();
+  });
+  return btn;
+}
 
 // --- Document outline -----------------------------------------------------
 // Built from the prose the preview renders, so its line numbers index the same
@@ -291,7 +385,7 @@ dom.outlineToggle.addEventListener("click", () => {
 function scrollPreviewToHeadingIndex(index: number): void {
   const all = dom.preview.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6");
   const target = all[index];
-  if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (target) smoothScrollIntoView(target, "start");
 }
 
 /** Highlight the outline entry for whatever heading is at the top of the view. */
@@ -322,7 +416,7 @@ function saveCollapsedThreads(): void {
 }
 
 /**
- * Set when the user fires "Ask Claude to Review This Doc". Holds the
+ * Set when the user fires "Ask Agent to Review This Doc". Holds the
  * thread IDs that existed at the time of the dispatch. On the next
  * render where new claude-unread threads appear (i.e. Claude's reply
  * has landed and the file was reloaded), we auto-scroll to the first
@@ -462,7 +556,7 @@ function highlightCurrent(scroll: boolean): void {
   const cur = findMatches[findIndex];
   if (!cur) return;
   cur.classList.add("mc-search--current");
-  if (scroll) cur.scrollIntoView({ block: "center", behavior: "smooth" });
+  if (scroll) smoothScrollIntoView(cur, "center");
 }
 
 function findStep(delta: number): void {
@@ -503,8 +597,11 @@ document.addEventListener("keydown", (e) => {
 dom.sendToClaude.addEventListener("click", () => {
   vscode.postMessage({ type: "send-to-claude" });
 });
+// The rest of the overflow menu's items — closing after each click, since
+// every one of them is a one-shot action, not a toggle.
 dom.copyPrompt.addEventListener("click", () => {
   vscode.postMessage({ type: "copy-prompt" });
+  closeOpenMenu(false);
 });
 dom.suggestModeToggle.addEventListener("click", () => {
   vscode.postMessage({ type: "toggle-suggest-mode" });
@@ -516,18 +613,39 @@ dom.suggestModeToggle.addEventListener("click", () => {
 // two-click arm is too quiet for something that removes many threads at once.
 dom.removeResolved.addEventListener("click", () => {
   vscode.postMessage({ type: "remove-resolved" });
+  closeOpenMenu(false);
 });
 
 // Same host-owned confirm as remove-resolved, and even more deserved: this one
 // deletes open conversations too. The button only asks; the modal decides.
 dom.finalizeDoc.addEventListener("click", () => {
   vscode.postMessage({ type: "finalize" });
+  closeOpenMenu(false);
 });
 
+/**
+ * A real switch now (round-4 P3.1), not a chip whose own label read as
+ * status text. "Suggest mode" is a fixed label element beside it; this only
+ * ever sets the state a screen reader and CSS read from — the webview still
+ * doesn't flip it on click (below): the setting is the host's, and the switch
+ * only reflects what comes back, same as the old chip did.
+ */
 function updateSuggestModeToggle(on: boolean): void {
-  dom.suggestModeToggle.textContent = on ? "Suggest: on" : "Suggest: off";
   dom.suggestModeToggle.setAttribute("aria-checked", String(on));
-  dom.suggestModeToggle.classList.toggle("active", on);
+  dom.suggestModeToggle.classList.toggle("on", on);
+}
+
+/**
+ * Put `agentName` into the toolbar wherever there's no per-thread agent to
+ * name instead (round-6 P5.2): the Send button reads "Send to Codex" for a
+ * file Codex is working on, its title and the suggest-mode switch title
+ * follow suit. Called after every `init`/`update` — `agentName` itself
+ * already fell back to "Claude" there, so this never needs to.
+ */
+function updateAgentUi(): void {
+  dom.sendToClaude.textContent = `Send to ${agentName}`;
+  dom.sendToClaude.title = `Send the prompt to a running ${agentName} terminal (or your configured send mode).`;
+  dom.suggestModeToggle.title = `When on, Send to ${agentName} asks ${agentName} to propose edits as suggestions you accept or reject.`;
 }
 
 dom.skillInstall.addEventListener("click", () => {
@@ -589,14 +707,14 @@ function scrollPreviewToFragment(fragment: string): void {
   // 1. Try exact id match (in case anything in the preview has ids).
   const byId = dom.preview.querySelector<HTMLElement>(`[id="${cssEscape(decoded)}"]`);
   if (byId) {
-    byId.scrollIntoView({ behavior: "smooth", block: "start" });
+    smoothScrollIntoView(byId, "start");
     return;
   }
   // 2. Match by slug against every heading in the preview.
   const headings = dom.preview.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6");
   for (const h of Array.from(headings)) {
     if (slugifyHeading(h.textContent || "") === decoded) {
-      h.scrollIntoView({ behavior: "smooth", block: "start" });
+      smoothScrollIntoView(h, "start");
       return;
     }
   }
@@ -633,26 +751,13 @@ dom.collapseAll.addEventListener("click", () => {
       collapsedThreads,
     ) === "collapse";
   for (const t of threads) setThreadCollapsed(t.id, collapse);
+  closeOpenMenu(false);
 });
 
 dom.claudeNext.addEventListener("click", () => {
   if (!currentState) return;
   const nextId = nextUnreadThreadId(currentState.threads, highlightedThreadId);
-  if (!nextId) return;
-  const target = currentState.threads.find((t) => t.id === nextId);
-  if (!target) return;
-  highlightedThreadId = target.id;
-  // Scroll the card into view, then scroll the preview to the anchor.
-  const card = dom.threadsList.querySelector<HTMLElement>(
-    `.thread-card[data-thread="${cssEscape(target.id)}"]`,
-  );
-  if (card) {
-    card.scrollIntoView({ behavior: "smooth", block: "center" });
-    for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
-      c.classList.toggle("highlighted", c.dataset.thread === target.id);
-    }
-  }
-  scrollPreviewTo(target);
+  if (nextId) focusThread(nextId);
 });
 
 function cssEscape(s: string): string {
@@ -671,6 +776,10 @@ let pendingThreadIds: ReadonlySet<string> = new Set();
 // What the waiting row says. The host owns the wording because only it knows
 // whether the wait is inferred or protocol-backed.
 let pendingLabelText = "Claude is working\u2026";
+// Display name of the agent that last wrote to this file (round-6 P5.2),
+// "Claude" until an `init`/`update` says otherwise. Drives the Send button,
+// its title, and the suggest-mode switch title \u2014 see `updateAgentUi`.
+let agentName = "Claude";
 /** First click on "Accept all" arms it; the second applies (P3.3). */
 let acceptAllArmed = false;
 // How many thread cards the list is currently allowed to build. Grows by a
@@ -686,6 +795,118 @@ let highlightedThreadId: string | null = null;
 // see nothing happen.
 const pendingDeleteThread = new Set<string>();
 const pendingDeleteComment = new Set<string>(); // composite "threadId:commentId"
+
+/**
+ * Move the "current card" state (`.highlighted` class + roving `tabindex`)
+ * to `id`, without touching anything else — callers that already re-render
+ * the whole list get this for free from `renderThreadCard`; the ones that
+ * don't (a click, `focusThread`'s reveal, a preview-mark click) call this
+ * instead of a full re-render so an in-progress reply textarea elsewhere in
+ * the list survives.
+ */
+function updateHighlightedCardDom(id: string): void {
+  for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
+    const match = c.dataset.thread === id;
+    c.classList.toggle("highlighted", match);
+    c.tabIndex = match ? 0 : -1;
+  }
+}
+
+/**
+ * Highlight `id`'s card, scroll it into view, and scroll the preview to its
+ * anchor. Shared by "Next unread from Claude", the `n`/`p` thread navigation,
+ * and the auto-scroll-to-new-review path — all three are "make this thread
+ * the one the reviewer is looking at", and used to each reimplement it
+ * slightly differently.
+ *
+ * Raises the render cap first when the card hasn't been built yet (same rule
+ * `maybeScrollToNewReview` always used): a review pass that landed threads
+ * past the chunk limit would otherwise scroll toward a card that doesn't
+ * exist in the DOM.
+ */
+function focusThread(id: string): void {
+  if (!currentState) return;
+  const target = currentState.threads.find((t) => t.id === id);
+  if (!target) return;
+  highlightedThreadId = target.id;
+
+  const revealAndScroll = (): void => {
+    const card = dom.threadsList.querySelector<HTMLElement>(
+      `.thread-card[data-thread="${cssEscape(target.id)}"]`,
+    );
+    updateHighlightedCardDom(target.id);
+    if (card) {
+      smoothScrollIntoView(card, "center");
+      // Roving tabindex (10x-plan-4 P2.4): move DOM focus with the highlight
+      // so a keyboard user (n/p, "Next unread from Claude") lands where the
+      // screen reader is now looking. `preventScroll` because the line above
+      // already positioned the scroll — a second, focus-driven scroll would
+      // just fight it.
+      card.focus({ preventScroll: true });
+    }
+    scrollPreviewTo(target);
+  };
+
+  const targetIndex = filterThreads(currentState.threads, filter).findIndex((t) => t.id === target.id);
+  if (targetIndex >= renderedThreadLimit) {
+    renderedThreadLimit = Math.ceil((targetIndex + 1) / THREAD_RENDER_CHUNK) * THREAD_RENDER_CHUNK;
+    renderThreads(currentState);
+    // Defer one frame so the freshly-rendered card is in the DOM.
+    requestAnimationFrame(revealAndScroll);
+  } else {
+    revealAndScroll();
+  }
+}
+
+/** Move the highlight to the next (`delta` 1) / previous (`delta` -1) card in the current filter. */
+function moveThreadHighlight(delta: 1 | -1): void {
+  if (!currentState) return;
+  const nextId = adjacentThreadId(currentState.threads, filter, highlightedThreadId, delta);
+  if (nextId) focusThread(nextId);
+}
+
+/**
+ * Focus the highlighted thread's reply textarea, expanding the card first if
+ * it's collapsed (the textarea is `display: none` inside a collapsed card,
+ * so a `.focus()` on it would silently do nothing). No-op if nothing is
+ * highlighted.
+ */
+function focusReplyOnHighlighted(): void {
+  if (!highlightedThreadId) return;
+  if (collapsedThreads.has(highlightedThreadId)) setThreadCollapsed(highlightedThreadId, false);
+  setReplyOpen(highlightedThreadId, true, true);
+}
+
+/**
+ * Resolve the highlighted thread if it's open, reopen it if resolved — posts
+ * exactly the message the card's own Resolve/Reopen button posts, so the host
+ * can't tell the two apart. No-op if nothing is highlighted.
+ */
+function resolveOrReopenHighlighted(): void {
+  if (!highlightedThreadId) return;
+  vscode.postMessage({ type: "toggle-resolve", threadId: highlightedThreadId });
+}
+
+/**
+ * Reverse navigation (10x-plan-4 P2.4): open the highlighted thread's
+ * anchored text in a text editor — the same message the card's own `↗`
+ * button posts. No-op if nothing is highlighted.
+ */
+function openHighlightedInEditor(): void {
+  if (!highlightedThreadId) return;
+  vscode.postMessage({ type: "open-in-editor", threadId: highlightedThreadId });
+}
+
+/**
+ * The segmented-control look (round-4 P3.1) is CSS driven off which radio is
+ * `:checked`, but a couple of call sites flip `.checked` on the input
+ * directly (rather than through a user click, which fires `change` on its
+ * own) — a background thread landing while "New from Claude" is selected, for
+ * instance. Those call this so the active segment repaints too.
+ */
+function updateFilterSegments(): void {
+  for (const r of dom.filterRadios) r.closest("label")?.classList.toggle("active", r.checked);
+}
 
 function render(state: SerializedState): void {
   currentState = state;
@@ -707,32 +928,10 @@ function maybeScrollToNewReview(state: SerializedState): void {
     });
   if (newClaudeUnread.length === 0) return;
   const target = newClaudeUnread[0];
-  highlightedThreadId = target.id;
-  // A big review pass can push the first new thread past the render cap. Raise
-  // the budget far enough to include it and rebuild, or "Claude finished —
-  // here's the first finding" would scroll to a card that was never built.
-  const targetIndex = filterThreads(state.threads, filter).findIndex((t) => t.id === target.id);
-  if (targetIndex >= renderedThreadLimit) {
-    renderedThreadLimit =
-      Math.ceil((targetIndex + 1) / THREAD_RENDER_CHUNK) * THREAD_RENDER_CHUNK;
-    renderThreads(state);
-  }
   // Clear the snapshot first so re-entry doesn't loop on subsequent updates.
   pendingReviewSnapshot = null;
   savePendingReviewSnapshot();
-  // Defer one frame so the freshly-rendered card is in the DOM.
-  requestAnimationFrame(() => {
-    const card = dom.threadsList.querySelector<HTMLElement>(
-      `.thread-card[data-thread="${cssEscape(target.id)}"]`,
-    );
-    if (card) {
-      card.scrollIntoView({ behavior: "smooth", block: "center" });
-      for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
-        c.classList.toggle("highlighted", c.dataset.thread === target.id);
-      }
-    }
-    scrollPreviewTo(target);
-  });
+  focusThread(target.id);
 }
 
 let mermaidInitialized = false;
@@ -789,6 +988,7 @@ function paintDiffStripes(prose: string, diff: DiffState | null): void {
   renderDiffBadge(diff);
   if (!diff) {
     diffNav.setStops([]);
+    updateKeysHint();
     return;
   }
   // 1-based line for each prose offset, via a sorted line-start table.
@@ -830,7 +1030,55 @@ function paintDiffStripes(prose: string, diff: DiffState | null): void {
   diffNav.setStops(
     Array.from(dom.preview.querySelectorAll<HTMLElement>(".mc-diff-changed, .mc-diff-removed")),
   );
+  updateKeysHint();
 }
+
+/**
+ * The hint names what n/p will actually do. They step changes whenever the
+ * change arrows are showing and walk threads otherwise, so the line follows
+ * the arrows' visibility rather than the diff badge: a diff with no changes
+ * has no arrows, and there n/p walk threads.
+ */
+function updateKeysHint(): void {
+  const target = dom.diffNav.hidden ? "threads" : "changes";
+  dom.keysHint.textContent = `n / p to move between ${target} · r reply · e resolve · o open in editor`;
+}
+
+// --- Keyboard hint visibility (round-4 P3.5) --------------------------------
+// The line is only worth showing to someone who hasn't discovered the keys
+// yet. It's on by default, hides itself the first time n/p/r/e/o is actually
+// used, and the "?" button in the toolbar brings it back (and can hide it
+// again) — a manual override on top of the automatic first-use dismissal, not
+// a replacement for it. Persisted like the other panel preferences so it
+// doesn't reappear on every webview reload once it's been dismissed.
+let hintDismissed: boolean = ((): boolean => {
+  const saved = vscode.getState() as { hintDismissed?: boolean } | undefined;
+  return saved?.hintDismissed ?? false;
+})();
+
+function saveHintDismissed(): void {
+  vscode.setState({ ...(vscode.getState() as Record<string, unknown> | undefined), hintDismissed });
+}
+
+function applyHintVisibility(): void {
+  dom.keysHint.hidden = hintDismissed;
+  dom.hintToggle.setAttribute("aria-pressed", String(!hintDismissed));
+}
+applyHintVisibility();
+
+/** Called once from the n/p/r/e/o handler below — the first use dismisses it. */
+function dismissHintOnFirstUse(): void {
+  if (hintDismissed) return;
+  hintDismissed = true;
+  saveHintDismissed();
+  applyHintVisibility();
+}
+
+dom.hintToggle.addEventListener("click", () => {
+  hintDismissed = !hintDismissed;
+  saveHintDismissed();
+  applyHintVisibility();
+});
 
 const diffNav = createDiffNav({
   container: dom.diffNav,
@@ -840,13 +1088,31 @@ const diffNav = createDiffNav({
   currentClass: "mc-diff-current",
 });
 
-// n/p step through changes, GitHub-style — but never while typing in the
-// find bar, a composer, or a reply box.
+// One keyboard map for n/p/r/e (10x-plan-4 P2.1, unifying the diff-nav
+// shortcut that already existed with the thread navigation added alongside
+// it). While the diff overlay is showing, n/p step through changed blocks,
+// GitHub-style, exactly as before; otherwise they walk the highlight through
+// the current filtered thread list. r focuses the highlighted thread's
+// reply box; e resolves/reopens it. Deliberately no `a` for "accept" — a
+// single-key accept with no visible target is a footgun. Never fires with a
+// modifier held or while typing in the find bar, a composer, or a reply box.
 document.addEventListener("keydown", (e) => {
-  if (dom.diffNav.hidden || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
   if (!isNavKeyContext(e.target)) return;
-  if (e.key === "n") diffNav.step(1);
-  else if (e.key === "p") diffNav.step(-1);
+  if (e.key === "n" || e.key === "p") {
+    const delta = e.key === "n" ? 1 : -1;
+    if (!dom.diffNav.hidden) diffNav.step(delta);
+    else moveThreadHighlight(delta);
+  } else if (e.key === "r") {
+    focusReplyOnHighlighted();
+  } else if (e.key === "e") {
+    resolveOrReopenHighlighted();
+  } else if (e.key === "o") {
+    openHighlightedInEditor();
+  } else {
+    return;
+  }
+  dismissHintOnFirstUse();
 });
 
 /** The block that sits directly under #preview — never inside a list or table. */
@@ -1202,7 +1468,7 @@ function buildHighlightMark(
       const card = dom.threadsList.querySelector<HTMLElement>(
         `[data-suggestion-id="${cssEscape(suggestionId)}"]`,
       );
-      card?.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (card) smoothScrollIntoView(card, "center");
     });
   } else {
     mark.className = `mc-hl ${status === "resolved" ? "mc-hl-resolved" : ""}`;
@@ -1211,9 +1477,7 @@ function buildHighlightMark(
       e.stopPropagation();
       highlightedThreadId = threadId;
       scrollSidebarTo(threadId);
-      for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
-        c.classList.toggle("highlighted", c.dataset.thread === threadId);
-      }
+      updateHighlightedCardDom(threadId);
     });
   }
   return mark;
@@ -1229,6 +1493,40 @@ function buildHighlightMark(
 const pendingReplyText = new Map<string, string>();
 let focusedReplyThreadId: string | null = null;
 
+/**
+ * Threads whose reply composer is expanded (round-4 P3.2) — via the card's
+ * Reply button or the `r` key. Collapsed by default: a review with thirty
+ * threads used to render thirty always-open textareas, which is thirty
+ * fields of chrome for the one or two the reviewer is about to use.
+ */
+const openReplyThreadIds = new Set<string>();
+
+/** A thread with an unsent draft stays open across a re-render even if the
+ * user never explicitly opened it this pass — losing sight of typed text
+ * behind a collapsed composer would be worse than the composer being open. */
+function replyShouldBeOpen(id: string): boolean {
+  return openReplyThreadIds.has(id) || (pendingReplyText.get(id)?.length ?? 0) > 0;
+}
+
+/**
+ * Expand or collapse a thread's reply composer in place (no re-render, so an
+ * in-progress edit elsewhere in the list survives). Mirrors `setThreadCollapsed`.
+ */
+function setReplyOpen(id: string, open: boolean, focus: boolean): void {
+  if (open) openReplyThreadIds.add(id);
+  else openReplyThreadIds.delete(id);
+  const card = dom.threadsList.querySelector<HTMLElement>(`.thread-card[data-thread="${cssEscape(id)}"]`);
+  const box = card?.querySelector<HTMLElement>(".reply-box");
+  const shown = replyShouldBeOpen(id);
+  box?.classList.toggle("open", shown);
+  card?.querySelector(".thread-reply-toggle")?.setAttribute("aria-expanded", String(shown));
+  // Synchronous, not deferred to a frame: the `display` flip above already
+  // took effect by the time this line runs, and a caller (the `r` key
+  // handler) expects the textarea focused by the time its own handler
+  // returns, same as the always-open composer did before this.
+  if (shown && focus) box?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+}
+
 function captureReplyState(): void {
   for (const card of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
     const id = card.dataset.thread;
@@ -1243,6 +1541,11 @@ function captureReplyState(): void {
 function renderThreads(state: SerializedState): void {
   captureReplyState();
   const list = dom.threadsList;
+  // A per-card "…" menu is about to be torn down with the rest of the list —
+  // an external update (a reply landing, a filter change) mid-open would
+  // otherwise leave `openMenu` pointing at a detached panel. The toolbar's
+  // menu lives outside `list` and is untouched.
+  if (openMenu && list.contains(openMenu.panel)) closeOpenMenu(false);
   list.innerHTML = "";
 
   // Pending suggestions render above the comment threads, regardless of the
@@ -1266,18 +1569,25 @@ function renderThreads(state: SerializedState): void {
   renderClaudeSummary(state);
   if (filtered.length === 0) {
     if (state.suggestions.length === 0) {
-      const empty = document.createElement("p");
-      empty.className = "empty";
-      empty.textContent = emptyListMessage(filter);
-      list.appendChild(empty);
+      list.appendChild(
+        buildEmptyStateEl(
+          emptyState({
+            filter,
+            totalThreads: state.threads.length,
+          }),
+        ),
+      );
     }
     return;
   }
   // Build at most a chunk of cards per pass. A 300-thread review used to build
   // every card before the panel painted anything; the rest arrive on click.
   const chunk = chunkThreads(filtered, renderedThreadLimit);
-  for (const t of chunk.visible) {
-    list.appendChild(renderThreadCard(t));
+  for (let i = 0; i < chunk.visible.length; i++) {
+    // posinset/setsize are against the full filtered list, not just what's
+    // built so far — a screen reader announcing "3 of 300" should say the
+    // list's real shape, even though only the first chunk has DOM behind it.
+    list.appendChild(renderThreadCard(chunk.visible[i], i + 1, filtered.length));
   }
   if (chunk.moreLabel) {
     const more = document.createElement("button");
@@ -1289,6 +1599,33 @@ function renderThreads(state: SerializedState): void {
     });
     list.appendChild(more);
   }
+}
+
+/**
+ * The thread list's empty state (10x-plan-4 P2.4): a plain line when a filter
+ * is hiding real threads, a small card that teaches the two ways to start a
+ * thread when the doc has never had one.
+ */
+function buildEmptyStateEl(state: EmptyState): HTMLElement {
+  if (state.kind === "filtered") {
+    const p = document.createElement("p");
+    p.className = "empty";
+    p.textContent = state.message;
+    return p;
+  }
+  const card = document.createElement("div");
+  card.className = "mc-empty-state";
+  const headline = document.createElement("div");
+  headline.className = "mc-empty-state__headline";
+  headline.textContent = state.headline;
+  const hint = document.createElement("div");
+  hint.className = "mc-empty-state__hint";
+  hint.textContent = state.hint;
+  const action = document.createElement("button");
+  action.textContent = state.action.label;
+  action.addEventListener("click", () => vscode.postMessage(state.action.message));
+  card.append(headline, hint, action);
+  return card;
 }
 
 /**
@@ -1339,7 +1676,7 @@ function renderSuggestion(s: SuggestionState): HTMLElement {
     onClick: s.anchor
       ? () => {
           const mark = dom.preview.querySelector<HTMLElement>(`[data-suggestion-id="${cssEscape(s.anchorId)}"]`);
-          mark?.scrollIntoView({ behavior: "smooth", block: "center" });
+          if (mark) smoothScrollIntoView(mark, "center");
         }
       : undefined,
   });
@@ -1350,20 +1687,26 @@ function renderSuggestion(s: SuggestionState): HTMLElement {
 function renderClaudeSummary(state: SerializedState): void {
   const summary = claudeSummary(state.threads);
   dom.claudeSummary.hidden = !summary.hasAny;
-  // The "New from Claude" filter chip is only relevant when there are
-  // Claude threads to look at. Hide it (and snap filter back to "open")
-  // when none exist so the chip doesn't sit there in dead state.
+  // The "New from <agent>" filter chip is only relevant when there are
+  // agent threads to look at. Hide it (and snap filter back to "open") when
+  // none exist so the chip doesn't sit there in dead state. Its wording
+  // follows the same agent-naming rule as the summary text above it
+  // (`claudeSummary`'s `agentNoun`) — "Claude" when that's the only agent
+  // involved, the real name for a single other agent, "Agents" for a mix.
   dom.claudeFilterLabel.hidden = !summary.hasAny;
+  dom.claudeFilterLabelText.textContent = `New from ${summary.agentNoun}`;
+  dom.claudeNext.title = `Jump to the next unread thread from ${summary.agentNoun}. (Cmd/Ctrl+K, Cmd/Ctrl+Alt+N)`;
   if (!summary.hasAny && filter === "claude-unread") {
     filter = "open";
     for (const r of dom.filterRadios) r.checked = r.value === "open";
+    updateFilterSegments();
   }
   if (!summary.hasAny) return;
   dom.claudeSummaryText.textContent = summary.text;
   dom.claudeNext.disabled = summary.unread === 0;
 }
 
-function renderThreadCard(t: ThreadState): HTMLElement {
+function renderThreadCard(t: ThreadState, posinset: number, setsize: number): HTMLElement {
   const card = document.createElement("section");
   card.className = "thread-card";
   if (t.status === "resolved") card.classList.add("resolved");
@@ -1371,15 +1714,27 @@ function renderThreadCard(t: ThreadState): HTMLElement {
   if (isClaudeUnread(t)) card.classList.add("claude-unread");
   if (collapsedThreads.has(t.id)) card.classList.add("collapsed");
   card.dataset.thread = t.id;
+  // a11y (10x-plan-4 P2.4): the list is a `role="feed"`, so each card reads as
+  // an article with its position in that feed and a label a screen reader can
+  // announce without expanding it.
+  card.setAttribute("role", "article");
+  card.setAttribute("aria-posinset", String(posinset));
+  card.setAttribute("aria-setsize", String(setsize));
+  const root = t.comments[0];
+  if (root) {
+    card.setAttribute("aria-label", `${root.author}: ${root.body.slice(0, 60)}`);
+  }
+  // Roving tabindex: only the highlighted card is in the Tab order. Before
+  // anything is explicitly highlighted, the first card in the feed takes the
+  // role instead of leaving the whole feed unreachable by keyboard.
+  card.tabIndex = (highlightedThreadId ? t.id === highlightedThreadId : posinset === 1) ? 0 : -1;
   card.addEventListener("click", () => {
     highlightedThreadId = t.id;
     scrollPreviewTo(t);
-    // Update only the .highlighted class on cards; do NOT re-render the
-    // list, because that would blow away any in-progress reply textarea
-    // content the user has typed on a different card.
-    for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
-      c.classList.toggle("highlighted", c.dataset.thread === t.id);
-    }
+    // Update only the .highlighted class (and roving tabindex) on cards; do
+    // NOT re-render the list, because that would blow away any in-progress
+    // reply textarea content the user has typed on a different card.
+    updateHighlightedCardDom(t.id);
   });
 
   const head = document.createElement("header");
@@ -1419,8 +1774,23 @@ function renderThreadCard(t: ThreadState): HTMLElement {
   headRow.appendChild(quote);
   head.appendChild(headRow);
 
+  // Visible per-card actions: Reply, Resolve/Reopen and Send. Every other
+  // per-thread action lives in the "…" menu below — a thirty-thread review
+  // would otherwise put six equal-weight buttons on every one of them.
   const actions = document.createElement("div");
   actions.className = "thread-actions";
+
+  const replyOpenNow = replyShouldBeOpen(t.id);
+  const replyToggleBtn = document.createElement("button");
+  replyToggleBtn.type = "button";
+  replyToggleBtn.className = "btn-ghost thread-reply-toggle";
+  replyToggleBtn.textContent = "Reply";
+  replyToggleBtn.setAttribute("aria-expanded", String(replyOpenNow));
+  replyToggleBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setReplyOpen(t.id, !replyShouldBeOpen(t.id), true);
+  });
+
   const resolveBtn = document.createElement("button");
   resolveBtn.className = "btn-ghost";
   resolveBtn.textContent = t.status === "resolved" ? "Reopen" : "Resolve";
@@ -1428,53 +1798,71 @@ function renderThreadCard(t: ThreadState): HTMLElement {
     e.stopPropagation();
     vscode.postMessage({ type: "toggle-resolve", threadId: t.id });
   });
-  const armed = pendingDeleteThread.has(t.id);
-  const deleteBtn = document.createElement("button");
-  deleteBtn.className = "btn-ghost danger";
-  deleteBtn.textContent = armed ? "Confirm delete" : "Delete";
-  deleteBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (pendingDeleteThread.has(t.id)) {
-      pendingDeleteThread.delete(t.id);
-      vscode.postMessage({ type: "delete-thread", threadId: t.id });
-    } else {
-      pendingDeleteThread.add(t.id);
-      // Auto-disarm after a few seconds so a stale "Confirm delete"
-      // button doesn't sit there waiting to bite.
-      setTimeout(() => {
-        if (pendingDeleteThread.delete(t.id) && currentState) renderThreads(currentState);
-      }, 4000);
-      renderThreads(currentState!);
-    }
-  });
-  const sendClaudeBtn = document.createElement("button");
-  sendClaudeBtn.className = "btn-ghost";
-  sendClaudeBtn.textContent = "→ Claude";
-  sendClaudeBtn.title = "Send the whole thread (all comments + replies) to Claude";
-  sendClaudeBtn.addEventListener("click", (e) => {
+
+  const sendBtn = document.createElement("button");
+  sendBtn.type = "button";
+  sendBtn.className = "btn-ghost thread-send";
+  sendBtn.textContent = "Send";
+  sendBtn.title = `Send this thread to ${agentName}`;
+  sendBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     vscode.postMessage({ type: "send-to-claude-comment", threadId: t.id });
   });
-  const copyClaudeBtn = document.createElement("button");
-  copyClaudeBtn.className = "btn-ghost";
-  copyClaudeBtn.textContent = "Copy";
-  copyClaudeBtn.title = "Copy this thread's prompt to clipboard";
-  copyClaudeBtn.addEventListener("click", (e) => {
+
+  const menuWrap = document.createElement("span");
+  menuWrap.className = "mc-menu-wrap";
+  const menuBtn = document.createElement("button");
+  menuBtn.type = "button";
+  menuBtn.className = "btn-ghost thread-menu-btn";
+  menuBtn.textContent = "…";
+  menuBtn.title = "More thread actions";
+  menuBtn.setAttribute("aria-haspopup", "menu");
+  menuBtn.setAttribute("aria-expanded", "false");
+  menuBtn.setAttribute("aria-label", "More actions for this thread");
+  const menu = document.createElement("div");
+  menu.className = "mc-menu";
+  menu.setAttribute("role", "menu");
+  menu.hidden = true;
+  menuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    vscode.postMessage({ type: "copy-claude-comment", threadId: t.id });
+    toggleMenuAt(menuBtn, menu);
   });
-  actions.append(sendClaudeBtn, copyClaudeBtn, resolveBtn, deleteBtn);
-  if (armed) {
-    const cancelBtn = document.createElement("button");
-    cancelBtn.className = "btn-ghost";
-    cancelBtn.textContent = "Cancel";
-    cancelBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      pendingDeleteThread.delete(t.id);
-      renderThreads(currentState!);
-    });
-    actions.append(cancelBtn);
-  }
+
+  const openInEditorItem = buildMenuItem("Open in editor", () => {
+    vscode.postMessage({ type: "open-in-editor", threadId: t.id });
+    closeOpenMenu(false);
+  });
+  const copyThreadItem = buildMenuItem("Copy prompt", () => {
+    vscode.postMessage({ type: "copy-claude-comment", threadId: t.id });
+    closeOpenMenu(false);
+  });
+  // Two-click confirm, armed in place (no re-render) so the open menu stays
+  // open across the arm step — the existing auto-disarm still applies.
+  const deleteItem = buildMenuItem(
+    pendingDeleteThread.has(t.id) ? "Confirm delete" : "Delete",
+    () => {
+      if (pendingDeleteThread.has(t.id)) {
+        pendingDeleteThread.delete(t.id);
+        vscode.postMessage({ type: "delete-thread", threadId: t.id });
+        closeOpenMenu(false);
+        return;
+      }
+      pendingDeleteThread.add(t.id);
+      deleteItem.textContent = "Confirm delete";
+      // Auto-disarm after a few seconds so a stale "Confirm delete"
+      // item doesn't sit there waiting to bite.
+      setTimeout(() => {
+        if (pendingDeleteThread.delete(t.id) && deleteItem.isConnected) {
+          deleteItem.textContent = "Delete";
+        }
+      }, 4000);
+    },
+    { danger: true },
+  );
+  menu.append(openInEditorItem, copyThreadItem, deleteItem);
+  menuWrap.append(menuBtn, menu);
+
+  actions.append(replyToggleBtn, resolveBtn, sendBtn, menuWrap);
   head.appendChild(actions);
   card.appendChild(head);
 
@@ -1491,8 +1879,11 @@ function renderThreadCard(t: ThreadState): HTMLElement {
   // so clicking inside doesn't bubble to the card's click handler (which
   // would re-highlight the thread and trigger a re-render that wipes the
   // textarea content the user just typed).
+  // Collapsed until Reply is clicked or `r` is pressed on the highlighted
+  // card (round-4 P3.2); a card with a non-empty pending draft stays open
+  // across a re-render regardless (`replyShouldBeOpen`).
   const replyBox = document.createElement("div");
-  replyBox.className = "reply-box";
+  replyBox.className = replyOpenNow ? "reply-box open" : "reply-box";
   replyBox.addEventListener("click", (e) => e.stopPropagation());
   replyBox.addEventListener("mousedown", (e) => e.stopPropagation());
   const composer = buildComposer({
@@ -1501,12 +1892,13 @@ function renderThreadCard(t: ThreadState): HTMLElement {
     rows: 2,
     // Restore in-progress text captured before the most recent re-render.
     initialValue: pendingReplyText.get(t.id) ?? "",
-    // Always-on reply box — don't grab focus on every thread re-render.
+    // The composer opens (and focuses) through `setReplyOpen`, not on mount.
     autofocus: false,
     onSubmit: (body) => {
       vscode.postMessage({ type: "reply", threadId: t.id, body });
       composer.textarea.value = "";
       pendingReplyText.delete(t.id);
+      setReplyOpen(t.id, false, false);
     },
   });
   // Persist what's typed so a re-render (e.g. highlight refresh) doesn't lose it.
@@ -1528,11 +1920,31 @@ function renderThreadCard(t: ThreadState): HTMLElement {
   return card;
 }
 
+/**
+ * "via tools" / "via cli" / "via file" — how an agent's comment reached the
+ * file (round-6 P1.4). Human comments never get a marker at all: nobody
+ * needs to be told they typed their own reply. An unrecognized `via` (an
+ * older file, or a value from an agent this build doesn't know about yet)
+ * reads the same as absent — "via file" — which is always a safe guess: it
+ * just means "not through the tools or `mdc`", true of anything hand-edited.
+ */
+function viaMarker(c: InlineComment): { label: string; title: string } | undefined {
+  if (!isAgentComment(c)) return undefined;
+  const kind: "tools" | "cli" | "file" = c.via === "tools" || c.via === "cli" ? c.via : "file";
+  const title = {
+    tools: "The agent wrote this through the review tools (MCP), not by hand-editing the file.",
+    cli: "The agent wrote this through the `mdc` command-line tool.",
+    file: "The agent edited the file's text directly — not through the review tools or `mdc`.",
+  }[kind];
+  return { label: `via ${kind}`, title };
+}
+
 function renderComment(thread: ThreadState, c: InlineComment, pending = false): HTMLElement {
   if (c.deleted) {
     const card = buildCommentCard({
       author: c.author,
       timestamp: c.ts,
+      via: viaMarker(c),
       body: "(comment deleted)",
       reply: !!c.parent,
     });
@@ -1560,6 +1972,7 @@ function renderComment(thread: ThreadState, c: InlineComment, pending = false): 
       author: c.author,
       timestamp: c.ts,
       note: c.editedTs ? "edited" : undefined,
+      via: viaMarker(c),
       bodyEl: composer.el,
       reply: !!c.parent,
     });
@@ -1611,26 +2024,26 @@ function renderComment(thread: ThreadState, c: InlineComment, pending = false): 
     author: c.author,
     timestamp: c.ts,
     note: c.editedTs ? "edited" : undefined,
+    via: viaMarker(c),
     bodyEl,
     reply: !!c.parent,
     actions,
     pending,
     pendingLabel: pendingLabelText,
+    pendingAriaLive: true,
   });
 }
 
-
-
 function scrollSidebarTo(id: string): void {
   const el = dom.threadsList.querySelector<HTMLElement>(`[data-thread="${id}"]`);
-  if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (el) smoothScrollIntoView(el, "center");
 }
 
 function scrollPreviewTo(t: ThreadState): void {
   if (!t.anchor) return;
   const el = dom.preview.querySelector<HTMLElement>(`mark[data-thread="${t.id}"]`);
   if (el) {
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    smoothScrollIntoView(el, "center");
     el.classList.add("flash");
     setTimeout(() => el.classList.remove("flash"), 1200);
   }
@@ -1868,12 +2281,14 @@ window.addEventListener("scroll", () => positionFloatingButton(), true);
 dom.filterRadios.forEach((r) =>
   r.addEventListener("change", () => {
     filter = (r.value as typeof filter);
+    updateFilterSegments();
     // A different filter is a different list — start its render budget over
     // rather than carrying a limit the user raised for the previous one.
     renderedThreadLimit = THREAD_RENDER_CHUNK;
     if (currentState) render(currentState);
   }),
 );
+updateFilterSegments();
 
 window.addEventListener("message", (ev) => {
   const msg = ev.data as InitMsg | UpdateMsg | ReviewPendingMsg | ScrollToMsg | DrawioReadResult | SkillStatusMsg;
@@ -1889,13 +2304,17 @@ window.addEventListener("message", (ev) => {
     renderSkillWarning(msg.skillStatus);
     updateSuggestModeToggle(msg.suggestMode ?? false);
     pendingThreadIds = new Set(msg.pendingThreadIds ?? []);
-    if (msg.pendingLabel) pendingLabelText = msg.pendingLabel;
+    agentName = msg.agentName || "Claude";
+    updateAgentUi();
+    pendingLabelText = msg.pendingLabel ?? `${agentName} is working…`;
     currentDiff = msg.diff ?? null;
     render(msg.state);
   } else if (msg.type === "update") {
     updateSuggestModeToggle(msg.suggestMode ?? false);
     pendingThreadIds = new Set(msg.pendingThreadIds ?? []);
-    if (msg.pendingLabel) pendingLabelText = msg.pendingLabel;
+    agentName = msg.agentName || "Claude";
+    updateAgentUi();
+    pendingLabelText = msg.pendingLabel ?? `${agentName} is working…`;
     currentDiff = msg.diff ?? null;
     render(msg.state);
   } else if (msg.type === "review-pending") {
@@ -1941,7 +2360,7 @@ function scrollPreviewToProseOffset(proseOffset: number): void {
       }
     }
     if (!best) return;
-    best.scrollIntoView({ behavior: "smooth", block: "start" });
+    smoothScrollIntoView(best, "start");
   });
 }
 

@@ -7,6 +7,7 @@
 // already solved "cycle through N things in both directions".
 
 import { stepIndex } from "./findState";
+import { smoothScrollIntoView } from "./scrollIntoView";
 
 export interface DiffNavHandle {
   /**
@@ -45,7 +46,7 @@ export function createDiffNav(opts: {
     index = stepIndex(index === -1 && delta === -1 ? 0 : index, delta, stops.length);
     const target = stops[index];
     target.classList.add(opts.currentClass);
-    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    smoothScrollIntoView(target, "center");
     renderCount();
   };
 

@@ -188,6 +188,27 @@ test.describe("layout", () => {
     await page.locator("#outline-toggle").click();
     expect(await widths(page)).toEqual(before);
   });
+
+  // round-4 P3.4, verified bug: `#app.with-outline` (0,1,1) out-specificities
+  // the narrow-viewport `#app { grid-template-columns: 1fr }` rule (0,1,0), so
+  // turning the outline on at a narrow width kept three columns instead of
+  // collapsing to one — the media query fired, but never won.
+  test("at 700px, the outline still collapses the layout to a single column", async ({ page }) => {
+    await page.setViewportSize({ width: 700, height: 700 });
+    await bootInlineView(page, {
+      fileName: "doc.md",
+      state: { prose: DOC, threads: [], suggestions: [] },
+      user: { name: "r" },
+      imageBaseUris: { docDir: "", workspaceFolder: null },
+    });
+    await page.locator("#outline-toggle").click();
+    await expect(page.locator("#outline-pane")).toBeVisible();
+
+    const columns = await page.evaluate(() =>
+      getComputedStyle(document.getElementById("app")!).gridTemplateColumns.trim().split(/\s+/),
+    );
+    expect(columns).toHaveLength(1);
+  });
 });
 
 // Two sections with the same name is ordinary in a structured document

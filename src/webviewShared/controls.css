@@ -1,0 +1,85 @@
+/* Shared visual tokens for chrome that lives OUTSIDE the comment list itself:
+ * the document toolbar (client.ts, `.mdc-doc-toolbar`) and the sidebar's own
+ * header/footer controls (threadSidebar.ts). Unscoped on purpose — the
+ * toolbar sits outside `.mc-thread-sidebar`, so the two need one shared
+ * definition rather than two copies that can drift apart
+ * (docs/sidebar-chrome-redesign.md).
+ *
+ * Three control kinds, one visual language: ghost icon button, segmented
+ * control, primary button (`.mc-btn--primary`, comments.css, unchanged).
+ *
+ * `.mc-icon-btn` itself moved to comments.css in phase 2: the card module's
+ * collapse chevron needs it in the PR review and classic panels too, and
+ * neither loads this file (only the live editor does, via threadSidebar.ts).
+ * What's left here is genuinely toolbar/header-only.
+ */
+
+/* Segmented control — same look, two jobs that must stay visually identical
+ * without sharing a stylesheet: the document's Reading/Editing switch here,
+ * the filter tabs' own (different, underline-style) look in threadSidebar.css.
+ * Keeps the label>input+span DOM so the radios keep native arrow-key nav. */
+.mc-segmented {
+  display: inline-flex;
+  gap: 2px;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  border-radius: 6px;
+  padding: 2px;
+}
+.mc-segmented .segment {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border-radius: var(--mdc-radius, 4px);
+  color: var(--vscode-descriptionForeground, #888);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+.mc-segmented .segment.active {
+  background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.28));
+  color: var(--vscode-foreground);
+}
+.mc-segmented .segment input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.mc-segmented .segment:has(input:focus-visible) {
+  outline: 2px solid var(--vscode-focusBorder, #0090f1);
+  outline-offset: 1px;
+}
+body.vscode-high-contrast .mc-segmented,
+body.vscode-high-contrast-light .mc-segmented {
+  outline: 1px solid var(--vscode-contrastBorder, currentColor);
+}
+body.vscode-high-contrast .mc-segmented .segment.active,
+body.vscode-high-contrast-light .mc-segmented .segment.active {
+  outline: 1px solid var(--vscode-contrastActiveBorder, currentColor);
+}
+
+/* Count on an icon button — the comments toggle while the sidebar is hidden.
+ * Sits beside the glyph and the button widens to fit, so the number never
+ * overlaps the icon. Scoped under `.mc-icon-btn` to outrank comments.css's
+ * card-tag `.mc-badge` whatever the stylesheet order. */
+.mc-icon-btn .mc-badge--count {
+  font-size: 10px;
+  line-height: 14px;
+  min-width: 14px;
+  padding: 0 4px;
+  border-radius: 7px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.4));
+  color: var(--vscode-badge-foreground, #fff);
+}
+.mc-icon-btn:has(.mc-badge--count:not([hidden])) {
+  width: auto;
+  padding: 0 6px;
+  gap: 4px;
+}

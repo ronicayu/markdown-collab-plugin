@@ -20,6 +20,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { imageResourceRootPaths } from "../webviewShared/resourceRoots";
 import { isInsideRoot } from "../pathUtils";
+import { agentDisplayName, isAgentComment } from "../agentIdentity";
 import { checkClaudeSkill, type SkillStatus } from "../skill";
 import { runDrawioRead } from "../collab/drawioService";
 import { claudePending, onPendingChanged } from "../claudePendingService";
@@ -87,6 +88,13 @@ interface InitMessage {
   pendingThreadIds: string[];
   /** What to say under those threads — protocol evidence earns a specific phrase. */
   pendingLabel: string;
+  /**
+   * Display name of the agent that most recently wrote to this file — the
+   * host's answer to "who should the Send button and pending text say?"
+   * instead of the client hardcoding "Claude" (10x-plan-6 P5.2). "Claude"
+   * when no agent has written here yet.
+   */
+  agentName: string;
 }
 
 interface UpdateMessage {
@@ -96,6 +104,8 @@ interface UpdateMessage {
   suggestMode: boolean;
   pendingThreadIds: string[];
   pendingLabel: string;
+  /** Same contract as `InitMessage.agentName`. */
+  agentName: string;
 }
 
 interface SkillStatusMessage {
@@ -224,6 +234,15 @@ interface FinalizeRequest {
   type: "finalize";
 }
 
+interface OpenInEditorRequest {
+  type: "open-in-editor";
+  threadId: string;
+}
+
+interface EmptyStateReviewRequest {
+  type: "empty-state-review";
+}
+
 type ClientMessage =
   | ReadyMessage
   | AddCommentRequest
@@ -244,15 +263,17 @@ type ClientMessage =
   | AcceptAllSuggestionsRequest
   | RemoveResolvedRequest
   | FinalizeRequest
-  | ToggleSuggestModeRequest;
+  | ToggleSuggestModeRequest
+  | OpenInEditorRequest
+  | EmptyStateReviewRequest;
 
 /** Dependencies the panel needs from the extension host (kept narrow so tests can stub them). */
 export interface InlinePanelDeps {
   /**
    * Route an inline-comments payload through the user's configured send
-   * mode (terminal / channel / mcp-channel / clipboard, with the same
-   * ask-once-and-remember UX as the sidecar path). Wired in
-   * extension.ts so the panel doesn't need to know about transports.
+   * mode (terminal / clipboard, with the same ask-once-and-remember UX as
+   * the sidecar path). Wired in extension.ts so the panel doesn't need to
+   * know about transports.
    */
   dispatchToClaude: (payload: ReviewPayload) => Promise<void>;
 }
@@ -535,6 +556,10 @@ ${inlineCommentsAppBody()}
           "markdownCollab.finalizeDocument",
           this.doc.uri,
         );
+      case "open-in-editor":
+        return this.handleOpenInEditor(msg.threadId);
+      case "empty-state-review":
+        return this.handleEmptyStateReview();
     }
   }
 
@@ -547,10 +572,9 @@ ${inlineCommentsAppBody()}
       return;
     }
     // Route through the shared dispatcher so the inline view honors the
-    // user's `markdownCollab.sendMode` setting (terminal / channel /
-    // mcp-channel / clipboard) the same way the sidecar-based command
-    // does. Terminal is the natural default — drops the prompt straight
-    // into a running Claude REPL via bracketed paste.
+    // user's `markdownCollab.sendMode` setting (terminal / clipboard) the
+    // same way the sidecar-based command does. Terminal is the natural
+    // default — drops the prompt straight into a running Claude session.
     await this.deps.dispatchToClaude(payload);
   }
 
@@ -595,6 +619,26 @@ ${inlineCommentsAppBody()}
     void vscode.window.showInformationMessage(
       "Inline comments: thread prompt copied to clipboard.",
     );
+  }
+
+  private async handleOpenInEditor(threadId: string): Promise<void> {
+    return openThreadInEditor(this.doc, threadId);
+  }
+
+  /**
+   * "Review with Claude" / "Ask Claude to review this doc" from the
+   * first-run empty-state card (10x-plan-4 P2.4) — the first-minute path for
+   * a document with zero threads. Used to force this dispatch through
+   * headless whenever it could run, skipping the send-mode prompt entirely;
+   * 10x-plan-6 P0.1b drops that override — the grill established terminal,
+   * not headless, is the mode actually used, so the button now goes through
+   * the same ask-review flow as the title-bar entry point: the remembered
+   * send mode, or the picker when there isn't one yet. This is the same
+   * command normal "Ask Claude to Review" runs through, focus prompt
+   * included — not a second, cut-down copy of that flow.
+   */
+  private async handleEmptyStateReview(): Promise<void> {
+    await vscode.commands.executeCommand("markdownCollab.askClaudeToReview", this.doc.uri);
   }
 
   /**
@@ -849,7 +893,8 @@ ${inlineCommentsAppBody()}
   }
 
   private async pushInit(): Promise<void> {
-    const state = serialize(parse(this.doc.getText()), { lineNumbers: readLineNumbers() });
+    const parsed = parse(this.doc.getText());
+    const state = serialize(parsed, { lineNumbers: readLineNumbers() });
     const docDirUri = vscode.Uri.file(path.dirname(this.doc.uri.fsPath));
     const folder = vscode.workspace.getWorkspaceFolder(this.doc.uri);
     const msg: InitMessage = {
@@ -867,6 +912,7 @@ ${inlineCommentsAppBody()}
       suggestMode: readSuggestMode(),
       pendingThreadIds: this.pendingThreadIds(),
       pendingLabel: this.pendingLabelText(),
+      agentName: mostRecentAgentName(parsed),
     };
     await this.panel.webview.postMessage(msg);
   }
@@ -887,7 +933,8 @@ ${inlineCommentsAppBody()}
     // Callers include editor-less triggers (diff refresh, pending-set
     // changes) where a GC'd document would otherwise render frozen content.
     await this.ensureLiveDoc();
-    const state = serialize(parse(this.doc.getText()), { lineNumbers: readLineNumbers() });
+    const parsed = parse(this.doc.getText());
+    const state = serialize(parsed, { lineNumbers: readLineNumbers() });
     const msg: UpdateMessage = {
       type: "update",
       state,
@@ -895,6 +942,7 @@ ${inlineCommentsAppBody()}
       suggestMode: readSuggestMode(),
       pendingThreadIds: this.pendingThreadIds(),
       pendingLabel: this.pendingLabelText(),
+      agentName: mostRecentAgentName(parsed),
     };
     await this.panel.webview.postMessage(msg);
   }
@@ -920,6 +968,37 @@ ${inlineCommentsAppBody()}
     this.disposables.length = 0;
     this.onDispose();
   }
+}
+
+/**
+ * Reverse navigation (10x-plan-4 P2.4): open the anchored text of one thread
+ * in a text editor. Source offsets, not prose offsets — `openEnd`..`closeStart`
+ * is exactly the raw markdown between the marker pair, excluding the markers
+ * themselves, which is what a human editing the file wants selected. Opens in
+ * the active editor group, consistent with 0.34.94's "review views open in
+ * the current editor group" decision. Exported (like `resolveScrollProseOffset`
+ * and `findHeadingLine` below) so the integration suite can drive it directly
+ * against a real `vscode.TextDocument`, without a live webview panel to post
+ * the triggering message through.
+ */
+export async function openThreadInEditor(doc: vscode.TextDocument, threadId: string): Promise<void> {
+  const anchor = parse(doc.getText()).anchors.get(threadId);
+  if (!anchor) {
+    void vscode.window.showInformationMessage(
+      "This comment's text was removed, so there's nothing to jump to.",
+    );
+    return;
+  }
+  const range = new vscode.Range(
+    doc.positionAt(anchor.openEnd),
+    doc.positionAt(anchor.closeStart),
+  );
+  const editor = await vscode.window.showTextDocument(doc, {
+    viewColumn: vscode.ViewColumn.Active,
+    preserveFocus: false,
+    selection: range,
+  });
+  editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
 }
 
 /**
@@ -999,4 +1078,32 @@ function readLineNumbers(): boolean {
 
 function readSuggestMode(): boolean {
   return vscode.workspace.getConfiguration("markdownCollab").get<boolean>("proposeEditsAsSuggestions", false);
+}
+
+/**
+ * The display name of the agent that most recently wrote to this file —
+ * across every comment and suggestion, resolved or pending, whichever has
+ * the latest timestamp (10x-plan-6 P5.2). Reuses `agentIdentity`'s slug→copy
+ * map so a Codex- or Cursor-written file says so instead of the client
+ * hardcoding "Claude"; a file no agent has written to yet defaults to
+ * "Claude", same as `agentGroupLabel`'s empty-group fallback.
+ *
+ * Exported for the unit test; pure over an already-parsed document so it
+ * needs no vscode surface of its own.
+ */
+export function mostRecentAgentName(parsed: ParsedDocument): string {
+  let latestTs: string | undefined;
+  let latestAuthor: string | undefined;
+  const consider = (entry: { author: string; ts: string; agent?: boolean }): void => {
+    if (!isAgentComment(entry)) return;
+    if (latestTs === undefined || entry.ts > latestTs) {
+      latestTs = entry.ts;
+      latestAuthor = entry.author;
+    }
+  };
+  for (const thread of parsed.threads) {
+    for (const comment of thread.comments) consider(comment);
+  }
+  for (const suggestion of parsed.suggestions) consider(suggestion);
+  return agentDisplayName(latestAuthor ?? "claude").noun;
 }

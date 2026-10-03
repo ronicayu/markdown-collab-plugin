@@ -1,15 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
+  adjacentThreadId,
   chunkThreads,
   claudeSummary,
+  collapseKey,
   emptyListMessage,
+  emptyState,
+  filterCounts,
   filterThreads,
+  initialCollapsed,
   matchesFilter,
   nextCollapseAllAction,
   nextUnreadThreadId,
   sidebarCountLabel,
   threadCountLabel,
   threadSignature,
+  type CollapsibleCard,
   type ListThread,
 } from "../webviewShared/threadListState";
 
@@ -83,6 +89,18 @@ describe("threadCountLabel", () => {
   });
 });
 
+describe("filterCounts", () => {
+  it("counts each tab independently", () => {
+    expect(
+      filterCounts([thread("a"), thread("b"), thread("c", { status: "resolved" })]),
+    ).toEqual({ open: 2, all: 3, resolved: 1 });
+  });
+
+  it("reads sensibly with nothing to count", () => {
+    expect(filterCounts([])).toEqual({ open: 0, all: 0, resolved: 0 });
+  });
+});
+
 describe("sidebarCountLabel", () => {
   it("shows both counts when not filtering", () => {
     expect(sidebarCountLabel({ open: 2, total: 5, hideResolved: false })).toBe("2 open · 5 total");
@@ -113,6 +131,38 @@ describe("claudeSummary", () => {
     expect(s.unread).toBe(0);
   });
 
+  // 10x-plan-4 P1.2: the label names whichever agent(s) the unread threads
+  // actually came from.
+  it("names Codex when every unread thread came from Codex", () => {
+    const s = claudeSummary([thread("a", { author: "codex" }), thread("b", { author: "codex" })]);
+    expect(s.text).toBe("2 new from Codex · 0 reviewed");
+  });
+
+  it("falls back to 'agents' when unread threads came from more than one agent", () => {
+    const s = claudeSummary([thread("a", { author: "codex" }), thread("b", { author: "claude" })]);
+    expect(s.unread).toBe(2);
+    expect(s.text).toBe("2 new from Agents · 0 reviewed");
+  });
+
+  // round-4 P3: `agentNoun` is the same name baked into `text`, exposed
+  // separately so a caller with its own copy (the sidebar's filter chip) can
+  // name the actual agent instead of hardcoding "Claude".
+  it("exposes the agent noun on its own for callers with their own copy to fill in", () => {
+    expect(claudeSummary([thread("a", { author: "codex" })]).agentNoun).toBe("Codex");
+    expect(claudeSummary([thread("a", { author: "claude" })]).agentNoun).toBe("Claude");
+    expect(
+      claudeSummary([thread("a", { author: "codex" }), thread("b", { author: "claude" })]).agentNoun,
+    ).toBe("Agents");
+    // No unread threads to derive a name from — generic, not a guess.
+    expect(claudeSummary([]).agentNoun).toBe("Agent");
+  });
+
+  it("reviewed count isn't agent-specific — a codex thread a human replied to still counts", () => {
+    const s = claudeSummary([thread("a", { author: "codex", replies: ["ronica"] })]);
+    expect(s.unread).toBe(0);
+    expect(s.reviewed).toBe(1);
+  });
+
   it("ignores human-authored threads entirely", () => {
     const s = claudeSummary([thread("a"), thread("b", { replies: ["claude"] })]);
     expect(s.hasAny).toBe(false);
@@ -139,12 +189,57 @@ describe("emptyListMessage", () => {
   });
 
   it("points at the review command when no claude threads exist", () => {
-    expect(emptyListMessage("claude-unread")).toMatch(/Ask Claude to Review/);
+    expect(emptyListMessage("claude-unread")).toBe(
+      "No unread threads from an agent. Run 'Ask Agent to Review This Doc' to start one.",
+    );
   });
 
   it("blames the filter otherwise", () => {
     expect(emptyListMessage("resolved")).toMatch(/filter/i);
     expect(emptyListMessage("all")).toMatch(/filter/i);
+  });
+});
+
+describe("emptyState", () => {
+  it("blames the filter when threads exist but it hides them all", () => {
+    const state = emptyState({ filter: "resolved", totalThreads: 3 });
+    expect(state).toEqual({ kind: "filtered", message: emptyListMessage("resolved") });
+  });
+
+  it("is first-run when the doc has never had a comment, regardless of filter", () => {
+    const state = emptyState({ filter: "open", totalThreads: 0 });
+    expect(state.kind).toBe("first-run");
+  });
+
+  it("labels the button 'Ask agent to review' — no agent is named, and no mode changes it", () => {
+    const state = emptyState({ filter: "open", totalThreads: 0 });
+    if (state.kind !== "first-run") throw new Error("expected first-run");
+    expect(state.action.label).toBe("Ask agent to review");
+    expect(state.action.label).not.toMatch(/claude/i);
+    expect(state.action.message).toEqual({ type: "empty-state-review" });
+  });
+
+  it("shows both keybinding forms when the platform isn't known", () => {
+    const state = emptyState({ filter: "open", totalThreads: 0 });
+    if (state.kind !== "first-run") throw new Error("expected first-run");
+    expect(state.hint).toContain("Cmd+K Cmd+Alt+M");
+    expect(state.hint).toContain("Ctrl+K Ctrl+Alt+M");
+  });
+
+  it("collapses to one keybinding form when the platform is known", () => {
+    const mac = emptyState({ filter: "open", totalThreads: 0, platform: "mac" });
+    const other = emptyState({ filter: "open", totalThreads: 0, platform: "other" });
+    if (mac.kind !== "first-run" || other.kind !== "first-run") throw new Error("expected first-run");
+    expect(mac.hint).toContain("Cmd+K Cmd+Alt+M");
+    expect(mac.hint).not.toContain("Ctrl+K");
+    expect(other.hint).toContain("Ctrl+K Ctrl+Alt+M");
+    expect(other.hint).not.toContain("Cmd+K");
+  });
+
+  it("always uses the same headline", () => {
+    const state = emptyState({ filter: "all", totalThreads: 0 });
+    if (state.kind !== "first-run") throw new Error("expected first-run");
+    expect(state.headline).toBe("No comments yet.");
   });
 });
 
@@ -179,6 +274,58 @@ describe("nextUnreadThreadId", () => {
   });
 });
 
+describe("adjacentThreadId", () => {
+  const threads = [thread("a"), thread("b"), thread("c")];
+
+  it("returns null for an empty list", () => {
+    expect(adjacentThreadId([], "open", null, 1)).toBeNull();
+    expect(adjacentThreadId([], "open", "a", -1)).toBeNull();
+  });
+
+  it("wraps onto itself for a single item", () => {
+    const one = [thread("a")];
+    expect(adjacentThreadId(one, "open", "a", 1)).toBe("a");
+    expect(adjacentThreadId(one, "open", "a", -1)).toBe("a");
+  });
+
+  it("starts at the first card when nothing is highlighted", () => {
+    expect(adjacentThreadId(threads, "open", null, 1)).toBe("a");
+  });
+
+  it("starts at the last card when nothing is highlighted and moving backward", () => {
+    expect(adjacentThreadId(threads, "open", null, -1)).toBe("c");
+  });
+
+  it("wraps forward from the last card to the first", () => {
+    expect(adjacentThreadId(threads, "open", "c", 1)).toBe("a");
+  });
+
+  it("wraps backward from the first card to the last", () => {
+    expect(adjacentThreadId(threads, "open", "a", -1)).toBe("c");
+  });
+
+  it("steps forward and backward through the middle", () => {
+    expect(adjacentThreadId(threads, "open", "a", 1)).toBe("b");
+    expect(adjacentThreadId(threads, "open", "c", -1)).toBe("b");
+  });
+
+  it("treats a current id outside the filtered list as no selection", () => {
+    // "b" is resolved, so the "open" filter never contains it — moving next
+    // from a stale/foreign cursor starts fresh rather than dead-ending.
+    const mixed = [thread("a"), thread("b", { status: "resolved" }), thread("c")];
+    expect(adjacentThreadId(mixed, "open", "b", 1)).toBe("a");
+    expect(adjacentThreadId(mixed, "open", "b", -1)).toBe("c");
+  });
+
+  it("recomputes against the current filter, not a stale one", () => {
+    const mixed = [thread("a"), thread("b", { status: "resolved" }), thread("c")];
+    // Under "open", stepping past "a" wraps straight to "c" — "b" isn't in it.
+    expect(adjacentThreadId(mixed, "open", "a", 1)).toBe("c");
+    // Under "all", "b" is back in the list between "a" and "c".
+    expect(adjacentThreadId(mixed, "all", "a", 1)).toBe("b");
+  });
+});
+
 describe("nextCollapseAllAction", () => {
   it("collapses when nothing is collapsed", () => {
     expect(nextCollapseAllAction(["a", "b"], new Set())).toBe("collapse");
@@ -194,6 +341,55 @@ describe("nextCollapseAllAction", () => {
 
   it("collapses on an empty list rather than reporting 'all collapsed'", () => {
     expect(nextCollapseAllAction([], new Set())).toBe("collapse");
+  });
+});
+
+describe("collapseKey", () => {
+  it("namespaces by kind so a thread id and a suggestion id can't collide", () => {
+    expect(collapseKey({ kind: "thread", id: "x1", status: "open" })).toBe("thread:x1");
+    expect(collapseKey({ kind: "suggestion", id: "x1" })).toBe("suggestion:x1");
+    expect(collapseKey({ kind: "thread", id: "x1", status: "open" })).not.toBe(
+      collapseKey({ kind: "suggestion", id: "x1" }),
+    );
+  });
+});
+
+describe("initialCollapsed", () => {
+  const openThread: CollapsibleCard = { kind: "thread", id: "t1", status: "open" };
+  const resolvedThread: CollapsibleCard = { kind: "thread", id: "t2", status: "resolved" };
+  const suggestion: CollapsibleCard = { kind: "suggestion", id: "s1" };
+  const noOverrides = new Map<string, boolean>();
+
+  it("defaults an open thread to expanded", () => {
+    expect(initialCollapsed(openThread, noOverrides)).toBe(false);
+  });
+
+  it("defaults a resolved thread to collapsed", () => {
+    expect(initialCollapsed(resolvedThread, noOverrides)).toBe(true);
+  });
+
+  it("defaults a pending suggestion to expanded", () => {
+    expect(initialCollapsed(suggestion, noOverrides)).toBe(false);
+  });
+
+  it("a manual override wins over a resolved thread's default", () => {
+    const overrides = new Map([[collapseKey(resolvedThread), false]]);
+    expect(initialCollapsed(resolvedThread, overrides)).toBe(false);
+  });
+
+  it("a manual override wins over an open thread's default", () => {
+    const overrides = new Map([[collapseKey(openThread), true]]);
+    expect(initialCollapsed(openThread, overrides)).toBe(true);
+  });
+
+  it("a manual override wins over a suggestion's default", () => {
+    const overrides = new Map([[collapseKey(suggestion), true]]);
+    expect(initialCollapsed(suggestion, overrides)).toBe(true);
+  });
+
+  it("an override on one kind doesn't leak onto the same id under the other kind", () => {
+    const overrides = new Map([[collapseKey({ kind: "suggestion", id: "t1" }), true]]);
+    expect(initialCollapsed(openThread, overrides)).toBe(false);
   });
 });
 

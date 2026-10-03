@@ -16,6 +16,7 @@ import { buildToolDeps } from "../../../mcpServer";
 import { callTool, TOOLS } from "../../../mcpServer/tools";
 import { serveMcp, type McpHttpServer } from "../../../mcpServer/httpServer";
 import { PROTOCOL_VERSION } from "../../../mcpServer/protocol";
+import { SessionRegistry } from "../../../mcpServer/sessions";
 
 const TOKEN = "t".repeat(64);
 const BODY = `# Release notes
@@ -210,6 +211,68 @@ suite("mcpServer: over HTTP", () => {
     const payload = JSON.parse(called.result.content[0].text);
     assert.ok(payload.threadId, "expected a thread id from the HTTP round trip");
     assert.strictEqual(parse(doc.getText()).threads.length, 1);
+  });
+
+  // 10x-plan-4 P1.2: the author a tool call lands in the document comes from
+  // the session's own `initialize`, not a hardcoded "claude" — a Codex
+  // session's reply must land as Codex's, over the real transport this time
+  // (mcpTools.test.ts covers the same claim against callTool directly).
+  test("a session that identifies as codex over HTTP lands author: codex in the document", async () => {
+    const { doc, name } = await openFixture();
+    const toolDeps = deps();
+    const sessions = new SessionRegistry();
+    const codexServer = await serveMcp({
+      token: TOKEN,
+      handlers: {
+        serverInfo: { name: "markdown-collab", version: "test" },
+        tools: TOOLS,
+        callTool: (toolName, args, author) => callTool(toolName, args, toolDeps, author),
+        recordSession: (sessionId, clientName) => sessions.record(sessionId, clientName),
+        resolveAuthor: (sessionId) => sessions.slugFor(sessionId),
+      },
+    });
+    try {
+      const post = async (body: unknown, headers: Record<string, string> = {}) =>
+        fetch(codexServer.url, {
+          method: "POST",
+          headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json", ...headers },
+          body: JSON.stringify(body),
+        });
+
+      const init = await post({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "codex-mcp-client" } },
+      });
+      const sessionId = init.headers.get("mcp-session-id");
+      assert.ok(sessionId, "expected the server to mint a session id on initialize");
+
+      const opened = await post(
+        { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "mc_open", arguments: { file: name, quote: "nested lists", body: "?" } } },
+        { "mcp-session-id": sessionId! },
+      );
+      const openedResult = (await opened.json()) as any;
+      const openedPayload = JSON.parse(openedResult.result.content[0].text);
+
+      const replied = await post(
+        {
+          jsonrpc: "2.0",
+          id: 3,
+          method: "tools/call",
+          params: { name: "mc_reply", arguments: { file: name, threadId: openedPayload.threadId, body: "codex says hi" } },
+        },
+        { "mcp-session-id": sessionId! },
+      );
+      const repliedResult = (await replied.json()) as any;
+      assert.strictEqual(repliedResult.error, undefined);
+
+      const thread = parse(doc.getText()).threads.find((t) => t.id === openedPayload.threadId)!;
+      assert.strictEqual(thread.comments.at(-1)?.author, "codex");
+      assert.strictEqual(thread.comments.at(-1)?.agent, true);
+    } finally {
+      await codexServer.close();
+    }
   });
 });
 

@@ -54,39 +54,108 @@ export interface MergeResult {
 }
 
 /**
- * Merge our entry into an existing `.mcp.json`, preserving every other server
- * and the file's own formatting decisions as far as JSON allows. Returns
- * `text: null` when the file already says exactly this, so a workspace whose
- * port hasn't moved isn't rewritten on every activation.
+ * Merge one server entry into an existing `{"mcpServers": {...}}`-shaped JSON
+ * file, preserving every other server and the file's own formatting decisions
+ * as far as JSON allows. Returns `text: null` when the file already says
+ * exactly this, so a workspace whose port hasn't moved isn't rewritten on
+ * every activation.
+ *
+ * Shared by every client whose config file uses this shape — today that's
+ * Claude Code's `.mcp.json` (`mergeMcpJson` below) and Cursor CLI's
+ * `.cursor/mcp.json` (`clients/cursor.ts`, 10x-plan-4 P1.1). Codex's
+ * `.codex/config.toml` is TOML, not JSON, so it gets its own upsert in
+ * `clients/codex.ts` rather than reusing this.
  */
-export function mergeMcpJson(existing: string | null, port: number): MergeResult {
-  const entry = mcpJsonEntry(port);
+export function mergeMcpServersJson(
+  existing: string | null,
+  serverName: string,
+  // `unknown`, not a shaped interface: every caller's entry is JSON-serializable
+  // but the shapes differ (Claude Code's has a `type`, Cursor CLI's doesn't),
+  // and this function only ever compares/stores it, never reads a field.
+  entry: unknown,
+): MergeResult {
   let root: Record<string, unknown> = {};
   if (existing && existing.trim() !== "") {
     let parsed: unknown;
     try {
       parsed = JSON.parse(existing);
     } catch (e) {
-      // Refuse rather than clobber: a malformed .mcp.json is the user's file
-      // with the user's other servers in it.
-      throw new Error(`.mcp.json is not valid JSON (${(e as Error).message}); leaving it alone`);
+      // Refuse rather than clobber: a malformed file is the user's file with
+      // the user's other servers in it.
+      throw new Error(`file is not valid JSON (${(e as Error).message}); leaving it alone`);
     }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      throw new Error(".mcp.json does not contain a JSON object; leaving it alone");
+      throw new Error("file does not contain a JSON object; leaving it alone");
     }
     root = parsed as Record<string, unknown>;
   }
-  const servers =
+  const servers: Record<string, unknown> =
     typeof root.mcpServers === "object" && root.mcpServers !== null && !Array.isArray(root.mcpServers)
       ? { ...(root.mcpServers as Record<string, unknown>) }
       : {};
-  const previous = servers[MCP_SERVER_NAME];
+  const previous = servers[serverName];
   if (previous !== undefined && JSON.stringify(previous) === JSON.stringify(entry)) {
     return { text: null, replaced: true };
   }
-  servers[MCP_SERVER_NAME] = entry;
+  servers[serverName] = entry;
   const next = { ...root, mcpServers: servers };
   return { text: `${JSON.stringify(next, null, 2)}\n`, replaced: previous !== undefined };
+}
+
+export interface RemovalResult {
+  /** The file text to write, or null when there was nothing to remove (already absent, or the file couldn't be read as ours to touch). */
+  text: string | null;
+  /** True when an entry under our name existed and was removed. */
+  removed: boolean;
+}
+
+/**
+ * The inverse of `mergeMcpServersJson` (4.4: Disconnect Agent) — drop
+ * `serverName`'s entry from an existing `{"mcpServers": {...}}`-shaped file,
+ * leaving every other server and the file's own formatting alone. Idempotent:
+ * `text: null` when the entry was never there, so running Disconnect on a
+ * workspace that was never connected is a no-op, not a rewrite. Refuses (same
+ * "leave it alone" rule the merge side follows) rather than guess at a file
+ * that isn't valid JSON or doesn't have the shape it expects.
+ */
+export function removeMcpServersJsonEntry(existing: string | null, serverName: string): RemovalResult {
+  if (!existing || existing.trim() === "") return { text: null, removed: false };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(existing);
+  } catch {
+    return { text: null, removed: false };
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { text: null, removed: false };
+  }
+  const root = parsed as Record<string, unknown>;
+  const servers = root.mcpServers;
+  if (
+    typeof servers !== "object" ||
+    servers === null ||
+    Array.isArray(servers) ||
+    !(serverName in (servers as Record<string, unknown>))
+  ) {
+    return { text: null, removed: false };
+  }
+  const nextServers = { ...(servers as Record<string, unknown>) };
+  delete nextServers[serverName];
+  const next = { ...root, mcpServers: nextServers };
+  return { text: `${JSON.stringify(next, null, 2)}\n`, removed: true };
+}
+
+/**
+ * Merge our entry into an existing `.mcp.json`. See `mergeMcpServersJson` for
+ * the shared mechanics; this just supplies Claude Code's entry shape and name.
+ */
+export function mergeMcpJson(existing: string | null, port: number): MergeResult {
+  return mergeMcpServersJson(existing, MCP_SERVER_NAME, mcpJsonEntry(port));
+}
+
+/** The inverse of `mergeMcpJson` (4.4: Disconnect Agent → Claude Code). */
+export function removeMcpJsonEntry(existing: string | null): RemovalResult {
+  return removeMcpServersJsonEntry(existing, MCP_SERVER_NAME);
 }
 
 export interface ServerDescriptor {

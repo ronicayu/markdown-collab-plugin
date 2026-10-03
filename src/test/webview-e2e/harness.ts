@@ -23,24 +23,27 @@ import { expect, type Page } from "@playwright/test";
 // resolution left to disagree about. `webviewShell` imports nothing, so there
 // was never a host build to be lazy about.
 import { inlineCommentsAppBody } from "../../inlineComments/webviewShell";
+import { liveEditorShellBody } from "../../collab/liveEditorShell";
 
 export const REPO_ROOT = path.resolve(__dirname, "../../..");
 const outFile = (...parts: string[]): string => path.join(REPO_ROOT, "out", ...parts);
 
 /**
  * The `acquireVsCodeApi` stand-in. Records every posted message on
- * `window.__mcPosted` and keeps `setState`/`getState` honest (the inline client
- * persists collapsed threads through them, so a no-op stub would change
- * behavior).
+ * `window.__mcPosted` and keeps `setState`/`getState` honest (the inline
+ * client persists collapsed threads, the outline, and — round-4 P3.5 — the
+ * keyboard hint's dismissal through them, so a no-op stub would change
+ * behavior). The state itself is on `window.__mcState` too, so a spec can
+ * read back what the client persisted without a real webview reload.
  */
 const VSCODE_API_STUB = `
 window.__mcPosted = [];
-let __mcState = undefined;
+window.__mcState = undefined;
 window.acquireVsCodeApi = function () {
   return {
     postMessage: function (msg) { window.__mcPosted.push(msg); },
-    setState: function (s) { __mcState = s; },
-    getState: function () { return __mcState; },
+    setState: function (s) { window.__mcState = s; },
+    getState: function () { return window.__mcState; },
   };
 };
 `;
@@ -55,6 +58,11 @@ export async function clearPosted(page: Page): Promise<void> {
   await page.evaluate(() => {
     (window as unknown as { __mcPosted: unknown[] }).__mcPosted.length = 0;
   });
+}
+
+/** Whatever the client last passed to `vscode.setState()`. */
+export async function getState(page: Page): Promise<unknown> {
+  return page.evaluate(() => (window as unknown as { __mcState: unknown }).__mcState);
 }
 
 /**
@@ -77,7 +85,16 @@ export async function pushToWebview(page: Page, msg: unknown): Promise<void> {
   await page.evaluate((m) => window.postMessage(m, "*"), msg);
 }
 
-async function bootPage(page: Page, body: string, styles: string[], script: string): Promise<void> {
+/** What a boot can set up before the bundle runs. */
+export interface BootOptions {
+  /**
+   * What `getState()` returns from the start — the state a reloaded webview
+   * finds, including state an older build (or a corrupted store) left behind.
+   */
+  state?: unknown;
+}
+
+async function bootPage(page: Page, body: string, styles: string[], script: string, opts: BootOptions = {}): Promise<void> {
   page.on("pageerror", (err) => {
     throw new Error(`uncaught error in webview: ${err.message}`);
   });
@@ -86,14 +103,17 @@ async function bootPage(page: Page, body: string, styles: string[], script: stri
   // Order matters: the stub must exist before the bundle's top-level
   // `acquireVsCodeApi()` call runs.
   await page.addScriptTag({ content: VSCODE_API_STUB });
+  if ("state" in opts) await page.addScriptTag({ content: `window.__mcState = ${JSON.stringify(opts.state)};` });
   await page.addScriptTag({ path: script });
 }
 
 /**
- * Boot the inline-comments webview with the panel's own DOM skeleton and push
- * an `init`. Resolves once the thread list has rendered.
+ * Boot the inline-comments webview shell (panel DOM + client bundle) without
+ * pushing an `init` yet. Split out of `bootInlineView` so a spec can assert
+ * the pre-init state — the "Loading…" placeholder (round-4 P3.3) — before
+ * sending the message that replaces it.
  */
-export async function bootInlineView(page: Page, init: Record<string, unknown>): Promise<void> {
+export async function bootInlineViewShell(page: Page): Promise<void> {
   await bootPage(
     page,
     inlineCommentsAppBody(),
@@ -102,8 +122,32 @@ export async function bootInlineView(page: Page, init: Record<string, unknown>):
   );
   await awaitPosted(page, "ready");
   await clearPosted(page);
+}
+
+/**
+ * Boot the inline-comments webview with the panel's own DOM skeleton and push
+ * an `init`. Resolves once the thread list has rendered.
+ */
+export async function bootInlineView(page: Page, init: Record<string, unknown>): Promise<void> {
+  await bootInlineViewShell(page);
   await pushToWebview(page, { type: "init", ...init });
   await expect(page.locator("#preview")).not.toBeEmpty();
+}
+
+/**
+ * Boot the live editor's page (the provider's pre-init shell + client bundle)
+ * without pushing an `init` yet, so a spec can assert the "Loading…" state.
+ */
+export async function bootLiveEditorShell(page: Page, opts: BootOptions = {}): Promise<void> {
+  await bootPage(
+    page,
+    liveEditorShellBody(),
+    [outFile("webview", "comments-shared.css"), outFile("webview", "client.css")],
+    outFile("webview", "client.js"),
+    opts,
+  );
+  await awaitPosted(page, "ready");
+  await clearPosted(page);
 }
 
 /**
@@ -111,15 +155,8 @@ export async function bootInlineView(page: Page, init: Record<string, unknown>):
  * has mounted and reported its post-init content back to the host — the same
  * signal the integration suite waits on.
  */
-export async function bootLiveEditor(page: Page, init: Record<string, unknown>): Promise<void> {
-  await bootPage(
-    page,
-    "",
-    [outFile("webview", "comments-shared.css"), outFile("webview", "client.css")],
-    outFile("webview", "client.js"),
-  );
-  await awaitPosted(page, "ready");
-  await clearPosted(page);
+export async function bootLiveEditor(page: Page, init: Record<string, unknown>, opts: BootOptions = {}): Promise<void> {
+  await bootLiveEditorShell(page, opts);
   await pushToWebview(page, { type: "init", ...init });
   await awaitPosted(page, "ready-with-content");
   await expect(page.locator(".mdc-editor-root .milkdown")).toBeVisible();

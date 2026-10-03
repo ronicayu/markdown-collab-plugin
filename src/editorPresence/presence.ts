@@ -13,7 +13,8 @@
 // the wiring in `index.ts` stays thin enough to read.
 
 import type { InlineThread, ParsedDocument } from "../inlineComments/format";
-import { isClaudeUnread } from "../inlineComments/claudeUnread";
+import { isClaudeUnread, unreadAgentSlug } from "../inlineComments/claudeUnread";
+import { agentGroupLabel } from "../agentIdentity";
 import { formatRelativeTime } from "../collab/relativeTime";
 
 /** Half-open `[start, end)` offsets into the document source. */
@@ -128,11 +129,14 @@ export function presenceLensLabel(parsed: ParsedDocument): string | null {
     if (unresolved > 0 && unresolved !== threads) parts.push(`${unresolved} unresolved`);
     else if (unresolved === 0) parts.push("all resolved");
   }
-  const unread = parsed.threads.filter(isClaudeUnread).length;
-  if (unread > 0) parts.push(`${unread} new from Claude`);
+  const unreadThreads = parsed.threads.filter(isClaudeUnread);
+  if (unreadThreads.length > 0) {
+    const agent = agentGroupLabel(unreadThreads.map((t) => unreadAgentSlug(t) ?? "agent")).noun;
+    parts.push(`${unreadThreads.length} new from ${agent}`);
+  }
   if (suggestions > 0) parts.push(`${suggestions} suggestion${suggestions === 1 ? "" : "s"}`);
 
-  return `${parts.join(" · ")} — open review view`;
+  return `${parts.join(" · ")} — open in Markdown Collab`;
 }
 
 /** The thread whose anchored span covers `offset`, innermost first. */
@@ -165,6 +169,21 @@ function gist(body: string, max = 220): string {
 }
 
 /**
+ * Escape Markdown syntax characters in text that came from the document
+ * itself — a comment's author or body — so it renders as plain text inside
+ * the trusted `MarkdownString` `index.ts` builds, rather than becoming a
+ * link, an image, emphasis, or a heading (M1). A comment body of
+ * `[Mark reviewed](command:markdownCollab.resolveThread?…)` must read as
+ * exactly that string; only the extension's own links, appended after this
+ * escaping runs, are ever live. Escaping `!` alongside `[`, `]`, `(`, and `)`
+ * together also keeps a `![alt](http://…)` from being interpreted as an
+ * image — nothing built from document text ever loads a remote image.
+ */
+function escapeMarkdown(text: string): string {
+  return text.replace(/[`*_()[\]!<>#|]/g, (c) => `\\${c}`);
+}
+
+/**
  * Hover markdown for the thread at `offset`, or null when there is none.
  *
  * `commandLinks` is off for the tests and on in the editor: a `command:` URI
@@ -185,7 +204,14 @@ export function hoverFor(
 
   const badges: string[] = [];
   if (thread.status === "resolved") badges.push("resolved");
-  else if (isClaudeUnread(thread)) badges.push("new from Claude");
+  else if (isClaudeUnread(thread)) {
+    // `unreadAgentSlug` falls back to the comment's own `author` field when it
+    // isn't one of the known slugs (any string is legal there once `agent:
+    // true` is set) — document-derived like everything else here, so it gets
+    // the same escaping before it can reach the badge.
+    const noun = agentGroupLabel([unreadAgentSlug(thread) ?? "agent"]).noun;
+    badges.push(`new from ${escapeMarkdown(noun)}`);
+  }
   if (parsed.suggestions.some((s) => s.threadId === thread.id)) badges.push("has a suggestion");
   lines.push(
     `**Markdown Collab** — ${live.length} comment${live.length === 1 ? "" : "s"}` +
@@ -195,21 +221,31 @@ export function hoverFor(
   if (latest) {
     lines.push("");
     const when = formatRelativeTime(latest.ts, opts.now);
-    lines.push(`**${latest.author}**${when ? ` · ${when}` : ""}`);
+    lines.push(`**${escapeMarkdown(latest.author)}**${when ? ` · ${when}` : ""}`);
     lines.push("");
-    lines.push(gist(latest.body));
+    lines.push(escapeMarkdown(gist(latest.body)));
   }
 
   if (live.length > 1) {
     lines.push("");
-    lines.push(`_+${live.length - 1} earlier — open the review view to read the thread._`);
+    lines.push(`_+${live.length - 1} earlier — open it in Markdown Collab to read the thread._`);
   }
 
   if (opts.commandLinks && opts.file) {
     // Encoded as a JSON array, which is what VS Code expects in a command URI.
     const args = encodeURIComponent(JSON.stringify([opts.file, thread.id]));
+    // Reply and Resolve/Reopen (3.7) give the hover its own path to the two
+    // things the webview could always do — no palette entry, no keybinding,
+    // reply-box-in-a-sidebar required. "Reopen" is the resolved-thread label;
+    // both labels point at the same command, which reads the thread's current
+    // status itself.
+    const resolveLabel = thread.status === "resolved" ? "Reopen" : "Resolve";
     lines.push("");
-    lines.push(`[Open in review view](command:markdownCollab.revealThread?${args})`);
+    lines.push(
+      `[Open in Markdown Collab](command:markdownCollab.revealThread?${args}) · ` +
+        `[Reply](command:markdownCollab.replyToThread?${args}) · ` +
+        `[${resolveLabel}](command:markdownCollab.resolveThread?${args})`,
+    );
   }
 
   return { thread, markdown: lines.join("\n") };

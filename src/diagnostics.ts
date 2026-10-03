@@ -22,6 +22,49 @@ export interface DiagnosticsSnapshot {
   rememberedSendMode: string | null;
   suggestMode: boolean;
   skillStatus: "missing" | "outdated" | "current" | "unknown";
+  /**
+   * The Claude Code plugin as Claude Code's registry records it; null when not
+   * installed. Optional so a snapshot built without the probe still renders.
+   */
+  claudePlugin?: { id: string; version: string } | null;
+  /**
+   * The `claude` binary, resolved through transports/claudeBinary.ts via
+   * headlessHost's cached lookup (10x-plan-4 P3.4) — the diagnostics command
+   * reads whatever activation already found, it never spawns its own probe.
+   * Optional so a snapshot built without collecting it renders as "unknown"
+   * rather than a false negative.
+   */
+  claudeBinary?: { path: string; version: string } | { error: string };
+  /**
+   * Headless availability and the last run's summary (10x-plan-4 P3.4), from
+   * `markdownCollab.headlessStatus` — state, file label, turn count, and
+   * estimated cost only. Never the prompt or the report text: those are the
+   * one thing a user pastes into a public issue that must never carry what
+   * the agent read or wrote.
+   */
+  headless?: {
+    available: boolean;
+    unavailableReason: string | null;
+    lastRun: {
+      state: string;
+      fileLabel: string;
+      turns: number | null;
+      costUsd: number | null;
+      failureReason: string | null;
+    } | null;
+  };
+  /**
+   * Which agent clients are wired up (10x-plan-4 P1.1): the in-process
+   * connections from `markdownCollab.agentConnectionStatus`, plus a yes/no
+   * read of each client's config file — never its contents.
+   */
+  agentConnections?: {
+    copilotConnected: boolean;
+    cursorInAppConnected: boolean;
+    mcpJson: boolean;
+    cursorMcpJson: boolean;
+    codexConfig: boolean;
+  };
   /** null when the tool server isn't running. Never carries the token. */
   mcpServer: { port: number; registered: boolean } | null;
   claudeTerminalVisible: boolean;
@@ -65,6 +108,24 @@ export function formatDiagnostics(s: DiagnosticsSnapshot): string {
   lines.push("");
   lines.push("## Claude wiring");
   lines.push(`- Skill: ${s.skillStatus}`);
+  // `installedClaudePlugin` is a cached file read, collected unconditionally
+  // alongside the legacy skill status above (`collectDiagnostics` always sets
+  // this field) — so in practice this is never "not checked". `undefined` is
+  // left as a silent omission, matching how a snapshot built without any
+  // other new-in-P3.4 field below also renders as absent rather than a false
+  // "not installed".
+  if (s.claudePlugin !== undefined) {
+    lines.push(
+      `- Claude Code plugin: ${s.claudePlugin ? `${s.claudePlugin.id} ${s.claudePlugin.version}` : "not installed"}`,
+    );
+  }
+  if (s.claudeBinary === undefined) {
+    lines.push("- Claude binary: unknown");
+  } else if ("error" in s.claudeBinary) {
+    lines.push(`- Claude binary: not found — ${s.claudeBinary.error}`);
+  } else {
+    lines.push(`- Claude binary: ${s.claudeBinary.path} (${s.claudeBinary.version})`);
+  }
   lines.push(
     s.mcpServer
       ? `- Tool server: running on port ${s.mcpServer.port}, registered in .mcp.json: ${yesNo(s.mcpServer.registered)}`
@@ -75,6 +136,38 @@ export function formatDiagnostics(s: DiagnosticsSnapshot): string {
     lines.push(`- Open terminals: ${s.terminalNames.join(", ")}`);
   }
   lines.push(`- Threads awaiting a reply: ${s.pendingThreads}`);
+  lines.push("");
+  lines.push("## Headless runs");
+  if (s.headless === undefined) {
+    lines.push("- Unknown (not checked)");
+  } else {
+    lines.push(
+      `- Available: ${yesNo(s.headless.available)}${
+        s.headless.available ? "" : ` — ${s.headless.unavailableReason ?? "unknown reason"}`
+      }`,
+    );
+    const last = s.headless.lastRun;
+    if (!last) {
+      lines.push("- Last run: none this session");
+    } else {
+      const turns = last.turns === null ? "unknown turns" : `${last.turns} turn(s)`;
+      const cost = last.costUsd === null ? "cost unknown" : `est. $${last.costUsd.toFixed(4)}`;
+      const outcome = last.failureReason ? `${last.state} — ${last.failureReason}` : last.state;
+      lines.push(`- Last run: ${outcome} on ${last.fileLabel} — ${turns}, ${cost}`);
+    }
+  }
+  lines.push("");
+  lines.push("## Agent connections");
+  if (s.agentConnections === undefined) {
+    lines.push("- Unknown (not checked)");
+  } else {
+    const a = s.agentConnections;
+    lines.push(`- Claude Code / generic MCP (.mcp.json): ${yesNo(a.mcpJson)}`);
+    lines.push(`- Cursor CLI (.cursor/mcp.json): ${yesNo(a.cursorMcpJson)}`);
+    lines.push(`- Codex (.codex/config.toml): ${yesNo(a.codexConfig)}`);
+    lines.push(`- Cursor in-app: ${yesNo(a.cursorInAppConnected)}`);
+    lines.push(`- Copilot agent mode: ${yesNo(a.copilotConnected)}`);
+  }
   lines.push("");
   lines.push("## Workspace");
   if (s.workspaceFolders.length === 0) {

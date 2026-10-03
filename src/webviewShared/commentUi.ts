@@ -10,6 +10,21 @@
 import type MarkdownIt from "markdown-it";
 import { createCommentRenderer } from "./markdownPipeline";
 import { formatRelativeTime } from "../collab/relativeTime";
+import { agentDisplayName, isAgentComment, WAITING_FOR_AGENT } from "../agentIdentity";
+import { diffWords, exceedsTokenCap, isBulkRewrite, MAX_DIFF_TOKENS, suggestionGist } from "./wordDiff";
+
+/**
+ * What the card shows for an author: the agent's display name for an agent
+ * comment (10x-plan-4 P1.2 — a raw `"codex"` author string used to render
+ * literally, same as a human's name would), unchanged for a human's own name.
+ * `isAgentComment` here only has the author string to go on (the card option
+ * doesn't carry the JSON `agent` flag), so it falls back to the known-slug
+ * check — which is every slug this extension has ever written, so it's
+ * accurate for every comment that reaches a card.
+ */
+function authorLabel(author: string): string {
+  return isAgentComment({ author }) ? agentDisplayName(author).noun : author;
+}
 
 export interface ComposerHandle {
   /** The composer root element to mount. */
@@ -63,7 +78,7 @@ export function buildComposer(opts: ComposerOptions): ComposerHandle {
 
   const cancel = opts.onCancel ? document.createElement("button") : null;
   if (cancel) {
-    cancel.className = "mc-btn mc-btn--ghost";
+    cancel.className = "mc-btn mc-btn--quiet";
     cancel.textContent = opts.cancelLabel ?? "Cancel";
     cancel.addEventListener("click", () => opts.onCancel?.());
   }
@@ -139,6 +154,13 @@ export interface CommentCardOptions {
   timestamp?: string | number;
   /** Extra muted note in the meta row after the time (e.g. "edited"). */
   note?: string;
+  /**
+   * How this comment reached the file — "via tools" / "via cli" / "via file"
+   * (round-6 P1.4). Agent comments only; the caller gates this on its own
+   * `isAgentComment` check and omits it for a human's comment. `title` is the
+   * one-sentence explanation shown as a tooltip.
+   */
+  via?: { label: string; title: string };
   /** Plain-text body. Rendered as text (callers that want markdown set `bodyEl`). */
   body?: string;
   /** Pre-rendered body element (e.g. markdown HTML), used instead of `body`. */
@@ -157,6 +179,14 @@ export interface CommentCardOptions {
    * (10x-plan-2 P0.2). Omitted means the default.
    */
   pendingLabel?: string;
+  /**
+   * Announce the pending row to screen readers as it changes (10x-plan-4
+   * P2.4). Off by default: the pending row is shared by all three review
+   * surfaces, but only the inline view's a11y pass asked for the live
+   * announcement — turning it on everywhere would be a feature the live
+   * editor and the PR view never asked for.
+   */
+  pendingAriaLive?: boolean;
   /** Render as a nested reply (indented, lighter chrome). */
   reply?: boolean;
   actions?: CardAction[];
@@ -199,13 +229,20 @@ export function buildCommentCard(opts: CommentCardOptions): HTMLElement {
   meta.className = "mc-card__meta";
   const author = document.createElement("span");
   author.className = "mc-card__author";
-  author.textContent = opts.author;
+  author.textContent = authorLabel(opts.author);
   meta.appendChild(author);
   if (opts.timestamp !== undefined) {
     const time = document.createElement("span");
     time.className = "mc-card__time";
     time.textContent = formatRelativeTime(opts.timestamp);
     meta.appendChild(time);
+  }
+  if (opts.via) {
+    const via = document.createElement("span");
+    via.className = "mc-card__via";
+    via.textContent = opts.via.label;
+    via.title = opts.via.title;
+    meta.appendChild(via);
   }
   if (opts.note) {
     const note = document.createElement("span");
@@ -232,11 +269,15 @@ export function buildCommentCard(opts: CommentCardOptions): HTMLElement {
   if (opts.pending) {
     const working = document.createElement("div");
     working.className = "mc-card__pending";
+    if (opts.pendingAriaLive) {
+      working.setAttribute("role", "status");
+      working.setAttribute("aria-live", "polite");
+    }
     const dot = document.createElement("span");
     dot.className = "mc-card__pending-dot";
     working.appendChild(dot);
     const label = document.createElement("span");
-    label.textContent = opts.pendingLabel ?? "Claude is working\u2026";
+    label.textContent = opts.pendingLabel ?? WAITING_FOR_AGENT;
     working.appendChild(label);
     card.appendChild(working);
   }
@@ -246,7 +287,7 @@ export function buildCommentCard(opts: CommentCardOptions): HTMLElement {
     row.className = "mc-card__actions";
     for (const a of opts.actions) {
       const btn = document.createElement("button");
-      btn.className = a.variant === "danger" ? "mc-btn mc-btn--link mc-btn--danger" : "mc-btn mc-btn--link";
+      btn.className = a.variant === "danger" ? "mc-btn mc-btn--quiet mc-btn--danger" : "mc-btn mc-btn--quiet";
       btn.textContent = a.label;
       if (a.title) btn.title = a.title;
       btn.addEventListener("click", (e) => {
@@ -286,22 +327,33 @@ export interface SuggestionCardOptions {
   onReject(): void;
   /** Card-level click, e.g. scroll to the anchored text. */
   onClick?(): void;
+  /**
+   * Collapse support (round-8 P1, every card kind folds). Omitted — as the
+   * classic panel always omits it — the card has no collapse chrome at all
+   * and renders exactly as it always has. Given, `collapsed` is the card's
+   * current state and `onToggleCollapse` fires from the chevron or (while
+   * collapsed) the header; the caller owns the actual state, the same way
+   * `onAccept`/`onReject` don't mutate anything themselves.
+   */
+  collapsed?: boolean;
+  onToggleCollapse?(): void;
 }
 
 /**
- * A pending suggestion rendered as an inline diff (original struck through,
- * proposed inserted) with Accept / Reject. The changed middle is emphasized
- * against a plain common prefix/suffix so a small edit reads at a glance.
+ * A pending suggestion with its diff (see `buildSuggestionDiff`) and
+ * Accept / Reject.
  */
 export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
   const card = document.createElement("div");
   card.className = "mc-card mc-suggestion";
+  const collapsible = !!opts.onToggleCollapse;
+  if (collapsible) card.classList.toggle("collapsed", !!opts.collapsed);
 
   const meta = document.createElement("div");
   meta.className = "mc-card__meta";
   const author = document.createElement("span");
   author.className = "mc-card__author";
-  author.textContent = opts.author;
+  author.textContent = authorLabel(opts.author);
   meta.appendChild(author);
   const verb = document.createElement("span");
   verb.className = "mc-card__time";
@@ -317,9 +369,47 @@ export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
   badge.className = "mc-badge mc-badge--suggestion";
   badge.textContent = "suggestion";
   meta.appendChild(badge);
-  card.appendChild(meta);
 
-  card.appendChild(buildDiff(opts.original, opts.proposed));
+  if (collapsible) {
+    // A one-line gist stands in for the meta row while collapsed
+    // (threadSidebar.css swaps the two on `.mc-suggestion.collapsed`), with the
+    // chevron at the row's right edge — same fold the thread card does, so the
+    // two read as one system.
+    const headRow = document.createElement("div");
+    headRow.className = "mc-suggestion__head";
+    headRow.appendChild(meta);
+    const summary = document.createElement("div");
+    summary.className = "mc-suggestion__summary";
+    summary.textContent = `Suggestion · ${authorLabel(opts.author)} · ${suggestionGist(opts.original, opts.proposed)}`;
+    headRow.appendChild(summary);
+    const chevron = buildCollapseToggle({
+      extraClass: "mc-suggestion__collapse thread-collapse",
+      ariaLabel: "Collapse or expand this suggestion",
+      title: "Collapse / expand this suggestion",
+      expanded: !opts.collapsed,
+      onToggle: (e) => {
+        e.stopPropagation();
+        opts.onToggleCollapse!();
+      },
+    });
+    headRow.appendChild(chevron);
+    // While collapsed the header is effectively the whole card, so clicking
+    // anywhere in it (the chevron handles its own click) expands — a bigger
+    // target than the chevron alone. Expanded, a click here is left to bubble
+    // to the card's own `onClick` (reveal in the document) instead: folding
+    // the card back up from under someone reading it would be a bad surprise
+    // for a plain click.
+    headRow.addEventListener("click", (e) => {
+      if (!card.classList.contains("collapsed")) return;
+      e.stopPropagation();
+      opts.onToggleCollapse!();
+    });
+    card.appendChild(headRow);
+  } else {
+    card.appendChild(meta);
+  }
+
+  card.appendChild(buildSuggestionDiff(opts.original, opts.proposed));
 
   if (opts.note) {
     // Claude's rationale, which is prose it writes like any other comment.
@@ -342,7 +432,7 @@ export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
     opts.onAccept();
   });
   const reject = document.createElement("button");
-  reject.className = "mc-btn mc-btn--ghost";
+  reject.className = "mc-btn mc-btn--quiet";
   reject.textContent = "Reject";
   reject.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -356,6 +446,84 @@ export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
     card.addEventListener("click", opts.onClick);
   }
   return card;
+}
+
+/**
+ * The suggestion's diff, in whichever form fits it (round-6 P2.2). A small
+ * edit — the common case, one sentence or one list item — renders as one
+ * paragraph with the changed words struck through / inserted in place, which
+ * reads at a glance the way a real edit does. `isBulkRewrite` decides which
+ * form is the default; either way a toggle lets the human switch to the
+ * other one, because the ratio guess is exactly that, a guess.
+ *
+ * The inline view is never built until it's actually shown (round-9 P1.1,
+ * security review): `buildInlineDiff` walks `diffWords`' O(n·m) LCS table,
+ * and building it unconditionally — even while the block view was the one
+ * on screen — is what let a huge pasted-in suggestion freeze the webview on
+ * every render, toggle or not. Past `exceedsTokenCap`, it's never built at
+ * all; the toggle itself is disabled so there's no click that can trigger
+ * it either.
+ */
+function buildSuggestionDiff(original: string, proposed: string): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "mc-suggestion__diffwrap";
+
+  const blockEl = buildDiff(original, proposed);
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "mc-btn mc-btn--link mc-suggestion__toggle";
+  wrap.append(blockEl, toggle);
+
+  if (exceedsTokenCap(original) || exceedsTokenCap(proposed)) {
+    blockEl.hidden = false;
+    toggle.disabled = true;
+    toggle.textContent = "Show inline";
+    toggle.title = `This suggestion is too large to diff word by word (over ${MAX_DIFF_TOKENS} words on one side) — showing the full old/new text instead.`;
+    return wrap;
+  }
+
+  let inlineEl: HTMLElement | null = null;
+  let showInline = !isBulkRewrite(original, proposed);
+  const applyMode = (): void => {
+    if (showInline && !inlineEl) {
+      inlineEl = buildInlineDiff(original, proposed);
+      wrap.insertBefore(inlineEl, blockEl);
+    }
+    if (inlineEl) inlineEl.hidden = !showInline;
+    blockEl.hidden = showInline;
+    toggle.textContent = showInline ? "Show old / new" : "Show inline";
+    toggle.title = showInline
+      ? "Show the change as two full paragraphs instead of one."
+      : "Show the change as one sentence with the edited words marked.";
+  };
+  toggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    showInline = !showInline;
+    applyMode();
+  });
+  applyMode();
+
+  return wrap;
+}
+
+/**
+ * One paragraph with the changed words wrapped in real `<del>`/`<ins>`
+ * elements — the common-word parts render as plain text in between, so a
+ * one-word change reads inside the sentence instead of as a doubled block.
+ */
+function buildInlineDiff(original: string, proposed: string): HTMLElement {
+  const p = document.createElement("p");
+  p.className = "mc-suggestion__sentence";
+  for (const op of diffWords(original, proposed)) {
+    if (op.kind === "equal") {
+      p.appendChild(document.createTextNode(op.text));
+      continue;
+    }
+    const el = document.createElement(op.kind === "del" ? "del" : "ins");
+    el.textContent = op.text;
+    p.appendChild(el);
+  }
+  return p;
 }
 
 /** Build the two-row original→proposed diff with the changed middle emphasized. */
@@ -395,6 +563,42 @@ function diffRow(kind: "del" | "ins", text: string, pre: number, suf: number): H
   }
   if (suffix) row.appendChild(document.createTextNode(suffix));
   return row;
+}
+
+/**
+ * Chevron markup for every card's collapse toggle — points down; CSS
+ * (comments.css) turns it to point left when the button's `aria-expanded` is
+ * false, so the caller only has to keep that attribute current, the same
+ * contract the old ▾/▸ text glyph had.
+ */
+const COLLAPSE_CHEVRON_SVG =
+  '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5l4 4 4-4"/></svg>';
+
+/**
+ * Build the collapse-toggle button used by a thread card (threadSidebar.ts)
+ * and this module's own suggestion card — one shared icon and
+ * `.mc-icon-btn`/`.mc-icon-btn--sm` styling (comments.css), so every card's
+ * fold control reads as the same control regardless of which webview mounts
+ * it (round-8 P1 → phase 2 of the chrome redesign).
+ */
+export function buildCollapseToggle(opts: {
+  /** Extra class(es) the caller still keys its own CSS/selectors off (e.g. "thread-collapse"). */
+  extraClass: string;
+  ariaLabel: string;
+  title: string;
+  expanded: boolean;
+  onToggle(e: MouseEvent): void;
+}): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = `mc-icon-btn mc-icon-btn--sm ${opts.extraClass}`;
+  btn.title = opts.title;
+  btn.setAttribute("aria-label", opts.ariaLabel);
+  btn.setAttribute("aria-expanded", String(opts.expanded));
+  btn.innerHTML = COLLAPSE_CHEVRON_SVG;
+  btn.addEventListener("click", opts.onToggle);
+  return btn;
 }
 
 /**

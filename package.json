@@ -1,11 +1,15 @@
 {
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
-  "description": "Review Markdown with Claude Code — inline comments anchored in the file, a live AI co-editor, suggestions you accept or reject, and GitHub/GitLab PR review.",
-  "version": "0.34.96",
+  "description": "Review Markdown with your AI agent — comments anchored in the file itself, suggestions you accept or reject. Works with Claude Code, Cursor, Codex and Copilot.",
+  "version": "0.35.26",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
+  "galleryBanner": {
+    "color": "#1E1B2E",
+    "theme": "dark"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/ronicayu/markdown-collab-plugin.git"
@@ -37,7 +41,11 @@
     "wysiwyg",
     "gitlab",
     "technical writing",
-    "docs"
+    "docs",
+    "cursor",
+    "codex",
+    "copilot",
+    "headless"
   ],
   "activationEvents": [
     "onLanguage:markdown",
@@ -66,11 +74,16 @@
     "onCommand:markdownCollab.removeResolvedComments"
   ],
   "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    }
+  },
   "contributes": {
     "commands": [
       {
         "command": "markdownCollab.installClaudeSkill",
-        "title": "Markdown Collab: Install Claude Skill"
+        "title": "Markdown Collab: Set Up Claude Code"
       },
       {
         "command": "markdownCollab.repairInlineComments",
@@ -83,15 +96,15 @@
       },
       {
         "command": "markdownCollab.copyClaudePrompt",
-        "title": "Markdown Collab: Copy Claude Prompt"
+        "title": "Markdown Collab: Copy Prompt"
       },
       {
         "command": "markdownCollab.revealComment",
-        "title": "Reveal Markdown Comment"
+        "title": "Reveal Review Thread (tree)"
       },
       {
         "command": "markdownCollab.sendAllToClaude",
-        "title": "Markdown Collab: Send Unresolved Comments to Claude"
+        "title": "Markdown Collab: Send Unresolved Comments to Agent"
       },
       {
         "command": "markdownCollab.startClaudeTerminal",
@@ -103,43 +116,43 @@
       },
       {
         "command": "markdownCollab.openCollabEditor",
-        "title": "Markdown Collab: Open Live Editor",
+        "title": "Open in Markdown Collab (alias)",
         "category": "Markdown Collab"
       },
       {
         "command": "markdownCollab.openInlineCommentsView",
-        "title": "Markdown Collab: Open Inline Comments View",
-        "category": "Markdown Collab"
+        "title": "Open in Markdown Collab",
+        "icon": "$(comment-discussion)"
       },
       {
         "command": "markdownCollab.askClaudeToReview",
-        "title": "Markdown Collab: Ask Claude to Review This Doc",
+        "title": "Markdown Collab: Ask Agent to Review This Doc",
         "category": "Markdown Collab"
       },
       {
         "command": "markdownCollab.askClaudeToReviewFolder",
-        "title": "Markdown Collab: Ask Claude to Review These Docs",
+        "title": "Markdown Collab: Ask Agent to Review These Docs",
         "category": "Markdown Collab"
       },
       {
         "command": "markdownCollab.askClaudeToReviewChanges",
-        "title": "Markdown Collab: Review Changes Since Last Pass",
+        "title": "Markdown Collab: Ask Agent to Review What Changed",
         "category": "Markdown Collab"
       },
       {
         "command": "markdownCollab.nextUnreadFromClaude",
-        "title": "Markdown Collab: Next Unread from Claude",
+        "title": "Markdown Collab: Next Unread from Agent",
         "category": "Markdown Collab",
         "icon": "$(arrow-right)"
       },
       {
         "command": "markdownCollab.startPrReview",
-        "title": "Markdown Collab: Review PR / MR",
+        "title": "Markdown Collab: Open PR Review",
         "category": "Markdown Collab"
       },
       {
         "command": "markdownCollab.reviewUncommittedChanges",
-        "title": "Markdown Collab: Review Uncommitted Changes",
+        "title": "Markdown Collab: Open Uncommitted Changes",
         "category": "Markdown Collab"
       },
       {
@@ -207,6 +220,16 @@
         "category": "Markdown Collab"
       },
       {
+        "command": "markdownCollab.connectAgent",
+        "title": "Markdown Collab: Connect an Agent…",
+        "category": "Markdown Collab"
+      },
+      {
+        "command": "markdownCollab.disconnectAgent",
+        "title": "Markdown Collab: Disconnect an Agent…",
+        "category": "Markdown Collab"
+      },
+      {
         "command": "markdownCollab.editReviewConventions",
         "title": "Markdown Collab: Edit Review Conventions",
         "category": "Markdown Collab"
@@ -236,6 +259,14 @@
         "title": "Reveal Markdown Collab Thread"
       },
       {
+        "command": "markdownCollab.resolveThread",
+        "title": "Resolve Markdown Collab Thread"
+      },
+      {
+        "command": "markdownCollab.replyToThread",
+        "title": "Reply to Markdown Collab Thread"
+      },
+      {
         "command": "markdownCollab.commentOnSelection",
         "title": "Markdown Collab: Comment on Selection",
         "category": "Markdown Collab"
@@ -249,6 +280,10 @@
         "command": "markdownCollab.finalizeDocument",
         "title": "Markdown Collab: Remove All Review Data",
         "category": "Markdown Collab"
+      },
+      {
+        "command": "markdownCollab.liveEditor.keyHandledInEditor",
+        "title": "Key Handled by the Markdown Collab Editor"
       }
     ],
     "configuration": {
@@ -258,32 +293,38 @@
           "type": "string",
           "enum": [
             "ask",
+            "headless",
             "terminal",
-            "mcp",
-            "channel",
-            "mcp-channel",
             "clipboard"
           ],
           "enumDescriptions": [
-            "Prompt the first time per workspace, then remember the choice. Run 'Markdown Collab: Reset Send Mode' to clear the remembered choice.",
-            "Type the prompt into a running Claude REPL via bracketed paste. Falls back to spawning a 'Claude Review' terminal if none is detected.",
-            "Terminal delivery, plus a directive to act through this extension's MCP review tools — Claude's edits then go through the editor (undoable, checked before they write). Never auto-selected: MCP can be disabled on Claude's side.",
-            "Append one JSON line per click to .markdown-collab/.events.jsonl. Claude reads it via the bundled mdc-tail.mjs in a background bash + Monitor — no polling, no Bash 600s timeout.",
-            "Push the payload to the bundled MCP channel server so Claude receives a native <channel> tag on its next turn. Requires Claude Code v2.1.80+ and a one-time .mcp.json setup (see README).",
-            "Copy the prompt to the clipboard for manual paste into Claude."
+            "Ask which way to send, the first time per workspace, then remember the answer. Run 'Markdown Collab: Reset Send Mode' to be asked again.",
+            "Runs Claude for you in the background and shows progress in the status bar — if you'd rather not keep a terminal open; needs Claude Code installed and signed in.",
+            "Type the prompt into your running terminal session. Works with any agent's terminal — recommended.",
+            "Copy the prompt to your clipboard so you can paste it into your agent yourself."
           ],
           "default": "ask",
-          "markdownDescription": "How the **Send to Claude** button delivers unresolved comments to Claude Code.\n\n- `ask` — quick-pick on first use per workspace; remembers the choice (run **Markdown Collab: Reset Send Mode** to clear).\n- `terminal` — bracketed-paste into a running `claude` REPL. No MCP required.\n- `mcp` — same delivery, plus a directive to use this extension's review tools, so Claude's edits land as editor edits you can undo. Requires the tool server (run **Markdown Collab: Register Review Tools with Claude Code**). Offered in the picker, never chosen for you.\n- `channel` — append to `.markdown-collab/.events.jsonl` for a `tail` + `Monitor` watch loop. No MCP required, but needs a streaming-tool harness.\n- `mcp-channel` — native MCP channel: events arrive as `<channel source=\"markdown-collab\">` tags. Requires Claude Code v2.1.80+, claude.ai login, and a one-time `.mcp.json` setup.\n- `clipboard` — copy the prompt for manual paste."
+          "markdownDescription": "How the **Send** button gets your comments to your agent.\n\n- `ask` — asks the first time per workspace, then remembers your answer. Run [Reset Send Mode](command:markdownCollab.resetSendMode) to be asked again.\n- `terminal` — types the prompt into your running terminal session. Works with any agent's terminal — recommended.\n- `headless` — **Run Claude for me**: the extension runs Claude Code in the background and shows progress in the status bar. In this mode Claude can only read files and use the review tools — if you'd rather not keep a terminal open; needs Claude Code installed and signed in.\n- `clipboard` — copies the prompt so you can paste it into your agent yourself.\n\nWhichever agent you use, connect it to this extension's review tools so its edits arrive as edits you can undo — see **Connect an Agent…** in the README."
         },
         "markdownCollab.collab.userName": {
           "type": "string",
           "default": "",
-          "description": "Display name attributed to your comments in the live editor. Defaults to your OS username."
+          "description": "Display name attributed to your comments. Defaults to your OS username."
+        },
+        "markdownCollab.liveEditor.readOnly": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the Markdown Collab view read-only. Switch to Editing in the toolbar above the document to turn editing on for that panel."
+        },
+        "markdownCollab.classicReviewView": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use the previous Markdown Collab view (rendered preview without editing). A later release removes this fallback."
         },
         "markdownCollab.plantuml.serverUrl": {
           "type": "string",
           "default": "https://www.plantuml.com/plantuml",
-          "description": "PlantUML server used to render `plantuml`/`puml` fenced code blocks in every preview surface (legacy preview, inline-comments view, PR review preview). Defaults to the public instance. Point at a self-hosted server (e.g. http://localhost:8080) to keep your diagrams off the public web."
+          "description": "PlantUML server used to render `plantuml`/`puml` fenced code blocks in the Markdown Collab view and the PR review preview. Defaults to the public instance. Point at a self-hosted server (e.g. http://localhost:8080) to keep your diagrams off the public web."
         },
         "markdownCollab.plantuml.format": {
           "type": "string",
@@ -297,19 +338,105 @@
         "markdownCollab.proposeEditsAsSuggestions": {
           "type": "boolean",
           "default": false,
-          "description": "When on, 'Send to Claude' asks Claude to propose its edits as suggestions (accept/reject) instead of applying them directly. Remembered per workspace."
+          "description": "When on, Send asks the agent to propose its edits as suggestions (accept/reject) instead of applying them directly. Remembered per workspace."
         },
         "markdownCollab.showLineNumbers": {
           "type": "boolean",
           "default": false,
-          "description": "Show the source line number beside each block in the inline comments view and the live editor. Numbers are lines in the .md file itself, so frontmatter and the stored threads block are accounted for."
+          "description": "Show the source line number beside each block in the Markdown Collab view. Numbers are lines in the .md file itself, so frontmatter and the stored threads block are accounted for."
+        },
+        "markdownCollab.claudePath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Path to the `claude` executable, if it isn't on your PATH. Used by the **Run Claude for me** send mode. Leave empty to find it automatically (PATH, then the usual install locations)."
+        },
+        "markdownCollab.headlessModel": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Model for **Run Claude for me** runs — an alias like `sonnet` or `opus`, or a full model name. Leave empty to use Claude Code's default."
         }
       }
     },
+    "keybindings": [
+      {
+        "command": "markdownCollab.openInlineCommentsView",
+        "key": "ctrl+k ctrl+alt+v",
+        "mac": "cmd+k cmd+alt+v",
+        "when": "editorLangId == markdown"
+      },
+      {
+        "command": "markdownCollab.commentOnSelection",
+        "key": "ctrl+k ctrl+alt+m",
+        "mac": "cmd+k cmd+alt+m",
+        "when": "editorTextFocus && editorLangId == markdown && editorHasSelection"
+      },
+      {
+        "command": "markdownCollab.nextUnreadFromClaude",
+        "key": "ctrl+k ctrl+alt+n",
+        "mac": "cmd+k cmd+alt+n",
+        "when": "editorLangId == markdown || activeCustomEditorId == 'markdownCollab.collabEditor' || activeWebviewPanelId == 'markdownCollab.inlineCommentsView'"
+      },
+      {
+        "command": "markdownCollab.liveEditor.keyHandledInEditor",
+        "key": "ctrl+z",
+        "mac": "cmd+z",
+        "when": "markdownCollab.liveEditorTyping"
+      },
+      {
+        "command": "markdownCollab.liveEditor.keyHandledInEditor",
+        "key": "ctrl+shift+z",
+        "mac": "cmd+shift+z",
+        "when": "markdownCollab.liveEditorTyping"
+      },
+      {
+        "command": "markdownCollab.liveEditor.keyHandledInEditor",
+        "key": "ctrl+y",
+        "when": "markdownCollab.liveEditorTyping && !isMac"
+      },
+      {
+        "command": "markdownCollab.liveEditor.keyHandledInEditor",
+        "key": "ctrl+b",
+        "mac": "cmd+b",
+        "when": "markdownCollab.liveEditorTyping"
+      },
+      {
+        "command": "markdownCollab.liveEditor.keyHandledInEditor",
+        "key": "ctrl+i",
+        "mac": "cmd+i",
+        "when": "markdownCollab.liveEditorTyping"
+      },
+      {
+        "command": "markdownCollab.liveEditor.keyHandledInEditor",
+        "key": "ctrl+e",
+        "mac": "cmd+e",
+        "when": "markdownCollab.liveEditorTyping"
+      },
+      {
+        "command": "markdownCollab.liveEditor.keyHandledInEditor",
+        "key": "ctrl+shift+b",
+        "mac": "cmd+shift+b",
+        "when": "markdownCollab.liveEditorTyping"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "markdownCollab.explorerSubmenu",
+        "label": "Markdown Collab"
+      },
+      {
+        "id": "markdownCollab.editorSubmenu",
+        "label": "Markdown Collab"
+      }
+    ],
     "menus": {
       "commandPalette": [
         {
           "command": "markdownCollab.revealComment",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.openCollabEditor",
           "when": "false"
         },
         {
@@ -350,6 +477,54 @@
         },
         {
           "command": "markdownCollab.unstageUncommittedFile",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.uncommittedRefresh",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.prReviewRefresh",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.askClaudeToReviewFolder",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.registerMcpServer",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.installClaudeSkill",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.startClaudeTerminal",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.copyClaudePrompt",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.initializeAgents",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.resetSendMode",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.resolveThread",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.replyToThread",
+          "when": "false"
+        },
+        {
+          "command": "markdownCollab.liveEditor.keyHandledInEditor",
           "when": "false"
         }
       ],
@@ -410,29 +585,55 @@
           "group": "navigation@30"
         },
         {
+          "submenu": "markdownCollab.explorerSubmenu",
+          "when": "resourceExtname == .md || explorerResourceIsFolder",
+          "group": "navigation@31"
+        }
+      ],
+      "markdownCollab.explorerSubmenu": [
+        {
           "command": "markdownCollab.askClaudeToReview",
           "when": "resourceExtname == .md",
-          "group": "navigation@31"
+          "group": "navigation@1"
         },
         {
           "command": "markdownCollab.askClaudeToReviewFolder",
           "when": "explorerResourceIsFolder",
-          "group": "navigation@31"
+          "group": "navigation@2"
         },
         {
           "command": "markdownCollab.askClaudeToReviewChanges",
           "when": "resourceExtname == .md",
-          "group": "navigation@32"
+          "group": "navigation@3"
         },
         {
           "command": "markdownCollab.removeResolvedComments",
           "when": "resourceExtname == .md",
-          "group": "navigation@33"
+          "group": "navigation@4"
         },
         {
           "command": "markdownCollab.finalizeDocument",
           "when": "resourceExtname == .md",
-          "group": "navigation@34"
+          "group": "navigation@5"
+        }
+      ],
+      "markdownCollab.editorSubmenu": [
+        {
+          "command": "markdownCollab.askClaudeToReview",
+          "when": "resourceLangId == markdown",
+          "group": "navigation@1"
+        },
+        {
+          "command": "markdownCollab.askClaudeToReviewChanges",
+          "when": "resourceExtname == .md",
+          "group": "navigation@2"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "markdownCollab.openInlineCommentsView",
+          "when": "resourceLangId == markdown && activeCustomEditorId != 'markdownCollab.collabEditor'",
+          "group": "navigation"
         }
       ],
       "editor/title/context": [
@@ -442,14 +643,9 @@
           "group": "1_open@1"
         },
         {
-          "command": "markdownCollab.askClaudeToReview",
+          "submenu": "markdownCollab.editorSubmenu",
           "when": "resourceExtname == .md",
           "group": "1_open@2"
-        },
-        {
-          "command": "markdownCollab.askClaudeToReviewChanges",
-          "when": "resourceExtname == .md",
-          "group": "1_open@3"
         }
       ],
       "editor/context": [
@@ -464,7 +660,7 @@
           "group": "navigation@30"
         },
         {
-          "command": "markdownCollab.askClaudeToReview",
+          "submenu": "markdownCollab.editorSubmenu",
           "when": "resourceLangId == markdown",
           "group": "navigation@31"
         }
@@ -486,23 +682,27 @@
       "explorer": [
         {
           "id": "markdownCollab.review",
-          "name": "Markdown Review",
+          "name": "Comment Threads",
           "when": "markdownCollab.hasReview"
         },
         {
           "id": "markdownCollab.prReviewFiles",
-          "name": "PR Review (markdown files)"
+          "name": "PR Review",
+          "visibility": "collapsed",
+          "when": "markdownCollab.workspaceHasGit"
         },
         {
           "id": "markdownCollab.uncommittedFiles",
-          "name": "Uncommitted Changes (markdown files)"
+          "name": "Uncommitted Markdown",
+          "visibility": "collapsed",
+          "when": "markdownCollab.workspaceHasGit"
         }
       ]
     },
     "customEditors": [
       {
         "viewType": "markdownCollab.collabEditor",
-        "displayName": "Markdown Collab (live editor)",
+        "displayName": "Markdown Collab",
         "selector": [
           {
             "filenamePattern": "*.md"
@@ -514,8 +714,8 @@
     "walkthroughs": [
       {
         "id": "markdownCollab.gettingStarted",
-        "title": "Review Markdown with Claude",
-        "description": "Leave review comments anchored in the file itself, send them to Claude, and accept its suggestions — all without leaving VS Code.",
+        "title": "Review Markdown with an AI agent",
+        "description": "Leave review comments anchored in the file itself, send them to your agent, and accept its suggestions — all without leaving VS Code. Claude Code is the most complete setup; any other agent can act on the same file format, with the review tools as an optional upgrade.",
         "steps": [
           {
             "id": "playground",
@@ -527,8 +727,8 @@
           },
           {
             "id": "install-skill",
-            "title": "Install the Claude skill",
-            "description": "Claude needs the skill to know how to act on your comments. One command, once per machine.\n[Install the skill](command:markdownCollab.installClaudeSkill)",
+            "title": "Set up Claude Code",
+            "description": "Claude needs the Markdown Collab plugin to know how to act on your comments. One command, once per machine.\n[Set up Claude Code](command:markdownCollab.installClaudeSkill)",
             "media": {
               "markdown": "media/walkthrough/skill.md"
             },
@@ -539,7 +739,7 @@
           {
             "id": "comment",
             "title": "Comment on your own document",
-            "description": "Open any .md file in the inline comments view, select a passage in the preview, and write a note. The thread is stored in the file itself.\n[Open a document](command:markdownCollab.openInlineCommentsView)",
+            "description": "Open any .md file in Markdown Collab, select a passage, and write a note. The thread is stored in the file itself.\n[Open a document](command:markdownCollab.openInlineCommentsView)",
             "media": {
               "markdown": "media/walkthrough/comment.md"
             },
@@ -549,8 +749,8 @@
           },
           {
             "id": "send",
-            "title": "Send it to Claude",
-            "description": "Click Send to Claude in the sidebar. The first time, pick how it should be delivered — 'Send to active terminal' works everywhere with no setup.\n[Send unresolved comments](command:markdownCollab.sendAllToClaude)",
+            "title": "Send it to your agent",
+            "description": "Click Send in the sidebar. The first time, pick how it's delivered; the terminal option works with any agent.\n[Send unresolved comments](command:markdownCollab.sendAllToClaude)",
             "media": {
               "markdown": "media/walkthrough/send.md"
             },
@@ -560,27 +760,44 @@
           },
           {
             "id": "ask-review",
-            "title": "Or ask Claude to review you",
-            "description": "Flip the direction: Claude reads the doc and opens a thread per concern, for you to triage.\n[Ask Claude to review](command:markdownCollab.askClaudeToReview)",
+            "title": "Or ask your agent to review",
+            "description": "Flip the direction: your agent reads the doc and opens a thread per concern, for you to triage.\n[Ask Agent to Review](command:markdownCollab.askClaudeToReview)",
             "media": {
               "markdown": "media/walkthrough/review.md"
             },
             "completionEvents": [
               "onCommand:markdownCollab.askClaudeToReview"
             ]
+          },
+          {
+            "id": "connect-agent",
+            "title": "Using Cursor, Codex, or Copilot?",
+            "description": "Hook the review tools up to whichever agent you use. Nothing is written with a token.\n[Connect an Agent…](command:markdownCollab.connectAgent)",
+            "media": {
+              "markdown": "media/walkthrough/agents.md"
+            },
+            "completionEvents": [
+              "onCommand:markdownCollab.connectAgent"
+            ]
           }
         ]
+      }
+    ],
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "markdownCollab.mcpServerDefinitionProvider",
+        "label": "Markdown Collab review tools"
       }
     ]
   },
   "scripts": {
-    "compile": "npm run bundle:skill-cli && tsc -p . && tsc -p tsconfig.webview.json && npm run bundle:extension && npm run bundle:webview && npm run bundle:inline-comments && npm run bundle:pr-review && npm run copy:shared-css && npm run copy:fixtures",
+    "compile": "npm run bundle:skill-cli && npm run build:plugin && tsc -p . && tsc -p tsconfig.webview.json && npm run bundle:extension && npm run bundle:webview && npm run bundle:inline-comments && npm run bundle:pr-review && npm run copy:shared-css && npm run copy:fixtures",
     "watch": "tsc -w -p .",
     "bundle:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --external:bufferutil --external:utf-8-validate --outfile=out/extension.js --minify --sourcemap=linked --legal-comments=none",
     "bundle:webview": "esbuild src/webview/client.ts --bundle --format=iife --outfile=out/webview/client.js --target=es2020 --platform=browser --minify --sourcemap=linked --legal-comments=none",
     "bundle:webview:watch": "npm run bundle:webview -- --watch",
     "bundle:inline-comments": "esbuild src/inlineComments/webview/client.ts --bundle --format=iife --outfile=out/inlineComments/client.js --target=es2020 --platform=browser --minify --sourcemap=linked --legal-comments=none && node -e \"require('fs').copyFileSync('src/inlineComments/webview/client.css','out/inlineComments/client.css')\"",
-    "bundle:pr-review": "esbuild src/pr/webview/client.ts --bundle --format=iife --outfile=out/pr/webview/client.js --target=es2020 --platform=browser --minify --sourcemap=linked --legal-comments=none && node -e \"const fs=require('fs');fs.mkdirSync('out/pr/webview',{recursive:true});fs.copyFileSync('src/pr/webview/client.css','out/pr/webview/client.css')\"",
+    "bundle:pr-review": "esbuild src/pr/webview/client.ts --bundle --format=iife --outfile=out/pr/webview/client.js --target=es2020 --platform=browser --minify --sourcemap=linked --legal-comments=none",
     "copy:fixtures": "node -e \"const fs=require('fs'),p=require('path');function cp(s,d){fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync(s,{withFileTypes:true})){const ss=p.join(s,f.name),dd=p.join(d,f.name);if(f.isDirectory())cp(ss,dd);else fs.copyFileSync(ss,dd);}}cp('src/test/integration/fixtures','out/test/integration/fixtures')\"",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -589,7 +806,11 @@
     "clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\"",
     "test:integration": "npm run clean && npm run compile && node ./out/test/integration/runTest.js",
     "bundle:skill-cli": "node scripts/build-skill-cli.mjs",
-    "copy:shared-css": "node scripts/copy-shared-css.mjs"
+    "build:plugin": "node scripts/build-plugin.mjs",
+    "copy:shared-css": "node scripts/copy-shared-css.mjs",
+    "verify:keys": "node scripts/verify-webview-keybinding.mjs",
+    "verify:editor-keys": "node scripts/verify-editor-keys.mjs",
+    "record:gifs": "node scripts/record-gifs.mjs"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.10.3",
@@ -619,7 +840,10 @@
   },
   "dependencies": {
     "markdown-it": "^14.1.1",
+    "mdast-util-from-markdown": "^2.0.3",
+    "mdast-util-gfm": "^3.1.0",
     "mermaid": "^11.14.0",
+    "micromark-extension-gfm": "^3.0.0",
     "mxgraph": "^4.2.2",
     "pako": "^2.1.0"
   }

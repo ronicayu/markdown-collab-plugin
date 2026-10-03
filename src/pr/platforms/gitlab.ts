@@ -8,11 +8,27 @@
  *                           "request changes" outside approval rules)
  */
 
-import { getCliRunner } from "../cli";
+import { getCliRunner, getLogger } from "../cli";
 import { mergeBaseSha, parseRemoteUrl } from "../diff";
 import type { ExistingPrComment, PrContext, PrPlatform } from "../types";
 
 const GLAB = "glab";
+
+/**
+ * GitLab discussion id — a SHA1 hex digest. What `replyToComment`'s
+ * `threadId` and `resolveThread`'s `resolveId` accept, and what both splice
+ * straight into a REST path segment. Checked before either does, so a value
+ * like `../x` (path traversal) or `?resolved=false` (query-string injection)
+ * never reaches a URL, and `encodeURIComponent` below is a second layer, not
+ * the only one.
+ */
+const DISCUSSION_ID_RE = /^[0-9a-f]{40}$/;
+
+function assertDiscussionId(id: string, what: string): void {
+  if (!DISCUSSION_ID_RE.test(id)) {
+    throw new Error(`Refusing to send ${what} to GitLab: "${id.slice(0, 40)}" isn't a discussion id.`);
+  }
+}
 
 function glabEnvForHost(host: string): Record<string, string | undefined> | undefined {
   if (host === "gitlab.com") return undefined;
@@ -236,11 +252,12 @@ export const gitlabPlatform: PrPlatform = {
     const env = glabEnvForHost(ctx.host);
     if (!ctx.projectId) throw new Error("GitLab context missing projectId");
     // `threadId` is the discussion id; POST a note to add a reply to it.
+    assertDiscussionId(threadId, "a discussion id");
     const res = await runner(
       GLAB,
       [
         "api",
-        `projects/${ctx.projectId}/merge_requests/${ctx.prNumber}/discussions/${threadId}/notes`,
+        `projects/${ctx.projectId}/merge_requests/${ctx.prNumber}/discussions/${encodeURIComponent(threadId)}/notes`,
         "--method",
         "POST",
         "--header",
@@ -255,6 +272,59 @@ export const gitlabPlatform: PrPlatform = {
     }
     const parsed = JSON.parse(res.stdout) as { id?: number };
     return { url: parsed.id ? `${ctx.prUrl}#note_${parsed.id}` : ctx.prUrl };
+  },
+
+  async resolveThread(ctx, resolveId, resolved) {
+    const runner = getCliRunner();
+    const env = glabEnvForHost(ctx.host);
+    if (!ctx.projectId) throw new Error("GitLab context missing projectId");
+    assertDiscussionId(resolveId, "a discussion id");
+    // `resolved` goes two ways at once: the query-string form GitLab's docs
+    // lead with, AND the JSON body (same idiom as the discussions/notes
+    // POSTs above — Grape accepts `resolved` as a body field too). Belt and
+    // suspenders: a `glab`/GitLab combination that only honors one of the two
+    // still gets it.
+    const path = `projects/${ctx.projectId}/merge_requests/${ctx.prNumber}/discussions/${encodeURIComponent(resolveId)}`;
+    const res = await runner(
+      GLAB,
+      [
+        "api",
+        `${path}?resolved=${resolved}`,
+        "--method",
+        "PUT",
+        "--header",
+        "Content-Type: application/json",
+        "--input",
+        "-",
+      ],
+      { cwd: ctx.repoRoot, env, stdin: JSON.stringify({ resolved }) },
+    );
+    if (res.code !== 0) {
+      throw new Error(`glab api discussion resolve failed: ${res.stderr.trim() || res.stdout.trim()}`);
+    }
+    // Exit 0 isn't proof — GitLab returns the updated Discussion object
+    // (`{ id, notes: [{ ..., resolved }, ...] }`), and a malformed or
+    // unexpected body (e.g. `{}`) used to read as success just because the
+    // process exited clean. Require the response to actually confirm the
+    // state we asked for before calling this a success.
+    let body: { notes?: Array<{ resolved?: boolean }>; resolved?: boolean };
+    try {
+      body = JSON.parse(res.stdout) as typeof body;
+    } catch {
+      throw new Error(
+        `glab api discussion resolve: unexpected response — could not confirm the discussion is now ` +
+          `${resolved ? "resolved" : "unresolved"}: ${res.stdout.slice(0, 200)}`,
+      );
+    }
+    const confirmed = body.notes && body.notes.length > 0
+      ? body.notes.every((n) => n.resolved === resolved)
+      : body.resolved === resolved;
+    if (!confirmed) {
+      throw new Error(
+        `glab api discussion resolve: GitLab did not confirm the discussion is now ` +
+          `${resolved ? "resolved" : "unresolved"} (${res.stdout.slice(0, 200)})`,
+      );
+    }
   },
 
   async listExistingComments(ctx) {
@@ -279,6 +349,10 @@ export const gitlabPlatform: PrPlatform = {
       body: string;
       created_at: string;
       resolved?: boolean;
+      /** False (or absent) for a discussion GitLab won't let anyone resolve
+       * — a plain, non-diff note landing here would be one, though today's
+       * `position` filter below already excludes those. */
+      resolvable?: boolean;
       position?: {
         new_path?: string;
         old_path?: string;
@@ -290,6 +364,7 @@ export const gitlabPlatform: PrPlatform = {
     const raw = res.stdout.trim();
     if (!raw) return [];
     const discussions: GlabDiscussion[] = [];
+    let parseFailures = 0;
     try {
       discussions.push(...(JSON.parse(raw) as GlabDiscussion[]));
     } catch {
@@ -299,8 +374,21 @@ export const gitlabPlatform: PrPlatform = {
         if (i === arr.length - 1) return `[${p}`;
         return `[${p}]`;
       });
-      for (const page of pages) {
-        try { discussions.push(...(JSON.parse(page) as GlabDiscussion[])); } catch { /* skip */ }
+      for (let i = 0; i < pages.length; i++) {
+        const page = pages[i];
+        try {
+          discussions.push(...(JSON.parse(page) as GlabDiscussion[]));
+        } catch {
+          // Page didn't parse — skip rather than fail the whole load, but
+          // say so (see the matching comment in github.ts's listExistingComments).
+          parseFailures++;
+          getLogger()?.warn("glab api discussions: page failed to parse, skipping it", {
+            page: i + 1,
+            of: pages.length,
+            bytes: page.length,
+            preview: page.slice(0, 80),
+          });
+        }
       }
     }
     const out: ExistingPrComment[] = [];
@@ -322,8 +410,16 @@ export const gitlabPlatform: PrPlatform = {
           createdAt: n.created_at,
           url: `${ctx.prUrl}#note_${n.id}`,
           resolved: n.resolved,
+          resolvable: n.resolvable === true,
+          resolveId: n.resolvable === true ? d.id : undefined,
         });
       }
+    }
+    if (parseFailures > 0) {
+      // See the matching property in github.ts's listExistingComments —
+      // same one-time-notice contract, carried the same way.
+      (out as ExistingPrComment[] & { partialLoadWarning?: string }).partialLoadWarning =
+        `${parseFailures} page${parseFailures === 1 ? "" : "s"} of MR discussions failed to parse.`;
     }
     return out;
   },

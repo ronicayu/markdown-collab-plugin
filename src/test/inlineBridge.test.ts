@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
+  addThreadAtEditorRange,
   addThreadAtOffsets,
+  addThreadAtProseRange,
   addThreadFromAnchor,
   commentsOf,
   deleteComment,
@@ -12,8 +14,11 @@ import {
   replyToThread,
   setThreadResolved,
 } from "../collab/inlineBridge";
-import { parse, withThreads } from "../inlineComments/format";
+import { addSuggestion, parse, withThreads } from "../inlineComments/format";
+import { checkpointFor } from "../inlineComments/deltaReview";
 import { locateNthOccurrence } from "../collab/liveAnchorLocator";
+import type { EditorPoint } from "../collab/sourcePositions";
+import { onlyMarkersAdded } from "./support/oneViewCorpus";
 
 const DOC = [
   "# Title",
@@ -656,5 +661,217 @@ describe("anchorOrdinal + ordinal highlight (table / structural-markdown regress
     const loc = locateNthOccurrence(rendered, c.anchor.text, c.anchorOrdinal)!;
     expect(loc).not.toBeNull();
     expect(loc.start).toBe(rendered.indexOf("active", rendered.indexOf("active") + 1));
+  });
+});
+
+describe("live-edit write paths preserve suggestions + review checkpoint", () => {
+  // Regression coverage for the spike's "found along the way" bug: every write
+  // path that goes through `withThreads` from this module rebuilds the source
+  // from prose it already stripped of the threads region, so a call that
+  // forgets to pass the current suggestions/checkpoint back in silently drops
+  // them, even though nothing about the write touched either. Build a doc that
+  // exercises all three: one open thread, one pending suggestion, and a review
+  // checkpoint.
+  function seedWithSuggestionAndCheckpoint(): { source: string; threadId: string; anchorId: string } {
+    const withThread = seed();
+    const start = withThread.source.indexOf("second paragraph");
+    const { source: withSuggestion, suggestion } = addSuggestion(
+      withThread.source,
+      start,
+      start + "second paragraph".length,
+      { author: "claude", proposed: "second section", ts: "2026-01-01T00:00:00.000Z" },
+    );
+    const checkpoint = checkpointFor(withSuggestion, () => "2026-01-02T00:00:00.000Z");
+    const source = withThreads(withSuggestion, parse(withSuggestion).threads, undefined, checkpoint);
+    // Sanity: the seed really carries all three before any write path runs.
+    const parsed = parse(source);
+    expect(parsed.suggestions).toHaveLength(1);
+    expect(parsed.checkpoint).not.toBeNull();
+    return { source, threadId: withThread.id, anchorId: suggestion.anchorId };
+  }
+
+  it("a prose edit (mergeProseEdit / assembleMarkedSource) keeps the suggestion and checkpoint", () => {
+    const { source, threadId } = seedWithSuggestionAndCheckpoint();
+    const edited = proseOf(source).replace("# Title", "# Title edited");
+    const merged = mergeProseEdit(source, edited);
+    const parsed = parse(merged);
+    expect(parsed.suggestions).toHaveLength(1);
+    expect(parsed.suggestions[0]!.proposed).toBe("second section");
+    expect(parsed.checkpoint).not.toBeNull();
+    expect(parsed.checkpoint!.ts).toBe("2026-01-02T00:00:00.000Z");
+    // The thread is still there too (edit happened elsewhere in the prose).
+    expect(commentsOf(merged).some((c) => c.id === threadId)).toBe(true);
+  });
+
+  it("keeps the suggestion's own anchor markers (not just its record) through a prose edit elsewhere", () => {
+    const { source, anchorId } = seedWithSuggestionAndCheckpoint();
+    // Edit well away from the suggestion's span so its text is untouched but
+    // shifts to a later offset — the marker has to move with it.
+    const edited = proseOf(source).replace("# Title", "# Title\n\nBrand new intro paragraph.");
+    const merged = mergeProseEdit(source, edited);
+    const parsed = parse(merged);
+    expect(parsed.anchors.has(anchorId)).toBe(true);
+    expect(parsed.unanchoredSuggestionIds).not.toContain(anchorId);
+    const a = parsed.anchors.get(anchorId)!;
+    expect(merged.slice(a.openEnd, a.closeStart)).toBe("second paragraph");
+  });
+
+  it("a new comment through addThreadAtOffsets keeps the suggestion and checkpoint", () => {
+    const { source, threadId } = seedWithSuggestionAndCheckpoint();
+    const newBody = proseOf(source);
+    const sel = "brown fox";
+    const start = newBody.indexOf(sel);
+    const res = addThreadAtOffsets(source, newBody, start, start + sel.length, {
+      author: "ron",
+      body: "new comment",
+      ts: "2026-01-03T00:00:00.000Z",
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const parsed = parse(res.source);
+    expect(parsed.suggestions).toHaveLength(1);
+    expect(parsed.suggestions[0]!.proposed).toBe("second section");
+    expect(parsed.checkpoint).not.toBeNull();
+    const comments = commentsOf(res.source);
+    expect(comments).toHaveLength(2); // old thread + new one
+    expect(comments.some((c) => c.id === threadId)).toBe(true);
+  });
+
+  it("a loosely-anchored comment (addThreadFromAnchor's unlocatable-text fallback) keeps the suggestion and checkpoint", () => {
+    const { source, threadId } = seedWithSuggestionAndCheckpoint();
+    // "Alex — PM" isn't in the doc verbatim, so `locate` fails and the save
+    // falls through to the loosely-anchored path (inlineBridge.ts ~342).
+    const res = addThreadFromAnchor(source, { text: "Alex — PM", contextBefore: "", contextAfter: "" }, {
+      author: "ron",
+      body: "loose comment",
+      ts: "2026-01-04T00:00:00.000Z",
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const parsed = parse(res.source);
+    expect(parsed.suggestions).toHaveLength(1);
+    expect(parsed.suggestions[0]!.proposed).toBe("second section");
+    expect(parsed.checkpoint).not.toBeNull();
+    const comments = commentsOf(res.source);
+    expect(comments).toHaveLength(2); // old thread + new loosely-anchored one
+    expect(comments.some((c) => c.id === threadId)).toBe(true);
+    expect(comments.some((c) => c.anchor.text === "Alex — PM")).toBe(true);
+  });
+
+  it("placeAnchorsInProse (the editor-reported-position path) also keeps the suggestion and checkpoint", () => {
+    // Shares assembleMarkedSource with mergeProseEdit, and has the same bug:
+    // covered separately since it's a distinct entry point the collab editor
+    // provider calls on every edit that carries live anchor positions.
+    const { source, threadId, anchorId } = seedWithSuggestionAndCheckpoint();
+    const newProse = proseOf(source).replace("# Title", "# Title\n\nBrand new intro paragraph.");
+    const out = placeAnchorsInProse(source, newProse, []);
+    const parsed = parse(out);
+    expect(parsed.suggestions).toHaveLength(1);
+    expect(parsed.suggestions[0]!.proposed).toBe("second section");
+    expect(parsed.checkpoint).not.toBeNull();
+    expect(parsed.anchors.has(anchorId)).toBe(true);
+    expect(commentsOf(out).some((c) => c.id === threadId)).toBe(true);
+  });
+});
+
+// Edit mode's add (docs/one-view-design.md, "Phase B"): the selection arrives
+// named by structure, is found in the file's own bytes, and adds two markers
+// and a record — never a re-serialized body.
+describe("addThreadAtEditorRange", () => {
+  const C = { author: "ron", body: "c", ts: "2026-09-30T00:00:00.000Z" };
+  const point = (block: number, type: string, container: number, text: string, offset: number): EditorPoint => ({
+    block,
+    type,
+    container,
+    offset,
+    text,
+  });
+  const added = (before: string, after: string): string => parse(after).threads.find((t) => !parse(before).threads.some((b) => b.id === t.id))!.id;
+
+  it("places the markers in the file's bytes, whatever the serializer would have written there", () => {
+    // Bytes the serializer would rewrite: `-` bullets, `__` strong, an escape, an entity.
+    const source = "# Notes\n\n- one __bold__ \\* star &amp; more\n- two\n";
+    const text = "one bold * star & more";
+    const r = addThreadAtEditorRange(
+      source,
+      { first: point(1, "bullet_list", 0, text, text.indexOf("bold")), last: point(1, "bullet_list", 0, text, text.indexOf("& more") + 5) },
+      C,
+    );
+    if (!r.ok) throw new Error(r.error);
+    const id = added(source, r.source);
+    expect(onlyMarkersAdded(source, r.source, id)).toEqual([]);
+    const a = parse(r.source).anchors.get(id)!;
+    expect(r.source.slice(a.openEnd, a.closeStart)).toBe("bold__ \\* star &amp; more");
+  });
+
+  it("picks the cell it names among duplicate values", () => {
+    const source = "| Flag | Default |\n|---|---|\n| `--retry` | 3 |\n| `--timeout` | 3 |\n";
+    // Containers with text: Flag, Default, --retry, 3, --timeout, 3 — the last is the timeout row's.
+    const r = addThreadAtEditorRange(source, { first: point(0, "table", 5, "3", 0), last: point(0, "table", 5, "3", 0) }, C);
+    if (!r.ok) throw new Error(r.error);
+    const line = r.source.split("\n").find((l) => l.includes("mc:a:"))!;
+    expect(line).toContain("--timeout");
+    expect(onlyMarkersAdded(source, r.source, added(source, r.source))).toEqual([]);
+  });
+
+  it("spans blocks from the first character to the last", () => {
+    const source = "Alpha one.\n\n> Beta two.\n";
+    const r = addThreadAtEditorRange(source, { first: point(0, "paragraph", 0, "Alpha one.", 6), last: point(1, "blockquote", 0, "Beta two.", 3) }, C);
+    if (!r.ok) throw new Error(r.error);
+    const id = added(source, r.source);
+    const a = parse(r.source).anchors.get(id)!;
+    expect(r.source.slice(a.openEnd, a.closeStart)).toBe("one.\n\n> Beta");
+  });
+
+  it("refuses when the file's bytes there don't read as the editor's text", () => {
+    const source = "Alpha one.\n\nBeta two.\n";
+    const stale = { first: point(1, "paragraph", 0, "Beta three.", 0), last: point(1, "paragraph", 0, "Beta three.", 3) };
+    expect(addThreadAtEditorRange(source, stale, C)).toEqual({ ok: false, error: expect.stringContaining("Select it again") });
+    const wrongType = { first: point(1, "heading", 0, "Beta two.", 0), last: point(1, "heading", 0, "Beta two.", 3) };
+    expect(addThreadAtEditorRange(source, wrongType, C).ok).toBe(false);
+  });
+});
+
+// Where a marker may go without changing how the raw file renders elsewhere:
+// never inside an autolink (it stops being one), never between an intraword
+// delimiter run and its text (the run stops flanking, and the emphasis goes).
+describe("addThreadAtProseRange: markers outside constructs they would break", () => {
+  const C = { author: "ron", body: "c", ts: "2026-09-30T00:00:00.000Z" };
+  const add = (source: string, text: string) => {
+    const prose = proseOf(source);
+    const start = prose.indexOf(text);
+    const r = addThreadAtProseRange(source, { start, end: start + text.length, text }, C);
+    if (!r.ok) throw new Error(r.error);
+    const id = parse(r.source).threads[0]!.id;
+    const a = parse(r.source).anchors.get(id)!;
+    return { source: r.source, anchored: r.source.slice(a.openEnd, a.closeStart), id };
+  };
+
+  it.each([
+    ["an autolink", "See <https://example.com/page> now.\n", "example.com", "<https://example.com/page>"],
+    ["an email autolink", "Mail <someone@example.com> today.\n", "example", "<someone@example.com>"],
+    ["a bare URL", "Visit https://example.com/page today.\n", "example.com", "https://example.com/page"],
+    ["intraword strong emphasis", "a**bold**b and more.\n", "bold", "**bold**"],
+    ["intraword strikethrough", "x~~gone~~y and more.\n", "gone", "~~gone~~"],
+  ])("widens a selection inside %s to its edges", (_what, source, selected, expected) => {
+    const r = add(source, selected);
+    expect(r.anchored).toBe(expected);
+    expect(onlyMarkersAdded(source, r.source, r.id)).toEqual([]);
+  });
+
+  it("leaves markers inside delimiters that still flank with them there", () => {
+    expect(add("Some **bold** word.\n", "bold").anchored).toBe("bold");
+  });
+
+  it("refuses when the text around the selection isn't what the editor saw (read-only)", () => {
+    const source = "Alpha one two.\n\nBeta one two.\n";
+    const prose = proseOf(source);
+    const start = prose.indexOf("one", prose.indexOf("Beta"));
+    const range = { start, end: start + 3, text: "one" };
+    expect(addThreadAtProseRange(source, { ...range, before: "Beta ", after: " two." }, C).ok).toBe(true);
+    expect(addThreadAtProseRange(source, { ...range, before: "Alpha ", after: " two." }, C)).toEqual({
+      ok: false,
+      error: expect.stringContaining("Select it again"),
+    });
   });
 });

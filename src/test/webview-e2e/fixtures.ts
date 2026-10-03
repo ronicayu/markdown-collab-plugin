@@ -9,6 +9,7 @@
 import { addSuggestion, addThread, appendReply, parse, replaceThread } from "../../inlineComments/format";
 import { serialize } from "../../inlineComments/serializeState";
 import { commentsOf, frontmatterOf, proseOf, suggestionsOf } from "../../collab/inlineBridge";
+import { sidebarDocumentFields } from "../../collab/sidebarState";
 import { withRefreshedAnchorHash } from "../../inlineComments/staleness";
 
 const BASE = `# Release notes
@@ -110,25 +111,36 @@ export function inlineInit(
   };
 }
 
+/** The host-side settings the live editor's sidebar shows (10x-plan-6 P4). */
+export interface LiveSidebarOpts {
+  pendingThreadIds?: string[];
+  pendingLabel?: string;
+  suggestMode?: boolean;
+  /** Overrides the name derived from the document's agent comments. */
+  agentName?: string;
+}
+
 /**
  * The comment/suggestion half of what the live-editor provider pushes — the
- * body of both `init` and the `sidecar-changed` update.
+ * body of both `init` and the `sidecar-changed` update, sidebar fields included.
  */
-export function liveSidecar(
-  source: string,
-  opts: { pendingThreadIds?: string[] } = {},
-): Record<string, unknown> {
+export function liveSidecar(source: string, opts: LiveSidebarOpts = {}): Record<string, unknown> {
+  const doc = sidebarDocumentFields(source);
   return {
     comments: commentsOf(source),
     suggestions: suggestionsOf(source),
     pendingThreadIds: opts.pendingThreadIds ?? [],
+    ...(opts.pendingLabel ? { pendingLabel: opts.pendingLabel } : {}),
+    threads: doc.threads,
+    agentName: opts.agentName ?? doc.agentName,
+    suggestMode: opts.suggestMode ?? false,
   };
 }
 
 /** The `init` message body the live-editor provider would push for `source`. */
 export function liveInit(
   source: string,
-  opts: { pendingThreadIds?: string[] } = {},
+  opts: LiveSidebarOpts = {},
 ): Record<string, unknown> {
   return {
     text: proseOf(source),
@@ -136,6 +148,7 @@ export function liveInit(
     ...liveSidecar(source, opts),
     frontmatter: frontmatterOf(source),
     imageBaseUris: { docDir: "", workspaceFolder: null },
+    plantuml: { serverUrl: "https://www.plantuml.com/plantuml", format: "svg" },
   };
 }
 

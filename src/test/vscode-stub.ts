@@ -66,6 +66,18 @@ class ThemeIcon {
   constructor(public id: string) {}
 }
 
+// Minimal stand-in for `vscode.McpHttpServerDefinition` (mcpServer/clients/copilot.ts,
+// 10x-plan-4 P1.1) — just enough shape for the Copilot provider's unit tests
+// to assert on `.uri` / `.headers` / `.label` without a real extension host.
+class McpHttpServerDefinition {
+  constructor(
+    public label: string,
+    public uri: { fsPath: string; toString: () => string },
+    public headers: Record<string, string> = {},
+    public version?: string,
+  ) {}
+}
+
 class RelativePattern {
   constructor(public base: any, public pattern: string) {}
 }
@@ -74,6 +86,9 @@ const CommentMode = { Editing: 0, Preview: 1 } as const;
 const CommentThreadCollapsibleState = { Collapsed: 0, Expanded: 1 } as const;
 const CommentThreadState = { Unresolved: 0, Resolved: 1 } as const;
 const TreeItemCollapsibleState = { None: 0, Collapsed: 1, Expanded: 2 } as const;
+// Real values (vscode.d.ts): Undo = 1, Redo = 2. Change events built by hand
+// in tests just omit `reason`, same as a plain programmatic edit's.
+const TextDocumentChangeReason = { Undo: 1, Redo: 2 } as const;
 
 const noopDisposable = new Disposable();
 
@@ -168,11 +183,13 @@ export {
   Range,
   MarkdownString,
   ThemeIcon,
+  McpHttpServerDefinition,
   RelativePattern,
   CommentMode,
   CommentThreadCollapsibleState,
   CommentThreadState,
   TreeItemCollapsibleState,
+  TextDocumentChangeReason,
   TreeItem,
   Uri,
   workspace,

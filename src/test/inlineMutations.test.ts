@@ -466,3 +466,33 @@ Suggest mode ships behind a setting.
     expect(parse(result.source).suggestions[0]!.anchorId).toBe(orphanId);
   });
 });
+
+// 10x-plan-6 P1.4: `via` names the path an agent's write took. The human's own
+// comments from the view carry none, and editing an agent's comment leaves the
+// record of how it arrived alone.
+describe("via", () => {
+  const seeded = () => {
+    const at = DOC.indexOf("exponential backoff");
+    return addThread(DOC, at, at + "exponential backoff".length, {
+      author: "codex",
+      agent: true,
+      via: "tools",
+      body: "cap is 30s",
+      ts: TS,
+    });
+  };
+
+  it("a comment or reply from the view carries none", () => {
+    const opened = commentOn(DOC, "exponential backoff", "which cap?").source;
+    const id = parse(opened).threads[0]!.id;
+    const replied = apply(opened, { type: "reply", threadId: id, body: "and why?" }).source;
+    expect(parse(replied).threads[0]!.comments.every((c) => !("via" in c))).toBe(true);
+    expect(replied).not.toContain('"via"');
+  });
+
+  it("editing an agent's comment keeps its via", () => {
+    const { source, thread } = seeded();
+    const edited = apply(source, { type: "edit-comment", threadId: thread.id, commentId: "c1", body: "cap is 60s" }).source;
+    expect(parse(edited).threads[0]!.comments[0]).toMatchObject({ body: "cap is 60s", via: "tools" });
+  });
+});

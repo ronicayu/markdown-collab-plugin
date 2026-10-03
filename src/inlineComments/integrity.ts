@@ -39,7 +39,9 @@ export type IntegrityIssueKind =
   /** A thread in the threads region with no anchor markers in the prose. */
   | "unanchored-thread"
   /** A suggestion whose anchor markers are missing — its original text is lost. */
-  | "unanchored-suggestion";
+  | "unanchored-suggestion"
+  /** An anchored thread with an empty quote — it was opened on nothing. */
+  | "empty-quote";
 
 export interface IntegrityIssue {
   kind: IntegrityIssueKind;
@@ -134,6 +136,29 @@ export function checkIntegrity(source: string): IntegrityReport {
         : `Thread ${id} has no anchor markers and its quote cannot be located unambiguously.`,
       threadId: id,
       repairable: recoverable,
+    });
+  }
+
+  // A thread with an empty quote was opened on nothing (ux-review-2026-09
+  // 0.1: `mdc open --occurrence banana` wrote exactly this, a zero-width
+  // anchor at byte 0, and `check` called it clean). Keyed on the quote, not
+  // the anchor's width: a zero-width anchor whose quote survives is the
+  // valid result of deleting the passage a thread was about (see the
+  // round-trip corpus), and stays unreported. Not repairable — there is no
+  // text to re-anchor to. Unanchored threads are already reported above.
+  for (const t of insp.parsed.threads) {
+    const a = insp.parsed.anchors.get(t.id);
+    if (!a || t.quote !== "") continue;
+    issues.push({
+      kind: "empty-quote",
+      severity: "warning",
+      message:
+        a.openEnd === a.closeStart
+          ? `Thread ${t.id} is anchored to an empty span and has an empty quote — it points at no text.`
+          : `Thread ${t.id} has an empty quote, so it cannot be re-anchored if its markers are lost.`,
+      threadId: t.id,
+      offset: a.openStart,
+      repairable: false,
     });
   }
 

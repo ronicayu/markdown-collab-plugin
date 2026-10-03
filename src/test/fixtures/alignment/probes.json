@@ -1,0 +1,254 @@
+{
+  "about": "The one-view spike alignment probe set (docs/spike-one-view.md, docs/one-view-design.md): words picked from the review view rendered text, repeated words first, 24 spread through each document, kept when addThread accepts them (probes). suggestions: a few more words per document, off the thread picks and never overlapping one, anchored with addSuggestion. Offsets are into the file as stored; the fixtures are frozen so the offsets stay valid.",
+  "total": 164,
+  "totalSuggestions": 19,
+  "docs": [
+    {
+      "name": "rt-tables",
+      "file": "src/test/fixtures/roundtrip/tables.md",
+      "probes": [
+        [76, 80, "cell"],
+        [117, 121, "cell"],
+        [130, 136, "anchor"],
+        [296, 301, "green"],
+        [356, 361, "green"],
+        [395, 402, "Package"],
+        [416, 423, "pending"],
+        [455, 462, "Publish"],
+        [476, 483, "pending"],
+        [578, 582, "cell"],
+        [601, 607, "anchor"],
+        [621, 625, "cell"],
+        [663, 670, "Confirm"],
+        [675, 682, "Package"],
+        [683, 688, "stage"],
+        [712, 719, "Confirm"],
+        [724, 731, "Publish"],
+        [732, 737, "stage"]
+      ],
+      "suggestions": [
+        [635, 643, "selected"]
+      ]
+    },
+    {
+      "name": "rt-frontmatter-lists",
+      "file": "src/test/fixtures/roundtrip/frontmatter-lists.md",
+      "probes": [
+        [148, 152, "must"],
+        [189, 193, "must"],
+        [349, 355, "thread"],
+        [356, 363, "variant"],
+        [384, 388, "kind"],
+        [397, 404, "variant"],
+        [444, 448, "kind"],
+        [504, 510, "thread"],
+        [577, 581, "item"],
+        [610, 614, "item"],
+        [625, 629, "item"],
+        [701, 705, "item"]
+      ],
+      "suggestions": [
+        [198, 205, "corrupt"],
+        [496, 503, "damaged"],
+        [750, 755, "Short"]
+      ]
+    },
+    {
+      "name": "int-sample",
+      "file": "src/test/integration/fixtures/sample.md",
+      "probes": [
+        [2, 8, "Sample"],
+        [9, 17, "document"],
+        [29, 36, "fixture"],
+        [49, 55, "collab"],
+        [56, 62, "editor"],
+        [75, 79, "test"],
+        [94, 98, "both"],
+        [99, 104, "ASCII"],
+        [133, 139, "verify"],
+        [149, 159, "round-trip"],
+        [165, 172, "handles"],
+        [173, 177, "UTF-"],
+        [189, 196, "through"],
+        [209, 217, "boundary"],
+        [222, 228, "bullet"],
+        [256, 261, "table"],
+        [276, 282, "Column"],
+        [357, 362, "three"],
+        [370, 374, "four"],
+        [409, 413, "task"],
+        [426, 430, "task"],
+        [441, 445, "task"],
+        [471, 475, "word"],
+        [493, 498, "https"]
+      ],
+      "suggestions": [
+        [63, 74, "integration"],
+        [201, 208, "webview"],
+        [455, 468, "strikethrough"]
+      ]
+    },
+    {
+      "name": "embeds",
+      "file": "src/test/fixtures/embeds.md",
+      "probes": [
+        [22, 27, "asset"],
+        [37, 43, "review"],
+        [124, 128, "that"],
+        [133, 144, "markdown-it"],
+        [169, 174, "asset"],
+        [232, 237, "image"],
+        [282, 287, "image"],
+        [343, 348, "image"],
+        [404, 409, "image"],
+        [464, 469, "image"],
+        [508, 513, "image"],
+        [578, 583, "image"],
+        [626, 632, "inline"],
+        [638, 643, "image"],
+        [995, 999, "that"],
+        [1074, 1080, "inline"],
+        [1171, 1182, "markdown-it"],
+        [1190, 1196, "review"],
+        [1199, 1210, "markdown-it"]
+      ],
+      "suggestions": [
+        [501, 507, "remote"]
+      ]
+    },
+    {
+      "name": "legacy-skill",
+      "file": "src/test/fixtures/skill/legacy-SKILL.pre-p02.md",
+      "probes": [
+        [979, 987, "Markdown"],
+        [2215, 2223, "workflow"],
+        [4348, 4352, "edit"],
+        [5487, 5495, "anchored"],
+        [6729, 6733, "with"],
+        [7776, 7782, "anchor"],
+        [8907, 8913, "opt-in"],
+        [10031, 10036, "These"],
+        [11222, 11226, "your"],
+        [12316, 12320, "Only"],
+        [13547, 13551, "it's"],
+        [14641, 14646, "place"],
+        [16164, 16168, "it's"],
+        [17370, 17374, "it's"],
+        [18652, 18658, "passes"],
+        [19772, 19776, "over"],
+        [20894, 20902, "Initiate"],
+        [21887, 21892, "whose"],
+        [22969, 22975, "thread"],
+        [24110, 24114, "when"],
+        [25210, 25214, "Code"],
+        [26322, 26326, "open"],
+        [27629, 27635, "region"]
+      ],
+      "suggestions": [
+        [5496, 5500, "span"],
+        [14650, 14656, "anchor"],
+        [24115, 24125, "addressing"]
+      ]
+    },
+    {
+      "name": "README",
+      "file": "src/test/fixtures/alignment/README.md",
+      "probes": [
+        [2, 10, "Markdown"],
+        [1280, 1286, "across"],
+        [1952, 1956, "plus"],
+        [3051, 3055, "PATH"],
+        [3824, 3828, "with"],
+        [4602, 4609, "suggest"],
+        [5482, 5486, "back"],
+        [6463, 6467, "from"],
+        [7339, 7345, "Claude"],
+        [8172, 8179, "buttons"],
+        [9034, 9041, "against"],
+        [9785, 9791, "Claude"],
+        [10581, 10585, "runs"],
+        [11365, 11372, "minutes"],
+        [12302, 12308, "Review"],
+        [13111, 13115, "tool"],
+        [13953, 13960, "Nothing"],
+        [14899, 14903, "Does"],
+        [15855, 15861, "thread"],
+        [16594, 16600, "Review"],
+        [17325, 17332, "scratch"],
+        [18229, 18233, "mode"],
+        [19252, 19256, "HTML"],
+        [20414, 20422, "Headless"]
+      ],
+      "suggestions": [
+        [3832, 3838, "Claude"],
+        [10590, 10597, "offered"],
+        [17333, 17341, "document"]
+      ]
+    },
+    {
+      "name": "10x-plan-6",
+      "file": "src/test/fixtures/alignment/10x-plan-6.md",
+      "probes": [
+        [11, 15, "what"],
+        [529, 539, "non-Claude"],
+        [885, 891, "commit"],
+        [1356, 1362, "change"],
+        [1788, 1797, "read-only"],
+        [2346, 2352, "Review"],
+        [2794, 2801, "changes"],
+        [3139, 3144, "Works"],
+        [4027, 4033, "Claude"],
+        [4564, 4569, "works"],
+        [5084, 5090, "behind"],
+        [5497, 5501, "mode"],
+        [5920, 5925, "human"],
+        [6443, 6451, "rendered"],
+        [6827, 6831, "diff"],
+        [7214, 7218, "live"],
+        [7644, 7648, "Open"],
+        [8071, 8078, "changes"],
+        [8595, 8603, "question"],
+        [9149, 9154, "isn't"],
+        [9765, 9770, "table"],
+        [10223, 10228, "never"],
+        [10789, 10795, "merged"]
+      ],
+      "suggestions": [
+        [1801, 1808, "default"],
+        [5508, 5515, "default"],
+        [9155, 9159, "read"]
+      ]
+    },
+    {
+      "name": "ux-review",
+      "file": "src/test/fixtures/alignment/ux-review-2026-09.md",
+      "probes": [
+        [17, 23, "review"],
+        [721, 727, "counts"],
+        [1365, 1371, "Review"],
+        [3683, 3688, "right"],
+        [4608, 4614, "thread"],
+        [5313, 5318, "setup"],
+        [5796, 5802, "become"],
+        [6513, 6521, "verified"],
+        [7279, 7286, "setting"],
+        [8037, 8044, "Changes"],
+        [8763, 8768, "Agent"],
+        [9393, 9401, "Comments"],
+        [9967, 9971, "Four"],
+        [11560, 11565, "three"],
+        [12476, 12484, "listener"],
+        [13469, 13473, "tree"],
+        [14234, 14239, "never"],
+        [15113, 15119, "Reopen"],
+        [16061, 16065, "with"],
+        [16849, 16854, "files"],
+        [17790, 17794, "Both"]
+      ],
+      "suggestions": [
+        [8771, 8776, "Other"],
+        [15122, 15127, "never"]
+      ]
+    }
+  ]
+}

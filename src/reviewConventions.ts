@@ -114,7 +114,7 @@ export function withConventions(prompt: string, raw: string | null): string {
 export const CONVENTIONS_TEMPLATE = `# Review conventions
 
 <!--
-Standing rules for Claude's review passes on this project. Plain prose — write
+Standing rules for the agent's review passes on this project. Plain prose — write
 what you'd tell a new reviewer on their first day. Everything outside HTML
 comments is sent with every review request, so keep it under 4 KB and delete
 what stops being true.

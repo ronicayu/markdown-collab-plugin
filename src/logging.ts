@@ -18,6 +18,7 @@ import * as vscode from "vscode";
 export type LogScope =
   | "activation"
   | "send"
+  | "headless"
   | "terminal"
   | "mcp"
   | "mcp-tool"

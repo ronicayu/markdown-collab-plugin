@@ -49,10 +49,10 @@ describe("inlineComments/sendToClaude - threadToComment", () => {
 });
 
 describe("inlineComments/sendToClaude - buildPrompt", () => {
-  it("invokes the vs-markdown-collab skill and lists each open thread", () => {
+  it("invokes the review skill by both names and lists each open thread", () => {
     const src = addThread("Hello world.", 6, 11, { author: "r", body: "fix?", ts: TS }).source;
     const prompt = _internal.buildPrompt("docs/foo.md", [parseFirst(src)]);
-    expect(prompt).toContain("vs-markdown-collab skill");
+    expect(prompt).toContain("Markdown Collab review skill (`markdown-collab:review`, or `vs-markdown-collab` on older installs)");
     expect(prompt).toContain("1 unresolved review comment on");
     expect(prompt).toContain("docs/foo.md");
     expect(prompt).toContain("world"); // the anchored quote

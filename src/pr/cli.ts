@@ -78,6 +78,16 @@ export function setCliLogger(log: Logger | null): void {
 }
 
 /**
+ * The logger installed via `setCliLogger`, for a warning that isn't tied to
+ * one CLI invocation's own exit code — e.g. a page of already-successful
+ * output that failed to parse. Null before activation installs one (or in a
+ * unit test that never calls `setCliLogger`); callers must tolerate that.
+ */
+export function getLogger(): Logger | null {
+  return cliLog;
+}
+
+/**
  * The runner every caller goes through: the active runner, wrapped so each
  * invocation is logged with its exit code and duration. Request bodies are
  * omitted (they carry comment text) and the output is truncated by the

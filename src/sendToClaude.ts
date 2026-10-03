@@ -5,34 +5,44 @@ import type { Comment } from "./types";
 import { parse as parseInline } from "./inlineComments/format";
 import { deltaScope } from "./inlineComments/deltaReview";
 import { buildDeltaPrompt } from "./inlineComments/deltaPrompt";
+import { workflowOpener, type SkillDelivery } from "./skillDelivery";
 
-export type SendMode =
-  | "terminal"
-  /** Terminal delivery, but Claude acts through the extension's MCP tools. */
-  | "mcp"
-  | "channel"
-  | "mcp-channel"
-  | "clipboard"
-  | "ask";
+// 10x-plan-4 P0.3: `mcp` folded into `terminal`, `channel` / `mcp-channel`
+// were deleted outright. P0.1 added `headless` — the extension runs Claude
+// itself — as one more entry in the picker builder
+// (`transports/sendModePicker.ts`), not a second list to keep in sync.
+export type SendMode = "headless" | "terminal" | "clipboard" | "ask";
 
 /**
- * The line appended to a prompt in `mcp` mode.
+ * The line appended to every terminal and clipboard delivery.
  *
- * The tools can't start a turn — only a delivered prompt does — so `mcp` mode
- * is terminal delivery plus this directive. What it buys is the write path:
- * every change lands as a `WorkspaceEdit` the human can undo, checked before it
- * applies, instead of a disk write the extension learns about afterwards.
+ * There used to be a separate `mcp` mode for this; folding it into `terminal`
+ * only works because the line is harmless when the tools aren't there — the
+ * skill's own CLI fallback covers that case, so the directive can go out
+ * unconditionally instead of being gated on a mode the human had to pick.
  */
 export function mcpToolsDirective(): string {
   return (
-    "Use the `markdown-collab` MCP tools for this pass — mc_list to read, mc_reply / mc_open / mc_rewrite / " +
-    "mc_suggest to act, mc_status to say what you're doing, and mc_check on each file when you're done. " +
-    "They write through the editor, so nothing races an unsaved buffer and the human can undo you."
+    "If the `markdown-collab` MCP tools are in your tool list, use them for this pass — mc_list to read, " +
+    "mc_reply / mc_open / mc_rewrite / mc_suggest to act, mc_edit for prose outside anchored spans, " +
+    "mc_status to say what you're doing, and mc_check on each file when you're done; if they aren't, " +
+    "use the `mdc` CLI as the skill describes."
   );
 }
 
 export interface ReviewPayload {
+  /** The prompt for a session with the skill installed (terminal, clipboard). */
   prompt: string;
+  /**
+   * The same prompt for a session whose skill rides along as the system
+   * prompt (a headless run) — identical except for its opener.
+   *
+   * Carried on the payload because the delivery is only known once the send
+   * mode is, and that is decided in `dispatchReviewPayload`, after the builder
+   * has already run; rebuilding there would need the document back. Optional
+   * so a hand-built payload still dispatches (it falls back to `prompt`).
+   */
+  inlineSkillPrompt?: string;
   /**
    * Workspace-relative path of the document under review. For a multi-file
    * review pass this is a human label ("3 files under docs/") and the paths
@@ -51,14 +61,20 @@ export interface ReviewPayload {
 
 /**
  * The terms of a Review Mode pass, shared by the single-file and multi-file
- * prompts: unbounded thread count (see the skill's "No upper bound" rule) and
- * no prose edits, because the human triages from the sidebar.
+ * prompts (10x-plan-6 P3): rank by severity, open threads for the five that
+ * matter most, summarize the rest, and no prose edits — the human triages
+ * from the sidebar. Multi-file passes cap and summarize per file, not once
+ * across the whole pass (`multiFileReview.ts`'s `CROSS_DOCUMENT_DIMENSION`
+ * covers the one thing that *is* pass-wide: consistency between the files).
  */
 export function reviewModeClosing(fileCount: number): string {
-  const subject = fileCount === 1 ? "the doc warrants" : "the docs warrant";
+  const perFile = fileCount === 1 ? "" : " in each file";
+  const summaryOwner = fileCount === 1 ? "one summary thread" : "that file's own summary thread";
   return (
-    "Open a review thread for every substantive concern. There is no upper bound — " +
-    `leave as many as ${subject}. Do not edit prose; the human triages from the sidebar.`
+    `Rank concerns by severity and open a thread for the five that matter most${perFile}. Put everything else in ` +
+    `${summaryOwner}, anchored to the document's title (or its first heading) — "Also noticed (N): …", one line ` +
+    "per item naming its passage, so the human can ask to open specific ones. A focus directive can raise or " +
+    'remove the cap ("give me ten", "everything"). Do not edit prose; the human triages from the sidebar.'
   );
 }
 
@@ -72,7 +88,7 @@ export function reviewModeClosing(fileCount: number): string {
 export function buildReviewRequestPayload(
   doc: vscode.TextDocument,
   focus: string | undefined,
-  opts: { delta?: boolean } = {},
+  opts: { delta?: boolean; skillDelivery?: SkillDelivery } = {},
 ):
   | { kind: "ok"; payload: ReviewPayload; fullPass: boolean }
   /** Delta pass on a file that hasn't moved since the last one. */
@@ -88,13 +104,18 @@ export function buildReviewRequestPayload(
     // document costs. The scope comes from the checkpoint the last pass left.
     const scope = deltaScope(parseInline(doc.getText()));
     if (scope.kind === "unchanged") return { kind: "unchanged" };
-    const prompt = buildDeltaPrompt(rel, scope, trimmedFocus);
+    const deltaFor = (delivery: SkillDelivery): string | null => {
+      const body = buildDeltaPrompt(rel, scope, trimmedFocus, delivery);
+      return body === null ? null : `${body}\n\n${reviewModeClosing(1)}`;
+    };
+    const prompt = deltaFor(opts.skillDelivery ?? "installed");
     if (prompt === null) return { kind: "unchanged" };
     return {
       kind: "ok",
       fullPass: scope.kind === "no-checkpoint",
       payload: {
-        prompt: `${prompt}\n\n${reviewModeClosing(1)}`,
+        prompt,
+        inlineSkillPrompt: deltaFor("inline") ?? prompt,
         file: rel,
         unresolvedCount: 0,
         comments: [],
@@ -102,16 +123,18 @@ export function buildReviewRequestPayload(
     };
   }
 
-  const promptLines: string[] = [
-    `Use the vs-markdown-collab skill in Review Mode on \`${rel}\`.`,
-  ];
-  if (trimmedFocus) promptLines.push(`Focus: ${trimmedFocus}`);
-  promptLines.push(reviewModeClosing(1));
+  const promptFor = (delivery: SkillDelivery): string => {
+    const promptLines: string[] = [`${workflowOpener(delivery)} in Review Mode on \`${rel}\`.`];
+    if (trimmedFocus) promptLines.push(`Focus: ${trimmedFocus}`);
+    promptLines.push(reviewModeClosing(1));
+    return promptLines.join("\n");
+  };
   return {
     kind: "ok",
     fullPass: true,
     payload: {
-      prompt: promptLines.join("\n"),
+      prompt: promptFor(opts.skillDelivery ?? "installed"),
+      inlineSkillPrompt: promptFor("inline"),
       file: rel,
       unresolvedCount: 0,
       comments: [],

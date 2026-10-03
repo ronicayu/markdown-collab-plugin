@@ -17,12 +17,43 @@
 
 import { hashAnchorText } from "./staleness";
 
+/**
+ * How an agent's write reached the file (10x-plan-6 P1.4): `"tools"` through
+ * the extension's MCP server — which includes every `mdc` write forwarded to
+ * it — and `"cli"` for `mdc` writing the file itself. A hand-edited comment has
+ * no such field, and that absence is the third answer, not a gap: it is how a
+ * reply from an agent following the file format alone shows up.
+ */
+export type WriteVia = "tools" | "cli";
+
+/** The `via` values this version understands; anything else reads as absent. */
+function isWriteVia(v: unknown): v is WriteVia {
+  return v === "tools" || v === "cli";
+}
+
 export interface InlineComment {
   /** Unique within the thread. Convention: c1, c2, ... */
   id: string;
   /** Set when this comment replies to another in the same thread. */
   parent?: string;
   author: string;
+  /**
+   * Set by the tools/CLI on every comment an agent writes (10x-plan-4 P1.2).
+   * Optional and additive, like `anchorHash`: a file written before this
+   * change has no such field on any comment, and `isAgentComment` falls back
+   * to recognizing the author string itself for those. New agent-authored
+   * comments always carry it, regardless of which agent's slug `author` is —
+   * that is what keeps a future, not-yet-known agent's comments recognizable
+   * without another format change.
+   */
+  agent?: boolean;
+  /**
+   * Which path wrote this comment (10x-plan-6 P1.4). Optional and additive,
+   * like `agent`: set only by the tools and the CLI, absent on everything a
+   * human or a hand-editing agent wrote. An unrecognized value is dropped at
+   * parse, so every reader sees one of the two values or nothing.
+   */
+  via?: WriteVia;
   /** ISO-8601 UTC timestamp. */
   ts: string;
   /** Markdown body. */
@@ -69,6 +100,10 @@ export interface InlineSuggestion {
   /** Optional link to a comment thread this suggestion discusses. */
   threadId?: string;
   author: string;
+  /** Same contract as `InlineComment.agent` (10x-plan-4 P1.2). */
+  agent?: boolean;
+  /** Same contract as `InlineComment.via` (10x-plan-6 P1.4). */
+  via?: WriteVia;
   /** ISO-8601 UTC timestamp. */
   ts: string;
   /** The current text, wrapped by this suggestion's anchor markers. */
@@ -301,16 +336,39 @@ function pairAnchors(markers: RawMarker[]): { anchors: Map<string, AnchorRange>;
 }
 
 function findThreadsRegion(source: string): { start: number; end: number; body: string } | null {
-  const begin = source.lastIndexOf(THREADS_BEGIN);
-  if (begin === -1) return null;
-  const end = source.indexOf(THREADS_END, begin + THREADS_BEGIN.length);
-  if (end === -1) return null;
-  const endAfter = end + THREADS_END.length;
-  return {
-    start: begin,
-    end: endAfter,
-    body: source.slice(begin + THREADS_BEGIN.length, end),
-  };
+  // The region this engine writes is always the file's tail, so the last
+  // begin marker followed by nothing but whitespace after its end marker is
+  // the real one — and that check is all the common case costs.
+  //
+  // Anything else has to prove it isn't code. A document that *describes* the
+  // format (a README, the walkthrough) carries a sample region in a fenced
+  // block; taking the last begin marker at face value made that sample the
+  // live region, so the first comment on such a file was written inside the
+  // fence and the sample's own thread came back unanchored. Markers in code
+  // are already inert for anchors (see `buildCodeMask`); the region now
+  // follows the same rule. The tail check comes first so an unterminated
+  // fence earlier in the file — which masks to end of file — can't hide a
+  // real region that sits after it.
+  let mask: Uint8Array | null = null;
+  let from = source.length;
+  for (;;) {
+    const begin = source.lastIndexOf(THREADS_BEGIN, from);
+    if (begin === -1) return null;
+    const end = source.indexOf(THREADS_END, begin + THREADS_BEGIN.length);
+    if (end !== -1) {
+      const endAfter = end + THREADS_END.length;
+      const region = {
+        start: begin,
+        end: endAfter,
+        body: source.slice(begin + THREADS_BEGIN.length, end),
+      };
+      if (source.slice(endAfter).trim() === "") return region;
+      mask ??= buildCodeMask(source);
+      if (!mask[begin]) return region;
+    }
+    if (begin === 0) return null;
+    from = begin - 1;
+  }
 }
 
 /**
@@ -342,7 +400,7 @@ function parseThreads(body: string, malformed?: MalformedThreadLine[]): InlineTh
         status: obj.status === "resolved" ? "resolved" : "open",
         resolvedBy: obj.resolvedBy,
         resolvedTs: obj.resolvedTs,
-        comments: Array.isArray(obj.comments) ? obj.comments.filter(isValidComment) : [],
+        comments: Array.isArray(obj.comments) ? obj.comments.filter(isValidComment).map(withKnownVia) : [],
         anchorHash: typeof obj.anchorHash === "string" ? obj.anchorHash : undefined,
       });
     } catch {
@@ -404,6 +462,13 @@ function parseSuggestions(body: string): InlineSuggestion[] {
         anchorId: obj.anchorId,
         threadId: typeof obj.threadId === "string" ? obj.threadId : undefined,
         author: typeof obj.author === "string" ? obj.author : "claude",
+        // Unlike a thread's `comments` array (kept as the raw parsed objects,
+        // so any field on them — including this one — already survives a
+        // round trip for free), a suggestion is rebuilt field by field here.
+        // Forgetting a field in this list means it was never truly optional —
+        // it was silently deleted the moment the file was next saved.
+        agent: typeof obj.agent === "boolean" ? obj.agent : undefined,
+        via: isWriteVia(obj.via) ? obj.via : undefined,
         ts: typeof obj.ts === "string" ? obj.ts : "",
         original: obj.original,
         proposed: obj.proposed,
@@ -426,6 +491,19 @@ function isValidComment(c: unknown): c is InlineComment {
     typeof o.ts === "string" &&
     typeof o.body === "string"
   );
+}
+
+/**
+ * The comment as parsed, minus a `via` this version doesn't recognize. Every
+ * other field stays the raw parsed object's (see `parseSuggestions`), so this
+ * copies only when there is something to drop — a comment without the field,
+ * which is every comment written before it existed, passes through untouched.
+ */
+function withKnownVia(c: InlineComment): InlineComment {
+  if (!("via" in c) || isWriteVia(c.via)) return c;
+  const rest = { ...c };
+  delete rest.via;
+  return rest;
 }
 
 /**
@@ -611,6 +689,8 @@ export function renderThreadsRegion(
     const obj: Record<string, unknown> = { anchorId: s.anchorId };
     if (s.threadId) obj.threadId = s.threadId;
     obj.author = s.author;
+    if (s.agent) obj.agent = true;
+    if (s.via) obj.via = s.via;
     obj.ts = s.ts;
     obj.original = s.original;
     obj.proposed = s.proposed;
@@ -728,7 +808,7 @@ export function addThread(
   source: string,
   selStart: number,
   selEnd: number,
-  comment: { author: string; body: string; ts?: string },
+  comment: { author: string; body: string; ts?: string; agent?: boolean; via?: WriteVia },
 ): { source: string; thread: InlineThread } {
   if (selEnd < selStart) throw new Error("selEnd must be >= selStart");
   // Keep the open marker out of a heading's `#` prefix so the line stays a heading.
@@ -747,7 +827,18 @@ export function addThread(
     id,
     quote,
     status: "open",
-    comments: [{ id: "c1", author: comment.author, ts, body: comment.body }],
+    comments: [
+      {
+        id: "c1",
+        author: comment.author,
+        ...(comment.agent ? { agent: true as const } : {}),
+        // Only when set, so a comment written without it serializes to exactly
+        // the bytes it always did.
+        ...(comment.via ? { via: comment.via } : {}),
+        ts,
+        body: comment.body,
+      },
+    ],
     // The author is looking at this text right now, so it is the baseline the
     // "text changed since this comment" badge compares against (P1.3).
     anchorHash: hashAnchorText(quote),
@@ -838,7 +929,7 @@ export function finalizeSource(source: string): string {
 /** Add a reply to an existing thread. Returns the new thread or null if not found. */
 export function appendReply(
   thread: InlineThread,
-  reply: { author: string; body: string; ts?: string; parent?: string },
+  reply: { author: string; body: string; ts?: string; parent?: string; agent?: boolean; via?: WriteVia },
 ): InlineThread {
   const ts = reply.ts ?? new Date().toISOString();
   const nextId = nextCommentId(thread);
@@ -849,6 +940,8 @@ export function appendReply(
       {
         id: nextId,
         author: reply.author,
+        ...(reply.agent ? { agent: true as const } : {}),
+        ...(reply.via ? { via: reply.via } : {}),
         ts,
         body: reply.body,
         parent: reply.parent,
@@ -877,7 +970,15 @@ export function addSuggestion(
   source: string,
   selStart: number,
   selEnd: number,
-  suggestion: { author: string; proposed: string; note?: string; threadId?: string; ts?: string },
+  suggestion: {
+    author: string;
+    proposed: string;
+    note?: string;
+    threadId?: string;
+    ts?: string;
+    agent?: boolean;
+    via?: WriteVia;
+  },
 ): { source: string; suggestion: InlineSuggestion } {
   if (selEnd < selStart) throw new Error("selEnd must be >= selStart");
   selStart = startPastHeadingPrefix(source, selStart, selEnd);
@@ -895,6 +996,8 @@ export function addSuggestion(
     anchorId,
     threadId: suggestion.threadId,
     author: suggestion.author,
+    agent: suggestion.agent,
+    via: suggestion.via,
     ts: suggestion.ts ?? new Date().toISOString(),
     original,
     proposed: suggestion.proposed,

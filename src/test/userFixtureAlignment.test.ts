@@ -12,7 +12,7 @@
 
 import { describe, expect, it } from "vitest";
 import { stripInlineMarkup } from "../collab/anchorExtractor";
-import { locateAnchorInRendered } from "../collab/anchorLocator";
+import { locateAnchorInRendered } from "./support/anchorLocator";
 
 const FIXTURE = `# TradeNet — End-to-End Flow Map
 

@@ -75,6 +75,12 @@ describe("isAnswered", () => {
     expect(isAnswered(snap1, thread("a1", ["ronica", "claude"]))).toBe(true);
   });
 
+  it("is true once ANY agent adds a comment, not just claude", () => {
+    // 10x-plan-4 P1.2: a Codex reply answers the wait exactly like Claude's
+    // would — the human isn't the one still owed an answer either way.
+    expect(isAnswered(snap1, thread("a1", ["ronica", "codex"]))).toBe(true);
+  });
+
   it("stays false when the HUMAN adds a comment while waiting", () => {
     // Counting alone would clear the indicator here, which is wrong: Claude
     // still owes a reply.
@@ -331,15 +337,21 @@ describe("ClaudePendingTracker — protocol evidence", () => {
     expect(tracker.pending(DOC, threads)).toEqual([]);
   });
 
-  it("an inferred wait is not extended by someone else's tool call", () => {
-    // Terminal-mode sends have no back channel; a tool call from an unrelated
-    // pass must not be read as evidence about them.
+  it("a tool call upgrades an inferred wait to protocol and extends it", () => {
+    // Every dispatch starts "inferred" since 10x-plan-4 P0.3 deleted the mode
+    // that used to mark "protocol" up front — a real tool call is now the
+    // only way a wait ever earns it, and it must earn it retroactively for
+    // whatever was already waiting on that document.
     const { tracker, advance } = makeTracker(1000);
     tracker.mark(DOC, threads, ["a1"], "inferred");
     advance(900);
     tracker.noteActivity(DOC);
     advance(200);
-    expect(tracker.pending(DOC, threads)).toEqual([]);
+    // Still pending: the tool call reset the silence clock, and only 200ms
+    // have passed since. Had it not upgraded/refreshed, 1100ms since the
+    // original dispatch would have already expired it.
+    expect(tracker.pending(DOC, threads)).toEqual(["a1"]);
+    expect(tracker.status(DOC, threads).evidence).toBe("protocol");
   });
 
   it("the closing check ends the wait with no reply-shaped change at all", () => {
@@ -347,6 +359,18 @@ describe("ClaudePendingTracker — protocol evidence", () => {
     // for a reply would leave the indicator up forever in that case.
     const { tracker, changes } = makeTracker();
     tracker.mark(DOC, threads, ["a1"], "protocol");
+    changes.length = 0;
+    tracker.noteComplete(DOC);
+    expect(tracker.pending(DOC, threads)).toEqual([]);
+    expect(changes).toEqual([DOC]);
+  });
+
+  it("the closing check also ends a wait that never left 'inferred'", () => {
+    // mc_check is itself a tool call, so it can be the very first signal a
+    // file gets — a pass that only verifies and never otherwise reports must
+    // still clear the indicator, not leave an "inferred" wait stuck forever.
+    const { tracker, changes } = makeTracker();
+    tracker.mark(DOC, threads, ["a1"], "inferred");
     changes.length = 0;
     tracker.noteComplete(DOC);
     expect(tracker.pending(DOC, threads)).toEqual([]);
@@ -382,20 +406,109 @@ describe("pendingLabel", () => {
   it("keeps the vague wording when the wait is inferred", () => {
     // It is a guess, and it should read like one.
     expect(pendingLabel({ evidence: "inferred", active: true, phase: "ignored" })).toBe(
-      "Claude is working…",
+      "Waiting for the agent…",
     );
   });
 
-  it("names the phase when Claude reported one", () => {
-    expect(pendingLabel({ evidence: "protocol", active: true, phase: "opening threads" })).toBe(
-      "Claude: opening threads",
+  it("an inferred wait names no agent, even if a slug somehow got attached", () => {
+    // The wording rule: an inferred wait is a guess that something read the
+    // prompt; nothing says who, so the label is generic whatever `agent` holds.
+    expect(pendingLabel({ evidence: "inferred", active: true, agent: "codex" })).toBe(
+      "Waiting for the agent…",
     );
+    expect(pendingLabel({ evidence: "inferred", active: false })).toBe("Waiting for the agent…");
+  });
+
+  it("names the phase when the agent reported one", () => {
+    expect(
+      pendingLabel({ evidence: "protocol", active: true, phase: "opening threads", agent: "claude" }),
+    ).toBe("Claude: opening threads");
   });
 
   it("claims work only once a tool call has actually arrived", () => {
-    expect(pendingLabel({ evidence: "protocol", active: false })).toBe("Sent to Claude…");
-    expect(pendingLabel({ evidence: "protocol", active: true })).toBe(
+    expect(pendingLabel({ evidence: "protocol", active: false, agent: "claude" })).toBe("Sent to Claude…");
+    expect(pendingLabel({ evidence: "protocol", active: true, agent: "claude" })).toBe(
       "Claude is working on this file…",
     );
+  });
+
+  it("protocol evidence with no agent recorded reads generic, not Claude", () => {
+    expect(pendingLabel({ evidence: "protocol", active: false })).toBe("Sent to the agent…");
+    expect(pendingLabel({ evidence: "protocol", active: true })).toBe(
+      "The agent is working on this file…",
+    );
+    expect(pendingLabel({ evidence: "protocol", active: true, phase: "reading" })).toBe("Agent: reading");
+  });
+
+  // 10x-plan-4 P1.2: protocol evidence names whichever agent actually earned
+  // it — a Codex-only wait says Codex throughout.
+  it("names Codex when the protocol evidence came from Codex", () => {
+    expect(pendingLabel({ evidence: "protocol", active: true, phase: "reading", agent: "codex" })).toBe(
+      "Codex: reading",
+    );
+    expect(pendingLabel({ evidence: "protocol", active: true, agent: "codex" })).toBe(
+      "Codex is working on this file…",
+    );
+    expect(pendingLabel({ evidence: "protocol", active: false, agent: "codex" })).toBe(
+      "Sent to Codex…",
+    );
+  });
+
+  it("reads as 'the agent' for the generic slug (an unknown/absent session)", () => {
+    // "agent" is the literal fallback slug `SessionRegistry.slugFor` returns
+    // for a session it never saw `initialize` on — distinct from a slug
+    // `agentSlugFromClientName` derived from an actual (if unrecognized)
+    // client name, which gets its own capitalized name instead.
+    expect(pendingLabel({ evidence: "protocol", active: true, agent: "agent" })).toBe(
+      "The agent is working on this file…",
+    );
+  });
+
+  it("title-cases an unrecognized-but-real client slug rather than genericizing it", () => {
+    expect(pendingLabel({ evidence: "protocol", active: true, agent: "my-weird-client" })).toBe(
+      "My-weird-client is working on this file…",
+    );
+  });
+});
+
+// 10x-plan-4 P1.2: the tracker learns which agent a protocol wait belongs to
+// from the tool calls themselves.
+describe("ClaudePendingTracker — agent attribution", () => {
+  function makeTracker() {
+    let now = T0;
+    const tracker = new ClaudePendingTracker(
+      () => undefined,
+      () => now,
+      1000,
+      () => 0 as unknown as ReturnType<typeof setTimeout>,
+      () => undefined,
+    );
+    return { tracker, advance: (ms: number) => (now += ms) };
+  }
+
+  const DOC = "/ws/docs/guide.md";
+  const threads = [thread("a1", ["ronica"])];
+
+  it("learns the agent from noteActivity and reports it in status()", () => {
+    const { tracker } = makeTracker();
+    tracker.mark(DOC, threads, ["a1"], "inferred");
+    tracker.noteActivity(DOC, { agent: "codex" });
+    expect(tracker.status(DOC, threads).agent).toBe("codex");
+  });
+
+  it("keeps the last-known agent when a later call carries none", () => {
+    const { tracker } = makeTracker();
+    tracker.mark(DOC, threads, ["a1"], "inferred");
+    tracker.noteActivity(DOC, { agent: "codex", phase: "step 1" });
+    tracker.noteActivity(DOC, { phase: "step 2" });
+    expect(tracker.status(DOC, threads)).toMatchObject({ agent: "codex", phase: "step 2" });
+  });
+
+  it("a fresh dispatch forgets the previous pass's agent, same as its phase", () => {
+    const { tracker } = makeTracker();
+    tracker.mark(DOC, threads, ["a1"], "protocol");
+    tracker.noteActivity(DOC, { agent: "codex" });
+    tracker.mark(DOC, threads, ["a1"], "protocol");
+    expect(tracker.status(DOC, threads).agent).toBeUndefined();
   });
 });

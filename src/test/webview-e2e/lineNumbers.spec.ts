@@ -130,9 +130,14 @@ test.describe("live editor", () => {
       .poll(() => page.evaluate(() => !!document.activeElement?.closest(".milkdown")))
       .toBe(true);
     await page.keyboard.type("x");
-    const edit = await awaitPosted(page, "edit");
-    const serialized = String(edit.text ?? "");
-    expect(serialized).toContain("# Title");
+    // Edit mode posts the blocks the keystroke changed, each serialized
+    // (docs/one-view-design.md, "Phase B"), not the whole document.
+    const edit = await awaitPosted(page, "edit-blocks");
+    // The gutter's widgets are decorations, not nodes: the host is told about
+    // exactly the document's two blocks.
+    expect(edit.baseTypes).toEqual(["heading", "paragraph"]);
+    const serialized = (edit.edits as Array<{ markdown: string }>).map((e) => e.markdown).join("\n\n");
+    expect(serialized).toContain("x");
     // A stray "5" or "7" on its own line would mean a decoration leaked in.
     expect(serialized).not.toMatch(/^\s*\d+\s*$/m);
   });

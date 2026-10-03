@@ -3,1026 +3,29 @@ import * as path from "path";
 import { createHash } from "node:crypto";
 
 export const SKILL_REL_PATH = ".claude/skills/vs-markdown-collab/SKILL.md";
-export const TAIL_SCRIPT_REL = ".claude/skills/vs-markdown-collab/mdc-tail.mjs";
-export const CHANNEL_SCRIPT_REL = ".claude/skills/vs-markdown-collab/mdc-channel.mjs";
 export const CLI_SCRIPT_REL = ".claude/skills/vs-markdown-collab/mdc.mjs";
 
-// Unlike the two hand-written helpers above, this one is generated: it is
-// src/skillCli/mdc.ts bundled with the real format engine. See
-// scripts/build-skill-cli.mjs.
+// Stale helpers from the deleted channel transports (10x-plan-4 P0.3) — no
+// longer installed, but `installClaudeSkill` still deletes them if it finds
+// them left over from an older install of this extension.
+const STALE_HELPER_RELS = [
+  ".claude/skills/vs-markdown-collab/mdc-tail.mjs",
+  ".claude/skills/vs-markdown-collab/mdc-channel.mjs",
+];
+
+// This one is generated: it is src/skillCli/mdc.ts bundled with the real
+// format engine. See scripts/build-skill-cli.mjs.
 export { CLI_SCRIPT_CONTENT } from "./skillCli/generated";
 import { CLI_SCRIPT_CONTENT } from "./skillCli/generated";
-
-export const TAIL_SCRIPT_CONTENT = `#!/usr/bin/env node
-// Markdown Collab event-log tailer for Claude Code's Monitor tool.
-//
-// Why a Node tailer instead of \`tail -f\`?
-//   When run as a background bash with stdout connected to a pipe (which is
-//   how Claude Code captures it), \`tail -f\` switches to block-buffered mode
-//   on most platforms — lines aren't visible to Monitor until ~4 KB
-//   accumulates. We avoid that by writing through fs.writeSync(1, ...) so
-//   every emitted line is flushed synchronously to fd 1; Node's regular
-//   process.stdout.write is itself buffered on POSIX pipes and would have
-//   the same problem.
-//
-// Acked-event suppression:
-//   After addressing a batch, Claude appends \`{"id":"<event-id>"}\` to a
-//   sibling \`.events.acked.jsonl\` (see SKILL.md → channel modes). The tailer
-//   reads that file on startup and watches it; any event whose id is already
-//   acked is silently skipped on emit. This makes \`--from-start\` safe to
-//   re-run without re-bothering Claude with already-addressed batches.
-//
-// Usage:
-//   node mdc-tail.mjs [--workspace <ws>] [--from-start]
-//
-// Default: streams ONLY new lines (history is skipped, matching \`tail -n 0\`).
-// Pass --from-start to replay all existing events first.
-
-import { readFileSync, statSync, watch, openSync, readSync, closeSync, existsSync, writeSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-
-// Synchronous, unbuffered write to stdout. process.stdout.write is async
-// when stdout is a pipe on POSIX, so lines could sit in the buffer until
-// the event loop ticks — bad for Monitor / TaskOutput which expects each
-// notification to arrive as soon as the underlying append happens.
-function emit(line) {
-  writeSync(1, line);
-}
-
-function fail(msg, code = 1) {
-  process.stderr.write(\`mdc-tail: \${msg}\\n\`);
-  process.exit(code);
-}
-
-function parseArgs(argv) {
-  const out = { workspace: null, fromStart: false };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--workspace") out.workspace = argv[++i];
-    else if (a === "--from-start") out.fromStart = true;
-  }
-  return out;
-}
-
-function findWorkspace(start) {
-  let cur = resolve(start);
-  while (true) {
-    if (existsSync(join(cur, ".markdown-collab"))) return cur;
-    const parent = dirname(cur);
-    if (parent === cur) return null;
-    cur = parent;
-  }
-}
-
-const args = parseArgs(process.argv.slice(2));
-const ws = args.workspace || process.env.MDC_WORKSPACE || findWorkspace(process.cwd());
-if (!ws) fail("could not locate a workspace with a .markdown-collab/ directory; pass --workspace <path>");
-
-const logPath = join(ws, ".markdown-collab", ".events.jsonl");
-const ackedPath = join(ws, ".markdown-collab", ".events.acked.jsonl");
-
-// Seek positions. When a file doesn't exist yet we start at 0 and wait for
-// fs.watch to surface its creation.
-let pos = 0;
-try {
-  const st = statSync(logPath);
-  pos = args.fromStart ? 0 : st.size;
-} catch {
-  pos = 0;
-}
-let ackedPos = 0;
-const ackedIds = new Set();
-
-let leftover = "";
-let ackedLeftover = "";
-
-function loadAcked() {
-  let st;
-  try {
-    st = statSync(ackedPath);
-  } catch {
-    return;
-  }
-  if (st.size < ackedPos) {
-    ackedPos = 0;
-    ackedLeftover = "";
-    ackedIds.clear();
-  }
-  if (st.size === ackedPos) return;
-  const fd = openSync(ackedPath, "r");
-  try {
-    const need = st.size - ackedPos;
-    const buf = Buffer.alloc(need);
-    let read = 0;
-    while (read < need) {
-      const n = readSync(fd, buf, read, need - read, ackedPos + read);
-      if (n === 0) break;
-      read += n;
-    }
-    ackedPos += read;
-    ackedLeftover += buf.subarray(0, read).toString("utf8");
-    let nl;
-    while ((nl = ackedLeftover.indexOf("\\n")) >= 0) {
-      const line = ackedLeftover.slice(0, nl);
-      ackedLeftover = ackedLeftover.slice(nl + 1);
-      if (line.length === 0) continue;
-      try {
-        const obj = JSON.parse(line);
-        if (obj && typeof obj.id === "string") ackedIds.add(obj.id);
-      } catch { /* skip malformed */ }
-    }
-  } finally {
-    closeSync(fd);
-  }
-}
-
-function drain() {
-  let st;
-  try {
-    st = statSync(logPath);
-  } catch {
-    return;
-  }
-  if (st.size < pos) {
-    // File was truncated or rotated. Restart at 0.
-    pos = 0;
-    leftover = "";
-  }
-  if (st.size === pos) return;
-  const fd = openSync(logPath, "r");
-  try {
-    const need = st.size - pos;
-    const buf = Buffer.alloc(need);
-    let read = 0;
-    while (read < need) {
-      const n = readSync(fd, buf, read, need - read, pos + read);
-      if (n === 0) break;
-      read += n;
-    }
-    pos += read;
-    leftover += buf.subarray(0, read).toString("utf8");
-    let nl;
-    while ((nl = leftover.indexOf("\\n")) >= 0) {
-      const line = leftover.slice(0, nl);
-      leftover = leftover.slice(nl + 1);
-      if (line.length === 0) continue;
-      // Suppress emission when this event is already acked. Parse defensively;
-      // a malformed line is forwarded as-is so debugging stays observable.
-      let id = null;
-      try {
-        const obj = JSON.parse(line);
-        if (obj && typeof obj.id === "string") id = obj.id;
-      } catch { /* fall through */ }
-      if (id && ackedIds.has(id)) continue;
-      emit(line + "\\n");
-    }
-  } finally {
-    closeSync(fd);
-  }
-}
-
-loadAcked();
-drain();
-
-// Watch both files. fs.watch may fire 'rename' on some platforms when a
-// file is replaced; in that case we re-arm by polling.
-function armWatch(target, onChange) {
-  let watcher = null;
-  function arm() {
-    try {
-      watcher = watch(target, { persistent: true }, () => onChange());
-      watcher.on("error", () => {
-        if (watcher) watcher.close();
-        setTimeout(arm, 250);
-      });
-    } catch {
-      setTimeout(arm, 250);
-    }
-  }
-  arm();
-}
-armWatch(logPath, drain);
-armWatch(ackedPath, () => {
-  loadAcked();
-  // After acks update, no need to re-emit anything from the main log —
-  // an ack arrives AFTER the corresponding event was emitted (if at all).
-});
-
-// Belt-and-suspenders polling — handles editors / FS layers that drop
-// inotify events. Cheap; runs every 500ms.
-setInterval(() => { loadAcked(); drain(); }, 500).unref?.();
-
-// Keep the process alive forever.
-process.stdin.resume();
-`;
-
-export const CHANNEL_SCRIPT_CONTENT = `#!/usr/bin/env node
-// Markdown Collab — Claude Code MCP channel server (research preview).
-//
-// Spawned by Claude Code over stdio when the user runs:
-//   claude --dangerously-load-development-channels server:markdown-collab
-// after registering this script in .mcp.json or ~/.claude.json:
-//   "markdown-collab": { "command": "node", "args": ["<this script>"] }
-//
-// What it does:
-// - Implements the minimum MCP handshake to declare the experimental
-//   "claude/channel" capability. (Hand-rolled JSON-RPC; no SDK dep.)
-// - Opens a localhost HTTP listener on a random port and writes the port
-//   plus a per-session bearer token to <workspace>/.markdown-collab/.channel.json.
-// - On POST /push, forwards the body to Claude as a notifications/claude/channel
-//   event so it arrives in Claude's next turn as a <channel source="markdown-collab" ...>
-//   tag.
-//
-// Reference: https://code.claude.com/docs/en/channels-reference
-
-import { createServer } from "node:http";
-import { writeFileSync, unlinkSync, mkdirSync, existsSync, writeSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { randomBytes } from "node:crypto";
-
-function findWorkspace(start) {
-  let cur = resolve(start);
-  while (true) {
-    if (existsSync(join(cur, ".markdown-collab"))) return cur;
-    const parent = dirname(cur);
-    if (parent === cur) return null;
-    cur = parent;
-  }
-}
-
-let workspace = process.env.MDC_WORKSPACE || null;
-for (let i = 0; i < process.argv.length; i++) {
-  if (process.argv[i] === "--workspace") workspace = process.argv[i + 1];
-}
-workspace = workspace || findWorkspace(process.cwd()) || process.cwd();
-
-// ---------------------------------------------------------------------------
-// JSON-RPC over stdio
-// ---------------------------------------------------------------------------
-
-let nextId = 1;
-let buffer = "";
-let initialized = false;
-
-function send(message) {
-  // writeSync to fd 1 — process.stdout.write is async on POSIX pipes and
-  // Claude Code is on the other end of this pipe expecting line-delimited
-  // JSON-RPC. Buffering would stall the handshake and notifications.
-  writeSync(1, JSON.stringify(message) + "\\n");
-}
-
-function sendNotification(method, params) {
-  send({ jsonrpc: "2.0", method, params });
-}
-
-function reply(id, result) {
-  send({ jsonrpc: "2.0", id, result });
-}
-
-function replyError(id, code, message) {
-  send({ jsonrpc: "2.0", id, error: { code, message } });
-}
-
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  buffer += chunk;
-  let nl;
-  while ((nl = buffer.indexOf("\\n")) >= 0) {
-    const line = buffer.slice(0, nl).trim();
-    buffer = buffer.slice(nl + 1);
-    if (!line) continue;
-    let msg;
-    try {
-      msg = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    handle(msg);
-  }
-});
-
-function handle(msg) {
-  if (msg.method === "initialize") {
-    reply(msg.id, {
-      protocolVersion: msg.params?.protocolVersion ?? "2024-11-05",
-      capabilities: {
-        experimental: { "claude/channel": {} },
-      },
-      serverInfo: { name: "markdown-collab", version: "0.13.0" },
-      instructions:
-        "Markdown Collab review batches arrive as <channel source=markdown-collab file=... count=N id=evt_...>. " +
-        "The body is JSON: { prompt, file, unresolvedCount, comments }. " +
-        "Address each unresolved comment per the vs-markdown-collab skill, then mark the event addressed " +
-        "by writing an ack line to <workspace>/.markdown-collab/.events.acked.jsonl using the event id from the tag.",
-    });
-    return;
-  }
-  if (msg.method === "initialized" || msg.method === "notifications/initialized") {
-    initialized = true;
-    return;
-  }
-  if (msg.method === "shutdown") {
-    reply(msg.id, {});
-    cleanup();
-    process.exit(0);
-  }
-  // Unknown methods: respond with method-not-found if it's a request.
-  if (typeof msg.id !== "undefined") {
-    replyError(msg.id, -32601, "method not found: " + msg.method);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Localhost HTTP receiver — extension POSTs button-click payloads here
-// ---------------------------------------------------------------------------
-
-const token = randomBytes(32).toString("hex");
-const channelDir = join(workspace, ".markdown-collab");
-const channelFile = join(channelDir, ".channel.json");
-
-const server = createServer((req, res) => {
-  const remote = req.socket.remoteAddress ?? "";
-  if (remote !== "127.0.0.1" && remote !== "::1" && remote !== "::ffff:127.0.0.1") {
-    res.statusCode = 403; res.end(); return;
-  }
-  if (req.headers.authorization !== \`Bearer \${token}\`) {
-    res.statusCode = 401; res.end(); return;
-  }
-  if (req.method !== "POST" || req.url !== "/push") {
-    res.statusCode = 404; res.end(); return;
-  }
-  const chunks = [];
-  let total = 0;
-  req.on("data", (c) => {
-    total += c.length;
-    if (total > 256 * 1024) { res.statusCode = 413; res.end(); req.destroy(); return; }
-    chunks.push(c);
-  });
-  req.on("end", () => {
-    if (res.writableEnded) return;
-    let payload;
-    try { payload = JSON.parse(Buffer.concat(chunks).toString("utf8")); }
-    catch { res.statusCode = 400; res.end("bad json"); return; }
-    if (!initialized) { res.statusCode = 503; res.end("not initialized"); return; }
-    sendNotification("notifications/claude/channel", {
-      content: JSON.stringify(payload, null, 2),
-      meta: {
-        file: String(payload.file ?? ""),
-        count: String(payload.unresolvedCount ?? 0),
-        id: String(payload.id ?? ""),
-      },
-    });
-    res.statusCode = 200; res.end("ok");
-  });
-});
-
-server.listen(0, "127.0.0.1", () => {
-  const port = server.address().port;
-  mkdirSync(channelDir, { recursive: true });
-  writeFileSync(
-    channelFile,
-    JSON.stringify({ port, token, pid: process.pid }, null, 2),
-    { mode: 0o600 },
-  );
-});
-
-// ---------------------------------------------------------------------------
-// Cleanup
-// ---------------------------------------------------------------------------
-
-function cleanup() {
-  try { unlinkSync(channelFile); } catch {}
-  try { server.close(); } catch {}
-}
-process.on("SIGINT", () => { cleanup(); process.exit(0); });
-process.on("SIGTERM", () => { cleanup(); process.exit(0); });
-process.on("exit", cleanup);
-`;
-
-export const SKILL_CONTENT = `---
-name: vs-markdown-collab
-description: Agentic workflow for addressing review comments on Markdown (.md) files in a Markdown Collab workspace, AND for reviewing Markdown docs by leaving review comments for the human. Comments are stored INLINE in the .md file itself (look for \`<!--mc:threads:begin-->\`). TRIGGER when the user asks to address, resolve, respond to, incorporate, or act on review comments, notes, suggestions, or feedback on any Markdown document — trigger phrases include "address the comments on foo.md", "apply the review feedback", "respond to the notes in README", "incorporate the suggestions", "fix the markdown collab comments", "work through the review on docs/spec.md". ALSO TRIGGER on review-mode requests where the user asks YOU to play reviewer — "review this doc", "leave your thoughts on README", "do a review pass on docs/spec.md", "second pair of eyes on this", "what would you flag in this file", "review the markdown collab doc on X".
----
-
-# Markdown Collab — agentic review-address skill
-
-You are addressing human review comments left on Markdown files via the Markdown Collab VS Code extension. The user runs the IDE; you do the writing.
-
-## Storage format
-
-Comments are stored INLINE in the \`.md\` file itself — there is no sidecar.
-
-- Anchored spans are wrapped in paired HTML comments:
-  \`<!--mc:a:ID-->anchored text<!--mc:/a:ID-->\` (ID = 1–12 char base36).
-- A single block at the end of the file holds one \`<!--mc:t {JSON}-->\` line per thread, fenced by \`<!--mc:threads:begin-->\` and \`<!--mc:threads:end-->\`.
-- Each thread JSON:
-  \`{"id":"<ID>","quote":"<original anchor text>","status":"open"|"resolved","comments":[Comment, …]}\`.
-- Each \`Comment\`:
-  \`{"id":"c<N>","parent"?:"c<N>","author":"<name>","ts":"<ISO-8601 UTC>","body":"<markdown>","editedTs"?:"<ISO-8601 UTC>","deleted"?:true}\`.
-
-**Detection:** the \`.md\` file contains the literal string \`<!--mc:threads:begin-->\`. A file without that block simply has no comments yet.
-
-If a named file has no threads region:
-- If the user is asking you to **address** comments, there are none — tell the user and stop.
-- If the user is asking you to **initiate** a thread (opt-in, see Phase 5), create the inline threads region.
-
-## How to change a document — the two safe paths
-
-Marker surgery by hand is the single most common way this workflow breaks: one
-dropped \`-->\` silently orphans a reviewer's comment. So you never hand-edit a
-marker or a thread line. Every change goes through one of two front ends over
-the *same* engine the editor itself uses. They accept and refuse exactly the
-same things; pick whichever is available:
-
-1. **The \`markdown-collab\` MCP tools** — first choice when they're in your tool
-   list. They run inside the extension, so your edits go through the editor:
-   ordered against the human's unsaved buffer instead of racing it, undoable
-   with Cmd+Z, and validated before they land.
-2. **The \`mdc\` CLI** — same verbs, run as a command. Use it when the tools
-   aren't there: a Claude session outside that VS Code window, MCP disabled by
-   policy, or the server not running.
-
-Hand-editing markers with the Edit tool is a distant third and only when
-neither exists — see *Appendix: hand-editing markers* at the end of this file.
-
-### Path 1 — the MCP tools
-
-| Tool | What it does |
-| --- | --- |
-| \`mc_list(file, actionable?)\` | Threads and pending suggestions as JSON, including each thread's live anchored text. \`actionable: true\` keeps only open threads whose last comment is not yours. |
-| \`mc_reply(file, threadId, body)\` | Appends a reply authored by \`claude\` with the correct \`c<N>\` id and timestamp. |
-| \`mc_rewrite(file, threadId, with)\` | Replaces the text between a thread's markers and updates its \`quote\`. Both markers are preserved by construction. |
-| \`mc_open(file, quote, body, occurrence?)\` | Opens a new thread on a passage: mints a unique id, wraps the passage, appends the thread line. |
-| \`mc_resolve(file, threadId)\` | Marks a thread resolved. Only when the human asks. |
-| \`mc_suggest(file, quote, with, note?, occurrence?)\` | Proposes an edit without applying it (suggest mode). |
-| \`mc_accept(file, anchorId)\` / \`mc_reject(file, anchorId)\` | Apply / drop a pending suggestion. Normally the human's call in the UI. |
-| \`mc_check(file)\` | Integrity report. **Run this last on every file you touched** — see below. |
-| \`mc_status(note, file?)\` | Say what you're doing right now ("reading 2 of 3 files", "opening threads on §Setup"). |
-
-Two of these do more than they look like they do:
-
-- **\`mc_check\` ends the pass.** The extension shows the human a "Claude is
-  working…" row on every thread it sent you, and your closing \`mc_check\` on a
-  file is what clears it. Skip the check and they are left watching a spinner
-  after you've finished. Run it once per file you touched, at the end.
-- **\`mc_status\` is free and worth it.** A review pass over three files is
-  minutes of silence otherwise. One short present-tense phrase per phase
-  ("reading 2 of 3 files", "opening threads") shows up next to the indicator
-  and in the status bar.
-
-Ordinary prose edits — text that isn't inside an anchored span — still use the
-Edit tool as normal. The tools are for *marker-level* changes.
-
-### Path 2 — the \`mdc\` CLI
-
-\`\`\`
-node ~/.claude/skills/vs-markdown-collab/mdc.mjs <command> <file> [args]
-\`\`\`
-
-| Command | What it does |
-| --- | --- |
-| \`list <file> [--actionable]\` | Threads as JSON, including each thread's live anchored text. \`--actionable\` keeps only open threads whose last comment is not yours. |
-| \`reply <file> <threadId> --body TEXT\` | Appends a reply authored by \`claude\` with the correct \`c<N>\` id and timestamp. |
-| \`rewrite <file> <threadId> --with TEXT\` | Replaces the text between a thread's markers and updates its \`quote\`. Both markers are preserved by construction. |
-| \`open <file> --quote TEXT --body TEXT [--occurrence N]\` | Opens a new thread on a passage: mints a unique id, wraps the passage, appends the thread line. |
-| \`resolve <file> <threadId>\` | Marks a thread resolved. Only when the human asks. |
-| \`suggest <file> --quote TEXT --with TEXT [--note TEXT] [--occurrence N]\` | Proposes an edit without applying it (suggest mode). Keeps the original in the prose, records the proposal for the human to accept/reject. |
-| \`accept <file> <anchorId>\` / \`reject <file> <anchorId>\` | Apply / drop a pending suggestion. Normally the human does this in the UI. |
-| \`check <file> [--repair]\` | Integrity report as JSON. \`--repair\` fixes what can be fixed without guessing. |
-
-Every command prints JSON to stdout. Exit codes: \`0\` ok, \`1\` usage error,
-\`2\` integrity violation. Mutating commands validate the document before
-writing and refuse if the change would introduce a new integrity problem, so
-a failed command leaves the file untouched rather than half-edited.
-
-**Both paths refuse rather than guess.** If a passage appears three times, pass
-the occurrence; if it is inside a code span, choose a different anchor. Never
-work around a refusal by hand-editing the file — the refusal is telling you
-that edit was unsafe, and the hand-edit would perform it anyway.
-
-**If neither path is available** (older install, no \`node\` on PATH, no tools),
-follow the appendix, and run a check as soon as either is back.
-
-## Workflow
-
-### Phase 1 — Discover
-
-One call lists the threads still waiting on you — open, and last spoken to by
-someone other than you:
-
-\`\`\`
-mc_list(file, actionable: true)
-CLI: node ~/.claude/skills/vs-markdown-collab/mdc.mjs list <file> --actionable
-\`\`\`
-
-It returns each actionable thread with its \`id\`, \`quote\`, \`comments\`, and
-\`anchoredText\` — the live text currently between that thread's markers, which
-is the passage the reviewer is talking about. A thread with \`"anchored": false\`
-has lost its markers; treat its \`quote\` as the locator and see Phase 7.
-
-Read the file itself too — you are about to edit its prose, and the threads are
-only the part of the document someone commented on.
-
-### Phase 2 — Plan
-
-Group by file. Within a file, order edits by anchor position (earlier first). For each thread, write down: the reviewer's intent, the concrete edit, and whether the anchored passage will be rewritten in place (marker pair must move with it) or removed (markers go away, thread orphans).
-
-### Phase 3 — Edit & reply
-
-For each thread, in order:
-
-1. **Make the prose change.**
-
-   - **Rewriting the anchored passage itself** — replace the text *between* the
-     markers, so neither marker can be dropped, duplicated, or split. The
-     thread's \`quote\` (the fallback locator) is updated in the same operation:
-
-     \`\`\`
-     mc_rewrite(file, threadId, with: "the new wording")
-     CLI: node ~/.claude/skills/vs-markdown-collab/mdc.mjs rewrite <file> <threadId> --with "the new wording"
-     \`\`\`
-
-   - **Editing prose that does not touch the anchored span** — use the Edit
-     tool normally. The markers stay exactly where they are.
-
-   - **Removing the anchored passage** — delete the open marker, the passage,
-     and the close marker together with the Edit tool. The thread will orphan
-     and surface in the UI as "broken anchor". That is the correct outcome —
-     do NOT re-anchor to nearby unrelated text.
-
-2. **Append a reply to the thread:**
-
-   \`\`\`
-   mc_reply(file, threadId, body: "what you changed and where")
-   CLI: node ~/.claude/skills/vs-markdown-collab/mdc.mjs reply <file> <threadId> --body "…"
-   \`\`\`
-
-   This assigns the next sequential \`c<N>\` id, sets \`author\` to \`"claude"\` and
-   \`ts\` to the current UTC timestamp, appends to the end of the thread, and
-   leaves \`status\` and every existing comment untouched.
-
-   Write a body that is one or two sentences quoting the new wording, naming
-   the section, or naming the file/function you changed. Be specific. Don't
-   say "done".
-
-3. **For threads you cannot fully address** (ambiguous request, missing info,
-   conflicting with another thread), still reply explaining what you tried and
-   what you need. Do not pretend it's done.
-
-### Phase 4 — Deletion (opt-in)
-
-You only delete or tombstone a thread when the human's body or trailing reply unambiguously asks for it ("delete this comment", "remove this thread", "drop this", "this comment is no longer relevant"):
-
-- Remove the matching \`<!--mc:t {…}-->\` line outright AND remove the matching anchor marker pair from the prose. Both edits in one pass.
-- Never delete to "clean up". Never delete just because you addressed a comment — the human resolves.
-
-### Phase 5 — Initiate a new thread (opt-in)
-
-You only **create** a new review thread when the human explicitly asks you to — "leave a comment on X", "add a review note about Y", "flag this section for follow-up", "drop a TODO comment here". Never initiate threads spontaneously while addressing existing ones, while doing maintenance edits, or to leave yourself a reminder.
-
-Use it when:
-- the target \`.md\` already contains \`<!--mc:threads:begin-->\`, OR
-- the target \`.md\` has no threads region yet (a fresh file) — create one.
-
-When asked to add a thread:
-
-1. **Pick the passage to anchor.** A verbatim substring of the current text, and
-   a meaningful span — a word at minimum, a sentence usually. Anchors inside code,
-   frontmatter, or the threads region are refused for you, so you don't have to
-   check for them; what you do have to judge is whether the span is the *right*
-   one, and whether wrapping it would split something markdown cares about (a
-   link target, an image alt, a table cell delimiter).
-
-2. **Open the thread.** This mints a unique id, wraps the passage in paired
-   markers, and appends a well-formed thread line — creating the threads region
-   if the file has none yet:
-
-   \`\`\`
-   mc_open(file, quote: "the exact passage", body: "your note")
-   CLI: node ~/.claude/skills/vs-markdown-collab/mdc.mjs open <file> --quote "…" --body "…"
-   \`\`\`
-
-   If the passage appears more than once you are told how many times; re-run
-   with \`occurrence\` to pick the one you mean. If the passage is inside a code
-   span, a fenced block, the frontmatter, or the threads region, it is refused —
-   pick a different anchor.
-
-3. **Verify** with \`mc_check\` (see Phase 7).
-
-If you need to add **multiple** threads in one turn, do them one at a time, re-reading after each to make sure earlier marker offsets weren't invalidated by intervening prose edits.
-
-### Phase 6 — Invariants (inline mode)
-
-These are judgement calls the tools can't make for you. You MUST NOT:
-
-- Change any thread's \`status\`. Only the human resolves.
-- Edit any comment other than to APPEND a new one. The record is history.
-- Re-anchor an orphaned thread to nearby unrelated text. Let it orphan.
-- Move anchor markers unless you also moved the passage they wrap.
-- Initiate a new thread (Phase 5) unless the human explicitly asked. The Review
-  Mode trigger ("review this doc", "leave your thoughts on X", "do a review
-  pass") counts as an explicit ask and unlocks thread initiation — see below.
-- Edit prose in Review Mode. There you OPEN threads, you do not modify the doc
-  text. Even obvious typos go in a thread unless the human said "fix as you go".
-
-The mechanical invariants — comment ids following the \`c<N>\` sequence, thread
-ids and quotes staying put, the threads region keeping its formatting — are
-enforced by the tools and the CLI. They are only yours to maintain when you are
-hand-editing (see the appendix).
-
-### Review Mode (inline) — Claude as the reviewer
-
-When the human's request matches **Review Mode** trigger phrases — "review this doc", "leave your thoughts on X", "do a review pass on Y", "second pair of eyes on README", "what would you flag in this file", or the Markdown Collab extension's "Ask Claude to Review This Doc" / "Ask Claude to Review These Docs" commands — you switch from addressing existing comments to **initiating** new review threads. The human will triage them in the sidebar. When the prompt names more than one file, read the *Multi-file review passes* section below before starting.
-
-The mechanics are the same as Phase 5: pick a passage, allocate an id, insert paired markers, append a \`<!--mc:t {…}-->\` line with a single \`c1\` comment authored by \`"claude"\`, verify. Read Phase 5 first if you have not — it carries the invariants you must respect when wrapping passages.
-
-#### Focus directive
-
-The prompt may include a \`Focus:\` line — a free-form instruction from the human (e.g. *"check API examples for correctness," "find marketing-y tone," "look for contradictions with the architecture doc"*). When a focus directive is present:
-
-- It is the **primary filter** for what counts as a concern worth a thread. Only flag things that match the focus.
-- A general-quality issue that doesn't match the focus does **not** warrant a thread unless it's a hard error (e.g. broken example, factually wrong claim).
-- If no concerns match the focus after a careful read, reply (via the send channel, not via a thread) saying so. **Do not fabricate threads to feel productive.**
-
-Without a focus directive, do a general review against the rubric below.
-
-#### Standing conventions
-
-A payload may carry a **Conventions:** block — the project's standing rules, from
-\`.markdown-collab/conventions.md\`. Terminology, tone, house style, and the
-"we know, don't flag it" exceptions.
-
-- They apply to **every** pass, where a \`Focus:\` line applies to one. Focus says
-  what to look for this time; conventions say how this project wants things said.
-- Where they pull in different directions, focus wins on **scope** (what warrants
-  a thread) and conventions still hold on **wording** (how you phrase it, and
-  which house rules count as violations).
-- A convention violation is a legitimate thread even without a matching focus —
-  that is what makes it standing.
-- Anything the block lists as known and accepted is **not** a finding. Flagging
-  it is exactly the re-litigation the file exists to stop.
-- If the human dismisses a thread by stating a rule ("we always write it this
-  way"), **suggest** they add it to the conventions file. Do not write to that
-  file yourself — it is theirs.
-
-#### What warrants a thread
-
-- Factual error or claim that's wrong.
-- Unclear claim that a reader could plausibly misinterpret.
-- Missing context the reader will need (e.g. an undefined term used in passing).
-- Broken example: code that won't run, a command with a wrong flag, a link to a nonexistent file.
-- Contradiction between this doc and another section / file the human has scoped in.
-- Structural issue: section out of order, heading hierarchy broken, key info buried.
-- Anything matching the focus directive when one was given.
-
-#### What does NOT warrant a thread by default
-
-- Pure typos (commas, articles, capitalization). Skip unless the focus is "copy-edit".
-- Style preferences (Oxford comma, sentence length, voice). Skip unless the focus is "tone" / "style".
-- Generic "could be clearer" / "this section feels long" without naming the specific problem. If you can't name it, you can't anchor it.
-- Restating the anchored text. The body must add something the human doesn't already see.
-
-#### Anchor sizing in Review Mode
-
-- The anchor should be the **smallest passage that makes the comment make sense**. Prefer one sentence over a paragraph. Prefer one phrase over a sentence when the issue is local.
-- Avoid wrapping a whole section. If the issue is structural ("this section is in the wrong place"), anchor the section heading line, not the body.
-- Anchors must still satisfy Phase 5 constraints: a meaningful span, outside code spans, marker-safe location.
-
-#### Thread body — specificity rule
-
-Every \`c1\` body must name the concern concretely.
-
-- **Good:** *"The claim that \`X\` implies \`Y\` skips intermediate step \`Z\`. Either justify the jump or add the step."*
-- **Good:** *"Example uses \`--all\` but the CLI flag is \`--include-deleted\` per \`cli.ts\` line 142. Update the flag or update the CLI."*
-- **Bad:** *"This could be clearer."*
-- **Bad:** *"The whole section needs work."*
-- **Bad:** *Restating the anchored text with no analysis.*
-
-The body should fit in 1–3 sentences. If you need more, split into separate threads on different anchors.
-
-#### Worked examples — good vs bad
-
-These calibrate the rubric. Mirror the *shape* of the good examples; avoid the failure modes in the bad ones.
-
-**Good — concrete factual correction.** Doc says: *"The CLI accepts \`--all\` to include resolved comments."* Code says the flag is \`--include-resolved\`. Anchor the literal \`--all\` token only (smallest meaningful span). Body: *"CLI flag is \`--include-resolved\` per \`cli.ts:142\`, not \`--all\`. Either rename the doc or update the CLI."*
-
-**Good — unclear claim with a named ambiguity.** Doc says: *"The skill triggers on review-mode phrases."* Anchor the sentence. Body: *"\\'Review-mode phrases\\' isn't defined here — the rubric for what counts as one is in Phase 5+. Either inline a one-line definition or link to the Review Mode section."*
-
-**Good — contradiction across sections.** Doc's \`Quick start\` says \`Send to Claude\` is in the right-click menu; doc's \`Commands\` table says it's palette-only. Anchor the quick-start claim (because it's the one that's likely wrong). Body: *"Conflicts with the Commands table, which marks this palette-only as of v0.28. Update one or the other to match reality."*
-
-**Good — structural issue, anchored at a heading.** Doc has a \`## Settings\` heading before \`## Storage layout\`, but Storage explains terms used in Settings. Anchor the \`## Settings\` heading. Body: *"Settings references the \`<!--mc:threads:begin-->\` marker introduced in Storage layout below. Move Storage layout above Settings, or forward-link explicitly."*
-
-**Bad — vague.** *"This could be clearer."* No anchored specifics, no named problem, nothing the human can act on without re-deriving the concern. Either name the specific issue or skip.
-
-**Bad — anchor too wide.** Anchoring an entire 8-paragraph section because *"the whole section needs work."* The human can't tell which sentence drove the comment. Pick the single sentence (or heading) that crystallizes the issue.
-
-**Bad — restating the anchor.** Anchored: *"Channels need MCP."* Body: *"This sentence is about channels needing MCP."* Adds nothing the reader doesn't see. Either explain *why* the claim is problematic (it's incomplete? wrong? unclear in this context?) or skip.
-
-**Bad — opinion presented as fact.** *"This intro is too marketing-y."* — only valid if the focus directive explicitly asks for tone. Without that, style preferences aren't a substantive concern.
-
-**Bad — fix dressed as a comment.** Body: *"I changed this to X."* You don't edit prose in Review Mode. Open a thread proposing the change in the body; let the human accept it.
-
-#### No upper bound on thread count
-
-There is **no maximum number of threads** per review pass. Leave a thread for every substantive concern that fits the focus directive (or the general rubric, if no focus was given). If you find 30 issues, leave 30 threads. The human triages with the sidebar UI; your job is signal, not curation.
-
-Do not "leave the top N" — dropping findings to hit a count target risks suppressing the one that matters most.
-
-#### Honest empty result
-
-If you read the doc carefully and find no concerns that match the focus (or no general-rubric concerns if no focus was given), say so explicitly via the send channel. Do **not** open a thread to comment "looks good" — threads are for actionable concerns. A short reply of *"Reviewed \`<path>\` against focus \`<focus>\`. No concerns found."* is the correct outcome.
-
-#### Delta passes — "review changes since last pass"
-
-A prompt may ask you to review **only what changed since your last pass**. It
-names the changed sections, includes their current text, and lists the threads
-that already exist. When you get one:
-
-- **Do not review unchanged prose.** It was reviewed already, and re-raising it
-  is noise in the human's triage queue.
-- **Cross-reference by id instead of duplicating.** If a concern is already
-  covered by a listed thread, reply to that thread rather than opening a second
-  one about the same passage.
-- **A resolved thread is settled.** Don't raise it again unless the new text
-  genuinely reintroduces the problem — and if it does, say which thread it was
-  ("this brings back the issue from a1b2c").
-- **Threads flagged "text changed" first.** Their comment was written about a
-  passage that has since been edited, so the concern may already be handled or
-  may have moved. Re-read those before opening anything new.
-- **Text outside the changed sections is fair game only when the change made it
-  wrong** — a renamed heading that other sections still link to, a claim the
-  edit now contradicts. Say why in the body so the human can see the connection.
-
-Finish with \`mc_check\` as always: it records the state you reviewed, which is
-what makes the *next* delta pass possible.
-
-#### Multi-file review passes
-
-A Review Mode prompt may name **several files** instead of one — the extension's "Ask Claude to Review These Docs" command builds one pass over a folder or a multi-select. The prompt lists the files; treat that list as the work order.
-
-1. **Read every listed file end to end before opening any thread.** You cannot judge consistency across files you haven't read, and a thread opened in file 1 may be answered by file 3.
-2. **Then open threads file by file, in the order listed**, document order within each file. Same Phase 5 mechanics per file; ids only need to be unique within their own file.
-3. **Cross-document consistency is part of the pass**, not an optional extra — reviewing each file in isolation is what the single-file command already does. Look for:
-   - terminology drift (the same concept under two names across files, or one name used for two concepts),
-   - a claim in one file contradicted by another,
-   - guidance duplicated in two files that has since diverged,
-   - cross-references between the files that no longer resolve (renamed heading, moved section, stale relative path).
-4. **Anchor a cross-document thread in the file that is wrong.** When neither is clearly wrong, anchor in the more prominent one (the entry-point doc, the one a reader hits first). Name the other file and quote its conflicting text in the body — the human is reading the thread without the other file open.
-   *Good:* *"\`docs/api.md\` calls this the \\"channel token\\"; here it's the \\"session key\\". Same value, two names — pick one and update the other file."*
-5. **The focus directive and the no-upper-bound rule apply per pass, not per file.** Don't ration threads across files to keep any one file's count down.
-6. **Verify each file** with \`mc_check\` before moving to the next — it is both the correctness check and the signal that ends the human's wait on that file. A broken marker in file 1 is much cheaper to fix before you've edited files 2 and 3.
-7. **Report per file** — how many threads you opened in each, plus the cross-document findings called out separately, so the human knows what the sidebar's per-file counts mean.
-
-#### Workflow — Review Mode pass
-
-1. **Read the doc end to end** before opening any threads. Cross-referencing the focus directive against the whole doc avoids redundant or contradictory threads.
-2. **List concerns mentally** with anchor candidate, severity (in your head — do not encode it in JSON), and one-sentence body. Discard anything that fails the specificity rule.
-3. **Initiate threads one at a time**, in document order (earlier anchors first), with \`mc_open\` (or \`mdc open\`). The anchor must be a verbatim passage, a meaningful span, outside code fences; everything else — the id, the markers, the thread line, the \`c1\` comment authored as \`claude\` — is handled for you.
-4. **Say what you're doing** with \`mc_status\` when the pass runs long ("reading 3 files", "opening threads on §Setup"). The human sees silence otherwise.
-5. **Do not edit prose.** Even if the fix is obvious. Open a thread; the human decides.
-6. **Verify** with \`mc_check\`, which also tells the extension the pass is over.
-
-### Phase 7 — Verify, and end the pass
-
-Finish every file you touched with the integrity check:
-
-\`\`\`
-mc_check(file)
-CLI: node ~/.claude/skills/vs-markdown-collab/mdc.mjs check <file>
-\`\`\`
-
-\`"ok": true\` means every marker is paired, every thread is anchored, and every
-thread line is valid JSON. Otherwise you get the list: unpaired markers,
-orphaned anchors, unanchored threads, malformed thread JSON, duplicate ids —
-each saying whether it is \`repairable\`. (The CLI also exits \`2\`.)
-
-This call does double duty. It is your correctness check, **and** it is how the
-extension learns your pass on that file is over: it clears the "Claude is
-working…" row the human is watching. One check per file you touched, at the end.
-Not checking leaves them waiting on a spinner for work you already finished.
-
-If the check reports damage you introduced, fix it. The CLI's \`check --repair\`
-will strip stray markers and re-anchor threads whose quote still matches exactly
-one place in the prose; it never alters prose and never guesses at an ambiguous
-quote. Damage it cannot repair is yours to fix by hand.
-
-One case is not damage: **a thread whose passage you deliberately removed is
-expected to be unanchored.** Deletions become orphans by design — report it,
-don't "fix" it by re-anchoring to unrelated text.
-
-Then confirm, from \`mc_list\`, that each addressed thread ends with a comment
-authored by you and is still \`"status":"open"\`.
-
-## Suggest Mode — propose edits instead of applying them
-
-When the human asks you to **suggest** or **propose** changes rather than make
-them ("suggest edits", "propose changes I can review", "don't apply, let me
-accept them", or a send payload that requests suggest mode), do NOT edit the
-prose directly. Every change becomes a pending suggestion the human accepts or
-rejects:
-
-\`\`\`
-mc_suggest(file, quote: "the exact text to change", with: "your proposed replacement", note: "why")
-CLI: node ~/.claude/skills/vs-markdown-collab/mdc.mjs suggest <file> --quote "…" --with "…" --note "…"
-\`\`\`
-
-- The original text stays in the file; the proposal is recorded separately, so
-  the document still reads as the original until the human accepts. \`--note\`
-  is your rationale, shown on the suggestion card — always include it.
-- Same anchoring rules as opening a thread: an ambiguous passage is refused, so
-  pass the occurrence. Passages inside code, frontmatter, or the threads region
-  are refused — pick a different span.
-- One suggestion per contiguous change. For several edits, suggest once per
-  change, re-reading between them so offsets stay valid.
-- **Do NOT accept or reject your own suggestions.** Accept/reject are the
-  human's decision, made in the review UI. Only run them if the human
-  explicitly tells you to.
-- Verify with \`mc_check\` and \`mc_list\` (which reports each suggestion's
-  \`original\` and \`proposed\`) — confirm each proposal landed and the prose
-  still shows the original.
-
-Suggest mode and direct-edit mode are mutually exclusive per request: if the
-human wants suggestions, route ALL changes through \`suggest\`; never mix a few
-direct edits in. Review Mode (leaving comments) is unaffected — it never edits
-prose in the first place.
-
-## When this skill applies
-
-Invoke when:
-- The user names one or more \`.md\` files and asks you to act on review comments / feedback / notes.
-- The user says "address the markdown collab comments" without naming files (operate workspace-wide).
-- The user references a specific comment thread or quote and asks you to apply / respond.
-- The user asks you to "watch for review batches" or to wait for the VS Code "Send to Claude" button (use the channel watch loop or MCP channel mode below).
-
-## Anchor maintenance applies on EVERY \`.md\` edit, not just comment-driven ones
-
-Whenever you modify a \`.md\` file in a Markdown Collab workspace — for any reason, not only when addressing review comments — you MUST also reconcile that file's anchors after the edit. Rewording a sentence, refactoring a heading, fixing a typo: any of these can break an existing anchor.
-
-1. After your Edit, run \`mc_check\` (or \`mdc check <file>\`). It reports every
-   unpaired, dropped, or duplicated marker — the bugs an ordinary prose edit
-   introduces. Fix anything it reports before moving on.
-2. For each thread id whose markers are still paired, confirm the wrapped text still reflects the same idea the reviewer commented on:
-   - **You rewrote the passage in place** → keep the markers wrapping the new wording (use \`mc_rewrite\` / \`mdc rewrite\`, which cannot drop a marker).
-   - **You removed the passage** → both markers should now be gone; the thread will surface as unanchored in the UI. That is the correct outcome. Do NOT re-add markers to wrap unrelated nearby text.
-3. Do NOT change any \`<!--mc:t {…}-->\` line during maintenance — only the human reviewer and the inline-mode reply workflow append to threads.
-
-The maintenance pass applies in addition to the comment-driven workflows above; do not skip it just because no review batch was active.
-
-## Getting the MCP tools (if you don't have them)
-
-If \`mc_list\` and friends aren't in your tool list, the human can add them in one
-step: **Markdown Collab: Register Review Tools with Claude Code** in VS Code,
-then restart the session. That writes a \`markdown-collab\` entry into the
-workspace's \`.mcp.json\` pointing at the server the extension already runs.
-
-Two things worth knowing before you suggest it:
-
-- The tools only exist while that VS Code window is open, because the extension
-  *is* the server. A session on another machine, or with MCP disabled by policy,
-  will never see them — that is what the CLI is for, and it is not a degraded
-  path, just a different one.
-- Nothing about the human's send mode changes. They keep sending work however
-  they already do; the tools only change how your edits reach the file.
-
-## MCP channel mode (preferred when supported)
-
-Claude Code v2.1.80+ supports first-party MCP channels: events arrive natively as \`<channel source="markdown-collab" file="..." count="N" id="evt_…">\` tags in your context with no streaming-tool dependency.
-
-**Setup (one-time):**
-
-1. Run the **Markdown Collab: Install Claude Skill** command in VS Code. This drops \`mdc-channel.mjs\` into \`~/.claude/skills/vs-markdown-collab/\`.
-2. Add the server to \`~/.claude.json\` (user-level) or the workspace's \`.mcp.json\` (project-level):
-   \`\`\`json
-   {
-     "mcpServers": {
-       "markdown-collab": {
-         "command": "node",
-         "args": ["~/.claude/skills/vs-markdown-collab/mdc-channel.mjs"]
-       }
-     }
-   }
-   \`\`\`
-3. Start Claude with the development flag (channels are still research preview):
-   \`\`\`
-   claude --dangerously-load-development-channels server:markdown-collab
-   \`\`\`
-4. Set \`markdownCollab.sendMode\` to \`mcp-channel\` in VS Code, or pick it from the quick-pick.
-
-**Runtime:**
-The button click POSTs to the running channel server, which fires \`notifications/claude/channel\`. The body of the \`<channel>\` tag is the same JSON payload \`{prompt, file, unresolvedCount, comments}\`. The \`prompt\` field tells you to follow this skill. Address each comment per the phases above, then append \`{"id": "<id-from-tag>"}\` to \`<workspace>/.markdown-collab/.events.acked.jsonl\` so the tailer stops re-surfacing that batch on restart.
-
-**Caveats:** channels require claude.ai login (no API keys / Console), and the protocol is research preview — Anthropic warns it may change. If channels aren't supported in your harness or version, fall back to one of the modes below.
-
-## Channel watch loop (button-driven)
-
-The VS Code extension exposes a "Send to Claude" button in the Inline Comments View. When configured for channel mode it appends one JSON line per click to \`<workspace>/.markdown-collab/.events.jsonl\`. To watch for the next click:
-
-1. **Start the tailer in background** using the Bash tool with \`run_in_background: true\`:
-   \`\`\`
-   node ~/.claude/skills/vs-markdown-collab/mdc-tail.mjs --workspace <workspace>
-   \`\`\`
-   Use the absolute workspace path. Do NOT use \`tail -f\` directly — when its stdout is a pipe (which it is for background bash), most platforms switch \`tail\` to block-buffered output and Monitor sees nothing until ~4 KB accumulates. \`mdc-tail.mjs\` flushes per line.
-
-2. **Subscribe to the bash's stdout stream.** Look for a tool whose contract is "each stdout line of a long-running process surfaces as a model notification" — typically \`Monitor\` or \`BashOutput\`. NOT \`TaskOutput\`: \`TaskOutput\` waits for the task to *complete*, and \`mdc-tail.mjs\` runs forever by design.
-
-   **If neither \`Monitor\` nor \`BashOutput\` is in your tool list**, the channel transport cannot run reactively in this harness. Options:
-   - Stop the tailer (kill the background bash) and tell the user to switch the VS Code setting \`markdownCollab.sendMode\` to \`terminal\` — that mode bracketed-pastes each click directly into your REPL, no watch loop required.
-   - Or fall back to polling: call \`TaskOutput block=false\` on the bash periodically, diff against the last-seen offset of stdout, process any new JSON lines. Functional but consumes one iteration per poll.
-   - Or skip the tailer entirely and \`Read\` \`.markdown-collab/.events.jsonl\` directly each turn, tracking the highest line you've already addressed.
-
-3. **Per notification**, parse the JSON line as \`{prompt, file, unresolvedCount, comments, ts}\`. Address the batch using the phases above, then return to the Monitor stream for the next event.
-
-4. **Stopping**: the user ends the session, or you exit the watch when they say "stop watching." Kill the background tailer process when done.
-
-Skip / abort if:
-- The user is asking for a general edit unrelated to review comments.
-- The target \`.md\` file contains no \`<!--mc:threads:begin-->\` block — there is nothing to act on.
-
-
-## Reporting
-
-Tell the user, per file:
-- Threads addressed (id + one-line summary of each change).
-- Threads initiated on explicit request (id + anchored passage + the note you left).
-- Threads deleted on explicit request (id).
-- Threads left unanchored / orphaned because their target was removed (id + why).
-- Threads answered without a prose change (id + the question / clarification you replied with).
-- Anything you skipped and why.
-
-Use the thread id so the human can find each thread in VS Code (thread IDs are 1–12 char base36).
-
-## Anti-patterns
-
-- Don't change any thread's \`"status"\` field. Only the human resolves.
-- Don't mutate or reorder existing comment objects. Append only.
-- Don't move or duplicate anchor markers without moving the passage they wrap.
-- Don't re-add markers to wrap unrelated nearby text after a deletion.
-- Don't reformat the threads region (newlines, key order, escaping).
-- Don't reply with vague "applied" — say what you applied, quoting the new wording.
-- Don't fabricate that you handled a comment you couldn't actually address.
-- Don't re-anchor a deleted passage to nearby unrelated text. Deletions become orphans by design.
-- Don't delete a thread the human didn't explicitly tell you to delete.
-- Don't initiate a new thread the human didn't explicitly ask for. The skill is reply-driven by default.
-- Don't operate on a file with no \`<!--mc:threads:begin-->\` block — surface this rather than invent state.
-- Don't hand-edit markers when the tools or the CLI are available. The appendix is for when neither is.
-
-## Appendix: hand-editing markers (last resort)
-
-**Only when neither the \`markdown-collab\` MCP tools nor \`mdc.mjs\` is
-available.** Everything below is string surgery on a format that is unforgiving
-about it — one dropped \`-->\` silently orphans a reviewer's comment. If either
-path exists, use it instead; if one comes back mid-task, switch to it and run a
-check.
-
-**Rewriting an anchored passage.** Put the markers *inside* your Edit:
-\`old_string\` = open marker + old passage + close marker; \`new_string\` = the same
-open marker + the NEW passage + the same close marker. Do NOT Edit the bare
-visible text — the markers sit flush against it, so a bare-text \`old_string\`
-either fails to match or eats a marker.
-
-- \`old_string\`: \`### <!--mc:a:aopzy-->Main business flows<!--mc:/a:aopzy-->\`
-- \`new_string\`: \`### <!--mc:a:aopzy-->Core business processes<!--mc:/a:aopzy-->\`
-
-Same id, both markers kept, only the wrapped text changed. Then update that
-thread's \`quote\` field to the new text.
-
-**Appending a reply.** Locate the matching \`<!--mc:t {…}-->\` line by its
-\`"id":"<thread-id>"\` and Edit only that line — append a comment object at the
-END of the \`comments\` array with the next sequential \`c<N>\` id, \`"parent"\` set
-to the last non-deleted comment's id, \`"author":"claude"\`, an ISO-8601 UTC
-\`"ts"\`, and your \`"body"\`. Preserve the JSON exactly otherwise: same key order,
-same escaping, same trailing \`-->\`, all on one line. **Do NOT change \`status\`.**
-**Do NOT mutate any existing comment.**
-
-**Opening a thread.** Pick a 5-char lowercase base36 id (\`[a-z0-9]{5}\`) unique
-across every \`<!--mc:a:ID-->\` marker and every \`"id":"…"\` in existing thread
-lines. Edit the passage to \`<!--mc:a:ID-->\` + passage + \`<!--mc:/a:ID-->\` with no
-extra whitespace, then insert a line just before \`<!--mc:threads:end-->\` (or
-append a fresh region at the end of the file):
-
-\`\`\`
-
-<!--mc:threads:begin-->
-<!--mc:t {"id":"ID","quote":"<anchored text>","status":"open","comments":[{"id":"c1","author":"claude","ts":"<ISO-8601 UTC>","body":"<your note>"}]}-->
-<!--mc:threads:end-->
-\`\`\`
-
-The thread JSON must be on a single line. \`quote\` is the verbatim anchored text.
-\`status\` is always \`"open"\` — never seed a thread as resolved. Adding several
-threads means re-reading between each one, because earlier edits shift the
-offsets the next anchor depends on.
-
-**Verifying by hand.** Re-read the threads region and confirm: each addressed
-thread ends with your comment; every rewritten passage still has exactly one
-matched marker pair; removed passages have both markers gone; opt-in deletions
-removed both the thread line and the marker pair; any thread you initiated has a
-paired marker plus a valid single-\`c1\` thread line with a unique id. Search for
-\`<!--mc:a:\` and \`<!--mc:/a:\` — every opener needs a closer with the same id.
-
-Hand-edits skip the two things the other paths give you for free: the pre-write
-integrity check, and the signal that ends the human's "Claude is working…" wait.
-Say in your report that you worked without them.
-`;
+import { PLUGIN_NAME, renderSkill } from "./skillText";
+
+/**
+ * The standalone skill — what `~/.claude/skills/vs-markdown-collab/SKILL.md`
+ * holds. The text itself lives in `skillText.ts`, one source for this, the
+ * Claude Code plugin's skill, the headless system prompt, and the MCP server's
+ * instructions.
+ */
+export const SKILL_CONTENT = renderSkill("legacy");
 
 export async function installClaudeSkill(
   homeDir: string,
@@ -1043,6 +46,11 @@ export async function installClaudeSkill(
   // can still pick up CLI fixes.
   await syncCliScript(homeDir);
 
+  // Helpers for the channel transports deleted in 10x-plan-4 P0.3. An install
+  // from before that release may still have them on disk; they're ours, so we
+  // clean them up rather than leaving dead scripts behind.
+  await deleteStaleHelpers(homeDir);
+
   if (existing !== null) {
     if (existing === SKILL_CONTENT) {
       return { action: "already-present", path: target };
@@ -1059,15 +67,72 @@ export async function installClaudeSkill(
 
 export type SkillStatus = "missing" | "outdated" | "current";
 
+/** Where Claude Code records the plugins installed for this user. */
+export const PLUGIN_REGISTRY_REL = ".claude/plugins/installed_plugins.json";
+
+export interface InstalledPlugin {
+  /** `<plugin>@<marketplace>`, e.g. `markdown-collab@markdown-collab-local`. */
+  id: string;
+  version: string;
+}
+
+/**
+ * The Markdown Collab plugin as Claude Code's own registry records it, from
+ * any marketplace — the extension's local one or the GitHub one — or null.
+ *
+ * Read from the file rather than by spawning `claude plugin list`: this runs
+ * every time the inline view opens, and a process per panel open is a price
+ * the "is Claude set up?" banner doesn't justify. The file is Claude Code's
+ * internal format (`{version, plugins: {id: [{scope, version, …}]}}`), so it
+ * is read defensively — anything unexpected reads as "not installed", and the
+ * legacy check decides as it always did. Project- and local-scope entries
+ * don't count: they belong to one project, and this can't tell which.
+ */
+export async function installedClaudePlugin(
+  homeDir: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<InstalledPlugin | null> {
+  // Claude Code moves its whole config directory when CLAUDE_CONFIG_DIR is
+  // set, registry included; honor it the same way or a relocated install
+  // reads as "not set up".
+  const registry = env.CLAUDE_CONFIG_DIR
+    ? path.join(env.CLAUDE_CONFIG_DIR, "plugins", "installed_plugins.json")
+    : path.join(homeDir, PLUGIN_REGISTRY_REL);
+  try {
+    const raw = JSON.parse(await fs.readFile(registry, "utf8")) as {
+      plugins?: Record<string, unknown>;
+    };
+    for (const [id, entries] of Object.entries(raw.plugins ?? {})) {
+      if (id.split("@")[0] !== PLUGIN_NAME || !Array.isArray(entries)) continue;
+      for (const e of entries as Array<{ scope?: unknown; version?: unknown }>) {
+        if (e && (e.scope === undefined || e.scope === "user" || e.scope === "managed")) {
+          return { id, version: typeof e.version === "string" ? e.version : "unknown" };
+        }
+      }
+    }
+  } catch {
+    // No registry (Claude Code never ran, or has no plugins yet) or a shape we
+    // don't know — either way, not evidence of an install.
+  }
+  return null;
+}
+
 /**
  * Compare the installed Claude skill against what this extension bundles:
- *   - "missing"  — SKILL.md isn't installed.
+ *   - "missing"  — neither the plugin nor SKILL.md is installed.
  *   - "outdated" — SKILL.md or a bundled helper script differs from this build.
- *   - "current"  — everything matches.
+ *   - "current"  — the plugin is installed, or the standalone skill matches.
  * Read errors other than "not found" report "current" so a transient or
  * permission issue never nags the user.
+ *
+ * An installed plugin wins outright: it carries its own copy of the skill, and
+ * the standalone files are removed when it's installed — reporting those as
+ * "missing" would nag exactly the users who did the recommended thing. (The
+ * plugin's own version drift is `maybePromptSkillUpdate`'s job, once per
+ * extension version, through `claude plugin list`.)
  */
 export async function checkClaudeSkill(homeDir: string): Promise<SkillStatus> {
+  if (await installedClaudePlugin(homeDir)) return "current";
   let skill: string | null = null;
   try {
     skill = await fs.readFile(path.join(homeDir, SKILL_REL_PATH), "utf8");
@@ -1075,19 +140,15 @@ export async function checkClaudeSkill(homeDir: string): Promise<SkillStatus> {
     return (e as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "current";
   }
   if (skill !== SKILL_CONTENT) return "outdated";
-  for (const [rel, content] of [
-    [TAIL_SCRIPT_REL, TAIL_SCRIPT_CONTENT],
-    [CHANNEL_SCRIPT_REL, CHANNEL_SCRIPT_CONTENT],
-    [CLI_SCRIPT_REL, CLI_SCRIPT_CONTENT],
-  ] as const) {
-    try {
-      if ((await fs.readFile(path.join(homeDir, rel), "utf8")) !== content) return "outdated";
-    } catch (e) {
-      // A missing helper script means the install is incomplete → outdated.
-      // Other read errors (permission, transient) shouldn't nag — same posture
-      // as the SKILL.md read above.
-      if ((e as NodeJS.ErrnoException).code === "ENOENT") return "outdated";
+  try {
+    if ((await fs.readFile(path.join(homeDir, CLI_SCRIPT_REL), "utf8")) !== CLI_SCRIPT_CONTENT) {
+      return "outdated";
     }
+  } catch (e) {
+    // A missing helper script means the install is incomplete → outdated.
+    // Other read errors (permission, transient) shouldn't nag — same posture
+    // as the SKILL.md read above.
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return "outdated";
   }
   return "current";
 }
@@ -1096,21 +157,56 @@ export async function checkClaudeSkill(homeDir: string): Promise<SkillStatus> {
  * Short, stable fingerprint of the bundled skill (SKILL.md + helper scripts).
  * Changes whenever the bundled skill content changes, so callers can prompt the
  * user to update exactly once per skill version instead of every activation.
+ *
+ * Covers exactly the files a fresh install writes — see `installClaudeSkill`.
  */
 export function skillFingerprint(): string {
   return createHash("sha1")
     .update(SKILL_CONTENT)
-    .update(TAIL_SCRIPT_CONTENT)
-    .update(CHANNEL_SCRIPT_CONTENT)
     .update(CLI_SCRIPT_CONTENT)
     .digest("hex")
     .slice(0, 12);
 }
 
+/**
+ * Remove the standalone skill once the plugin is installed. Both at once would
+ * register the workflow twice — as `vs-markdown-collab` and as
+ * `markdown-collab:review` — and the two can disagree whenever one is older.
+ * Only files this extension wrote are touched; the directory goes only if that
+ * leaves it empty, so anything a user added beside them survives.
+ */
+export async function removeLegacySkill(homeDir: string): Promise<string[]> {
+  const removed: string[] = [];
+  for (const rel of [SKILL_REL_PATH, CLI_SCRIPT_REL, ...STALE_HELPER_RELS]) {
+    const target = path.join(homeDir, rel);
+    try {
+      await fs.unlink(target);
+      removed.push(target);
+    } catch {
+      // Not there — the goal state.
+    }
+  }
+  try {
+    await fs.rmdir(path.dirname(path.join(homeDir, SKILL_REL_PATH)));
+  } catch {
+    // Missing, or not empty because the user keeps something there: leave it.
+  }
+  return removed;
+}
+
 async function syncCliScript(homeDir: string): Promise<void> {
-  await syncScript(path.join(homeDir, TAIL_SCRIPT_REL), TAIL_SCRIPT_CONTENT);
-  await syncScript(path.join(homeDir, CHANNEL_SCRIPT_REL), CHANNEL_SCRIPT_CONTENT);
   await syncScript(path.join(homeDir, CLI_SCRIPT_REL), CLI_SCRIPT_CONTENT);
+}
+
+/** Remove helpers the deleted channel transports installed, if still present. */
+async function deleteStaleHelpers(homeDir: string): Promise<void> {
+  for (const rel of STALE_HELPER_RELS) {
+    try {
+      await fs.unlink(path.join(homeDir, rel));
+    } catch {
+      // Already gone, or never installed — both are the goal state.
+    }
+  }
 }
 
 async function syncScript(target: string, content: string): Promise<void> {

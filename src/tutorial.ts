@@ -34,7 +34,7 @@ Delete the file when you're done — nothing else depends on it.
    Accept applies it; Reject keeps the current wording. Both are undoable with
    Cmd+Z, like any edit you make yourself.
 4. **Resolve a thread** when you're satisfied with it.
-5. **Add your own.** Select any sentence in the preview and click Comment.
+5. **Add your own.** Select any sentence in the rendered document and click **+ Add comment**.
 
 ## How this works
 
@@ -46,7 +46,7 @@ The heading above is anchored to a comment. So is this sentence about tokenizers
 
 ## What comes next
 
-When you send comments to Claude, it reads them, edits the document, and replies
+When you send comments to your agent, it reads them, edits the document, and replies
 in the thread. Point it at a real doc when you're ready — this file has taught
 you the loop.
 `;

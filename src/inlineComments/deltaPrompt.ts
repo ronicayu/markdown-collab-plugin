@@ -6,6 +6,7 @@
 // reviewed, and letting it re-raise a concern the human settled.
 
 import type { DeltaScope, ExistingThread } from "./deltaReview";
+import { workflowOpener, type SkillDelivery } from "../skillDelivery";
 
 /** Cap the changed-section text so an enormous edit doesn't blow up the prompt. */
 const MAX_SECTION_CHARS = 4000;
@@ -29,15 +30,22 @@ function threadLines(existing: ExistingThread[]): string[] {
  * should say so rather than sending Claude to re-read an unchanged file — the
  * whole point of this feature is not doing that.
  */
-export function buildDeltaPrompt(rel: string, scope: DeltaScope, focus?: string): string | null {
+export function buildDeltaPrompt(
+  rel: string,
+  scope: DeltaScope,
+  focus?: string,
+  delivery: SkillDelivery = "installed",
+): string | null {
   if (scope.kind === "unchanged") return null;
+
+  const opener = workflowOpener(delivery);
 
   const trimmedFocus = focus?.trim();
   const lines: string[] = [];
 
   if (scope.kind === "no-checkpoint") {
     // First pass on this file, or a checkpoint too old to compare against.
-    lines.push(`Use the vs-markdown-collab skill in Review Mode on \`${rel}\`.`);
+    lines.push(`${opener} in Review Mode on \`${rel}\`.`);
     if (trimmedFocus) lines.push(`Focus: ${trimmedFocus}`);
     if (scope.existing.length > 0) {
       lines.push(
@@ -51,7 +59,7 @@ export function buildDeltaPrompt(rel: string, scope: DeltaScope, focus?: string)
   }
 
   lines.push(
-    `Use the vs-markdown-collab skill in Review Mode on \`${rel}\`, but review only what has`,
+    `${opener} in Review Mode on \`${rel}\`, but review only what has`,
     `changed since your last pass (${scope.checkpoint.ts}).`,
   );
   if (trimmedFocus) lines.push("", `Focus: ${trimmedFocus}`);

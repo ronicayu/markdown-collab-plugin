@@ -50,7 +50,7 @@ test("the inline comments view renders a reply's list and code block", async ({ 
 test("the live editor renders a reply's list and code block", async ({ page }) => {
   const { source } = withMarkdownReply();
   await bootLiveEditor(page, liveInit(source));
-  const body = page.locator(".mdc-comment .mc-card__body-md").last();
+  const body = page.locator(".thread-card .mc-card__body-md").last();
   await expect(body.locator("li")).toHaveCount(2);
   await expect(body.locator("pre code")).toBeVisible();
 });

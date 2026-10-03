@@ -101,6 +101,24 @@ export interface ExistingPrComment {
   url: string;
   /** Resolved / outdated state when the platform tracks it. */
   resolved?: boolean;
+  /**
+   * Can this thread be resolved/unresolved at all? GitHub: true for every
+   * review-thread comment (the REST comments this feature fetches are
+   * always part of a resolvable `PullRequestReviewThread`). GitLab: mirrors
+   * the note's own `resolvable` flag — false for a non-resolvable
+   * discussion or a plain MR note. Undefined means unknown (e.g. the
+   * GitHub GraphQL enrichment failed) — treat the same as false.
+   */
+  resolvable?: boolean;
+  /**
+   * The id to pass to `PrPlatform.resolveThread`. GitHub: the GraphQL
+   * `PullRequestReviewThread` node id — deliberately NOT the same value as
+   * `threadId` above, which is the REST root-comment id `replyToComment`
+   * expects; the two ids are different shapes and neither endpoint accepts
+   * the other's. GitLab: the discussion id, same value as `threadId`.
+   * Present only when `resolvable` is true.
+   */
+  resolveId?: string;
 }
 
 export interface PrPlatform {
@@ -120,4 +138,11 @@ export interface PrPlatform {
    * review. Returns the URL of the new reply.
    */
   replyToComment(ctx: PrContext, threadId: string, body: string): Promise<{ url: string }>;
+  /**
+   * Resolve or unresolve a thread, identified by `ExistingPrComment.resolveId`.
+   * Only ever called for a comment whose `resolvable` was true — callers
+   * (the webview, and this platform's own tests) are responsible for that
+   * gate; the adapter itself doesn't re-check it.
+   */
+  resolveThread(ctx: PrContext, resolveId: string, resolved: boolean): Promise<void>;
 }

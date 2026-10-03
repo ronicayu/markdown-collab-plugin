@@ -14,7 +14,7 @@
 // the refusals above.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { handleRpc, type ProtocolHandlers } from "./protocol";
 
 /** 1 MB: a tool call carrying a rewritten section, with room to spare. */
@@ -56,9 +56,9 @@ export function isBrowserOrigin(origin: string | undefined): boolean {
   return typeof origin === "string" && origin !== "" && origin !== "null";
 }
 
-function send(res: ServerResponse, status: number, body?: unknown): void {
+function send(res: ServerResponse, status: number, body?: unknown, extraHeaders?: Record<string, string>): void {
   if (body === undefined) {
-    res.writeHead(status);
+    res.writeHead(status, extraHeaders);
     res.end();
     return;
   }
@@ -68,8 +68,27 @@ function send(res: ServerResponse, status: number, body?: unknown): void {
     "content-length": Buffer.byteLength(text),
     // Nothing here is cacheable and some of it is a token-authenticated reply.
     "cache-control": "no-store",
+    ...extraHeaders,
   });
   res.end(text);
+}
+
+/** The `Mcp-Session-Id` header value, or undefined when the client sent none. */
+function sessionIdFromRequest(req: IncomingMessage): string | undefined {
+  const header = req.headers["mcp-session-id"];
+  return typeof header === "string" ? header : undefined;
+}
+
+/** True for a bare (non-batched) `initialize` request — the one message
+ * shape allowed to mint a fresh session id (10x-plan-4 P1.2). */
+function isInitializeMessage(msg: unknown): boolean {
+  return typeof msg === "object" && msg !== null && !Array.isArray(msg) && (msg as { method?: unknown }).method === "initialize";
+}
+
+/** 16 random bytes, hex-encoded — plenty of entropy for a session id nothing
+ * cryptographic hangs off; it's a map key, not a credential. */
+function mintSessionId(): string {
+  return randomBytes(16).toString("hex");
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -151,22 +170,32 @@ export async function serveMcp(opts: ServeOptions): Promise<McpHttpServer> {
       return;
     }
 
+    // The session id to attribute this request's calls to (10x-plan-4 P1.2):
+    // whatever the client echoed back, or — only for a fresh `initialize` —
+    // one minted here and handed back in the response so the client can echo
+    // it from then on, per the streamable-HTTP transport's session contract.
+    const incomingSessionId = sessionIdFromRequest(req);
+    const isInitBatch = Array.isArray(parsed) ? parsed.some(isInitializeMessage) : isInitializeMessage(parsed);
+    const sessionId = incomingSessionId ?? (isInitBatch ? mintSessionId() : undefined);
+    const sessionHeaders =
+      sessionId !== undefined && incomingSessionId === undefined ? { "mcp-session-id": sessionId } : undefined;
+
     // A batch is a JSON array; answer with an array of the responses that
     // aren't notifications, or 202 when every message was one.
     if (Array.isArray(parsed)) {
       const responses = [];
       for (const one of parsed) {
-        const r = await handleRpc(one, opts.handlers);
+        const r = await handleRpc(one, opts.handlers, sessionId);
         if (r) responses.push(r);
       }
-      if (responses.length === 0) send(res, 202);
-      else send(res, 200, responses);
+      if (responses.length === 0) send(res, 202, undefined, sessionHeaders);
+      else send(res, 200, responses, sessionHeaders);
       return;
     }
 
-    const response = await handleRpc(parsed, opts.handlers);
-    if (!response) send(res, 202);
-    else send(res, 200, response);
+    const response = await handleRpc(parsed, opts.handlers, sessionId);
+    if (!response) send(res, 202, undefined, sessionHeaders);
+    else send(res, 200, response, sessionHeaders);
   }
 
   const port = await listen(server, opts.port ?? 0, opts.onError);

@@ -119,6 +119,82 @@ describe("tools/call", () => {
   });
 });
 
+// 10x-plan-4 P1.2: the author a `tools/call` gets attributed to comes from
+// the session's `initialize`, not a global default — two sessions on the
+// same server must never bleed into each other.
+describe("session-scoped author", () => {
+  function sessionAwareHandlers(): { handlers: ProtocolHandlers; seenAuthors: string[] } {
+    const seenAuthors: string[] = [];
+    const bySession = new Map<string, string>();
+    const h = handlers({
+      recordSession: (sessionId, clientName) => {
+        bySession.set(sessionId, clientName ?? "");
+      },
+      resolveAuthor: (sessionId) => {
+        const name = sessionId ? bySession.get(sessionId) : undefined;
+        return name?.includes("codex") ? "codex" : name?.includes("claude") ? "claude" : "claude";
+      },
+      callTool: async (name, args, author) => {
+        seenAuthors.push(author);
+        return { content: [{ type: "text", text: JSON.stringify({ name, args, author }) }] };
+      },
+    });
+    return { handlers: h, seenAuthors };
+  }
+
+  it("records clientInfo.name against the session id it arrived on", async () => {
+    const { handlers: h } = sessionAwareHandlers();
+    await handleRpc(
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { clientInfo: { name: "codex-mcp-client" } } },
+      h,
+      "session-a",
+    );
+    const r = await handleRpc(
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "mc_list", arguments: {} } },
+      h,
+      "session-a",
+    );
+    expect(JSON.parse((r!.result as any).content[0].text).author).toBe("codex");
+  });
+
+  it("keeps two sessions' authors independent", async () => {
+    const { handlers: h, seenAuthors } = sessionAwareHandlers();
+    await handleRpc(
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { clientInfo: { name: "claude-code" } } },
+      h,
+      "claude-session",
+    );
+    await handleRpc(
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { clientInfo: { name: "codex-mcp-client" } } },
+      h,
+      "codex-session",
+    );
+    await handleRpc(
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "mc_list" } },
+      h,
+      "codex-session",
+    );
+    await handleRpc(
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "mc_list" } },
+      h,
+      "claude-session",
+    );
+    expect(seenAuthors).toEqual(["codex", "claude"]);
+  });
+
+  it("defaults to claude when handlers don't implement session tracking at all", async () => {
+    const h = handlers({
+      callTool: async (_name, _args, author) => ({ content: [{ type: "text", text: JSON.stringify({ author }) }] }),
+    });
+    const r = await handleRpc(
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "mc_list" } },
+      h,
+      "some-session-nobody-recorded",
+    );
+    expect(JSON.parse((r!.result as any).content[0].text).author).toBe("claude");
+  });
+});
+
 describe("malformed input", () => {
   it("rejects a non-object message", async () => {
     expect((await handleRpc("hello", handlers()))!.error!.code).toBe(RPC_INVALID_REQUEST);

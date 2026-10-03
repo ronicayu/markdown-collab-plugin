@@ -3,307 +3,195 @@
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/markdown-collab.markdown-collab-plugin?label=VS%20Code%20Marketplace&color=4F46E5)](https://marketplace.visualstudio.com/items?itemName=markdown-collab.markdown-collab-plugin)
 [![Open VSX](https://img.shields.io/open-vsx/v/markdown-collab/markdown-collab-plugin?label=Open%20VSX&color=4F46E5)](https://open-vsx.org/extension/markdown-collab/markdown-collab-plugin)
 
-Review Markdown *with* Claude Code, in VS Code. Comments anchor to the text and live **inside
-the `.md` file**, so review state survives a commit, a branch switch, and a colleague opening
-the file. There is no sidecar and no database.
+Review Markdown *with* your AI agent — Claude Code, Cursor, Codex or Copilot — in VS Code, Cursor or Windsurf. Comments live inside the `.md` file, anchored to the text they're about. The agent reads them, replies, and proposes edits you accept or reject. Or it reviews the document and leaves comments for you.
+
+![Click Ask agent to review; three comment threads land; walk them with the keyboard](media/gifs/ask-agent-to-review.gif)
+
+Click **Ask agent to review**. The agent reads your doc and leaves a comment per concern, and you triage them. The first send asks how to reach your agent and remembers your answer — typing into a running terminal session is the normal path.
+
+## What you get
+
+- **Comments stored in the file.** Each thread is an HTML comment wrapped around the exact passage it points at, so it's invisible on GitHub and in every preview. The state stays in the file overnight and across sessions — strip it with **Remove All Review Data** before you commit; staging a file that still carries threads reminds you once. No sidecar, no database.
+- **Your agent as reviewer or as writer.** Ask it to review a document, a folder, or only what changed since its last pass. Or leave comments yourself and send them; the agent edits the document and replies in each thread.
+- **Suggestions you can undo.** In suggest mode, the agent's edits arrive as tracked changes. Accept applies one, Reject keeps your wording, and both are ordinary editor edits, so Cmd+Z takes them back.
+- **The Markdown Collab view, and the text editor too.** The rendered document with a threads sidebar — read it, or switch to Editing and edit in place — plus dimmed markers, hovers, and a CodeLens in the plain text editor, so a reviewed file never looks corrupted.
+- **Any agent.** Claude Code is the most complete setup — a plugin and the review tools in one step. Beyond it, the file format is the contract: copy the prompt and any agent can edit it by following `AGENTS.md`, no integration required. Connect Cursor, Codex, Copilot, or another MCP client as an optional second step, for edits you can undo; comments say which agent wrote them.
+
+## Get started
+
+1. **Install the extension.** Search **Markdown Collab** in the Extensions view, or:
+   ```bash
+   code --install-extension markdown-collab.markdown-collab-plugin
+   ```
+   Cursor, Windsurf, VSCodium, and Gitpod install it from [Open VSX](https://open-vsx.org/extension/markdown-collab/markdown-collab-plugin). A `.vsix` is on every [GitHub release](https://github.com/ronicayu/markdown-collab-plugin/releases).
+2. **Connect an Agent…, once per machine.** `Cmd-Shift-P` → **Markdown Collab: Connect an Agent…** → **Claude Code**. This installs the Markdown Collab plugin into Claude Code — the review workflow as `/markdown-collab:review`, the anchor-safe `mdc` helper on Claude's PATH, a check that tells Claude the moment an edit breaks a comment anchor — and registers this extension's review tools in the same step, so Claude's edits arrive as edits you can undo. It installs from a marketplace the extension keeps on your machine, so the plugin always matches the extension's version, and it offers an update when a new one ships. Restart any running Claude session afterwards, or run `/reload-plugins`. Using Cursor, Codex, or Copilot instead? The same command lists them — see [Other agents](#other-agents) below.
+3. **Open a Markdown file** and click the comment icon in its title bar. Then either click **Ask agent to review**, or select a passage in the rendered document, click **+ Add comment**, write your note, and click **Send**.
+
+Want to try it with no agent at all? **Markdown Collab: Open Tutorial Playground** writes a scratch document that arrives mid-review, with threads, a reply, and two pending suggestions to accept or reject.
+
+Without the extension, the Claude Code plugin is also available on its own: `claude plugin marketplace add ronicayu/markdown-collab-plugin`, then `claude plugin install markdown-collab@markdown-collab`.
 
 ## The loop
 
-**Comment → send → Claude edits and replies → accept → resolve.**
+**Comment → send → the agent edits and replies → accept → resolve.**
 
-1. **Comment.** Select a passage in the rendered preview and write a note. The thread is
-   written into the file, wrapped around the exact text it points at.
-2. **Send.** One button. Claude gets your unresolved threads plus the document.
-3. **Claude works.** It edits the doc and replies in each thread — or, in suggest mode,
-   proposes changes you accept or reject. The thread card says what it's doing while it does it.
-4. **Accept.** A suggestion is a tracked change: Accept applies it, Reject keeps your wording,
-   and both are ordinary editor edits you can undo.
-5. **Resolve** when you're satisfied. Or reply, and go round again.
+1. **Comment.** Select a passage in the rendered document and write a note. The thread is written into the file, around the exact text it points at — and nothing else in the file changes.
+2. **Send.** One button. Your agent gets your unresolved threads and the document.
+3. **The agent works.** It edits the doc and replies in each thread with what it changed. In suggest mode it proposes changes instead. The thread card shows what the agent is doing while it does it.
+4. **Accept or reject.** A suggestion is a tracked change. Accept applies it; Reject keeps your wording; **Accept all** takes the whole batch after a second click.
+5. **Resolve** when you're satisfied, or reply and go round again.
 
-**Flip it:** right-click a `.md` → **Ask Claude to Review This Doc**, optionally say what to
-focus on, and Claude opens a thread per concern for you to triage. No cap — if thirty things
-warrant a thread, you get thirty.
+![A pending suggestion accepted with a click, then a thread resolved](media/gifs/review-loop.gif)
 
-## Try it in one minute
+**Suggest mode** is **Ask for suggestions instead of edits** in the menu beside the Send button — the button then reads *Send 2 comments as suggestions* — or `markdownCollab.proposeEditsAsSuggestions`. Each thread card has its own **Send** button, and it works the same way as sending them all. **Copy prompt** is the copy button beside the Send bar.
 
-`Cmd-Shift-P` → **Markdown Collab: Open Tutorial Playground**.
+## Reviewing a colleague's PR
 
-You get a scratch document that arrives mid-review: two threads (one already answered), two
-pending suggestions, and a short list of things to click. No skill install, no Claude session,
-no configuration. Delete the file when you're done.
+**Open PR Review** shows the Markdown a GitHub PR or GitLab MR changed, rendered, with the platform's existing comments inline — what changed and what's already been said, in one view. Add comments, reply, edit your drafts, and post them back through your `gh` or `glab` sign-in; no extra tokens.
 
-## Quick start
+This isn't an agent loop. There's no agent in it, and nothing gets written into the file: the comments live where they always did, on the PR or MR. It's a client for reading and answering them without leaving the editor.
 
-1. **Install the extension.**
-   - **VS Code** — open Extensions (`Cmd-Shift-X`), search **Markdown Collab**, click Install. Or from the [Marketplace listing](https://marketplace.visualstudio.com/items?itemName=markdown-collab.markdown-collab-plugin), or the CLI:
-     ```bash
-     code --install-extension markdown-collab.markdown-collab-plugin
-     ```
-   - **Cursor / Windsurf / VSCodium / Gitpod** (Open VSX) — search **Markdown Collab** in Extensions, or install from the [Open VSX listing](https://open-vsx.org/extension/markdown-collab/markdown-collab-plugin).
-   - **Manual / fallback** — grab the latest `.vsix` from the [GitHub Releases page](https://github.com/ronicayu/markdown-collab-plugin/releases) (`code --install-extension markdown-collab-plugin-*.vsix`), or build from source (see [Development](#development)).
-2. **Install the Claude skill (one-time per machine).** `Cmd-Shift-P` → **Markdown Collab: Install Claude Skill**. This drops the skill instructions and bundled helpers into `~/.claude/skills/vs-markdown-collab/`.
-3. **Open a Markdown file**, then right-click it → **Markdown Collab: Open Inline Comments View**.
-4. **Select a passage in the rendered view** → **+ Comment on selection** → write your note.
-5. **Click Send to Claude.** The first time you'll pick a delivery mode; the answer is
-   remembered. **For most people that's `terminal`** — see [Choosing a send mode](#choosing-a-send-mode).
+## Asking your agent to review
 
-> What lands in the file: anchored spans wrapped in `<!--mc:a:ID-->…<!--mc:/a:ID-->`, and one
-> `<!--mc:threads:begin-->`…`<!--mc:threads:end-->` block at the end holding the threads. Both
-> are HTML comments, so they're invisible in GitHub, your docs site, and every other preview.
+Right-click a `.md` file → **Ask Agent to Review This Doc**, or click **Ask agent to review** in an empty sidebar. The agent opens one thread per substantive concern: a wrong claim, an ambiguous sentence, a broken example, a contradiction with another section. It ranks concerns by severity and opens threads for the five that matter most, plus one summary thread listing everything else so you can ask for any of them ("open 3 and 7") — add *"give me ten"* (or more) to the focus directive to raise the cap. Pure typos and style preferences are skipped unless you ask for them. If it finds nothing, it says so instead of inventing something.
 
-## Three surfaces
+The sidebar shows *"N new from Codex · M reviewed"* — named after whichever agent opened them — with a **Next** button, and a thread counts as reviewed once you reply to or resolve it. Files over 50 KB ask for a confirmation before sending.
 
-- **Inline comments view** — rendered preview on the left, threads on the right. The default,
-  and where the loop above happens.
-- **Live editor** — a WYSIWYG Markdown editor you and Claude share: you type, Claude edits the
-  file on disk, both sides show up live. Same threads, same suggestions, no leaving the editor.
-- **PR / MR review** — review the Markdown changed in a GitHub PR or GitLab MR, comment on the
-  diff, reply to existing comments, post back to the platform.
+- **Focus.** The command asks for an optional one-line directive, such as *"check the API examples"* or *"find marketing tone"*. Your last five are offered again.
+- **Standing conventions.** **Edit Review Conventions** creates `.markdown-collab/conventions.md` from a template: the product's name, the house tone, the things you've decided not to care about. Every review carries it, so the agent stops re-raising what you've settled. It's capped at 4 KB per request, and the payload says so if it was cut.
+- **Only what changed.** **Ask Agent to Review What Changed** sends the sections that moved since the last review and lists the threads that already exist, so a resolved concern stays resolved. The agent records a checkpoint in the file when it finishes a pass through the review tools or the `mdc` helper; the first review of a file is a full one.
+- **A whole folder.** Right-click a folder, or multi-select files, → **Ask Agent to Review These Docs**. Every `.md` goes into one pass, so the agent can compare the documents against each other: terminology that drifts, a claim one file contradicts, a cross-reference that no longer resolves. **Next Unread from Agent** walks the results across every file.
 
-## How to use, day to day
+Afterwards, **Review Session Summary** turns the thread state into a digest for a PR description or a note to a colleague.
 
-### Adding a comment
+## Where it shows up
 
-Open the **Inline Comments view** (`Markdown Collab: Open Inline Comments View`, or right-click a `.md` file), highlight rendered text, click the floating **Comment** button, type your note, submit. The thread is written into the `.md` file itself as inline marker comments — everything travels with the document.
+**The Markdown Collab view.** The rendered document on the left, threads on the right. It opens read-only: select a passage and comment, and the comment's two markers are written into the file's original bytes, so nothing else in the file changes and every highlight sits exactly where its markers are. Switch to **Editing** in the toolbar above the document to edit in place; a change rewrites only the block you typed in. The agent's edits to the file show up as they land. Comments render as Markdown. There's a find bar, a collapsible outline, optional source line numbers, and buttons to remove every resolved thread or every trace of review data in one undoable step. Mermaid and PlantUML fences and linked draw.io files render in the document. It's also in **Open With… → Markdown Collab**. `markdownCollab.classicReviewView` brings back the previous Markdown Collab view, a rendered preview without editing, as a fallback; a later release removes it.
 
-Any selection works — even a single word. Only empty or whitespace-only selections are ignored.
+**The text editor.** Anchors are dimmed, commented text is tinted, and the threads block at the end of the file folds away. Hovering a commented passage shows its thread, with a link into the view, and one CodeLens at the top of the file gives the counts and opens the view. Select text and press `Cmd+K Cmd+Alt+M` to comment without leaving the editor.
 
-### Sending the batch to Claude
+**Uncommitted changes.** An **Uncommitted Markdown** tree in the Explorer lists every Markdown file that differs from HEAD. Each opens in the view with changed blocks striped, removed text shown struck through where it used to be, arrows to step between changes, and stage and unstage buttons on each row. The diff is prose against prose, so a paragraph that only gained an anchor isn't marked as changed. A file that still carries review threads shows the count in the tree, and staging it reminds you once that **Remove All Review Data** strips them.
 
-Once you've left one or more unresolved comments, click **Send N to Claude** at the top of the comments sidebar (the count updates live). The button is disabled when nothing is unresolved.
+## How your comments reach your agent
 
-### Reviewing replies
+The **Send** button delivers one of three ways. The first click asks, remembers your answer per workspace, and never asks again. **Reset Send Mode** clears it.
 
-Claude addresses each comment, edits the doc in place, and appends a reply with what it changed. The reply lands as a thread reply in VS Code. Toggle the thread to **Resolved** when satisfied; reply with more questions if not.
+**Type into the active terminal** is the recommended, normal path: if a Claude terminal is already open, this is picked for you without asking; otherwise the picker offers to start one. It works with any agent's terminal, not only Claude's.
 
-### Asking Claude to review (Claude-initiated threads)
+### Other ways to send
 
-The flow above is human-to-Claude: you leave comments, Claude addresses them. v0.29 added the reverse direction — **Markdown Collab: Ask Claude to Review This Doc** (right-click a `.md` file or run from the command palette).
-
-The extension prompts for an optional **focus directive** — a free-form sentence telling Claude what to look for, e.g. *"check API examples for correctness"* or *"find marketing-y tone."* Leave it blank for a general review. The last five focus directives you've used are offered in a quick-pick so you don't retype the common ones.
-
-Claude reads the doc and opens one inline-comment thread per substantive concern it finds. There's **no cap on thread count** — if 30 things warrant a thread, Claude leaves 30. The sidebar grows two affordances when Claude-initiated threads exist:
-
-- A summary row: *"N new from Claude · M reviewed,"* with a **Next** button that jumps to the next unread Claude thread.
-- A **Collapse all** / **Expand all** toggle that folds every unread Claude card so a big review pass stays browseable.
-
-A thread counts as "reviewed" once you reply or resolve it; the indicator clears automatically. The detection uses the existing inline-thread JSON — no schema change, no migration needed.
-
-Files larger than 50 KB prompt a soft confirm before sending (Claude's review can use significant context on big docs). In review mode the skill never edits prose — every concern goes in a thread for you to gate. Expect *"Reviewed `<path>` — no concerns found"* via the send channel if Claude reads the doc and finds nothing matching the focus.
-
-#### Standing conventions
-
-Some things are true of every review: the product's name, the house tone, the code-example
-rule, the thing you've decided not to care about. Retyping those into the focus prompt each
-time — or watching Claude re-raise them — is the tax this removes.
-
-**Markdown Collab: Edit Review Conventions** creates `.markdown-collab/conventions.md` from
-a commented template and opens it. It's plain prose you own; write what you'd tell a new
-reviewer on their first day. Every review request appends it under a `Conventions:` header.
-
-- A `Focus:` line applies to one pass; conventions apply to all of them. Where they pull
-  apart, focus decides *what* warrants a thread and conventions decide *how* it's phrased —
-  and a convention violation is a legitimate finding with no focus at all.
-- Anything you list as known and accepted stops being a finding.
-- HTML comments in the file are stripped before sending, so the template's instructions and
-  your own notes-to-self never reach Claude.
-- Capped at 4 KB per request, and if it's over, the payload says it was truncated rather
-  than quietly dropping the rest.
-
-#### Reviewing changes since the last pass
-
-Once Claude has reviewed a file, **Markdown Collab: Review Changes Since Last Pass**
-(right-click a `.md` file, or the command palette) reviews only what moved since then.
-A second pass costs what the edit cost, not what the document costs.
-
-The bookkeeping is inline like everything else: when Claude finishes a pass it records a
-`<!--mc:rev …-->` checkpoint holding a hash of each heading-section. The next delta pass
-compares those hashes, sends only the sections that changed, and tells Claude which
-threads already exist — so a concern you resolved stays resolved instead of being raised
-again, and a passage that was edited after its comment gets re-read first.
-
-- Nothing changed since the last pass? You get a toast saying so, and nothing is sent.
-- No checkpoint yet (first review, or a pass that ran before this feature)? It reviews the
-  whole file and says so; the pass after that one can be incremental.
-- The checkpoint is written by the closing integrity check, which only happens when Claude
-  works through the MCP tools or the `mdc` CLI — so delta passes need one of those, not
-  bare terminal editing.
-
-#### Reviewing a whole folder
-
-Real doc work is rarely one file, so the same command takes a **folder or a multi-select**: right-click a folder in the explorer → **Markdown Collab: Ask Claude to Review These Docs**, or select several `.md` files and use the same action. Every `.md` under the folder (excluding `node_modules`) goes into **one** review pass, so Claude can do the thing a per-file pass structurally can't — compare the documents against each other. Cross-document consistency is part of the pass: terminology that drifts between files, a claim in one file contradicted by another, duplicated guidance that has since diverged, and cross-references that no longer resolve. Such a thread is anchored in the file that's wrong and names the other file in its body.
-
-One focus prompt covers the whole selection, and the 50 KB soft confirm applies to the summed size. Threads land per file; the Markdown Review tree shows the per-file counts, and **Next Unread from Claude** (the → button in that view's title bar) walks the unread threads across all the files in order, wrapping at the end.
-
-### Comments that survive doc edits
-
-Comments are anchored to a text selection, not a line number. When Claude rewrites a passage that has a comment, the skill instructs it to update the anchor text to match — so comments survive revisions.
-
-If a rewrite removes the anchored passage entirely, the thread's markers go with it and the thread surfaces as **unanchored** in the Inline Comments view — re-anchor it by selecting fresh text and leaving the note again.
-
-### The live editor (WYSIWYG + AI co-editing)
-
-Prefer editing rendered Markdown directly? Right-click a `.md` file → **Markdown Collab: Open Live Editor** (or **Reopen with → Markdown Collab (live editor)**). It's a WYSIWYG editor with the same comment panel alongside it.
-
-It's built for **one human + Claude on the same machine** — not multi-user network sync:
-
-- You edit in the editor; your changes autosave to the `.md` on disk.
-- Claude edits the same `.md` with its normal tools; those edits land back in the editor live (a brief *"Updated from disk"* note appears when they do).
-- Guards keep you and Claude from overwriting each other in the normal turn-based flow.
-
-The comment panel matches the inline view: collapse threads, an always-on reply box, resolve, delete a single comment or a whole thread, and **send one thread (or the whole file) to Claude**.
-
-## Reviewing pull requests / merge requests
-
-Run **Markdown Collab: Review PR / MR** to review the Markdown files changed in a GitHub Pull Request or GitLab Merge Request. It uses your existing `gh` (GitHub) or `glab` (GitLab) CLI authentication — no extra tokens to configure.
-
-- Pick the PR/MR; its changed `.md` files appear in a **PR Review** tree in the Explorer.
-- Open a file to see the rendered view with the existing review comments inline.
-- Add comments, **reply** to existing threads, and edit or delete your drafts before posting.
-- Click a comment's line number to jump straight to it within the review.
-- Post your comments back to the PR/MR, or hand them to Claude like any other thread.
-
-**Requires** the `gh` or `glab` CLI installed and signed in.
-
-## Choosing a send mode
-
-The **Send to Claude** button delivers the comment payload one of five ways. Pick one once via `markdownCollab.sendMode` and you won't be asked again.
-
-> **TL;DR:** if MCP isn't available in your environment AND your Claude Code harness doesn't expose a streaming-stdout tool (`Monitor` or `BashOutput`), **use `terminal`**. It works everywhere with zero setup.
-
-| Your situation | Recommended mode | Why |
+| Mode | What happens | Choose it when |
 |---|---|---|
-| Just trying it out, or unsure | `terminal` | Zero setup. Bracketed-pastes the prompt into a `claude` REPL in your VS Code terminal. |
-| MCP disabled by your company / org | **`terminal`** | Channel-based modes need MCP; terminal mode doesn't. |
-| You want Claude's edits to be undoable | `mcp` | Same delivery as `terminal`, plus Claude acts through this extension's review tools, so every change lands as an editor edit you can undo. |
-| Harness lacks `Monitor` / `BashOutput` | **`terminal`** | Channel mode's reactivity depends on streaming notifications; without them you'd be polling, which terminal sidesteps entirely. |
-| Harness has `Monitor` / `BashOutput`, MCP allowed | `channel` | File-watcher pattern; supports long-lived watch loops without per-click setup. |
-| Claude Code v2.1.80+, `claude.ai` login, channels enabled by your org | `mcp-channel` | Native `<channel>` events on Claude's next turn — cleanest semantics when supported. |
-| Want to copy/paste manually each time | `clipboard` | Simplest fallback; nothing automatic. |
+| `headless` | **Run Claude for me.** The extension runs Claude Code in the background and shows progress in the status bar. | You'd rather not keep a terminal open. Still needs Claude Code installed and signed in. |
+| `clipboard` | Copies the prompt for you to paste. | You'd rather hand it off yourself. |
 
-**Don't know which to pick? Don't.** Leave `markdownCollab.sendMode` on `ask` (the default) and the first click works it out from what's running (v0.34.58+):
+Headless runs are offered in the picker whenever they can work, but never chosen for you. What they need: Claude Code installed and signed in (run `claude` once in a terminal if you never have), a trusted workspace, and the review tool server, which starts with the extension. If `claude` isn't on the PATH VS Code sees, set `markdownCollab.claudePath`. `markdownCollab.headlessModel` picks the model.
 
-- A `claude` REPL running in a terminal → `terminal`, no prompt. One toast tells you what happened.
-- Otherwise, an MCP channel server that has registered itself for this workspace → `mcp-channel`, no prompt.
-- Neither → the quick-pick, as before. `mcp` appears there when the review tool server is running; it is offered, never auto-selected.
+In this mode Claude can read files and use this extension's review tools, and nothing else: no shell, no direct file edits, no other MCP servers, and none of your Claude Code hooks. Every change lands through the editor, undoable and checked before it applies. The status bar reads *Claude is reviewing guide.md · 1m 20s* while it works; click it to cancel, and a run stops itself after 30 minutes. When it finishes, a notification carries the first line of Claude's report, with **Show report** for the whole thing and the estimated cost.
 
-The detected mode is remembered like a manual choice, and the toast names the escape hatch: **Markdown Collab: Reset Send Mode** clears it if you want to switch later. If the MCP channel turns out to be stale (its endpoint file outlived the server), the send falls back to the event log and un-remembers the choice, so the next click asks you properly instead of failing the same way twice.
+If a run can't start, the send goes to your terminal and the toast says why. If Claude Code can't load the review tools (MCP disabled by policy), headless stops being offered in that workspace until you reset the send mode.
 
-## Send mode details
+### What the status bar shows
 
-### `terminal` — recommended default
+Every review request has a pulse, whichever way it was sent. Each state is something the extension observed, not a guess.
 
-Bracketed-pastes the prompt into a `claude` REPL running in any VS Code terminal.
+| You see | It means |
+|---|---|
+| *Sent for review · 1m 20s* | The prompt went out; nothing has come back yet. |
+| *Claude: reading 2 of 3 files* | The agent reported its phase through the review tools, and who it is. |
+| *Review in progress · 3 new comments* | Threads are landing. The agent opens them one at a time. |
+| *Review arrived: 12 new comments* | Every file is finished. *No concerns found* is also an answer. |
+| *Review sent 10m ago — nothing arrived* | Ten minutes of silence. Click for Resend, Dismiss, or Show logs. |
 
-- **Detection ladder:** terminals the extension spawned → shell-integration evidence of `claude` → name match `/claude/i` → active terminal (with confirmation toast).
-- **No detected terminal?** A quick-pick offers to spawn one (`claude` auto-launches inside it) or fall back to clipboard.
-- **No MCP, no streaming tool, no protocol gates** — just a `paste` keystroke into your REPL.
+## Other agents
 
-**Setup:** none. Just have `claude` running in any integrated terminal when you click.
+The file format is the contract, and any agent that reads project instructions can act on it — Cursor, Codex, Copilot, or anything else:
 
-### `mcp` — terminal delivery, tool-driven edits
+1. **Copy the prompt.** Set the send mode to `clipboard`, or pick it from the picker on your first send — the prompt goes to your clipboard instead of a terminal.
+2. **The agent edits the file, following `AGENTS.md`.** [`docs/format.md`](docs/format.md) is the full contract — every marker, the threads block, the suggestion shape. The `AGENTS.md` snippet (written or refreshed by **Connect an Agent…**, or the hidden **Initialize AGENTS.md** command) points any agent that reads it at the same rules, so it can reply and open threads without a tool of its own.
+3. **Repair Comment Anchors is the safety net.** If the agent breaks a marker anyway, it fixes what can be fixed without guessing. `mdc check` does the same check — but only from inside a Claude Code session; `mdc` isn't on any other agent's PATH.
 
-Delivered exactly like `terminal`, with one extra line asking Claude to work through this
-extension's MCP review tools (`mc_list`, `mc_reply`, `mc_open`, `mc_rewrite`, `mc_suggest`,
-`mc_status`, `mc_check`) instead of editing the file directly.
+### Optional: undoable edits through MCP
 
-What that changes is the *write path*, not the delivery:
+For an agent that can call MCP tools, **Connect an Agent…** hooks the review tools up directly: its edits arrive as editor edits you can undo, and a change that would break an anchor is refused before it lands, not repaired after. The list shows only the entries your editor can support.
 
-- **Undoable.** Every change arrives as a `WorkspaceEdit`, so <kbd>Cmd</kbd>+<kbd>Z</kbd> takes back
-  Claude's reply or rewrite like your own typing.
-- **No races with your unsaved work.** The edit is ordered against the live buffer instead of
-  overwriting the file underneath it.
-- **Refused before it lands, not repaired after.** A call that would break marker integrity comes
-  back to Claude as a structured error and the file is untouched.
+| Client | What it writes |
+|---|---|
+| Claude Code | Installs the Claude Code plugin and adds a `markdown-collab` entry to the workspace's `.mcp.json`, in one step. If Claude is already running, `/mcp` reconnects it. |
+| Cursor, in-app agent | Nothing on disk. Registered live for the session, and again after each reload. |
+| Cursor CLI | `.cursor/mcp.json` with environment references. Restart `cursor-agent`. |
+| Codex | A `[mcp_servers.markdown-collab]` table in `.codex/config.toml`, with the loopback address and the name of the token's environment variable. Codex loads it once you trust the project. |
+| GitHub Copilot, agent mode | Nothing on disk. Enable the Markdown Collab tools in Copilot's tool picker. |
+| Anything else | A scratch document with the address, the token, and a snippet to copy. |
 
-**Setup:** run **Markdown Collab: Register Review Tools with Claude Code** (or accept the prompt on
-first activation). That adds a `markdown-collab` entry to the workspace's `.mcp.json`. No token is
-written to that file — the URL and a per-session token travel through the environment of terminals
-VS Code spawns, so a committed `.mcp.json` leaks nothing and a fresh window mints a fresh token.
+The token is never written to `.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, or any file you'd commit — those carry only environment references, or (Codex) the name of the environment variable that holds it. It is written to one file, `.markdown-collab/.mcp-server.json`, at permissions only your OS user can read, git-ignored, and deleted when the window closes. Comments written by another agent are credited to it: the sidebar says *"3 new from Codex"*, and the card says who replied.
 
-**This mode is never chosen for you.** MCP can be disabled entirely on your side of the
-conversation, so detection never selects it — it appears in the quick-pick only when the tool server
-is actually running, and if it stops running, a send degrades to `terminal` with a toast saying so.
-Claude sessions outside this VS Code window (ssh, another editor) keep using the `mdc` CLI.
+Connecting is always your call — the three steps above work with no MCP registration at all.
 
-### `channel` — events log + tailer
+**Disconnect an Agent…** removes an entry you no longer want registered.
 
-Each click appends one JSON line to `<workspace>/.markdown-collab/.events.jsonl`. Claude runs the bundled `mdc-tail.mjs` in a background bash and subscribes via `Monitor` (or your harness's equivalent stream-stdout tool); each click surfaces as a model notification.
+## Keyboard
 
-- **Auto-ack:** when every comment in an event has been addressed (last reply is `ai`, or comment is resolved/deleted), the extension appends the event id to `.events.acked.jsonl`. The tailer suppresses acked events on `--from-start` replays.
-- **Per-line flush:** the tailer uses `fs.writeSync(1, …)` to bypass Node's stdout buffering on POSIX pipes — every appended JSON line surfaces immediately, never batched.
+| Keys (mac / win + linux) | Where | Does |
+|---|---|---|
+| `Cmd+K Cmd+Alt+V` / `Ctrl+K Ctrl+Alt+V` | a Markdown editor | Open the file in Markdown Collab |
+| `Cmd+K Cmd+Alt+M` / `Ctrl+K Ctrl+Alt+M` | a Markdown editor, with a selection | Comment on the selection |
+| `Cmd+K Cmd+Alt+N` / `Ctrl+K Ctrl+Alt+N` | a Markdown editor or the Markdown Collab view | Next unread thread from an agent |
+| `n` / `p` | the view | Next or previous thread; next or previous change when a diff is showing |
+| `r` | the view | Reply to the highlighted thread |
+| `e` | the view | Resolve or reopen the highlighted thread |
+| `o` | the view | Open the highlighted thread's text in the editor |
 
-**Setup:** run **Markdown Collab: Install Claude Skill** once. Then ask Claude to start the watch loop:
-
-> Run `node ~/.claude/skills/vs-markdown-collab/mdc-tail.mjs --workspace <abs-path>` in background, then subscribe with the Monitor tool on the returned process id.
-
-**Won't work if** your harness only has `TaskOutput` (no streaming primitive). In that case use `terminal`.
-
-### `mcp-channel` — native channel events
-
-Pushes the payload to the bundled MCP server (`mdc-channel.mjs`), which emits `notifications/claude/channel`. Claude receives it as a native `<channel source="markdown-collab" file="…" id="evt_…">` tag on its next turn.
-
-**Requires:**
-- Claude Code v2.1.80+
-- `claude.ai` login (not API key / Console / Bedrock)
-- Channels enabled by your organization (`channelsEnabled`)
-- The one-time `.mcp.json` setup below
-
-**Setup:**
-1. Run **Markdown Collab: Install Claude Skill**.
-2. Register the server in `~/.claude.json` (user-level) or `<workspace>/.mcp.json`:
-   ```json
-   {
-     "mcpServers": {
-       "markdown-collab": {
-         "command": "node",
-         "args": ["~/.claude/skills/vs-markdown-collab/mdc-channel.mjs"]
-       }
-     }
-   }
-   ```
-3. Start Claude with the research-preview flag:
-   ```bash
-   claude --dangerously-load-development-channels server:markdown-collab
-   ```
-4. Set `markdownCollab.sendMode` to `mcp-channel`.
-
-If you see `--channels ignored (server:markdown-collab) — Channels are not currently available`, your environment fails one of the gates above. **Switch to `terminal`** — it doesn't depend on any of them.
-
-### `clipboard` — manual paste
-
-Copies the prompt to the clipboard. Paste into Claude however you like.
+The single keys do nothing while you're typing. There's no key for accepting a suggestion on purpose: that stays a click on the card you can see.
 
 ## Commands
 
-| Command | Purpose |
+| Command | Does |
 |---|---|
-| `Markdown Collab: Install Claude Skill` | Write `~/.claude/skills/vs-markdown-collab/SKILL.md` and the bundled helpers (`mdc.mjs`, `mdc-tail.mjs`, `mdc-channel.mjs`). |
-| `Markdown Collab: Initialize AGENTS.md` | Append a convention block to `<workspace>/AGENTS.md` (for non–Claude-Code agents). |
-| `Markdown Collab: Open Inline Comments View` | Open the rendered view with an inline-threads sidebar. Comments are stored inside the `.md` file. The right-click action on `.md` files. |
-| `Markdown Collab: Open Live Editor` | Open the WYSIWYG live editor with the comment panel — you and Claude co-edit the same `.md` (single human + Claude, no relay). |
-| `Markdown Collab: Review PR / MR` | Review the Markdown files changed in a GitHub PR or GitLab MR via the `gh` / `glab` CLI. |
-| `Markdown Collab: Ask Claude to Review This Doc` | Ask Claude to act as the reviewer (v0.29+). Prompts for an optional focus directive, then sends a Review Mode payload through the configured send mode. Claude opens one thread per concern; you triage in the sidebar. |
-| `Markdown Collab: Ask Claude to Review These Docs` | Same, over a folder or a multi-select of `.md` files — one review pass across all of them, including cross-document consistency (v0.34.55+). Right-click a folder in the explorer. |
-| `Markdown Collab: Next Unread from Claude` | Jump to the next thread Claude opened that you haven't answered, walking across every file in the Markdown Review tree. Also the → button in that view's title bar. |
-| `Markdown Collab: Send Unresolved Comments to Claude` | Same as the **Send to Claude** button — usable from palette. |
-| `Markdown Collab: Start Claude Review Terminal` | Spawn a fresh integrated terminal and launch `claude`. |
-| `Markdown Collab: Copy Claude Prompt` | Copy a short "address the comments on this file" prompt to clipboard. |
-| `Markdown Collab: Reset Send Mode` | Clear the remembered `ask` choice for the current workspace. |
-| `Markdown Collab: Remove All Resolved Comments` | Delete every resolved thread from the file at once, markers and all. Open threads and pending suggestions are left alone. Modal confirm; one undo step. Also a **Remove N resolved** button in both comment panels, shown only when there is something to remove. |
-| `Markdown Collab: Show Logs` | Open the **Markdown Collab** output channel. Set its level to **Trace** (gear icon in the Output panel) to see per-send and per-tool-call detail. |
-| `Markdown Collab: Report a Problem (collect diagnostics)` | Build an environment report — versions, send mode, skill and tool-server status, per-document review state — into a scratch document, ready to paste into an issue. Contains no tokens. |
+| Open in Markdown Collab | Also the title-bar icon and the right-click menu on `.md` files. |
+| Comment on Selection | Start a thread from a selection in the text editor. |
+| Send Unresolved Comments to Agent | The Send button, from the palette. |
+| Ask Agent to Review This Doc / These Docs | An agent as reviewer, for one file or a folder. |
+| Ask Agent to Review What Changed | Review only what moved since the last pass. |
+| Next Unread from Agent | Jump to the next thread an agent opened that you haven't answered, across every file. |
+| Toggle Suggest Mode | Ask the agent to propose edits instead of applying them. |
+| Edit Review Conventions | Create or open `.markdown-collab/conventions.md`. |
+| Review Session Summary | A digest of the thread state, ready to paste. |
+| Open Uncommitted Changes | Refresh and focus the uncommitted-changes tree. |
+| Open PR Review | Review the Markdown a GitHub PR or GitLab MR changed. |
+| Remove All Resolved Comments | Delete every resolved thread, anchors included. One undo step. |
+| Remove All Review Data | Strip every comment, anchor, and checkpoint, leaving clean Markdown to commit. A pending suggestion is discarded, not applied. One undo step. |
+| Repair Comment Anchors | Fix the anchor damage that can be fixed without guessing. |
+| Connect an Agent… | Hook the review tools up to Claude Code, Cursor, Codex, Copilot, or another MCP client. |
+| Disconnect an Agent… | Remove an agent's entry you no longer want registered. |
+| Open Tutorial Playground | The scratch document that arrives mid-review. |
+| Show Logs | The Markdown Collab output channel. Set it to Trace for per-send and per-tool-call detail. |
+| Report a Problem | An environment report for an issue: versions, send mode, Claude Code, plugin, tool server, connected agents, per-document review state. Tokens are redacted. |
+
+A few commands still exist but are hidden from the palette, now that Connect an Agent… covers the everyday path: Set Up Claude Code and Register Review Tools with Claude Code (both folded into it), Start Claude Review Terminal, Copy Prompt (the clipboard send mode replaces it), Reset Send Mode (linked from the setting instead), and Initialize AGENTS.md.
 
 ## Settings
 
-| Setting | Default | Purpose |
+| Setting | Default | Does |
 |---|---|---|
-| `markdownCollab.showLineNumbers` | `false` | Show the source line number beside each block in the inline comments view and the live editor. Numbers are lines in the `.md` file itself — frontmatter and the stored threads block are accounted for, so they match what you'd type into "Go to Line". |
-| `markdownCollab.sendMode` | `ask` | One of `ask`, `terminal`, `mcp`, `channel`, `mcp-channel`, `clipboard`. See [Choosing a send mode](#choosing-a-send-mode). |
+| `markdownCollab.sendMode` | `ask` | `ask`, `headless`, `terminal`, or `clipboard`. |
+| `markdownCollab.proposeEditsAsSuggestions` | `false` | Suggest mode: the agent proposes edits instead of applying them. |
+| `markdownCollab.claudePath` | `""` | Path to `claude` if it isn't on the PATH VS Code sees. |
+| `markdownCollab.headlessModel` | `""` | Model for headless runs, such as `sonnet` or `opus`. Empty uses Claude Code's default. |
+| `markdownCollab.showLineNumbers` | `false` | Source line numbers beside each block in the Markdown Collab view. They're lines of the `.md` file, frontmatter and threads block included, so they match Go to Line. |
+| `markdownCollab.collab.userName` | your OS username | The name on comments you write. |
+| `markdownCollab.liveEditor.readOnly` | `true` | Open the Markdown Collab view read-only. Switch to **Editing** in the toolbar above the document to turn editing on for that view; turn this off to open every view editable. |
+| `markdownCollab.classicReviewView` | `false` | Use the previous Markdown Collab view, a rendered preview without editing. A fallback; a later release removes it. |
+| `markdownCollab.plantuml.serverUrl` | `https://www.plantuml.com/plantuml` | The server that renders `plantuml` fences. Diagram source is sent to it, so point it at your own server for private documents. |
+| `markdownCollab.plantuml.format` | `svg` | `svg` or `png`. |
 
-## Storage layout
+### Privacy
 
-**Inline view (default).** Threads live inside the `.md` file itself. Anchored spans are wrapped in paired HTML comments and threads are serialized as `<!--mc:t {JSON}-->` lines inside a fenced region at the end of the file:
+A `plantuml` fence is rendered by sending its diagram source to `markdownCollab.plantuml.serverUrl` — public plantuml.com by default, including when you're just viewing a colleague's PR. An `http://` server sees that source in plaintext on the wire. Point the setting at your own server for anything private.
+
+## What's in your files
+
+A thread is two anchors around the passage and one JSON line in a block at the end of the file. All of it is HTML comments.
 
 ```markdown
 The <!--mc:a:k7q3p-->quick brown fox<!--mc:/a:k7q3p--> jumps…
@@ -313,89 +201,31 @@ The <!--mc:a:k7q3p-->quick brown fox<!--mc:/a:k7q3p--> jumps…
 <!--mc:threads:end-->
 ```
 
-The markers are invisible in any rendered preview (they're HTML comments). Commit the `.md` file as-is — review state ships with the document.
+The state stays in the file overnight and across sessions — a commit, a branch switch, a colleague opening the file, all fine. Strip it before you commit with **Remove All Review Data**, which clears everything in one step; staging a file that still carries threads reminds you once, in case you meant to run it first.
 
-The only files Markdown Collab writes under `.markdown-collab/` are runtime state for the channel send modes. Add them to `.gitignore`:
-
-```
-<workspace>/
-└── .markdown-collab/
-    ├── .events.jsonl         ← channel-mode event log (gitignore)
-    ├── .events.acked.jsonl   ← addressed-event ids (gitignore)
-    ├── .channel.json         ← mcp-channel endpoint descriptor (gitignore)
-    ├── .mcp-server.json      ← review tool server address + session token (gitignore)
-    └── conventions.md        ← standing review conventions (COMMIT this one)
-```
+Under `.markdown-collab/`, the extension writes runtime state for the tool server and, if you create it, your conventions file. Ignore the first, commit the second:
 
 ```gitignore
 .markdown-collab/
 !.markdown-collab/conventions.md
 ```
 
-Everything under `.markdown-collab/` is runtime state except `conventions.md`, which is
-project prose your team should share — hence the negation above.
-
 ## Troubleshooting
 
-**Start here for anything.** Run **Markdown Collab: Report a Problem (collect diagnostics)** — it answers the first six questions of any diagnosis in one paste (versions, send mode, whether the skill is installed and current, whether the tool server is up, whether a Claude terminal is visible, and what review state each open document holds). Then open **Markdown Collab: Show Logs**, set the level to **Trace**, and reproduce: every send, terminal resolution, MCP tool call, tool refusal, and `gh`/`glab` invocation is logged with its outcome. Both are safe to share — the session token and anything else credential-shaped is redacted before it is written.
+**Start with Report a Problem.** It answers the first questions of any diagnosis in one paste, with tokens redacted. Then set **Show Logs** to Trace and reproduce: every send, tool call, refusal, and `gh`/`glab` call is logged with its outcome.
 
-**Click did nothing, no toast.** Your `markdownCollab.sendMode` is set to a stale value (e.g., `ipc` from before 0.11). v0.12.1+ falls back to `ask` and warns; if you're on something older, change the setting to `terminal`.
+**Run Claude for me isn't offered in the send-mode picker.** Headless needs `claude` on the PATH VS Code sees (or `markdownCollab.claudePath`), a trusted workspace, and the tool server. The diagnostics report says which is missing.
 
-**Channel mode: tailer started, but lines don't arrive at Claude.**
-- Make sure you're on v0.13.1+ (uses `fs.writeSync` to flush per line).
-- Make sure Claude actually subscribed via `Monitor` / `BashOutput`. `TaskOutput block=true` waits for completion and will hang forever — wrong tool.
-- If your harness has only `TaskOutput`, switch to `terminal` mode. Channel mode requires a streaming primitive.
+**Claude replied in the terminal, but nothing changed in the file.** Claude may not have the review tools or the plugin. Run **Connect an Agent…** → **Claude Code**, and restart the Claude session.
 
-**`mcp-channel`: "Channels are not currently available."** One of: Claude Code <v2.1.80, logged in with API key / Bedrock / Vertex (not `claude.ai`), or your org has `channelsEnabled: false`. Diagnose with `claude /status` and `claude --version`. Otherwise, use `terminal`.
+**A thread is unanchored.** Its passage was deleted or rewritten beyond recognition, so the anchors went with it. Select fresh text and leave the note again, or **Repair Comment Anchors** if the quote still matches exactly one place.
 
-**A thread shows up as unanchored.** The anchored passage was deleted or rewritten beyond recognition, so its markers are gone. Re-anchor it by selecting fresh text in the Inline Comments view and leaving the note again.
+**Send did nothing.** `markdownCollab.sendMode` has a value this version doesn't recognize. Retired modes fall back to `terminal` with a one-time notice; anything else falls back to `ask`.
 
-## Development
+## Contributing
 
-```bash
-npm install
-npm run compile
-npm test
-```
+Building, the three test suites, and the release pipeline are described in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Three suites, all run in CI and again on every tag:
+## Out of scope
 
-```bash
-npm test               # Vitest — pure helpers, format engine, prompts
-npm run test:integration   # a real Extension Host: TextDocuments, WorkspaceEdits, undo
-npm run test:webview       # the shipped webview bundles in Chromium, driven by a real pointer
-```
-
-The VS Code API surface is stubbed in `src/test/vscode-stub.ts` for tests of pure helpers.
-Press **F5** to launch an Extension Development Host for the handful of things no harness
-reaches (explorer context menus, the skill install flow, a live Claude session).
-
-To produce a `.vsix` for distribution:
-```bash
-npx @vscode/vsce package
-```
-
-### Releasing
-
-Bump the version in `package.json`, prepend a `## X.Y.Z — <date>` block to `CHANGELOG.md`,
-commit, then tag `vX.Y.Z` and push the tag. Run `node scripts/release-checklist.mjs` first —
-it prints where the tag will publish and fails on anything a script can decide.
-
-The release commit message picks the destination:
-
-| Marker in the commit | What the tag does |
-|---|---|
-| `[skip-publish]` | GitHub Release with the `.vsix`. Nothing goes public. |
-| `[pre-release]` | **Publishes publicly** to the VS Code Marketplace and Open VSX pre-release channels. Users who opted into pre-releases get it as an auto-update; everyone else stays on stable. |
-| *(neither)* | **Publishes publicly** as a stable release to both marketplaces. |
-
-A marketplace version must be plain `x.y.z`, so the channel can't be encoded in the tag
-name — it lives in the commit message, the same way `[skip-publish]` already did.
-
-The workflow refuses to publish unless the tag matches `package.json`, the CHANGELOG has a
-non-empty section for that version, all three test suites pass, and `verify-package` is
-happy with the built `.vsix`.
-
-## Out of scope (v1)
-
-- Real-time **multi-user** (multi-human) collaboration. The live editor is single human + Claude; "collab" here means human ↔ AI, not multiple people editing at once.
+Real-time collaboration between people. "Collab" here means one person and an AI agent; the Markdown Collab view is not multi-user.
