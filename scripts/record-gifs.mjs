@@ -1,8 +1,11 @@
 #!/usr/bin/env node
-// Records the two README GIFs (10x-plan-4 P3.3) from the SHIPPED inline-view
-// bundle, driven through the same stubbed host the webview e2e harness uses
-// (src/test/webview-e2e/harness.ts) — real Chromium, `acquireVsCodeApi`
-// stubbed, host pushes simulated with `postMessage`. The scene scripts live in
+// Records the two README GIFs (10x-plan-4 P3.3) from the SHIPPED live-editor
+// bundle (out/webview/client.js — the default view since 0.35.16, not the
+// classic review view), driven through the same stubbed host the webview e2e
+// harness uses (src/test/webview-e2e/harness.ts) — real Chromium,
+// `acquireVsCodeApi` stubbed, host pushes simulated with `postMessage`, and a
+// dark VS Code-like theme injected since the bare harness page has none. The
+// scene scripts live in
 // src/test/webview-e2e/gifRecording.record.ts, named so playwright.config.ts's
 // default testMatch never picks it up as a spec (`npm run test:webview` must
 // not run it); this script bundles that TS entry point with esbuild — the
@@ -14,8 +17,8 @@
 // GIF not look like a wall of dithering), starting at ~12fps/900px and
 // backing off both until the file is under the 1.5 MB budget.
 //
-// Run after `npm run compile` (the driver boots out/inlineComments/client.js,
-// not the TypeScript source) via `npm run record:gifs`. GIFs land in
+// Run after `npm run compile` (the driver boots out/webview/client.js, not the
+// TypeScript source) via `npm run record:gifs`. GIFs land in
 // media/gifs/ and are committed — see .vscodeignore for why they don't ship
 // in the .vsix, and README.md for how they're referenced.
 
@@ -49,9 +52,9 @@ function ffprobeBin() {
 
 function ensureCompiled() {
   const required = [
-    "out/inlineComments/client.js",
-    "out/inlineComments/client.css",
-    "out/inlineComments/comments-shared.css",
+    "out/webview/client.js",
+    "out/webview/client.css",
+    "out/webview/comments-shared.css",
   ].map((rel) => path.join(root, rel));
   const missing = required.filter((f) => !existsSync(f));
   if (missing.length > 0) {
@@ -86,20 +89,22 @@ async function bundleDriver() {
 }
 
 /** Convert `webmPath` to a GIF at `gifPath`, backing off quality until it fits the budget. */
-function convertToGif(webmPath, gifPath) {
+function convertToGif(webmPath, gifPath, trimStartSeconds = 0) {
   let lastSize = Infinity;
   for (const { fps, width } of QUALITY_LADDER) {
     const paletteFile = path.join(os.tmpdir(), `mc-gif-palette-${Date.now()}-${fps}-${width}.png`);
+    const trim = trimStartSeconds > 0 ? ["-ss", trimStartSeconds.toFixed(2)] : [];
     const scaleFilter = `fps=${fps},scale=${width}:-1:flags=lanczos`;
     execFileSync(
       ffmpegBin(),
-      ["-y", "-i", webmPath, "-vf", `${scaleFilter},palettegen`, "-update", "1", paletteFile],
+      ["-y", ...trim, "-i", webmPath, "-vf", `${scaleFilter},palettegen`, "-update", "1", paletteFile],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
     execFileSync(
       ffmpegBin(),
       [
         "-y",
+        ...trim,
         "-i", webmPath,
         "-i", paletteFile,
         "-filter_complex", `${scaleFilter}[x];[x][1:v]paletteuse`,
@@ -132,10 +137,11 @@ async function recordScene(driver, name, recorder, scratchDir) {
   console.log(`record-gifs: recording ${name}…`);
   const sceneDir = path.join(scratchDir, name);
   mkdirSync(sceneDir, { recursive: true });
-  const webmPath = await driver[recorder](sceneDir);
+  // A scene returns its .webm and how much of the start (browser + bundle boot) to cut.
+  const { videoPath: webmPath, trimStartSeconds } = await driver[recorder](sceneDir);
   const gifPath = path.join(GIFS_DIR, `${name}.gif`);
   mkdirSync(GIFS_DIR, { recursive: true });
-  const { fps, width, bytes } = convertToGif(webmPath, gifPath);
+  const { fps, width, bytes } = convertToGif(webmPath, gifPath, trimStartSeconds);
   const duration = gifDurationSeconds(gifPath);
   const warn = duration > DURATION_BUDGET_S ? "  ⚠️ OVER the 12s budget" : "";
   console.log(
@@ -162,7 +168,7 @@ async function main() {
     const driver = await import(pathToFileURL(driverFile).href);
     const results = [];
     results.push(await recordScene(driver, "review-loop", "recordReviewLoop", scratchDir));
-    results.push(await recordScene(driver, "review-with-claude", "recordReviewWithClaude", scratchDir));
+    results.push(await recordScene(driver, "ask-agent-to-review", "recordAskAgentToReview", scratchDir));
     console.log("\nrecord-gifs: done.");
     for (const r of results) {
       console.log(`  media/gifs/${r.name}.gif — ${(r.bytes / 1024).toFixed(0)} KB, ${r.duration.toFixed(1)}s`);

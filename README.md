@@ -3,19 +3,19 @@
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/markdown-collab.markdown-collab-plugin?label=VS%20Code%20Marketplace&color=4F46E5)](https://marketplace.visualstudio.com/items?itemName=markdown-collab.markdown-collab-plugin)
 [![Open VSX](https://img.shields.io/open-vsx/v/markdown-collab/markdown-collab-plugin?label=Open%20VSX&color=4F46E5)](https://open-vsx.org/extension/markdown-collab/markdown-collab-plugin)
 
-Review Markdown *with* Claude, in VS Code. Comments live inside the `.md` file, anchored to the text they're about. Claude reads them, replies, and proposes edits you accept or reject. Or it reviews the document and leaves comments for you.
+Review Markdown *with* your AI agent — Claude Code, Cursor, Codex or Copilot — in VS Code, Cursor or Windsurf. Comments live inside the `.md` file, anchored to the text they're about. The agent reads them, replies, and proposes edits you accept or reject. Or it reviews the document and leaves comments for you.
 
-![Click Ask agent to review; three comment threads land; walk them with the keyboard](media/gifs/review-with-claude.gif)
+![Click Ask agent to review; three comment threads land; walk them with the keyboard](media/gifs/ask-agent-to-review.gif)
 
-Click **Ask agent to review**. Claude reads your doc and leaves a comment per concern, and you triage them. The first send asks how to reach Claude and remembers your answer — typing into a running terminal session is the normal path.
+Click **Ask agent to review**. The agent reads your doc and leaves a comment per concern, and you triage them. The first send asks how to reach your agent and remembers your answer — typing into a running terminal session is the normal path.
 
 ## What you get
 
 - **Comments stored in the file.** Each thread is an HTML comment wrapped around the exact passage it points at, so it's invisible on GitHub and in every preview. The state stays in the file overnight and across sessions — strip it with **Remove All Review Data** before you commit; staging a file that still carries threads reminds you once. No sidecar, no database.
-- **Claude as reviewer or as writer.** Ask Claude to review a document, a folder, or only what changed since its last pass. Or leave comments yourself and send them; Claude edits the document and replies in each thread.
-- **Suggestions you can undo.** In suggest mode, Claude's edits arrive as tracked changes. Accept applies one, Reject keeps your wording, and both are ordinary editor edits, so Cmd+Z takes them back.
-- **The Markdown Collab view, and the text editor too.** A rendered preview with a threads sidebar, plus dimmed markers, hovers, and a CodeLens in the plain text editor, so a reviewed file never looks corrupted.
-- **Other agents.** The file format is the contract: copy the prompt and any agent can edit it by following `AGENTS.md`, no integration required. Connect Cursor, Codex, Copilot, or another MCP client as an optional second step, for edits you can undo; comments say which agent wrote them.
+- **Your agent as reviewer or as writer.** Ask it to review a document, a folder, or only what changed since its last pass. Or leave comments yourself and send them; the agent edits the document and replies in each thread.
+- **Suggestions you can undo.** In suggest mode, the agent's edits arrive as tracked changes. Accept applies one, Reject keeps your wording, and both are ordinary editor edits, so Cmd+Z takes them back.
+- **The Markdown Collab view, and the text editor too.** The rendered document with a threads sidebar — read it, or switch to Editing and edit in place — plus dimmed markers, hovers, and a CodeLens in the plain text editor, so a reviewed file never looks corrupted.
+- **Any agent.** Claude Code is the most complete setup — a plugin and the review tools in one step. Beyond it, the file format is the contract: copy the prompt and any agent can edit it by following `AGENTS.md`, no integration required. Connect Cursor, Codex, Copilot, or another MCP client as an optional second step, for edits you can undo; comments say which agent wrote them.
 
 ## Get started
 
@@ -27,52 +27,52 @@ Click **Ask agent to review**. Claude reads your doc and leaves a comment per co
 2. **Connect an Agent…, once per machine.** `Cmd-Shift-P` → **Markdown Collab: Connect an Agent…** → **Claude Code**. This installs the Markdown Collab plugin into Claude Code — the review workflow as `/markdown-collab:review`, the anchor-safe `mdc` helper on Claude's PATH, a check that tells Claude the moment an edit breaks a comment anchor — and registers this extension's review tools in the same step, so Claude's edits arrive as edits you can undo. It installs from a marketplace the extension keeps on your machine, so the plugin always matches the extension's version, and it offers an update when a new one ships. Restart any running Claude session afterwards, or run `/reload-plugins`. Using Cursor, Codex, or Copilot instead? The same command lists them — see [Other agents](#other-agents) below.
 3. **Open a Markdown file** and click the comment icon in its title bar. Then either click **Ask agent to review**, or select a passage in the rendered document, click **+ Add comment**, write your note, and click **Send**.
 
-Want to try it with no Claude at all? **Markdown Collab: Open Tutorial Playground** writes a scratch document that arrives mid-review, with threads, a reply, and two pending suggestions to accept or reject.
+Want to try it with no agent at all? **Markdown Collab: Open Tutorial Playground** writes a scratch document that arrives mid-review, with threads, a reply, and two pending suggestions to accept or reject.
 
-Without the extension, the Claude side is also available on its own: `claude plugin marketplace add ronicayu/markdown-collab-plugin`, then `claude plugin install markdown-collab@markdown-collab`.
+Without the extension, the Claude Code plugin is also available on its own: `claude plugin marketplace add ronicayu/markdown-collab-plugin`, then `claude plugin install markdown-collab@markdown-collab`.
 
 ## The loop
 
-**Comment → send → Claude edits and replies → accept → resolve.**
+**Comment → send → the agent edits and replies → accept → resolve.**
 
 1. **Comment.** Select a passage in the rendered document and write a note. The thread is written into the file, around the exact text it points at — and nothing else in the file changes.
-2. **Send.** One button. Claude gets your unresolved threads and the document.
-3. **Claude works.** It edits the doc and replies in each thread with what it changed. In suggest mode it proposes changes instead. The thread card shows what Claude is doing while it does it.
+2. **Send.** One button. Your agent gets your unresolved threads and the document.
+3. **The agent works.** It edits the doc and replies in each thread with what it changed. In suggest mode it proposes changes instead. The thread card shows what the agent is doing while it does it.
 4. **Accept or reject.** A suggestion is a tracked change. Accept applies it; Reject keeps your wording; **Accept all** takes the whole batch after a second click.
 5. **Resolve** when you're satisfied, or reply and go round again.
 
 ![A pending suggestion accepted with a click, then a thread resolved](media/gifs/review-loop.gif)
 
-**Suggest mode** is the toggle next to the Send button, or `markdownCollab.proposeEditsAsSuggestions`. Each thread card has its own **Send** button, and it works the same way as sending them all. **Copy prompt** is the copy button beside the Send bar.
+**Suggest mode** is **Ask for suggestions instead of edits** in the menu beside the Send button — the button then reads *Send 2 comments as suggestions* — or `markdownCollab.proposeEditsAsSuggestions`. Each thread card has its own **Send** button, and it works the same way as sending them all. **Copy prompt** is the copy button beside the Send bar.
 
 ## Reviewing a colleague's PR
 
 **Open PR Review** shows the Markdown a GitHub PR or GitLab MR changed, rendered, with the platform's existing comments inline — what changed and what's already been said, in one view. Add comments, reply, edit your drafts, and post them back through your `gh` or `glab` sign-in; no extra tokens.
 
-This isn't an agent loop. There's no Claude in it, and nothing gets written into the file: the comments live where they always did, on the PR or MR. It's a client for reading and answering them without leaving the editor.
+This isn't an agent loop. There's no agent in it, and nothing gets written into the file: the comments live where they always did, on the PR or MR. It's a client for reading and answering them without leaving the editor.
 
-## Asking Claude to review
+## Asking your agent to review
 
-Right-click a `.md` file → **Ask Agent to Review This Doc**, or click **Ask agent to review** in an empty sidebar. Claude opens one thread per substantive concern: a wrong claim, an ambiguous sentence, a broken example, a contradiction with another section. It ranks concerns by severity and opens threads for the five that matter most, plus one summary thread listing everything else so you can ask for any of them ("open 3 and 7") — add *"give me ten"* (or more) to the focus directive to raise the cap. Pure typos and style preferences are skipped unless you ask for them. If Claude finds nothing, it says so instead of inventing something.
+Right-click a `.md` file → **Ask Agent to Review This Doc**, or click **Ask agent to review** in an empty sidebar. The agent opens one thread per substantive concern: a wrong claim, an ambiguous sentence, a broken example, a contradiction with another section. It ranks concerns by severity and opens threads for the five that matter most, plus one summary thread listing everything else so you can ask for any of them ("open 3 and 7") — add *"give me ten"* (or more) to the focus directive to raise the cap. Pure typos and style preferences are skipped unless you ask for them. If it finds nothing, it says so instead of inventing something.
 
-The sidebar shows *"N new from Claude · M reviewed"* with a **Next** button, and a thread counts as reviewed once you reply to or resolve it. Files over 50 KB ask for a confirmation before sending.
+The sidebar shows *"N new from Codex · M reviewed"* — named after whichever agent opened them — with a **Next** button, and a thread counts as reviewed once you reply to or resolve it. Files over 50 KB ask for a confirmation before sending.
 
 - **Focus.** The command asks for an optional one-line directive, such as *"check the API examples"* or *"find marketing tone"*. Your last five are offered again.
-- **Standing conventions.** **Edit Review Conventions** creates `.markdown-collab/conventions.md` from a template: the product's name, the house tone, the things you've decided not to care about. Every review carries it, so Claude stops re-raising what you've settled. It's capped at 4 KB per request, and the payload says so if it was cut.
-- **Only what changed.** **Ask Agent to Review What Changed** sends the sections that moved since Claude's last review and lists the threads that already exist, so a resolved concern stays resolved. Claude records a checkpoint in the file when it finishes a pass through the review tools or the `mdc` helper; the first review of a file is a full one.
-- **A whole folder.** Right-click a folder, or multi-select files, → **Ask Agent to Review These Docs**. Every `.md` goes into one pass, so Claude can compare the documents against each other: terminology that drifts, a claim one file contradicts, a cross-reference that no longer resolves. **Next Unread from Agent** walks the results across every file.
+- **Standing conventions.** **Edit Review Conventions** creates `.markdown-collab/conventions.md` from a template: the product's name, the house tone, the things you've decided not to care about. Every review carries it, so the agent stops re-raising what you've settled. It's capped at 4 KB per request, and the payload says so if it was cut.
+- **Only what changed.** **Ask Agent to Review What Changed** sends the sections that moved since the last review and lists the threads that already exist, so a resolved concern stays resolved. The agent records a checkpoint in the file when it finishes a pass through the review tools or the `mdc` helper; the first review of a file is a full one.
+- **A whole folder.** Right-click a folder, or multi-select files, → **Ask Agent to Review These Docs**. Every `.md` goes into one pass, so the agent can compare the documents against each other: terminology that drifts, a claim one file contradicts, a cross-reference that no longer resolves. **Next Unread from Agent** walks the results across every file.
 
 Afterwards, **Review Session Summary** turns the thread state into a digest for a PR description or a note to a colleague.
 
 ## Where it shows up
 
-**The Markdown Collab view.** The rendered document on the left, threads on the right. It opens read-only: select a passage and comment, and the comment's two markers are written into the file's original bytes, so nothing else in the file changes and every highlight sits exactly where its markers are. Switch to **Editing** in the sidebar to edit in place; a change rewrites only the block you typed in. The agent's edits to the file show up as they land. Comments render as Markdown. There's a find bar, a collapsible outline, optional source line numbers, and buttons to remove every resolved thread or every trace of review data in one undoable step. Mermaid and PlantUML fences and linked draw.io files render in the document. It's also in **Open With… → Markdown Collab**. For one release, `markdownCollab.classicReviewView` brings back the previous Markdown Collab view, a rendered preview without editing; the next release removes it.
+**The Markdown Collab view.** The rendered document on the left, threads on the right. It opens read-only: select a passage and comment, and the comment's two markers are written into the file's original bytes, so nothing else in the file changes and every highlight sits exactly where its markers are. Switch to **Editing** in the toolbar above the document to edit in place; a change rewrites only the block you typed in. The agent's edits to the file show up as they land. Comments render as Markdown. There's a find bar, a collapsible outline, optional source line numbers, and buttons to remove every resolved thread or every trace of review data in one undoable step. Mermaid and PlantUML fences and linked draw.io files render in the document. It's also in **Open With… → Markdown Collab**. `markdownCollab.classicReviewView` brings back the previous Markdown Collab view, a rendered preview without editing, as a fallback; a later release removes it.
 
 **The text editor.** Anchors are dimmed, commented text is tinted, and the threads block at the end of the file folds away. Hovering a commented passage shows its thread, with a link into the view, and one CodeLens at the top of the file gives the counts and opens the view. Select text and press `Cmd+K Cmd+Alt+M` to comment without leaving the editor.
 
 **Uncommitted changes.** An **Uncommitted Markdown** tree in the Explorer lists every Markdown file that differs from HEAD. Each opens in the view with changed blocks striped, removed text shown struck through where it used to be, arrows to step between changes, and stage and unstage buttons on each row. The diff is prose against prose, so a paragraph that only gained an anchor isn't marked as changed. A file that still carries review threads shows the count in the tree, and staging it reminds you once that **Remove All Review Data** strips them.
 
-## How your comments reach Claude
+## How your comments reach your agent
 
 The **Send** button delivers one of three ways. The first click asks, remembers your answer per workspace, and never asks again. **Reset Send Mode** clears it.
 
@@ -98,8 +98,8 @@ Every review request has a pulse, whichever way it was sent. Each state is somet
 | You see | It means |
 |---|---|
 | *Sent for review · 1m 20s* | The prompt went out; nothing has come back yet. |
-| *Claude: reading 2 of 3 files* | Claude reported its phase through the review tools. |
-| *Review in progress · 3 new comments* | Threads are landing. Claude opens them one at a time. |
+| *Claude: reading 2 of 3 files* | The agent reported its phase through the review tools, and who it is. |
+| *Review in progress · 3 new comments* | Threads are landing. The agent opens them one at a time. |
 | *Review arrived: 12 new comments* | Every file is finished. *No concerns found* is also an answer. |
 | *Review sent 10m ago — nothing arrived* | Ten minutes of silence. Click for Resend, Dismiss, or Show logs. |
 
@@ -136,7 +136,7 @@ Connecting is always your call — the three steps above work with no MCP regist
 |---|---|---|
 | `Cmd+K Cmd+Alt+V` / `Ctrl+K Ctrl+Alt+V` | a Markdown editor | Open the file in Markdown Collab |
 | `Cmd+K Cmd+Alt+M` / `Ctrl+K Ctrl+Alt+M` | a Markdown editor, with a selection | Comment on the selection |
-| `Cmd+K Cmd+Alt+N` / `Ctrl+K Ctrl+Alt+N` | a Markdown editor or the Markdown Collab view | Next unread thread from Claude |
+| `Cmd+K Cmd+Alt+N` / `Ctrl+K Ctrl+Alt+N` | a Markdown editor or the Markdown Collab view | Next unread thread from an agent |
 | `n` / `p` | the view | Next or previous thread; next or previous change when a diff is showing |
 | `r` | the view | Reply to the highlighted thread |
 | `e` | the view | Resolve or reopen the highlighted thread |
@@ -154,7 +154,7 @@ The single keys do nothing while you're typing. There's no key for accepting a s
 | Ask Agent to Review This Doc / These Docs | An agent as reviewer, for one file or a folder. |
 | Ask Agent to Review What Changed | Review only what moved since the last pass. |
 | Next Unread from Agent | Jump to the next thread an agent opened that you haven't answered, across every file. |
-| Toggle Suggest Mode | Ask Claude to propose edits instead of applying them. |
+| Toggle Suggest Mode | Ask the agent to propose edits instead of applying them. |
 | Edit Review Conventions | Create or open `.markdown-collab/conventions.md`. |
 | Review Session Summary | A digest of the thread state, ready to paste. |
 | Open Uncommitted Changes | Refresh and focus the uncommitted-changes tree. |
@@ -175,13 +175,13 @@ A few commands still exist but are hidden from the palette, now that Connect an 
 | Setting | Default | Does |
 |---|---|---|
 | `markdownCollab.sendMode` | `ask` | `ask`, `headless`, `terminal`, or `clipboard`. |
-| `markdownCollab.proposeEditsAsSuggestions` | `false` | Suggest mode: Claude proposes edits instead of applying them. |
+| `markdownCollab.proposeEditsAsSuggestions` | `false` | Suggest mode: the agent proposes edits instead of applying them. |
 | `markdownCollab.claudePath` | `""` | Path to `claude` if it isn't on the PATH VS Code sees. |
 | `markdownCollab.headlessModel` | `""` | Model for headless runs, such as `sonnet` or `opus`. Empty uses Claude Code's default. |
 | `markdownCollab.showLineNumbers` | `false` | Source line numbers beside each block in the Markdown Collab view. They're lines of the `.md` file, frontmatter and threads block included, so they match Go to Line. |
 | `markdownCollab.collab.userName` | your OS username | The name on comments you write. |
-| `markdownCollab.liveEditor.readOnly` | `true` | Open the Markdown Collab view read-only. Switch to **Editing** in the sidebar to turn editing on for that view; turn this off to open every view editable. |
-| `markdownCollab.classicReviewView` | `false` | Use the previous Markdown Collab view, a rendered preview without editing. A fallback for one release; the next removes it. |
+| `markdownCollab.liveEditor.readOnly` | `true` | Open the Markdown Collab view read-only. Switch to **Editing** in the toolbar above the document to turn editing on for that view; turn this off to open every view editable. |
+| `markdownCollab.classicReviewView` | `false` | Use the previous Markdown Collab view, a rendered preview without editing. A fallback; a later release removes it. |
 | `markdownCollab.plantuml.serverUrl` | `https://www.plantuml.com/plantuml` | The server that renders `plantuml` fences. Diagram source is sent to it, so point it at your own server for private documents. |
 | `markdownCollab.plantuml.format` | `svg` | `svg` or `png`. |
 

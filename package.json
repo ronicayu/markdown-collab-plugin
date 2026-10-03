@@ -314,12 +314,12 @@
         "markdownCollab.liveEditor.readOnly": {
           "type": "boolean",
           "default": true,
-          "description": "Open the Markdown Collab view read-only. Switch to Editing in the sidebar to turn editing on for that panel."
+          "description": "Open the Markdown Collab view read-only. Switch to Editing in the toolbar above the document to turn editing on for that panel."
         },
         "markdownCollab.classicReviewView": {
           "type": "boolean",
           "default": false,
-          "description": "Use the previous Markdown Collab view (rendered preview without editing). This fallback is removed in the next release."
+          "description": "Use the previous Markdown Collab view (rendered preview without editing). A later release removes this fallback."
         },
         "markdownCollab.plantuml.serverUrl": {
           "type": "string",

@@ -33,9 +33,15 @@ Terminal, the Claude terminal detection) still say Claude.
   Markdown with your AI agent — comments anchored in the file itself,
   suggestions you accept or reject. Works with Claude Code, Cursor, Codex and
   Copilot."
+- **README** follows the same rule, and catches up with the view: Editing is
+  in the toolbar above the document, suggest mode is in the menu beside Send,
+  and `classicReviewView` is a fallback a later release removes. Both GIFs
+  are re-recorded from the Markdown Collab view instead of the classic one;
+  the first is now `media/gifs/ask-agent-to-review.gif`. The
+  `liveEditor.readOnly` and `classicReviewView` setting descriptions say the
+  same.
 - Unchanged: the classic review view's own wording, author names on
-  comments and suggestions, and the skill text agents read. The README GIF of
-  the empty state still shows the old button and needs re-recording.
+  comments and suggestions, and the skill text agents read.
 
 ### Tests
 
