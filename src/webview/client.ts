@@ -2649,9 +2649,12 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     sidebarState.comments = msg.comments ?? [];
     sidebarState.suggestions = msg.suggestions ?? [];
     takeSidebarPush(msg);
-    renderSidebar();
+    // Highlights before the sidebar: rendering it can reveal a thread in the
+    // document (an agent's first new thread after a review request), and in
+    // Reading mode that jump finds its anchor through these decorations.
     forceHighlightRefresh();
     forceSuggestionHighlightRefresh();
+    renderSidebar();
     currentDiff = msg.diff ?? null;
     forceDiffRefresh();
   } else if (msg.type === "add-comment-result") {

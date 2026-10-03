@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.35.26 — 2026-10-03 (GitHub only)
+
+### Fixed: an agent's review landed without taking you to its first thread
+
+After **Ask agent to review**, the first new thread is meant to become the
+current card and the document is meant to scroll to its passage. In Reading
+mode the document half never happened: the sidebar jumped before the
+document's highlights included the new threads, found no highlight for the
+thread, and showed "Couldn't locate this comment's anchor in the document".
+The highlights are now refreshed before the sidebar renders, so the jump
+lands and the passage pulses. Found while re-recording the README GIF.
+
+### Tests
+
+- `liveSidebarEmptyState`: the existing review-landing test now also
+  requires the document jump, and a new one covers a first review of a file
+  with no threads. Both fail without the fix. Playwright 395; vitest 130
+  files / 2,421 tests.
+
 ## 0.35.25 — 2026-10-03 (GitHub only)
 
 ### Changed: the UI names an agent only when it knows which one

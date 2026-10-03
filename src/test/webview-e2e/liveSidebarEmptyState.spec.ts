@@ -86,4 +86,40 @@ test("after an agent is asked to review, its first new thread becomes the curren
   });
   await pushToWebview(page, { type: "sidecar-changed", ...liveSidecar(landed.source) });
   await expect(page.locator(`.thread-card[data-thread="${landed.thread.id}"]`)).toHaveClass(/highlighted/);
+  // The document goes to the new thread too: its highlight pulses, and the
+  // jump never reports the anchor missing.
+  await expect(
+    page.locator(`.mdc-anchor-highlight[data-comment-id="${landed.thread.id}"]`).first(),
+  ).toHaveClass(/mdc-anchor-highlight--pulse/);
+  await expect(page.locator(".mdc-toast", { hasText: "Couldn't locate" })).toHaveCount(0);
+});
+
+test("a first review of an empty file lands on its first thread without an anchor error", async ({ page }) => {
+  const doc = "# Notes\n\nThe setup section references the old config path.\n\nRetries are not described.\n";
+  await bootLiveEditor(page, { ...liveInit(doc), readOnly: true });
+  await pushToWebview(page, { type: "review-pending", existingIds: [] });
+
+  let source = doc;
+  const ids: string[] = [];
+  for (const [quote, body] of [
+    ["old config path", "This path moved in the last release."],
+    ["Retries are not described", "What happens after the third retry?"],
+  ] as const) {
+    const at = source.indexOf(quote);
+    const added = addThread(source, at, at + quote.length, {
+      author: "claude",
+      body,
+      ts: "2026-07-02T10:00:00.000Z",
+      agent: true,
+    });
+    source = added.source;
+    ids.push(added.thread.id);
+  }
+  await pushToWebview(page, { type: "sidecar-changed", ...liveSidecar(source) });
+
+  await expect(page.locator(`.thread-card[data-thread="${ids[0]}"]`)).toHaveClass(/highlighted/);
+  await expect(page.locator(`.mdc-anchor-highlight[data-comment-id="${ids[0]}"]`).first()).toHaveClass(
+    /mdc-anchor-highlight--pulse/,
+  );
+  await expect(page.locator(".mdc-toast", { hasText: "Couldn't locate" })).toHaveCount(0);
 });
