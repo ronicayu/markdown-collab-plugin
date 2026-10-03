@@ -61,12 +61,12 @@ async function invokeCopyClaudePrompt(): Promise<void> {
   const doc = editor.document;
   const folder = folderForDocument(doc.uri);
   const rel = path.relative(folder.uri.fsPath, doc.uri.fsPath);
-  // This command is Claude-branded by its own title ("Copy Claude Prompt") —
-  // unlike the generic clipboard send mode below, it says so explicitly.
+  // The command is "Copy Prompt" (the id keeps its old name): the prompt opens
+  // with the skill's workflow line, but whichever agent it is pasted into reads it.
   const prompt = `${workflowOpener("installed")} to address the unresolved review comments on ${rel}.`;
   await vscode.env.clipboard.writeText(prompt);
   void vscode.window.showInformationMessage(
-    "Prompt copied — paste into Claude Code.",
+    "Prompt copied — paste it into your agent.",
   );
 }
 
@@ -193,7 +193,7 @@ export async function dispatchReviewPayload(
   /**
    * Skip mode resolution (config / remembered / detect / ask) entirely and
    * deliver through this mode for this one dispatch (10x-plan-4 P2.4's
-   * empty-state "Review with Claude" button). Never persisted — the next
+   * former headless-only empty-state button). Never persisted — the next
    * ordinary send still resolves the mode the normal way.
    */
   opts?: { forceMode?: SendMode },

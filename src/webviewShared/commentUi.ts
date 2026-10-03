@@ -10,7 +10,7 @@
 import type MarkdownIt from "markdown-it";
 import { createCommentRenderer } from "./markdownPipeline";
 import { formatRelativeTime } from "../collab/relativeTime";
-import { agentDisplayName, isAgentComment } from "../agentIdentity";
+import { agentDisplayName, isAgentComment, WAITING_FOR_AGENT } from "../agentIdentity";
 import { diffWords, exceedsTokenCap, isBulkRewrite, MAX_DIFF_TOKENS, suggestionGist } from "./wordDiff";
 
 /**
@@ -277,7 +277,7 @@ export function buildCommentCard(opts: CommentCardOptions): HTMLElement {
     dot.className = "mc-card__pending-dot";
     working.appendChild(dot);
     const label = document.createElement("span");
-    label.textContent = opts.pendingLabel ?? "Claude is working\u2026";
+    label.textContent = opts.pendingLabel ?? WAITING_FOR_AGENT;
     working.appendChild(label);
     card.appendChild(working);
   }

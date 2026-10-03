@@ -153,8 +153,8 @@ describe("claudeSummary", () => {
     expect(
       claudeSummary([thread("a", { author: "codex" }), thread("b", { author: "claude" })]).agentNoun,
     ).toBe("Agents");
-    // No unread threads to derive a name from — falls back to "Claude".
-    expect(claudeSummary([]).agentNoun).toBe("Claude");
+    // No unread threads to derive a name from — generic, not a guess.
+    expect(claudeSummary([]).agentNoun).toBe("Agent");
   });
 
   it("reviewed count isn't agent-specific — a codex thread a human replied to still counts", () => {
@@ -189,7 +189,9 @@ describe("emptyListMessage", () => {
   });
 
   it("points at the review command when no claude threads exist", () => {
-    expect(emptyListMessage("claude-unread")).toMatch(/Ask Agent to Review/);
+    expect(emptyListMessage("claude-unread")).toBe(
+      "No unread threads from an agent. Run 'Ask Agent to Review This Doc' to start one.",
+    );
   });
 
   it("blames the filter otherwise", () => {
@@ -200,38 +202,33 @@ describe("emptyListMessage", () => {
 
 describe("emptyState", () => {
   it("blames the filter when threads exist but it hides them all", () => {
-    const state = emptyState({ filter: "resolved", totalThreads: 3, headlessAvailable: false });
+    const state = emptyState({ filter: "resolved", totalThreads: 3 });
     expect(state).toEqual({ kind: "filtered", message: emptyListMessage("resolved") });
   });
 
   it("is first-run when the doc has never had a comment, regardless of filter", () => {
-    const state = emptyState({ filter: "open", totalThreads: 0, headlessAvailable: false });
+    const state = emptyState({ filter: "open", totalThreads: 0 });
     expect(state.kind).toBe("first-run");
   });
 
-  it("labels the button 'Review with Claude' when headless is available", () => {
-    const state = emptyState({ filter: "open", totalThreads: 0, headlessAvailable: true });
+  it("labels the button 'Ask agent to review' — no agent is named, and no mode changes it", () => {
+    const state = emptyState({ filter: "open", totalThreads: 0 });
     if (state.kind !== "first-run") throw new Error("expected first-run");
-    expect(state.action.label).toBe("Review with Claude");
+    expect(state.action.label).toBe("Ask agent to review");
+    expect(state.action.label).not.toMatch(/claude/i);
     expect(state.action.message).toEqual({ type: "empty-state-review" });
   });
 
-  it("labels the button 'Ask Claude to review this doc' when headless is unavailable", () => {
-    const state = emptyState({ filter: "open", totalThreads: 0, headlessAvailable: false });
-    if (state.kind !== "first-run") throw new Error("expected first-run");
-    expect(state.action.label).toBe("Ask Claude to review this doc");
-  });
-
   it("shows both keybinding forms when the platform isn't known", () => {
-    const state = emptyState({ filter: "open", totalThreads: 0, headlessAvailable: false });
+    const state = emptyState({ filter: "open", totalThreads: 0 });
     if (state.kind !== "first-run") throw new Error("expected first-run");
     expect(state.hint).toContain("Cmd+K Cmd+Alt+M");
     expect(state.hint).toContain("Ctrl+K Ctrl+Alt+M");
   });
 
   it("collapses to one keybinding form when the platform is known", () => {
-    const mac = emptyState({ filter: "open", totalThreads: 0, headlessAvailable: false, platform: "mac" });
-    const other = emptyState({ filter: "open", totalThreads: 0, headlessAvailable: false, platform: "other" });
+    const mac = emptyState({ filter: "open", totalThreads: 0, platform: "mac" });
+    const other = emptyState({ filter: "open", totalThreads: 0, platform: "other" });
     if (mac.kind !== "first-run" || other.kind !== "first-run") throw new Error("expected first-run");
     expect(mac.hint).toContain("Cmd+K Cmd+Alt+M");
     expect(mac.hint).not.toContain("Ctrl+K");
@@ -240,7 +237,7 @@ describe("emptyState", () => {
   });
 
   it("always uses the same headline", () => {
-    const state = emptyState({ filter: "all", totalThreads: 0, headlessAvailable: true });
+    const state = emptyState({ filter: "all", totalThreads: 0 });
     if (state.kind !== "first-run") throw new Error("expected first-run");
     expect(state.headline).toBe("No comments yet.");
   });

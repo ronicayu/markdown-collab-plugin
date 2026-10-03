@@ -1,8 +1,8 @@
 {
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
-  "description": "Claude reviews your Markdown in VS Code — inline comments stored in the file, suggestions you accept or reject, and runs that need no terminal. Works with Cursor, Codex, and Copilot agents too.",
-  "version": "0.35.24",
+  "description": "Review Markdown with your AI agent — comments anchored in the file itself, suggestions you accept or reject. Works with Claude Code, Cursor, Codex and Copilot.",
+  "version": "0.35.25",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -96,7 +96,7 @@
       },
       {
         "command": "markdownCollab.copyClaudePrompt",
-        "title": "Markdown Collab: Copy Claude Prompt"
+        "title": "Markdown Collab: Copy Prompt"
       },
       {
         "command": "markdownCollab.revealComment",
@@ -301,10 +301,10 @@
             "Ask which way to send, the first time per workspace, then remember the answer. Run 'Markdown Collab: Reset Send Mode' to be asked again.",
             "Runs Claude for you in the background and shows progress in the status bar — if you'd rather not keep a terminal open; needs Claude Code installed and signed in.",
             "Type the prompt into your running terminal session. Works with any agent's terminal — recommended.",
-            "Copy the prompt to your clipboard so you can paste it into Claude yourself."
+            "Copy the prompt to your clipboard so you can paste it into your agent yourself."
           ],
           "default": "ask",
-          "markdownDescription": "How the **Send to Claude** button gets your comments to Claude.\n\n- `ask` — asks the first time per workspace, then remembers your answer. Run [Reset Send Mode](command:markdownCollab.resetSendMode) to be asked again.\n- `terminal` — types the prompt into your running terminal session. Works with any agent's terminal — recommended.\n- `headless` — **Run Claude for me**: the extension runs Claude Code in the background and shows progress in the status bar. In this mode Claude can only read files and use the review tools — if you'd rather not keep a terminal open; needs Claude Code installed and signed in.\n- `clipboard` — copies the prompt so you can paste it into Claude yourself.\n\nWhichever agent you use, connect it to this extension's review tools so its edits arrive as edits you can undo — see **Connect an Agent…** in the README."
+          "markdownDescription": "How the **Send** button gets your comments to your agent.\n\n- `ask` — asks the first time per workspace, then remembers your answer. Run [Reset Send Mode](command:markdownCollab.resetSendMode) to be asked again.\n- `terminal` — types the prompt into your running terminal session. Works with any agent's terminal — recommended.\n- `headless` — **Run Claude for me**: the extension runs Claude Code in the background and shows progress in the status bar. In this mode Claude can only read files and use the review tools — if you'd rather not keep a terminal open; needs Claude Code installed and signed in.\n- `clipboard` — copies the prompt so you can paste it into your agent yourself.\n\nWhichever agent you use, connect it to this extension's review tools so its edits arrive as edits you can undo — see **Connect an Agent…** in the README."
         },
         "markdownCollab.collab.userName": {
           "type": "string",
@@ -338,7 +338,7 @@
         "markdownCollab.proposeEditsAsSuggestions": {
           "type": "boolean",
           "default": false,
-          "description": "When on, 'Send to Claude' asks Claude to propose its edits as suggestions (accept/reject) instead of applying them directly. Remembered per workspace."
+          "description": "When on, Send asks the agent to propose its edits as suggestions (accept/reject) instead of applying them directly. Remembered per workspace."
         },
         "markdownCollab.showLineNumbers": {
           "type": "boolean",
@@ -749,8 +749,8 @@
           },
           {
             "id": "send",
-            "title": "Send it to Claude",
-            "description": "Click Send to Claude in the sidebar. The first time, pick how it's delivered; the terminal option works with any agent.\n[Send unresolved comments](command:markdownCollab.sendAllToClaude)",
+            "title": "Send it to your agent",
+            "description": "Click Send in the sidebar. The first time, pick how it's delivered; the terminal option works with any agent.\n[Send unresolved comments](command:markdownCollab.sendAllToClaude)",
             "media": {
               "markdown": "media/walkthrough/send.md"
             },
@@ -760,8 +760,8 @@
           },
           {
             "id": "ask-review",
-            "title": "Or ask Claude to review you",
-            "description": "Flip the direction: Claude reads the doc and opens a thread per concern, for you to triage.\n[Ask Claude to review](command:markdownCollab.askClaudeToReview)",
+            "title": "Or ask your agent to review",
+            "description": "Flip the direction: your agent reads the doc and opens a thread per concern, for you to triage.\n[Ask Agent to Review](command:markdownCollab.askClaudeToReview)",
             "media": {
               "markdown": "media/walkthrough/review.md"
             },

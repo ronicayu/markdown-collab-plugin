@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { addThread, appendReply, parse, replaceThread } from "../inlineComments/format";
 import { serialize } from "../inlineComments/serializeState";
-import { mostRecentAgentName, sidebarDocumentFields } from "../collab/sidebarState";
+import { mostRecentAgentName, sidebarDocumentFields, skillBannerStatus } from "../collab/sidebarState";
 
 // 10x-plan-6 P4: the live editor's sidebar renders from the same thread list
 // the review view's panel serializes, plus the agent name for its toolbar.
@@ -32,7 +32,17 @@ describe("sidebarDocumentFields", () => {
   });
 
   it("is empty for a document nobody has reviewed", () => {
-    expect(sidebarDocumentFields(DOC)).toEqual({ threads: [], agentName: "Claude" });
+    // No agent has written here, so there is no `agentName` at all — the
+    // sidebar words Send and the waiting row generically instead of guessing.
+    const fields = sidebarDocumentFields(DOC);
+    expect(fields).toEqual({ threads: [] });
+    expect("agentName" in fields).toBe(false);
+  });
+
+  it("omits agentName when only people have commented", () => {
+    const at = DOC.indexOf("Alpha");
+    const { source } = addThread(DOC, at, at + 5, { author: "ronica", body: "Why?", ts: TS });
+    expect("agentName" in sidebarDocumentFields(source)).toBe(false);
   });
 });
 
@@ -41,8 +51,8 @@ describe("mostRecentAgentName (sidebarState)", () => {
   const withThreadsBlock = (...lines: string[]) =>
     ["Plain.", "", "<!--mc:threads:begin-->", ...lines, "<!--mc:threads:end-->"].join("\n");
 
-  it("defaults to Claude when no agent has written to the file", () => {
-    expect(mostRecentAgentName(parse("No threads at all."))).toBe("Claude");
+  it("is undefined when no agent has written to the file", () => {
+    expect(mostRecentAgentName(parse("No threads at all."))).toBeUndefined();
   });
 
   it("picks the latest-timestamped agent write across threads", () => {
@@ -68,5 +78,21 @@ describe("mostRecentAgentName (sidebarState)", () => {
       `<!--mc:s {"anchorId":"s1","author":"cursor","agent":true,"ts":"2026-02-01T00:00:00Z","original":"foo","proposed":"bar"}-->`,
     );
     expect(mostRecentAgentName(parse(md))).toBe("Cursor");
+  });
+});
+
+// The skill banner is about the Claude skill: it shows for people running
+// Claude Code, and stays quiet on a Cursor- or Codex-only machine.
+describe("skillBannerStatus", () => {
+  it("shows missing / outdated when Claude Code is on the machine", () => {
+    expect(skillBannerStatus("missing", true)).toBe("missing");
+    expect(skillBannerStatus("outdated", true)).toBe("outdated");
+    expect(skillBannerStatus("current", true)).toBe("current");
+  });
+
+  it("stays hidden without Claude Code, whatever the skill files say", () => {
+    expect(skillBannerStatus("missing", false)).toBe("current");
+    expect(skillBannerStatus("outdated", false)).toBe("current");
+    expect(skillBannerStatus("current", false)).toBe("current");
   });
 });

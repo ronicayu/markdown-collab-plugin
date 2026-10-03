@@ -86,8 +86,8 @@ export interface ClaudeSummary {
    * The same agent noun baked into `text` ("Claude", another agent's name, or
    * "agents"), exposed separately so callers with their own copy to fill in —
    * the filter chip, a button's title — can name the actual agent instead of
-   * hardcoding "Claude" (round-4 P3, agent-neutral copy). Falls back to
-   * "Claude" when there are no unread threads to derive it from.
+   * hardcoding "Claude" (round-4 P3, agent-neutral copy). Falls back to the
+   * generic "Agent" when there are no unread threads to derive it from.
    */
   agentNoun: string;
 }
@@ -97,10 +97,10 @@ export interface ClaudeSummary {
  * once: unread until the human replies or resolves it, reviewed after.
  *
  * The label names whichever agent(s) the unread threads actually came from
- * (10x-plan-4 P1.2, the wording rule): "Claude" when that's the only one
- * involved — the common case, worded exactly as before — the other agent's
- * name when every unread thread came from one non-Claude agent, and the
- * generic "agents" when more than one distinct agent contributed.
+ * (the wording rule: name the agent when the code knows it): the one agent's
+ * name ("Claude", "Codex", …) when every unread thread came from the same
+ * agent, and the generic "agents" when more than one distinct agent
+ * contributed.
  */
 export function claudeSummary(threads: ListThread[]): ClaudeSummary {
   let unread = 0;
@@ -132,11 +132,11 @@ export function emptyListMessage(filter: ThreadFilter): string {
     return "No open comments. Select text in the preview to start a thread.";
   }
   if (filter === "claude-unread") {
-    // Command renamed to "Ask Agent to Review This Doc" (package.json). "from
-    // Claude" stays: this function only gets `filter`, not the thread list,
-    // so there's no agent to name — there are no unread threads to draw one
-    // from, which is exactly why this message is showing.
-    return "No unread threads from Claude. Run 'Ask Agent to Review This Doc' to start one.";
+    // Command renamed to "Ask Agent to Review This Doc" (package.json). This
+    // function only gets `filter`, not the thread list, so there's no agent to
+    // name — there are no unread threads to draw one from, which is exactly
+    // why this message is showing — and the wording rule says "an agent".
+    return "No unread threads from an agent. Run 'Ask Agent to Review This Doc' to start one.";
   }
   return "No comments match this filter.";
 }
@@ -151,7 +151,7 @@ export interface FilteredEmptyState {
  * The doc has never had a comment on it — the first-minute path, not a filter
  * artifact. Rendered as a small card instead of a line of grey text (10x-plan-4
  * P2.4 / round-3 P3.1): a brand-new user staring at a blank sidebar has no way
- * to know a comment is even possible, let alone that Claude can start one.
+ * to know a comment is even possible, let alone that an agent can start one.
  */
 export interface FirstRunEmptyState {
   kind: "first-run";
@@ -188,8 +188,6 @@ export function emptyState(opts: {
   filter: ThreadFilter;
   /** Every thread in the document, before filtering — 0 means "never reviewed". */
   totalThreads: number;
-  /** Whether a headless Claude run is available right now (same check the send-mode picker uses). */
-  headlessAvailable: boolean;
   platform?: "mac" | "other";
 }): EmptyState {
   if (opts.totalThreads > 0) {
@@ -202,7 +200,9 @@ export function emptyState(opts: {
     headline: "No comments yet.",
     hint,
     action: {
-      label: opts.headlessAvailable ? "Review with Claude" : "Ask Claude to review this doc",
+      // The same words as the "Ask Agent to Review This Doc" command; the
+      // empty state can't know which agent (or send mode) the click will use.
+      label: "Ask agent to review",
       message: { type: "empty-state-review" },
     },
   };

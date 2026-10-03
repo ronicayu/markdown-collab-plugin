@@ -5,6 +5,8 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import type { Logger } from "../logging";
+import { agentGroupLabel } from "../agentIdentity";
+import { unreadAgentSlug } from "../inlineComments/claudeUnread";
 import { folderForDocument } from "../workspaceFolder";
 import { buildReviewRequestPayload, type SendMode } from "../sendToClaude";
 import {
@@ -265,7 +267,7 @@ async function invokeAskClaudeToReviewMulti(
   if (total > LARGE_DOC_WARN_BYTES) {
     const kb = Math.round(total / 1024);
     const pick = await vscode.window.showWarningMessage(
-      `Reviewing ${files.length} files (${kb} KB total) — Claude's review may take a while and use significant context.`,
+      `Reviewing ${files.length} files (${kb} KB total) — the agent's review may take a while and use significant context.`,
       { modal: false },
       "Continue",
       "Cancel",
@@ -357,8 +359,10 @@ async function invokeNextUnreadFromClaude(
     return;
   }
   const position = ((currentIdx + 1) % unread.length) + 1;
+  // Names the agent(s) the unread threads came from — the sidebar's "New from X" rule.
+  const from = agentGroupLabel(unread.map((u) => unreadAgentSlug(u.thread) ?? "agent")).noun;
   void vscode.window.setStatusBarMessage(
-    `Unread from Claude ${position}/${unread.length} — ${path.basename(next.docPath)}`,
+    `Unread from ${from} ${position}/${unread.length} — ${path.basename(next.docPath)}`,
     5000,
   );
 }
@@ -382,7 +386,7 @@ async function invokeAskClaudeToReview(
   if (byteSize > LARGE_DOC_WARN_BYTES) {
     const kb = Math.round(byteSize / 1024);
     const pick = await vscode.window.showWarningMessage(
-      `This file is ${kb} KB — Claude's review may take a while and use significant context.`,
+      `This file is ${kb} KB — the agent's review may take a while and use significant context.`,
       { modal: false },
       "Continue",
       "Cancel",
@@ -398,7 +402,7 @@ async function invokeAskClaudeToReview(
   if (result.kind === "unchanged") {
     // The whole point of a delta pass is not re-reading an unchanged file.
     void vscode.window.showInformationMessage(
-      `Nothing has changed in ${path.basename(doc.uri.fsPath)} since Claude's last review pass.`,
+      `Nothing has changed in ${path.basename(doc.uri.fsPath)} since the last review pass.`,
     );
     return;
   }
@@ -445,12 +449,12 @@ async function promptForFocus(
     const items: FocusItem[] = [
       {
         label: "$(edit) Enter a new focus…",
-        description: "Tell Claude what to look for",
+        description: "Tell the agent what to look for",
         tag: "custom",
       },
       {
         label: "$(eye) General review (no focus)",
-        description: "Let Claude flag anything substantive",
+        description: "Let the agent flag anything substantive",
         tag: "general",
       },
       ...history.map<FocusItem>((h) => ({
@@ -460,7 +464,7 @@ async function promptForFocus(
       })),
     ];
     const pick = await vscode.window.showQuickPick<FocusItem>(items, {
-      placeHolder: "What should Claude look for?",
+      placeHolder: "What should the agent look for?",
       ignoreFocusOut: true,
     });
     if (!pick) return undefined;
@@ -469,7 +473,7 @@ async function promptForFocus(
     // fall through to InputBox for "custom"
   }
   const entered = await vscode.window.showInputBox({
-    prompt: "What should Claude look for? (leave blank for a general review)",
+    prompt: "What should the agent look for? (leave blank for a general review)",
     placeHolder: "e.g. check API examples for correctness",
     ignoreFocusOut: true,
     validateInput: (v) => {

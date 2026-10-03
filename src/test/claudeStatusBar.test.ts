@@ -16,10 +16,28 @@ describe("statusBarText", () => {
     expect(statusBarText({ threadIds: ["a1"], evidence: "inferred", active: true }, FILE)).toBeNull();
   });
 
-  it("names the phase Claude reported", () => {
+  it("names the phase the agent reported, under the agent's name", () => {
     expect(
-      statusBarText({ threadIds: ["a1"], evidence: "protocol", active: true, phase: "reading 2 of 3" }, FILE),
+      statusBarText(
+        { threadIds: ["a1"], evidence: "protocol", active: true, phase: "reading 2 of 3", agent: "claude" },
+        FILE,
+      ),
     ).toContain("Claude: reading 2 of 3");
+    expect(
+      statusBarText(
+        { threadIds: ["a1"], evidence: "protocol", active: true, phase: "reading", agent: "codex" },
+        FILE,
+      ),
+    ).toContain("Codex: reading");
+  });
+
+  it("reads generic when protocol evidence has no agent recorded", () => {
+    const text = (s: Partial<Parameters<typeof statusBarText>[0]>): string | null =>
+      statusBarText({ threadIds: ["a1"], evidence: "protocol", active: true, ...s }, FILE);
+    expect(text({ phase: "reading" })).toContain("Agent: reading");
+    expect(text({})).toBe(`$(loading~spin) The agent is working on ${FILE}`);
+    expect(text({ active: false })).toBe(`$(loading~spin) Sent ${FILE} to the agent`);
+    expect(text({})).not.toContain("Claude");
   });
 
   it("distinguishes sent from actually working", () => {
@@ -46,8 +64,8 @@ describe("protocolTooltip", () => {
     expect(protocolTooltip("codex")).toBe("Markdown Collab: Codex is working through the review tools");
   });
 
-  it("defaults to Claude when no agent is recorded", () => {
-    expect(protocolTooltip(undefined)).toBe("Markdown Collab: Claude is working through the review tools");
+  it("reads generic when no agent is recorded", () => {
+    expect(protocolTooltip(undefined)).toBe("Markdown Collab: The agent is working through the review tools");
   });
 
   it("title-cases an unrecognized slug rather than showing it raw", () => {

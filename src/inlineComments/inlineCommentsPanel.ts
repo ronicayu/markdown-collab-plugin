@@ -25,7 +25,6 @@ import { checkClaudeSkill, type SkillStatus } from "../skill";
 import { runDrawioRead } from "../collab/drawioService";
 import { claudePending, onPendingChanged } from "../claudePendingService";
 import { pendingLabel } from "./claudePending";
-import { headlessAvailability, headlessAvailableNow } from "../transports/headlessHost";
 import { detectUrlScheme, parseLinkHref, slugifyHeading } from "./linkParse";
 import type { LineRange } from "../pr/diff";
 import { headFileContent, repoRootFor } from "../uncommitted/gitUncommitted";
@@ -90,15 +89,6 @@ interface InitMessage {
   /** What to say under those threads — protocol evidence earns a specific phrase. */
   pendingLabel: string;
   /**
-   * Whether a headless Claude run is available right now — the same check
-   * `commands/send.ts` uses for the send-mode picker (10x-plan-4 P2.4). Drives
-   * the empty-state card's button label ("Review with Claude" vs "Ask Claude
-   * to review this doc"). No longer forces the dispatch through headless on
-   * click (10x-plan-6 P0.1b) — the button now goes through the same
-   * remembered send mode / picker as every other send.
-   */
-  headlessAvailable: boolean;
-  /**
    * Display name of the agent that most recently wrote to this file — the
    * host's answer to "who should the Send button and pending text say?"
    * instead of the client hardcoding "Claude" (10x-plan-6 P5.2). "Claude"
@@ -114,7 +104,6 @@ interface UpdateMessage {
   suggestMode: boolean;
   pendingThreadIds: string[];
   pendingLabel: string;
-  headlessAvailable: boolean;
   /** Same contract as `InitMessage.agentName`. */
   agentName: string;
 }
@@ -363,8 +352,6 @@ export class InlineCommentsPanel {
 
   private readonly disposables: vscode.Disposable[] = [];
   private pendingApply = false;
-  /** A background binary lookup started for the empty state is in flight. */
-  private headlessLookupPending = false;
 
   /** Set by reveal() when an open request includes a scroll target. Consumed once on the next `ready` after init. */
   private pendingScroll: RevealOpts | null = null;
@@ -925,7 +912,6 @@ ${inlineCommentsAppBody()}
       suggestMode: readSuggestMode(),
       pendingThreadIds: this.pendingThreadIds(),
       pendingLabel: this.pendingLabelText(),
-      headlessAvailable: this.headlessAvailableForRender(),
       agentName: mostRecentAgentName(parsed),
     };
     await this.panel.webview.postMessage(msg);
@@ -943,28 +929,6 @@ ${inlineCommentsAppBody()}
     await this.panel.webview.postMessage(msg);
   }
 
-  /**
-   * Whether the empty state may offer "Review with Claude", without holding the
-   * render on the binary lookup. A cold lookup renders as unavailable and
-   * starts one; when it lands, the view gets one more push with the real answer.
-   */
-  private headlessAvailableForRender(): boolean {
-    const now = headlessAvailableNow(this.context.workspaceState);
-    if (now !== null) return now;
-    if (!this.headlessLookupPending) {
-      this.headlessLookupPending = true;
-      void headlessAvailability(this.context.workspaceState)
-        .then((a) => {
-          if (a.ok) void this.pushState();
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          this.headlessLookupPending = false;
-        });
-    }
-    return false;
-  }
-
   private async pushState(): Promise<void> {
     // Callers include editor-less triggers (diff refresh, pending-set
     // changes) where a GC'd document would otherwise render frozen content.
@@ -978,7 +942,6 @@ ${inlineCommentsAppBody()}
       suggestMode: readSuggestMode(),
       pendingThreadIds: this.pendingThreadIds(),
       pendingLabel: this.pendingLabelText(),
-      headlessAvailable: this.headlessAvailableForRender(),
       agentName: mostRecentAgentName(parsed),
     };
     await this.panel.webview.postMessage(msg);

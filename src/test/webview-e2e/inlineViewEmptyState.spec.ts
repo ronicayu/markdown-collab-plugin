@@ -4,8 +4,8 @@
 // that do exist.
 //
 // A separate file from inlineView.spec.ts on purpose: every test here boots
-// its own `init` payload (a doc with no threads, or a headlessAvailable
-// override), and `bootInlineView` injects the client's stub/bundle scripts
+// its own `init` payload (a doc with no threads, or one with them hidden by a
+// filter), and `bootInlineView` injects the client's stub/bundle scripts
 // into the page — doing that twice against one already-booted page throws
 // ("Identifier '__mcState' has already been declared"), which is exactly why
 // inlineView.spec.ts's shared `beforeEach` boot can't be reused here.
@@ -17,22 +17,14 @@ import { inlineInit } from "./fixtures";
 
 const EMPTY_DOC = "# Notes\n\nNothing has been reviewed in this file yet.\n";
 
-test("shows 'Review with Claude' when headless is available, and posts empty-state-review", async ({ page }) => {
-  await bootInlineView(page, { ...inlineInit(EMPTY_DOC), headlessAvailable: true });
+test("shows 'Ask agent to review' and posts empty-state-review", async ({ page }) => {
+  await bootInlineView(page, inlineInit(EMPTY_DOC));
   const card = page.locator(".mc-empty-state");
   await expect(card).toBeVisible();
   await expect(card).toContainText("No comments yet.");
-  const button = card.getByRole("button", { name: "Review with Claude" });
+  const button = card.getByRole("button", { name: "Ask agent to review" });
   await button.click();
   expect(await awaitPosted(page, "empty-state-review")).toEqual({ type: "empty-state-review" });
-});
-
-test("shows 'Ask Claude to review this doc' when headless is unavailable", async ({ page }) => {
-  await bootInlineView(page, { ...inlineInit(EMPTY_DOC), headlessAvailable: false });
-  const card = page.locator(".mc-empty-state");
-  await expect(card.getByRole("button", { name: "Ask Claude to review this doc" })).toBeVisible();
-  // Same message either way — only the button label depends on headlessAvailable.
-  await expect(card).toContainText("No comments yet.");
 });
 
 test("shows both keybinding forms — the client doesn't try to detect the OS", async ({ page }) => {

@@ -131,7 +131,7 @@ export function presenceLensLabel(parsed: ParsedDocument): string | null {
   }
   const unreadThreads = parsed.threads.filter(isClaudeUnread);
   if (unreadThreads.length > 0) {
-    const agent = agentGroupLabel(unreadThreads.map((t) => unreadAgentSlug(t) ?? "claude")).noun;
+    const agent = agentGroupLabel(unreadThreads.map((t) => unreadAgentSlug(t) ?? "agent")).noun;
     parts.push(`${unreadThreads.length} new from ${agent}`);
   }
   if (suggestions > 0) parts.push(`${suggestions} suggestion${suggestions === 1 ? "" : "s"}`);
@@ -209,7 +209,7 @@ export function hoverFor(
     // isn't one of the known slugs (any string is legal there once `agent:
     // true` is set) — document-derived like everything else here, so it gets
     // the same escaping before it can reach the badge.
-    const noun = agentGroupLabel([unreadAgentSlug(thread) ?? "claude"]).noun;
+    const noun = agentGroupLabel([unreadAgentSlug(thread) ?? "agent"]).noun;
     badges.push(`new from ${escapeMarkdown(noun)}`);
   }
   if (parsed.suggestions.some((s) => s.threadId === thread.id)) badges.push("has a suggestion");

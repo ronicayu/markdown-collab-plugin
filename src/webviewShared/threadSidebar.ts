@@ -16,7 +16,7 @@
 
 import "./threadSidebar.css";
 import "./controls.css";
-import { isAgentComment } from "../agentIdentity";
+import { isAgentComment, WAITING_FOR_AGENT } from "../agentIdentity";
 import { isClaudeUnread } from "../inlineComments/claudeUnread";
 import { isNavKeyContext } from "./diffNav";
 import { createMenuController } from "./menu";
@@ -111,11 +111,11 @@ const SHELL = `<header id="threads-header">
     <label class="segment"><input type="radio" name="filter" value="open" checked><span>Open <span id="filter-count-open" class="count"></span></span></label>
     <label class="segment"><input type="radio" name="filter" value="all"><span>All <span id="filter-count-all" class="count"></span></span></label>
     <label class="segment"><input type="radio" name="filter" value="resolved"><span>Resolved <span id="filter-count-resolved" class="count"></span></span></label>
-    <label id="filter-claude-label" class="segment" hidden><input type="radio" name="filter" value="claude-unread"><span id="filter-claude-label-text">New from Claude</span></label>
+    <label id="filter-claude-label" class="segment" hidden><input type="radio" name="filter" value="claude-unread"><span id="filter-claude-label-text">New from Agent</span></label>
   </div>
   <div id="claude-summary" hidden>
     <span id="claude-summary-text" role="status" aria-live="polite"></span>
-    <button id="claude-next" class="mc-btn mc-btn--link" title="Jump to the next unread thread from Claude.">Next</button>
+    <button id="claude-next" class="mc-btn mc-btn--link" title="Jump to the next unread thread from an agent.">Next</button>
   </div>
   <div id="keys-hint"><span id="keys-hint-text">n / p to move between threads · r reply · e resolve · o open in editor</span><button id="keys-hint-dismiss" type="button" class="mc-icon-btn" aria-label="Hide shortcuts">×</button></div>
   <div id="skill-warning" class="skill-warning" hidden>
@@ -125,11 +125,11 @@ const SHELL = `<header id="threads-header">
 </header>
 <div id="threads-list" role="feed"><p class="mc-loading">Loading…</p></div>
 <footer class="mc-sidebar-footer" hidden>
-  <button id="send-to-claude" class="mc-btn mc-btn--primary" title="Send the prompt to a running Claude terminal (or your configured send mode).">Send</button>
+  <button id="send-to-claude" class="mc-btn mc-btn--primary" title="Send the prompt to your agent's terminal (or your configured send mode).">Send</button>
   <span class="mc-menu-wrap">
     <button id="send-options-btn" type="button" class="mc-btn mc-btn--primary" aria-haspopup="menu" aria-expanded="false" aria-controls="send-options-menu" aria-label="Send options" title="Send options"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5l4 4 4-4"/></svg></button>
     <div id="send-options-menu" class="mc-menu mc-menu--up" role="menu" aria-label="Send options" hidden>
-      <button id="suggest-mode-toggle" type="button" role="menuitemcheckbox" class="mc-menuitem" aria-checked="false" title="When on, Send asks Claude to propose edits as suggestions you accept or reject.">Ask for suggestions instead of edits</button>
+      <button id="suggest-mode-toggle" type="button" role="menuitemcheckbox" class="mc-menuitem" aria-checked="false" title="When on, Send asks the agent to propose edits as suggestions you accept or reject.">Ask for suggestions instead of edits</button>
     </div>
   </span>
   <button id="copy-prompt" type="button" class="mc-icon-btn" aria-label="Copy prompt" title="Copy the prompt to your clipboard."><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg></button>
@@ -216,9 +216,9 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     return THREAD_FILTERS.includes(f as ThreadFilter) ? (f as ThreadFilter) : "open";
   })();
   let pendingThreadIds: ReadonlySet<string> = new Set();
-  let pendingLabelText = "Claude is working…";
-  let agentName = "Claude";
-  let headlessAvailable = false;
+  let pendingLabelText = WAITING_FOR_AGENT;
+  /** The agent that last wrote in this file; undefined until one has, and then everything reads generic. */
+  let agentName: string | undefined;
   /** First click on "Accept all" arms it; the second applies. */
   let acceptAllArmed = false;
   // How many thread cards the list is currently allowed to build. Grows by a
@@ -338,12 +338,15 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   /**
    * Put `agentName` wherever there's no per-thread agent to name instead: the
    * Send button's title and the suggest-mode item's title. The Send label
-   * itself names no agent: `agentName` is whoever wrote here last ("Claude"
-   * before anyone has), which is not necessarily who this send goes to.
+   * itself names no agent: `agentName` is whoever wrote here last, which is not
+   * necessarily who this send goes to. Until an agent has written here there
+   * is nobody to name, so both titles read generic.
    */
   function updateAgentUi(): void {
-    dom.sendToClaude.title = `Send the prompt to a running ${agentName} terminal (or your configured send mode).`;
-    dom.suggestModeToggle.title = `When on, Send asks ${agentName} to propose edits as suggestions you accept or reject.`;
+    dom.sendToClaude.title = agentName
+      ? `Send the prompt to a running ${agentName} terminal (or your configured send mode).`
+      : "Send the prompt to your agent's terminal (or your configured send mode).";
+    dom.suggestModeToggle.title = `When on, Send asks ${agentName ?? "the agent"} to propose edits as suggestions you accept or reject.`;
   }
 
   /**
@@ -607,9 +610,8 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   function render(state: SidebarState): void {
     currentState = state;
     pendingThreadIds = new Set(state.pendingThreadIds);
-    agentName = state.agentName || "Claude";
-    pendingLabelText = state.pendingLabel ?? `${agentName} is working…`;
-    headlessAvailable = state.headlessAvailable;
+    agentName = state.agentName || undefined;
+    pendingLabelText = state.pendingLabel ?? (agentName ? `${agentName} is working…` : WAITING_FOR_AGENT);
     updateSwitches(state);
     updateAgentUi();
     updateFooter(state);
@@ -654,7 +656,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     if (filtered.length === 0) {
       if (state.suggestions.length === 0) {
         list.appendChild(
-          buildEmptyStateEl(emptyState({ filter, totalThreads: state.threads.length, headlessAvailable })),
+          buildEmptyStateEl(emptyState({ filter, totalThreads: state.threads.length })),
         );
       }
       return;
@@ -758,7 +760,8 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     // summary text.
     dom.claudeFilterLabel.hidden = !summary.hasAny;
     dom.claudeFilterLabelText.textContent = `New from ${summary.agentNoun}`;
-    dom.claudeNext.title = `Jump to the next unread thread from ${summary.agentNoun}.`;
+    // "from an agent", not "from Agent": the generic noun reads as a label.
+    dom.claudeNext.title = `Jump to the next unread thread from ${summary.agentNoun === "Agent" ? "an agent" : summary.agentNoun}.`;
     if (!summary.hasAny && filter === "claude-unread") {
       filter = "open";
       persist({ threadFilter: filter });
@@ -896,7 +899,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     sendBtn.type = "button";
     sendBtn.className = "mc-btn mc-btn--quiet thread-send";
     sendBtn.textContent = "Send";
-    sendBtn.title = `Send this thread to ${agentName}`;
+    sendBtn.title = `Send this thread to ${agentName ?? "your agent"}`;
     sendBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       host.post({ type: "send-to-claude-comment", threadId: t.id });

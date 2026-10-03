@@ -150,14 +150,6 @@ interface InitMsg {
    * each comment's own author and ignores this field.
    */
   agentName?: string;
-  /**
-   * Whether the host can run Claude for this workspace right now — the same
-   * check the send-mode picker uses (10x-plan-4 P2.4). Drives which label the
-   * empty-state card's button shows and, on click, whether the host forces
-   * that one dispatch through headless or falls back to normal mode
-   * resolution.
-   */
-  headlessAvailable?: boolean;
 }
 
 type SkillStatus = "missing" | "outdated" | "current";
@@ -175,7 +167,6 @@ interface UpdateMsg {
   pendingThreadIds?: string[];
   pendingLabel?: string;
   agentName?: string;
-  headlessAvailable?: boolean;
 }
 
 interface ReviewPendingMsg {
@@ -789,9 +780,6 @@ let pendingLabelText = "Claude is working\u2026";
 // "Claude" until an `init`/`update` says otherwise. Drives the Send button,
 // its title, and the suggest-mode switch title \u2014 see `updateAgentUi`.
 let agentName = "Claude";
-// Whether the host can run Claude headlessly for this workspace right now \u2014
-// only meaningful for the empty-state card's button label (10x-plan-4 P2.4).
-let headlessAvailable = false;
 /** First click on "Accept all" arms it; the second applies (P3.3). */
 let acceptAllArmed = false;
 // How many thread cards the list is currently allowed to build. Grows by a
@@ -1586,7 +1574,6 @@ function renderThreads(state: SerializedState): void {
           emptyState({
             filter,
             totalThreads: state.threads.length,
-            headlessAvailable,
           }),
         ),
       );
@@ -2320,7 +2307,6 @@ window.addEventListener("message", (ev) => {
     agentName = msg.agentName || "Claude";
     updateAgentUi();
     pendingLabelText = msg.pendingLabel ?? `${agentName} is working…`;
-    headlessAvailable = msg.headlessAvailable ?? false;
     currentDiff = msg.diff ?? null;
     render(msg.state);
   } else if (msg.type === "update") {
@@ -2329,7 +2315,6 @@ window.addEventListener("message", (ev) => {
     agentName = msg.agentName || "Claude";
     updateAgentUi();
     pendingLabelText = msg.pendingLabel ?? `${agentName} is working…`;
-    headlessAvailable = msg.headlessAvailable ?? false;
     currentDiff = msg.diff ?? null;
     render(msg.state);
   } else if (msg.type === "review-pending") {

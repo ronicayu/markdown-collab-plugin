@@ -22,6 +22,9 @@ import { editAnchoredText, liveInit, liveSidecar, replyTo, reviewFixture, twoSug
 
 const fixture = reviewFixture();
 
+/** A document no agent has written in. */
+const BASE_DOC = "# Notes\n\nSome text worth commenting on.\n";
+
 /** Push a `sidecar-changed` for `source`, as the provider does after any change. */
 async function pushSidecar(page: Page, source: string, opts: Parameters<typeof liveSidecar>[1] = {}): Promise<void> {
   await pushToWebview(page, { type: "sidecar-changed", ...liveSidecar(source, opts) });
@@ -742,6 +745,22 @@ test.describe("sending from the sidebar", () => {
 
     await pushToWebview(page, { type: "send-result", ok: true, saved: true });
     await expect(page.locator(".mdc-banner")).toHaveText("Sent to Claude — your edits are saved to disk");
+  });
+
+  test("with no agent known in the file, the notice says 'your agent', never Claude", async ({ page }) => {
+    const at = BASE_DOC.indexOf("Some text");
+    const human = addThread(BASE_DOC, at, at + 9, { author: "ronica", body: "Why?", ts: "2026-01-01T00:00:00.000Z" });
+    await bootLiveEditor(page, { ...liveInit(human.source), readOnly: true });
+    await page.locator("#send-to-claude").click();
+    await pushToWebview(page, { type: "send-result", ok: true, saved: true });
+    await expect(page.locator(".mdc-banner")).toHaveText("Sent to your agent");
+  });
+
+  test("with an agent known in the file, the notice names it", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(fixture.source, { agentName: "Codex" }), readOnly: true });
+    await page.locator("#send-to-claude").click();
+    await pushToWebview(page, { type: "send-result", ok: true, saved: true });
+    await expect(page.locator(".mdc-banner")).toHaveText("Sent to Codex");
   });
 
   test("read-only, a confirmed send says only that it was sent", async ({ page }) => {

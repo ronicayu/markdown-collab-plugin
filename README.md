@@ -5,9 +5,9 @@
 
 Review Markdown *with* Claude, in VS Code. Comments live inside the `.md` file, anchored to the text they're about. Claude reads them, replies, and proposes edits you accept or reject. Or it reviews the document and leaves comments for you.
 
-![Click Review with Claude; three comment threads land; walk them with the keyboard](media/gifs/review-with-claude.gif)
+![Click Ask agent to review; three comment threads land; walk them with the keyboard](media/gifs/review-with-claude.gif)
 
-Click **Review with Claude**. Claude reads your doc and leaves a comment per concern, and you triage them. The first send asks how to reach Claude and remembers your answer — typing into a running terminal session is the normal path.
+Click **Ask agent to review**. Claude reads your doc and leaves a comment per concern, and you triage them. The first send asks how to reach Claude and remembers your answer — typing into a running terminal session is the normal path.
 
 ## What you get
 
@@ -25,7 +25,7 @@ Click **Review with Claude**. Claude reads your doc and leaves a comment per con
    ```
    Cursor, Windsurf, VSCodium, and Gitpod install it from [Open VSX](https://open-vsx.org/extension/markdown-collab/markdown-collab-plugin). A `.vsix` is on every [GitHub release](https://github.com/ronicayu/markdown-collab-plugin/releases).
 2. **Connect an Agent…, once per machine.** `Cmd-Shift-P` → **Markdown Collab: Connect an Agent…** → **Claude Code**. This installs the Markdown Collab plugin into Claude Code — the review workflow as `/markdown-collab:review`, the anchor-safe `mdc` helper on Claude's PATH, a check that tells Claude the moment an edit breaks a comment anchor — and registers this extension's review tools in the same step, so Claude's edits arrive as edits you can undo. It installs from a marketplace the extension keeps on your machine, so the plugin always matches the extension's version, and it offers an update when a new one ships. Restart any running Claude session afterwards, or run `/reload-plugins`. Using Cursor, Codex, or Copilot instead? The same command lists them — see [Other agents](#other-agents) below.
-3. **Open a Markdown file** and click the comment icon in its title bar. Then either click **Review with Claude**, or select a passage in the rendered document, click **+ Add comment**, write your note, and click **Send to Claude**.
+3. **Open a Markdown file** and click the comment icon in its title bar. Then either click **Ask agent to review**, or select a passage in the rendered document, click **+ Add comment**, write your note, and click **Send**.
 
 Want to try it with no Claude at all? **Markdown Collab: Open Tutorial Playground** writes a scratch document that arrives mid-review, with threads, a reply, and two pending suggestions to accept or reject.
 
@@ -53,7 +53,7 @@ This isn't an agent loop. There's no Claude in it, and nothing gets written into
 
 ## Asking Claude to review
 
-Right-click a `.md` file → **Ask Agent to Review This Doc**, or click **Review with Claude** in an empty sidebar. Claude opens one thread per substantive concern: a wrong claim, an ambiguous sentence, a broken example, a contradiction with another section. It ranks concerns by severity and opens threads for the five that matter most, plus one summary thread listing everything else so you can ask for any of them ("open 3 and 7") — add *"give me ten"* (or more) to the focus directive to raise the cap. Pure typos and style preferences are skipped unless you ask for them. If Claude finds nothing, it says so instead of inventing something.
+Right-click a `.md` file → **Ask Agent to Review This Doc**, or click **Ask agent to review** in an empty sidebar. Claude opens one thread per substantive concern: a wrong claim, an ambiguous sentence, a broken example, a contradiction with another section. It ranks concerns by severity and opens threads for the five that matter most, plus one summary thread listing everything else so you can ask for any of them ("open 3 and 7") — add *"give me ten"* (or more) to the focus directive to raise the cap. Pure typos and style preferences are skipped unless you ask for them. If Claude finds nothing, it says so instead of inventing something.
 
 The sidebar shows *"N new from Claude · M reviewed"* with a **Next** button, and a thread counts as reviewed once you reply to or resolve it. Files over 50 KB ask for a confirmation before sending.
 
@@ -168,7 +168,7 @@ The single keys do nothing while you're typing. There's no key for accepting a s
 | Show Logs | The Markdown Collab output channel. Set it to Trace for per-send and per-tool-call detail. |
 | Report a Problem | An environment report for an issue: versions, send mode, Claude Code, plugin, tool server, connected agents, per-document review state. Tokens are redacted. |
 
-A few commands still exist but are hidden from the palette, now that Connect an Agent… covers the everyday path: Set Up Claude Code and Register Review Tools with Claude Code (both folded into it), Start Claude Review Terminal, Copy Claude Prompt (the clipboard send mode replaces it), Reset Send Mode (linked from the setting instead), and Initialize AGENTS.md.
+A few commands still exist but are hidden from the palette, now that Connect an Agent… covers the everyday path: Set Up Claude Code and Register Review Tools with Claude Code (both folded into it), Start Claude Review Terminal, Copy Prompt (the clipboard send mode replaces it), Reset Send Mode (linked from the setting instead), and Initialize AGENTS.md.
 
 ## Settings
 
@@ -214,7 +214,7 @@ Under `.markdown-collab/`, the extension writes runtime state for the tool serve
 
 **Start with Report a Problem.** It answers the first questions of any diagnosis in one paste, with tokens redacted. Then set **Show Logs** to Trace and reproduce: every send, tool call, refusal, and `gh`/`glab` call is logged with its outcome.
 
-**Review with Claude isn't offered.** Headless needs `claude` on the PATH VS Code sees (or `markdownCollab.claudePath`), a trusted workspace, and the tool server. The diagnostics report says which is missing.
+**Run Claude for me isn't offered in the send-mode picker.** Headless needs `claude` on the PATH VS Code sees (or `markdownCollab.claudePath`), a trusted workspace, and the tool server. The diagnostics report says which is missing.
 
 **Claude replied in the terminal, but nothing changed in the file.** Claude may not have the review tools or the plugin. Run **Connect an Agent…** → **Claude Code**, and restart the Claude session.
 

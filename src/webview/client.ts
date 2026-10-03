@@ -123,7 +123,6 @@ interface SidebarPush {
   /** Every thread with its full comment list; absent, the cards are built from `comments`. */
   threads?: SidebarThread[];
   suggestMode?: boolean;
-  headlessAvailable?: boolean;
   agentName?: string;
 }
 
@@ -335,7 +334,6 @@ const sidebarPush: Omit<SidebarState, "readOnly"> = {
   suggestions: [],
   suggestMode: false,
   pendingThreadIds: [],
-  headlessAvailable: false,
 };
 
 /**
@@ -451,8 +449,9 @@ function updateLastNonEmptySelection(): void {
 const HIGHLIGHT_PLUGIN_KEY = new PluginKey("mdc-anchor-highlight");
 const CLAUDE_EDIT_KEY = new PluginKey("mdc-claude-edit");
 
-// Decorates the span Claude just edited (from an externalChange) so the change
-// is visible, not silent. The decoration fades itself via `flashClaudeEdit`.
+// Decorates the span an outside writer just edited (from an externalChange) so
+// the change is visible, not silent. The decoration fades itself via
+// `flashOutsideEdit`.
 function makeClaudeEditPlugin(): Plugin {
   return new Plugin({
     key: CLAUDE_EDIT_KEY,
@@ -485,7 +484,7 @@ let claudeEditTimer: ReturnType<typeof setTimeout> | undefined;
  * markdown syntax (so it isn't a substring of the rendered content) simply
  * isn't flashed — the notice still fires.
  */
-function flashClaudeEdit(changedText: string): boolean {
+function flashOutsideEdit(changedText: string): boolean {
   const needle = changedText.trim();
   if (!editor || needle.length === 0) return false;
   let placed = false;
@@ -1144,7 +1143,6 @@ function takeSidebarPush(
     anchored: s.anchorOrdinal >= 0,
   }));
   sidebarPush.suggestMode = msg.suggestMode ?? false;
-  sidebarPush.headlessAvailable = msg.headlessAvailable ?? false;
   sidebarPush.agentName = msg.agentName;
   sidebarPush.pendingThreadIds = msg.pendingThreadIds ?? [];
   sidebarPush.pendingLabel = msg.pendingLabel;
@@ -1183,7 +1181,7 @@ function renderNotice(): void {
     return;
   }
   if (noticeJump) {
-    slot.innerHTML = `<button type="button" class="mdc-banner mdc-banner--info mdc-banner--jump" title="Scroll to Claude's edit">${escapeHtml(sidebarState.notice)} ↗</button>`;
+    slot.innerHTML = `<button type="button" class="mdc-banner mdc-banner--info mdc-banner--jump" title="Scroll to the edit">${escapeHtml(sidebarState.notice)} ↗</button>`;
     slot.querySelector<HTMLButtonElement>(".mdc-banner--jump")?.addEventListener("click", () => {
       const mark = editorContainer?.querySelector<HTMLElement>(".mdc-claude-edit");
       if (mark) smoothScrollIntoView(mark, "center");
@@ -2476,11 +2474,13 @@ function applyExternalChange(
   // Nothing happened the person needs to hear about (an edit of theirs, written late).
   if (quiet) return;
 
-  // Presence: flash the span Claude edited and name the nearest heading in a
+  // Presence: flash the span that changed and name the nearest heading in a
   // clickable notice. Falls back to a plain notice when there's no locatable
-  // span (e.g. a pure deletion, or the range didn't map).
-  const flashed = changed ? flashClaudeEdit(changed.text) : false;
-  const where = changed?.heading ? `Claude edited §${changed.heading}` : "Claude updated this document";
+  // span (e.g. a pure deletion, or the range didn't map). Who wrote it is
+  // unknown here — an agent, a save from another window, git all arrive the
+  // same way — so the notice names no one.
+  const flashed = changed ? flashOutsideEdit(changed.text) : false;
+  const where = changed?.heading ? `Edited outside this view: §${changed.heading}` : "This document was updated outside this view";
   showNotice(where, flashed);
 }
 
@@ -2490,8 +2490,8 @@ let noticeJump = false;
 // Flash a transient one-line notice in the sidebar header, then clear it. Used
 // when an edit arrives from outside the editor (Claude editing the .md, a save
 // from another window, git) so the change isn't silent. When `jumpToChange` is
-// set, the notice is clickable and scrolls the editor to Claude's just-edited
-// span, and lingers long enough to click.
+// set, the notice is clickable and scrolls the editor to the just-edited span,
+// and lingers long enough to click.
 function showNotice(text: string, jumpToChange = false): void {
   sidebarState.notice = text;
   noticeJump = jumpToChange;
@@ -2686,7 +2686,8 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     threadSidebar.notifyReviewPending(msg.existingIds);
   } else if (msg.type === "send-result") {
     // Only what the host confirmed: nothing is claimed about the file before it answers.
-    const agent = sidebarPush.agentName || "Claude";
+    // Names the agent only when the file shows one has written here.
+    const agent = sidebarPush.agentName || "your agent";
     if (msg.ok) showNotice(msg.saved && !readOnly ? `Sent to ${agent} — your edits are saved to disk` : `Sent to ${agent}`);
   } else if (msg.type === "reveal-thread") {
     // After any `init` still building: the thread has to be in the list, and

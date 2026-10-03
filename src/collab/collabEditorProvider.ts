@@ -41,7 +41,6 @@ import { imageResourceRootPaths } from "../webviewShared/resourceRoots";
 import type { Logger } from "../logging";
 import {
   handleSidebarMessage,
-  headlessAvailableForRender,
   isSidebarMessage,
   postSkillStatus,
   readSuggestMode,
@@ -99,8 +98,6 @@ interface InitPayload extends SidebarFields {
 interface SidebarFields extends SidebarDocumentFields {
   /** Whether Send asks the agent for suggestions instead of edits. */
   suggestMode: boolean;
-  /** Whether a headless run is available now — the empty state's button label. */
-  headlessAvailable: boolean;
 }
 
 /** Said when an edit threw instead of being written or refused. */
@@ -460,15 +457,13 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly log: Logger,
-    /** For the headless probe behind the sidebar's empty-state button. */
-    private readonly workspaceState?: vscode.Memento,
   ) {}
 
   static register(
     context: vscode.ExtensionContext,
     log: Logger,
   ): vscode.Disposable {
-    const provider = new CollabEditorProvider(context.extensionUri, log, context.workspaceState);
+    const provider = new CollabEditorProvider(context.extensionUri, log);
     return vscode.Disposable.from(
       vscode.window.registerCustomEditorProvider(VIEW_TYPE, provider, {
         webviewOptions: { retainContextWhenHidden: true, enableFindWidget: true },
@@ -883,10 +878,6 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       } satisfies LineMapPayload);
     };
 
-    // Set on dispose, so a late callback (the headless probe landing) doesn't
-    // post to a webview that is gone.
-    let disposed = false;
-
     // A thread to land on waits for the webview's first `init`: before it
     // there is no list to find the thread in. After it, a reveal follows the
     // latest `init` posted (a mode switch re-sends one), and the webview runs
@@ -936,9 +927,6 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     const sidebarFields = (source: string): SidebarFields => ({
       ...sidebarDocumentFields(source),
       suggestMode: readSuggestMode(),
-      headlessAvailable: headlessAvailableForRender(this.workspaceState, () => {
-        if (!disposed) pushComments();
-      }),
     });
 
     const pushComments = (): void => {
@@ -1276,7 +1264,6 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     });
 
     panel.onDidDispose(() => {
-      disposed = true;
       // Guarded internally: a no-op unless this panel is the one that last
       // set the (global) context key true.
       setLiveEditorTypingContext(panel, false);
@@ -1549,7 +1536,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         const prompt = `${workflowOpener()} to address the unresolved review comments on ${rel}.`;
         await vscode.env.clipboard.writeText(prompt);
         void vscode.window.showInformationMessage(
-          "Prompt copied — paste into Claude Code.",
+          "Prompt copied — paste it into your agent.",
         );
       } catch (e) {
         this.log.info(

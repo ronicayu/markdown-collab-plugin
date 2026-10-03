@@ -406,29 +406,38 @@ describe("pendingLabel", () => {
   it("keeps the vague wording when the wait is inferred", () => {
     // It is a guess, and it should read like one.
     expect(pendingLabel({ evidence: "inferred", active: true, phase: "ignored" })).toBe(
-      "Claude is working…",
+      "Waiting for the agent…",
     );
   });
 
-  it("an inferred wait says Claude even if an agent slug somehow got attached", () => {
-    // Inferred waits only ever come from a terminal send, which only ever
-    // talks to Claude (10x-plan-4 P1.2) — the agent field is irrelevant here.
+  it("an inferred wait names no agent, even if a slug somehow got attached", () => {
+    // The wording rule: an inferred wait is a guess that something read the
+    // prompt; nothing says who, so the label is generic whatever `agent` holds.
     expect(pendingLabel({ evidence: "inferred", active: true, agent: "codex" })).toBe(
-      "Claude is working…",
+      "Waiting for the agent…",
     );
+    expect(pendingLabel({ evidence: "inferred", active: false })).toBe("Waiting for the agent…");
   });
 
-  it("names the phase when Claude reported one", () => {
-    expect(pendingLabel({ evidence: "protocol", active: true, phase: "opening threads" })).toBe(
-      "Claude: opening threads",
-    );
+  it("names the phase when the agent reported one", () => {
+    expect(
+      pendingLabel({ evidence: "protocol", active: true, phase: "opening threads", agent: "claude" }),
+    ).toBe("Claude: opening threads");
   });
 
   it("claims work only once a tool call has actually arrived", () => {
-    expect(pendingLabel({ evidence: "protocol", active: false })).toBe("Sent to Claude…");
-    expect(pendingLabel({ evidence: "protocol", active: true })).toBe(
+    expect(pendingLabel({ evidence: "protocol", active: false, agent: "claude" })).toBe("Sent to Claude…");
+    expect(pendingLabel({ evidence: "protocol", active: true, agent: "claude" })).toBe(
       "Claude is working on this file…",
     );
+  });
+
+  it("protocol evidence with no agent recorded reads generic, not Claude", () => {
+    expect(pendingLabel({ evidence: "protocol", active: false })).toBe("Sent to the agent…");
+    expect(pendingLabel({ evidence: "protocol", active: true })).toBe(
+      "The agent is working on this file…",
+    );
+    expect(pendingLabel({ evidence: "protocol", active: true, phase: "reading" })).toBe("Agent: reading");
   });
 
   // 10x-plan-4 P1.2: protocol evidence names whichever agent actually earned
@@ -451,7 +460,7 @@ describe("pendingLabel", () => {
     // `agentSlugFromClientName` derived from an actual (if unrecognized)
     // client name, which gets its own capitalized name instead.
     expect(pendingLabel({ evidence: "protocol", active: true, agent: "agent" })).toBe(
-      "the agent is working on this file…",
+      "The agent is working on this file…",
     );
   });
 

@@ -66,10 +66,8 @@ export interface SidebarState {
   pendingThreadIds: string[];
   /** The host's wording for the waiting row; absent means "<agentName> is working…". */
   pendingLabel?: string;
-  /** Who the Send button and the waiting row name. Absent means Claude. */
+  /** Who the Send button and the waiting row name. Absent means no agent has written here yet: they read generic ("your agent"). */
   agentName?: string;
-  /** Whether a headless run is available now — the empty state's button label. */
-  headlessAvailable: boolean;
   /** Whether the document is read-only (the Edit switch is off). */
   readOnly: boolean;
 }

@@ -10,6 +10,59 @@ import { liveInit, liveSidecar, reviewFixture } from "./fixtures";
 
 const fixture = reviewFixture();
 
+// The wording rule: copy names the agent only when the file shows one has
+// written there. Until then Send, the waiting row and the filter chip read
+// generic — a Cursor- or Codex-only user never sees "Claude" they didn't ask for.
+test.describe("no agent has written in the file", () => {
+  const BASE = "# Notes\n\nSome text worth commenting on.\n";
+  const at = BASE.indexOf("Some text");
+  const human = addThread(BASE, at, at + 9, { author: "ronica", body: "Why?", ts: "2026-01-01T00:00:00.000Z" });
+
+  test.beforeEach(async ({ page }) => {
+    await bootLiveEditor(page, {
+      ...liveInit(human.source, { pendingThreadIds: [human.thread.id] }),
+      readOnly: true,
+    });
+  });
+
+  test("Send and the suggest-mode item are worded generically", async ({ page }) => {
+    await expect(page.locator("#send-to-claude")).toHaveText("Send 1 comment");
+    await expect(page.locator("#send-to-claude")).toHaveAttribute(
+      "title",
+      "Send the prompt to your agent's terminal (or your configured send mode).",
+    );
+    await expect(page.locator("#suggest-mode-toggle")).toHaveAttribute(
+      "title",
+      "When on, Send asks the agent to propose edits as suggestions you accept or reject.",
+    );
+    const card = page.locator(`.thread-card[data-thread="${human.thread.id}"]`);
+    await expect(card.locator(".thread-send")).toHaveAttribute("title", "Send this thread to your agent");
+  });
+
+  test("the waiting row says 'Waiting for the agent…'", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${human.thread.id}"]`);
+    await expect(card.locator(".mc-card__pending")).toHaveText("Waiting for the agent…");
+  });
+
+  test("the unread chip and Next start generic, and no sidebar chrome says Claude", async ({ page }) => {
+    await expect(page.locator("#filter-claude-label-text")).toHaveText("New from Agent");
+    await expect(page.locator("#claude-next")).toHaveAttribute("title", "Jump to the next unread thread from an agent.");
+    await expect(page.locator("#threads-header")).not.toContainText("Claude");
+    await expect(page.locator(".mc-sidebar-footer")).not.toContainText("Claude");
+  });
+
+  test("once an agent writes, the same controls name it", async ({ page }) => {
+    await pushToWebview(page, {
+      type: "sidecar-changed",
+      ...liveSidecar(human.source, { pendingThreadIds: [human.thread.id], agentName: "Cursor" }),
+    });
+    await expect(page.locator("#send-to-claude")).toHaveAttribute("title", /running Cursor terminal/);
+    const card = page.locator(`.thread-card[data-thread="${human.thread.id}"]`);
+    await expect(card.locator(".thread-send")).toHaveAttribute("title", "Send this thread to Cursor");
+    await expect(card.locator(".mc-card__pending")).toHaveText("Cursor is working…");
+  });
+});
+
 test.describe("with the review fixture, read-only", () => {
   test.beforeEach(async ({ page }) => {
     await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });

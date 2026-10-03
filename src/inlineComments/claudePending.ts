@@ -31,13 +31,14 @@
 // Pure and vscode-free: the tracker takes an injected clock and scheduler so
 // the expiry path is testable without waiting ten minutes.
 //
-// Naming the agent (10x-plan-4 P1.2): an "inferred" wait always says Claude —
-// it exists only for a terminal send, and that path only ever talks to
-// Claude. A "protocol" wait's evidence IS a tool call, and a tool call now
-// carries the calling agent's slug, so `noteActivity`/`noteComplete` learn it
-// there and `pendingLabel` names whichever agent is actually doing the work.
+// Naming the agent (the wording rule: name the agent when the code knows it,
+// say "the agent" when it doesn't): an "inferred" wait names no one — the
+// extension only knows it sent something, not who read it. A "protocol" wait's
+// evidence IS a tool call, and a tool call carries the calling agent's slug,
+// so `noteActivity`/`noteComplete` learn it there and `pendingLabel` names
+// whichever agent is actually doing the work.
 
-import { agentDisplayName, isAgentComment } from "../agentIdentity";
+import { agentDisplayName, isAgentComment, sentenceLead, WAITING_FOR_AGENT } from "../agentIdentity";
 
 /** How long a thread may wait, with no signal at all, before we stop claiming Claude is working on it. */
 export const PENDING_TIMEOUT_MS = 10 * 60 * 1000;
@@ -372,17 +373,18 @@ export class ClaudePendingTracker {
  * a specific claim; inferred evidence keeps the vaguer one, because it is a
  * guess and should read like one.
  *
- * An inferred wait always says Claude (10x-plan-4 P1.2): it is only ever
- * recorded for a terminal send, and that path only ever talks to Claude — the
- * wording rule's "keep Claude's copy exactly as it reads today" case. A
- * protocol wait names whichever agent's tool call actually earned it,
- * defaulting to Claude when a caller has evidence but hasn't learned who from
- * (`status`/`peek` built before any tool call carried a slug).
+ * The wording rule: name the agent when the code knows which one, otherwise
+ * say "the agent". An inferred wait is only a guess that something read the
+ * prompt, and the extension doesn't know who — "Waiting for the agent…". A
+ * protocol wait names whichever agent's tool call actually earned it, and reads
+ * generic ("Agent: …", "The agent is working…") when a caller has evidence but
+ * hasn't learned who from (`status`/`peek` built before any tool call carried
+ * a slug).
  */
 export function pendingLabel(status: Pick<PendingStatus, "evidence" | "phase" | "active" | "agent">): string {
-  if (status.evidence !== "protocol") return "Claude is working…";
-  const agent = agentDisplayName(status.agent ?? "claude");
+  if (status.evidence !== "protocol") return WAITING_FOR_AGENT;
+  const agent = agentDisplayName(status.agent ?? "agent");
   if (status.phase) return `${agent.noun}: ${status.phase}`;
-  if (status.active) return `${agent.sentence} is working on this file…`;
+  if (status.active) return `${sentenceLead(agent)} is working on this file…`;
   return `Sent to ${agent.sentence}…`;
 }

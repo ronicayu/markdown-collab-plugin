@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.35.25 — 2026-10-03 (GitHub only)
+
+### Changed: the UI names an agent only when it knows which one
+
+Most people using this extension run Cursor, Codex or Copilot as well as, or
+instead of, Claude Code. Where the extension didn't know which agent it was
+talking to, its wording said "Claude" anyway — the empty state offered
+"Review with Claude" to everyone. The rule now: name the agent when the file
+or a tool call says who it is; otherwise say "the agent". Features that really
+are Claude Code (Run Claude for me, Set Up Claude Code, Start Claude Review
+Terminal, the Claude terminal detection) still say Claude.
+
+- **Empty state:** "Ask agent to review", whatever the send mode.
+- **A change made outside the view** now reads "Edited outside this view:
+  §Heading" / "This document was updated outside this view". It used to say
+  "Claude edited", but the extension can't tell who wrote the file — another
+  window or git looks the same.
+- **Until an agent has written in a file** the sidebar names none: the
+  waiting row reads "Waiting for the agent…", a send says "Sent to your
+  agent", and the Send and suggest-mode tooltips say "your agent". Once an
+  agent has written, they name it as before.
+- **Generic wording** replaces "Claude" in the review-focus prompts, the
+  review progress status bar and its tooltips, the size warnings, the review
+  summary, "Copy Prompt" (was "Copy Claude Prompt") and its toast, two
+  settings' descriptions, the walkthrough's Send and Ask-for-review steps,
+  the tutorial playground and the review-conventions template.
+- **The "Claude skill isn't installed" banner** shows only when Claude Code
+  (the `claude` binary) is on the machine. It reuses the lookup Run Claude
+  for me already does, so it costs no extra probe.
+- **The extension's description** no longer opens with Claude: "Review
+  Markdown with your AI agent — comments anchored in the file itself,
+  suggestions you accept or reject. Works with Claude Code, Cursor, Codex and
+  Copilot."
+- Unchanged: the classic review view's own wording, author names on
+  comments and suggestions, and the skill text agents read. The README GIF of
+  the empty state still shows the old button and needs re-recording.
+
+### Tests
+
+- The skill banner's gating, the generic and named forms of every changed
+  string, and the empty state in both views. Playwright 394; vitest 130
+  files / 2,421 tests.
+
 ## 0.35.24 — 2026-10-01 (GitHub only)
 
 ### Changed: the collapse chevron is at the right end of each card

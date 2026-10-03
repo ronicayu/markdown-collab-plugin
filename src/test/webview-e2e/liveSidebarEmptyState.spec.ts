@@ -23,19 +23,18 @@ test("shows a muted 'Loading…' placeholder before init, and clears it on the f
   await expect(page.locator(".mc-loading")).toHaveCount(0);
 });
 
-test("shows 'Review with Claude' when headless is available, and posts empty-state-review", async ({ page }) => {
-  await bootLiveEditor(page, { ...liveInit(EMPTY_DOC, { headlessAvailable: true }), readOnly: true });
+test("shows 'Ask agent to review' — naming no agent — and posts empty-state-review", async ({ page }) => {
+  await bootLiveEditor(page, { ...liveInit(EMPTY_DOC), readOnly: true });
   const card = page.locator(".mc-empty-state");
   await expect(card).toBeVisible();
   await expect(card).toContainText("No comments yet.");
-  await card.getByRole("button", { name: "Review with Claude" }).click();
+  await expect(card).not.toContainText("Claude");
+  await card.getByRole("button", { name: "Ask agent to review" }).click();
   expect(await awaitPosted(page, "empty-state-review")).toEqual({ type: "empty-state-review" });
 });
 
-test("shows 'Ask Claude to review this doc' when headless is unavailable", async ({ page }) => {
-  await bootLiveEditor(page, { ...liveInit(EMPTY_DOC, { headlessAvailable: false }), readOnly: true });
-  const card = page.locator(".mc-empty-state");
-  await expect(card.getByRole("button", { name: "Ask Claude to review this doc" })).toBeVisible();
+test("the empty state teaches both keybinding forms", async ({ page }) => {
+  await bootLiveEditor(page, { ...liveInit(EMPTY_DOC), readOnly: true });
   await expect(page.locator(".mc-empty-state__hint")).toContainText("Cmd+K Cmd+Alt+M");
   await expect(page.locator(".mc-empty-state__hint")).toContainText("Ctrl+K Ctrl+Alt+M");
 });

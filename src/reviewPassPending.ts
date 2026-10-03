@@ -49,7 +49,7 @@
 // `ReviewPayload` and `DispatchIntent` satisfy them without a cast, so nothing
 // is lost by not reaching across the vscode boundary to import them.
 
-import { agentDisplayName, isAgentComment } from "./agentIdentity";
+import { agentDisplayName, isAgentComment, sentenceLead } from "./agentIdentity";
 import { formatElapsed } from "./headlessStatusText";
 
 /** How long a `waiting` pass may go with NOTHING received before it's declared stale. Same duration as the per-thread wait — it's the same "how long is too long to say nothing" question. */
@@ -419,37 +419,40 @@ export class ReviewPassTracker {
 
 /**
  * The status bar line for a live (or just-resolved) pass. Every branch is a
- * fact: "sent" for an inferred wait (nothing claims Claude picked it up),
- * whatever Claude last reported for a protocol one (a tool call IS evidence),
- * "in progress" once threads are actually landing, and a plain count once
- * every file is done — never "Claude is working/reviewing" without protocol
- * evidence behind it (the same honesty rule `claudeStatusBar.ts`'s header
- * states for the per-thread wait).
+ * fact: "sent" for an inferred wait (nothing claims an agent picked it up),
+ * whatever the agent last reported for a protocol one (a tool call IS
+ * evidence), "in progress" once threads are actually landing, and a plain
+ * count once every file is done — never "<agent> is working/reviewing"
+ * without protocol evidence behind it (the same honesty rule
+ * `claudeStatusBar.ts`'s header states for the per-thread wait).
+ *
+ * The wording rule: the tooltips name the agent when the record knows it (a
+ * tool call carried its slug) and say "the agent" when it doesn't.
  */
 export function reviewPassStatusText(record: ReviewPassRecord, now: number): { text: string; tooltip: string } {
   const fileLabel = record.payload.file;
+  const agent = agentDisplayName(record.agent ?? "agent");
   if (record.state === "waiting") {
     if (record.evidence === "protocol") {
-      const agent = agentDisplayName(record.agent ?? "claude");
       const text = record.phase
         ? `$(loading~spin) ${agent.noun}: ${record.phase}`
-        : `$(loading~spin) ${agent.sentence} is reviewing ${fileLabel}`;
+        : `$(loading~spin) ${sentenceLead(agent)} is reviewing ${fileLabel}`;
       return {
         text,
-        tooltip: `${agent.sentence} is working through the review tools on ${fileLabel}. Click for options.`,
+        tooltip: `${sentenceLead(agent)} is working through the review tools on ${fileLabel}. Click for options.`,
       };
     }
     const elapsed = formatElapsed(now - record.dispatchedAt);
     return {
       text: `$(clock) Sent for review · ${elapsed}`,
-      tooltip: `Sent ${fileLabel} to Claude for review. Waiting for comments to appear — click for options.`,
+      tooltip: `Sent ${fileLabel} to ${agent.sentence} for review. Waiting for comments to appear — click for options.`,
     };
   }
   if (record.state === "receiving") {
     const total = totalNewThreads(record);
     return {
       text: `$(sync~spin) Review in progress · ${total} new comment${total === 1 ? "" : "s"}`,
-      tooltip: `Claude's review of ${fileLabel} is under way — ${total} new comment${total === 1 ? "" : "s"} so far. Click for options.`,
+      tooltip: `${sentenceLead(agent)}'s review of ${fileLabel} is under way — ${total} new comment${total === 1 ? "" : "s"} so far. Click for options.`,
     };
   }
   if (record.state === "arrived") {
@@ -457,12 +460,12 @@ export function reviewPassStatusText(record: ReviewPassRecord, now: number): { t
     if (total === 0) {
       return {
         text: "$(check) Review arrived: no concerns found",
-        tooltip: `Claude reviewed ${fileLabel} and found nothing worth a thread. Click to open it.`,
+        tooltip: `${sentenceLead(agent)} reviewed ${fileLabel} and found nothing worth a thread. Click to open it.`,
       };
     }
     return {
       text: `$(check) Review arrived: ${total} new comment${total === 1 ? "" : "s"}`,
-      tooltip: `Claude's review of ${fileLabel} landed — ${total} new comment${total === 1 ? "" : "s"}. Click to open.`,
+      tooltip: `${sentenceLead(agent)}'s review of ${fileLabel} landed — ${total} new comment${total === 1 ? "" : "s"}. Click to open.`,
     };
   }
   // "stale" — the constant is fixed, so the wording can be too, rather than
@@ -470,7 +473,7 @@ export function reviewPassStatusText(record: ReviewPassRecord, now: number): { t
   const minutes = Math.round(REVIEW_PASS_TIMEOUT_MS / 60000);
   return {
     text: `$(warning) Review sent ${minutes}m ago — nothing arrived`,
-    tooltip: `Sent ${fileLabel} to Claude for review ${minutes} minutes ago — nothing has arrived yet. Click to resend, dismiss, or show logs.`,
+    tooltip: `Sent ${fileLabel} to ${agent.sentence} for review ${minutes} minutes ago — nothing has arrived yet. Click to resend, dismiss, or show logs.`,
   };
 }
 

@@ -162,7 +162,19 @@ test("the waiting row follows the phase Claude reports", async ({ page }) => {
   await expect(card.locator(".mc-card__pending")).toContainText("Claude: opening threads");
 });
 
-test("an external (Claude) change lands in the editor without echoing back an edit", async ({ page }) => {
+test("an external change with no heading to name says the document was updated outside this view", async ({ page }) => {
+  const nextProse = liveProse(fixture.source).replace(
+    "Suggest mode ships behind a setting.",
+    "Suggest mode ships behind a setting, off by default.",
+  );
+  await pushToWebview(page, { type: "externalChange", text: nextProse });
+  await expect(page.locator(".milkdown")).toContainText("off by default");
+  const banner = page.locator(".mdc-banner");
+  await expect(banner).toHaveText("This document was updated outside this view");
+  await expect(banner).not.toContainText("Claude");
+});
+
+test("an external change lands in the editor without echoing back an edit", async ({ page }) => {
   const nextProse = liveProse(fixture.source).replace(
     "Suggest mode ships behind a setting.",
     "Suggest mode ships behind a setting, off by default.",
@@ -175,7 +187,11 @@ test("an external (Claude) change lands in the editor without echoing back an ed
   });
 
   await expect(page.locator(".milkdown")).toContainText("off by default");
-  await expect(page.locator(".mdc-banner")).toContainText("Claude edited §Release notes");
+  // Who wrote it is unknown (an agent, another window, git all arrive alike): the banner names no one.
+  const banner = page.locator(".mdc-banner");
+  await expect(banner).toContainText("Edited outside this view: §Release notes");
+  await expect(banner).toHaveAttribute("title", "Scroll to the edit");
+  await expect(banner).not.toContainText("Claude");
   // Applying a disk-side change must not echo back as a human edit — that round
   // trip is how an external write gets overwritten by the editor's own state.
   // Waited out past the 250ms edit debounce, so a late post would be caught.

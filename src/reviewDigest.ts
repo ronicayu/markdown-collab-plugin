@@ -133,12 +133,12 @@ export function buildReviewDigest(
 
   // What the reader has to do next, stated before the detail.
   //
-  // `awaitingHuman` names whichever agent(s) actually answered (10x-plan-4
-  // P1.2) — that's a fact about the document, knowable the same way the
-  // per-thread "from Claude" flag is. `awaitingClaude` stays worded as before:
-  // it's a thread nobody has answered YET, so there is no agent to name —
-  // Claude is the safe default absent better information, same as
-  // `agentGroupLabel` falling back to it for an empty group.
+  // `awaitingHuman` names whichever agent(s) actually answered (the wording
+  // rule: name the agent when the code knows it) — that's a fact about the
+  // document, knowable the same way the per-thread "from Claude" flag is.
+  // `awaitingClaude` is a thread nobody has answered YET, so there is no agent
+  // to name: it says "an agent", same as `agentGroupLabel` reading generic for
+  // an empty group.
   const answeredBy = new Set<string>();
   for (const f of files) {
     for (const t of f.parsed.threads) {
@@ -153,7 +153,7 @@ export function buildReviewDigest(
     const whose = agent.noun === "Agents" ? "the agents'" : `${agent.sentence}'s`;
     next.push(`${totals.awaitingHuman} waiting on you to read ${whose} reply`);
   }
-  if (totals.awaitingClaude > 0) next.push(`${totals.awaitingClaude} not yet answered by Claude`);
+  if (totals.awaitingClaude > 0) next.push(`${totals.awaitingClaude} not yet answered by an agent`);
   if (totals.suggestions > 0) next.push(`${totals.suggestions} suggestion(s) to accept or reject`);
   if (totals.stale > 0) next.push(`${totals.stale} anchored on text that has since changed`);
   if (next.length > 0) lines.push(`**Still open:** ${next.join("; ")}.`, "");

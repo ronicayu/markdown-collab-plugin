@@ -176,10 +176,10 @@ export async function recordReviewWithClaude(outDir: string): Promise<string> {
       "The setup section still references the old config path.\n\n" +
       "Error handling around the retry loop looks incomplete.\n";
 
-    await bootInlineView(page, { ...initOf(emptyDoc), headlessAvailable: true });
+    await bootInlineView(page, initOf(emptyDoc));
     await hold(page, 1000);
 
-    await page.locator(".mc-empty-state").getByRole("button", { name: "Review with Claude" }).click();
+    await page.locator(".mc-empty-state").getByRole("button", { name: "Ask agent to review" }).click();
     await awaitPosted(page, "empty-state-review");
     // No global "review pass pending" row exists in the shipped inline view
     // yet (that's P2.2's terminal-mode progress work, not landed on this

@@ -9,6 +9,15 @@
 // answered still read as "waiting on you" wherever the check happened to be
 // `!== "claude"` instead of "did *an* agent already reply".
 //
+// THE WORDING RULE. If the code knows which agent (an author slug on a
+// comment or suggestion, or the agent recorded by a protocol/tool call), copy
+// names it through `agentDisplayName`. If it doesn't, copy is generic: "the
+// agent", "your agent", "an agent", "Agent". (An earlier version of this rule
+// kept "Claude" wherever the agent was unknown; users mostly run other agents,
+// so that guess read as wrong more often than right.) Copy about features that
+// genuinely ARE Claude Code — "Run Claude for me", the Claude skill/plugin —
+// stays as it is.
+//
 // This module is the one place that maps an MCP client's self-reported name
 // to a short slug, turns a slug into copy, and answers "is this comment an
 // agent's?" for every other file to read through. Pure and vscode-free (like
@@ -76,18 +85,28 @@ export function agentDisplayName(slug: string): AgentDisplayName {
 }
 
 /**
+ * The waiting row's wording when the code knows a prompt went out but not who
+ * picked it up (an inferred wait, or a sidebar that hasn't seen an agent yet).
+ */
+export const WAITING_FOR_AGENT = "Waiting for the agent…";
+
+/** `sentence`, capitalized — for the start of a line ("The agent is working…", "Codex is working…"). */
+export function sentenceLead(name: AgentDisplayName): string {
+  return name.sentence.length > 0 ? name.sentence[0]!.toUpperCase() + name.sentence.slice(1) : name.sentence;
+}
+
+/**
  * Name the agent(s) behind a group of author slugs — the "N new from X" /
- * "X is working…" family (the wording rule, 10x-plan-4 P1.2). Say the one
- * agent's name when every slug in the group is the same; fall back to the
- * generic plural when more than one distinct agent contributed, because
- * naming just one of several would imply the others didn't participate. An
- * empty group reads as Claude — every caller of this only calls it once it
- * already knows at least one agent is involved, and Claude is the safe
- * default when that provenance somehow got lost.
+ * "X is working…" family (the wording rule: name the agent when the code
+ * knows it, otherwise say "the agent"). Say the one agent's name when every
+ * slug in the group is the same; fall back to the generic plural when more
+ * than one distinct agent contributed, because naming just one of several
+ * would imply the others didn't participate. An empty group has no agent to
+ * name, so it reads as the generic "Agent" rather than guessing Claude.
  */
 export function agentGroupLabel(slugs: Iterable<string>): AgentDisplayName {
   const distinct = new Set([...slugs].map((s) => s.toLowerCase()));
-  if (distinct.size === 0) return agentDisplayName("claude");
+  if (distinct.size === 0) return agentDisplayName(UNKNOWN_SLUG);
   if (distinct.size === 1) return agentDisplayName([...distinct][0]!);
   return { noun: "Agents", sentence: "agents" };
 }

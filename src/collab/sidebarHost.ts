@@ -21,8 +21,9 @@ import { parse } from "../inlineComments/format";
 import { applyClientMutation } from "../inlineComments/mutations";
 import { buildInlinePayload } from "../inlineComments/sendToClaude";
 import { mcpToolsDirective } from "../sendToClaude";
-import { checkClaudeSkill, type SkillStatus } from "../skill";
-import { headlessAvailability, headlessAvailableNow } from "../transports/headlessHost";
+import { checkClaudeSkill } from "../skill";
+import { claudeBinaryFound } from "../transports/headlessHost";
+import { skillBannerStatus } from "./sidebarState";
 import type { SidebarMessage, SidebarMutation } from "../webviewShared/sidebarProtocol";
 
 export interface SidebarHostContext {
@@ -142,7 +143,7 @@ export async function handleSidebarMessage(msg: SidebarMessage, ctx: SidebarHost
       return;
     case "install-skill":
       await vscode.commands.executeCommand("markdownCollab.installClaudeSkill");
-      ctx.post({ type: "skill-status", status: await checkSkill() });
+      await postSkillStatus(ctx.post);
       return;
     case "set-read-only":
       // The provider's to handle; `isSidebarMessage` never admits it here.
@@ -230,43 +231,18 @@ export function readSuggestMode(): boolean {
   return vscode.workspace.getConfiguration("markdownCollab").get<boolean>("proposeEditsAsSuggestions", false);
 }
 
-function checkSkill(): Promise<SkillStatus> {
-  return checkClaudeSkill(os.homedir());
-}
-
-/** The skill banner's state, posted after `init` so the first paint doesn't wait on the disk. */
-export async function postSkillStatus(post: (msg: unknown) => void): Promise<void> {
-  post({ type: "skill-status", status: await checkSkill() });
-}
-
-// One binary lookup at a time, however many editors are waiting on it.
-let headlessLookup: Promise<void> | null = null;
-const headlessWaiters = new Set<() => void>();
-
 /**
- * Whether the empty state may offer "Review with Claude", without holding the
- * render on the binary lookup: a cold lookup renders as unavailable and starts
- * one, and `onSettled` re-pushes with the real answer when it lands.
+ * The skill banner's state, posted after `init` so the first paint doesn't wait
+ * on the disk or on a `claude --version` probe. The banner is about the Claude
+ * skill, so it only matters once Claude Code is on this machine: the binary
+ * lookup is the one headless availability already caches (a cold one starts
+ * here and the post follows when it settles), and without Claude Code the
+ * status goes out as "current" — nothing to show.
  */
-export function headlessAvailableForRender(
-  workspaceState: vscode.Memento | undefined,
-  onSettled: () => void,
-): boolean {
-  if (!workspaceState) return false;
-  const now = headlessAvailableNow(workspaceState);
-  if (now !== null) return now;
-  headlessWaiters.add(onSettled);
-  if (!headlessLookup) {
-    headlessLookup = headlessAvailability(workspaceState)
-      .then((a) => {
-        if (!a.ok) return;
-        for (const waiter of headlessWaiters) waiter();
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        headlessWaiters.clear();
-        headlessLookup = null;
-      });
-  }
-  return false;
+export async function postSkillStatus(post: (msg: unknown) => void): Promise<void> {
+  const [status, claudeCode] = await Promise.all([
+    checkClaudeSkill(os.homedir()),
+    claudeBinaryFound().catch(() => false),
+  ]);
+  post({ type: "skill-status", status: skillBannerStatus(status, claudeCode) });
 }

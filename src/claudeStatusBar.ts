@@ -36,7 +36,7 @@
 import * as vscode from "vscode";
 import { claudePending, onPendingChanged } from "./claudePendingService";
 import type { PendingStatus } from "./inlineComments/claudePending";
-import { agentDisplayName } from "./agentIdentity";
+import { agentDisplayName, sentenceLead } from "./agentIdentity";
 import { headlessStatusBar } from "./headlessStatusText";
 import { reviewPassPending, onReviewPassChanged } from "./reviewPassPendingService";
 import { firstArrivedFile, reviewPassStatusText, type ReviewPassRecord } from "./reviewPassPending";
@@ -55,16 +55,16 @@ const REVIEW_ARRIVED_FLASH_MS = 8000;
 
 /**
  * What the status bar should read, or null to hide it. Names whichever agent
- * the protocol evidence actually came from (10x-plan-4 P1.2) — defaulting to
- * Claude, both because that's the overwhelming common case and because an
- * "inferred" wait (filtered out above) never earns a slug at all.
+ * the protocol evidence actually came from (the wording rule) — "the agent"
+ * when a caller has evidence but no slug yet; an "inferred" wait (filtered out
+ * above) never earns a slug at all.
  */
 export function statusBarText(status: PendingStatus, fileLabel: string): string | null {
   if (status.threadIds.length === 0) return null;
   if (status.evidence !== "protocol") return null;
-  const agent = agentDisplayName(status.agent ?? "claude");
+  const agent = agentDisplayName(status.agent ?? "agent");
   if (status.phase) return `$(loading~spin) ${agent.noun}: ${status.phase}`;
-  if (status.active) return `$(loading~spin) ${agent.sentence} is working on ${fileLabel}`;
+  if (status.active) return `$(loading~spin) ${sentenceLead(agent)} is working on ${fileLabel}`;
   return `$(loading~spin) Sent ${fileLabel} to ${agent.sentence}`;
 }
 
@@ -82,11 +82,11 @@ export interface StatusBarChoice {
 /**
  * The per-thread wait's tooltip, named for whichever agent the protocol
  * evidence actually came from (1.3) — `statusBarText` above already resolves
- * the same `status.agent ?? "claude"` value for the status bar text itself;
+ * the same `status.agent ?? "agent"` value for the status bar text itself;
  * this is the tooltip's share of that same resolution, not a second guess.
  */
 export function protocolTooltip(agentSlug?: string): string {
-  return `Markdown Collab: ${agentDisplayName(agentSlug ?? "claude").sentence} is working through the review tools`;
+  return `Markdown Collab: ${sentenceLead(agentDisplayName(agentSlug ?? "agent"))} is working through the review tools`;
 }
 
 /**
@@ -294,10 +294,10 @@ export function activateClaudeStatusBar(): vscode.Disposable {
       return;
     }
     // "stale". No protocol evidence has arrived for this pass, so — like
-    // `statusBarText`'s own default — this names Claude only because that's
-    // the safe assumption with nothing more specific recorded yet.
+    // `statusBarText`'s own default — this says "the agent" unless a tool call
+    // already told us which one it was.
     const pick = await vscode.window.showQuickPick(["Resend", "Dismiss", "Show logs"], {
-      placeHolder: `Review sent to ${agentDisplayName(record.agent ?? "claude").sentence} — nothing has arrived yet`,
+      placeHolder: `Review sent to ${agentDisplayName(record.agent ?? "agent").sentence} — nothing has arrived yet`,
     });
     if (pick === "Resend") await vscode.commands.executeCommand("markdownCollab.resendReviewPass");
     else if (pick === "Dismiss") reviewPassPending.dismiss(record.folderKey);

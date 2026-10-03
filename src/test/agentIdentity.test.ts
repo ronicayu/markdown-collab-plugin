@@ -73,8 +73,9 @@ describe("agentGroupLabel", () => {
     expect(agentGroupLabel(["codex", "cursor"])).toEqual({ noun: "Agents", sentence: "agents" });
   });
 
-  it("defaults to Claude for an empty group", () => {
-    expect(agentGroupLabel([]).noun).toBe("Claude");
+  it("reads generic for an empty group — there is no agent to name", () => {
+    expect(agentGroupLabel([]).noun).toBe("Agent");
+    expect(agentGroupLabel([]).sentence).toBe("the agent");
   });
 });
 

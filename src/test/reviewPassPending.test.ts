@@ -494,22 +494,73 @@ describe("reviewPassStatusText", () => {
     };
   }
 
-  it("inferred + waiting: a fact, not a claim about Claude", () => {
+  it("inferred + waiting: a fact, not a claim about any agent", () => {
     const view = reviewPassStatusText(record(), T0 + 80_000);
     expect(view.text).toBe("$(clock) Sent for review · 1m 20s");
     expect(view.tooltip).toBe(
-      "Sent docs/guide.md to Claude for review. Waiting for comments to appear — click for options.",
+      "Sent docs/guide.md to the agent for review. Waiting for comments to appear — click for options.",
     );
   });
 
   it("protocol + waiting + phase", () => {
-    const view = reviewPassStatusText(record({ evidence: "protocol", phase: "reading 2 of 3" }), T0);
+    const view = reviewPassStatusText(
+      record({ evidence: "protocol", phase: "reading 2 of 3", agent: "claude" }),
+      T0,
+    );
     expect(view.text).toBe("$(loading~spin) Claude: reading 2 of 3");
   });
 
   it("protocol + waiting, no phase yet", () => {
-    const view = reviewPassStatusText(record({ evidence: "protocol" }), T0);
+    const view = reviewPassStatusText(record({ evidence: "protocol", agent: "claude" }), T0);
     expect(view.text).toBe("$(loading~spin) Claude is reviewing docs/guide.md");
+  });
+
+  it("protocol + waiting with no agent recorded reads generic, not Claude", () => {
+    const view = reviewPassStatusText(record({ evidence: "protocol" }), T0);
+    expect(view.text).toBe("$(loading~spin) The agent is reviewing docs/guide.md");
+    expect(view.tooltip).toBe(
+      "The agent is working through the review tools on docs/guide.md. Click for options.",
+    );
+    expect(reviewPassStatusText(record({ evidence: "protocol", phase: "reading" }), T0).text).toBe(
+      "$(loading~spin) Agent: reading",
+    );
+  });
+
+  it("every tooltip says 'the agent' when the record knows no agent", () => {
+    const states: Array<Partial<ReviewPassRecord>> = [
+      {},
+      { state: "receiving", newThreadCounts: new Map([[FILE_A, 2]]) },
+      { state: "arrived" },
+      { state: "arrived", newThreadCounts: new Map([[FILE_A, 2]]) },
+      { state: "stale" },
+    ];
+    const tooltips = states.map((s) => reviewPassStatusText(record(s), T0).tooltip);
+    expect(tooltips).toEqual([
+      "Sent docs/guide.md to the agent for review. Waiting for comments to appear — click for options.",
+      "The agent's review of docs/guide.md is under way — 2 new comments so far. Click for options.",
+      "The agent reviewed docs/guide.md and found nothing worth a thread. Click to open it.",
+      "The agent's review of docs/guide.md landed — 2 new comments. Click to open.",
+      "Sent docs/guide.md to the agent for review 10 minutes ago — nothing has arrived yet. Click to resend, dismiss, or show logs.",
+    ]);
+    for (const t of tooltips) expect(t).not.toContain("Claude");
+  });
+
+  it("every tooltip names the agent when the record knows it", () => {
+    const states: Array<Partial<ReviewPassRecord>> = [
+      {},
+      { state: "receiving", newThreadCounts: new Map([[FILE_A, 2]]) },
+      { state: "arrived" },
+      { state: "arrived", newThreadCounts: new Map([[FILE_A, 2]]) },
+      { state: "stale" },
+    ];
+    const tooltips = states.map((s) => reviewPassStatusText(record({ ...s, agent: "codex" }), T0).tooltip);
+    expect(tooltips).toEqual([
+      "Sent docs/guide.md to Codex for review. Waiting for comments to appear — click for options.",
+      "Codex's review of docs/guide.md is under way — 2 new comments so far. Click for options.",
+      "Codex reviewed docs/guide.md and found nothing worth a thread. Click to open it.",
+      "Codex's review of docs/guide.md landed — 2 new comments. Click to open.",
+      "Sent docs/guide.md to Codex for review 10 minutes ago — nothing has arrived yet. Click to resend, dismiss, or show logs.",
+    ]);
   });
 
   it("protocol names whichever agent actually earned it", () => {
@@ -524,7 +575,7 @@ describe("reviewPassStatusText", () => {
     );
     expect(view.text).toBe("$(sync~spin) Review in progress · 1 new comment");
     expect(view.tooltip).toBe(
-      "Claude's review of docs/guide.md is under way — 1 new comment so far. Click for options.",
+      "The agent's review of docs/guide.md is under way — 1 new comment so far. Click for options.",
     );
   });
 

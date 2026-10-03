@@ -116,7 +116,6 @@ export interface LiveSidebarOpts {
   pendingThreadIds?: string[];
   pendingLabel?: string;
   suggestMode?: boolean;
-  headlessAvailable?: boolean;
   /** Overrides the name derived from the document's agent comments. */
   agentName?: string;
 }
@@ -135,7 +134,6 @@ export function liveSidecar(source: string, opts: LiveSidebarOpts = {}): Record<
     threads: doc.threads,
     agentName: opts.agentName ?? doc.agentName,
     suggestMode: opts.suggestMode ?? false,
-    headlessAvailable: opts.headlessAvailable ?? false,
   };
 }
 
