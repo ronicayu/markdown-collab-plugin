@@ -76,7 +76,7 @@ Afterwards, **Review Session Summary** turns the thread state into a digest for 
 
 The **Send** button delivers one of three ways. The first click asks, remembers your answer per workspace, and never asks again. **Reset Send Mode** clears it.
 
-**Type into the active terminal** is the recommended, normal path: if a Claude terminal is already open, this is picked for you without asking; otherwise the picker offers to start one. It works with any agent's terminal, not only Claude's.
+**Type into the active terminal** is the recommended, normal path: if Claude is already running in a terminal, this is picked for you without asking; otherwise the picker lists it first. The prompt goes to the terminal you're using, so start your agent there first. If nothing is running in your terminals, you're offered to copy the prompt instead. It works with any agent's terminal, not only Claude's.
 
 ### Other ways to send
 

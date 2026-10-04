@@ -30,7 +30,7 @@ export function detectSendMode(evidence: SendModeEvidence): SendModeDetection | 
   if (evidence.claudeTerminal) {
     return {
       mode: "terminal",
-      reason: "Sent to your running Claude terminal.",
+      reason: "Claude is running in a terminal.",
     };
   }
   return null;

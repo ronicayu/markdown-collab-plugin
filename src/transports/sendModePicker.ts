@@ -20,8 +20,6 @@ export interface SendModePickerItem {
 }
 
 export interface SendModePickerOptions {
-  /** A visible terminal is already running Claude. */
-  terminalDetected: boolean;
   /**
    * The extension can run Claude itself: the binary resolved, the workspace is
    * trusted, the tool server is up, and headless hasn't failed here before.
@@ -41,26 +39,16 @@ export interface SendModePickerOptions {
  * open question 1). Headless, when available, is listed second: a way to not
  * keep a terminal open, not the default path. Clipboard is last either way.
  *
- * `terminalDetected` is the same evidence `detectSendMode` uses — when it's
- * true the caller has already auto-selected terminal without asking, so in
- * practice this only ever runs with it false, but the parameter keeps the item
- * list honest (and testable) rather than hard-coding the "nothing detected"
- * wording as a constant.
- *
- * The terminal item's label and description stay agent-neutral (1.4): the
- * mode types into whatever's in the active terminal, not necessarily Claude —
- * "Connect an Agent" can leave Cursor CLI or Codex running there instead. What
- * *is* Claude-specific — `detectSendMode`'s Claude-REPL auto-pick — only shows
- * up in the detail line, and only when it actually found one.
+ * The terminal item stays agent-neutral (1.4): the mode types into the
+ * terminal the user is using, not necessarily Claude — "Connect an Agent" can
+ * leave Cursor CLI or Codex running there instead.
  */
 export function buildSendModeItems(opts: SendModePickerOptions): SendModePickerItem[] {
   const headless = opts.headlessAvailable === true;
   const terminal: SendModePickerItem = {
     label: "Type into the active terminal (recommended)",
     description: "Types the prompt into whatever's running there. Works everywhere.",
-    detail: opts.terminalDetected
-      ? "A Claude Code session is running in a visible terminal — the prompt goes there."
-      : "No Claude terminal detected — you'll be offered to start one.",
+    detail: "Goes to the terminal you're using, if something is running in it.",
     mode: "terminal",
   };
   const clipboard: SendModePickerItem = {

@@ -63,3 +63,24 @@ describe("conventions ride along on both prompts", () => {
     expect(dispatcherBody()).toMatch(/inlineSkillPrompt: withConventions\(payload\.inlineSkillPrompt, conventions\)/);
   });
 });
+
+describe("the terminal delivery", () => {
+  const body = dispatcherBody();
+
+  it("leaves the no-terminal and idle-terminal dialogs to sendViaTerminal", () => {
+    expect(body).toMatch(/sendViaTerminal\(delivered, tracker, \{ log \}\)/);
+    expect(send).not.toMatch(/offerStart|claudeBinaryFound|Start Claude in new terminal|Switch to clipboard/);
+  });
+
+  it("names no agent in the headless-unavailable warning", () => {
+    expect(body).toMatch(/"Sending to your terminal instead\."/);
+    expect(body).not.toMatch(/Sending to your Claude terminal/);
+  });
+
+  it("names no agent in the mcp-unavailable warning, but keeps the sign-in flow's own wording", () => {
+    const host = read("transports/headlessHost.ts");
+    expect(host).toMatch(/this was sent to your terminal instead\./);
+    expect(host).not.toMatch(/sent to your Claude terminal/);
+    expect(host).toMatch(/"Send to Claude terminal"/);
+  });
+});

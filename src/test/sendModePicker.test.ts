@@ -19,13 +19,13 @@ const NO_JARGON = [
 
 describe("buildSendModeItems", () => {
   it("lists terminal first, labelled recommended", () => {
-    const items = buildSendModeItems({ terminalDetected: true });
+    const items = buildSendModeItems({});
     expect(items[0]!.mode).toBe("terminal");
     expect(items[0]!.label).toMatch(/recommended/i);
   });
 
   it("describes terminal in agent-neutral language — it types into whatever's there, not necessarily Claude", () => {
-    const items = buildSendModeItems({ terminalDetected: true });
+    const items = buildSendModeItems({});
     const terminal = items.find((i) => i.mode === "terminal")!;
     expect(terminal.description).toBe(
       "Types the prompt into whatever's running there. Works everywhere.",
@@ -34,27 +34,14 @@ describe("buildSendModeItems", () => {
     expect(terminal.description).not.toMatch(/claude/i);
   });
 
-  // 1.4: the label itself stays neutral ("Connect an Agent" can leave Cursor
-  // CLI or Codex running in that terminal instead of Claude); only the detail
-  // line names Claude, and only because `detectSendMode`'s auto-pick — the one
-  // thing this mode is still allowed to assume — is specifically about a
-  // Claude REPL.
-  it("names the detected Claude session in the detail line when there is one", () => {
-    const detected = buildSendModeItems({ terminalDetected: true }).find((i) => i.mode === "terminal")!;
-    expect(detected.detail).toMatch(/claude/i);
-  });
-
-  it("tells the human no terminal was detected in the detail line otherwise", () => {
-    const notDetected = buildSendModeItems({ terminalDetected: false }).find(
-      (i) => i.mode === "terminal",
-    )!;
-    expect(notDetected.detail).toBe(
-      "No Claude terminal detected — you'll be offered to start one.",
-    );
+  it("tells the human where the terminal send goes in the detail line", () => {
+    const terminal = buildSendModeItems({}).find((i) => i.mode === "terminal")!;
+    expect(terminal.detail).toBe("Goes to the terminal you're using, if something is running in it.");
+    expect(terminal.detail).not.toMatch(/claude/i);
   });
 
   it("lists clipboard too", () => {
-    const items = buildSendModeItems({ terminalDetected: true });
+    const items = buildSendModeItems({});
     expect(items.some((i) => i.mode === "clipboard")).toBe(true);
   });
 
@@ -63,13 +50,13 @@ describe("buildSendModeItems", () => {
   // keeps "recommended" whether or not headless is on offer.
   it("leaves headless out when it isn't available", () => {
     for (const headlessAvailable of [undefined, false]) {
-      const items = buildSendModeItems({ terminalDetected: false, headlessAvailable });
+      const items = buildSendModeItems({ headlessAvailable });
       expect(items.map((i) => i.mode)).toEqual(["terminal", "clipboard"]);
     }
   });
 
   it("keeps terminal first and recommended, with headless second, when headless is available", () => {
-    const items = buildSendModeItems({ terminalDetected: false, headlessAvailable: true });
+    const items = buildSendModeItems({ headlessAvailable: true });
     expect(items.map((i) => i.mode)).toEqual(["terminal", "headless", "clipboard"]);
     expect(items[0]!.label).toBe("Type into the active terminal (recommended)");
     // Only one item may claim "recommended".
@@ -78,7 +65,7 @@ describe("buildSendModeItems", () => {
   });
 
   it("tells the human what headless may do before they pick it", () => {
-    const headless = buildSendModeItems({ terminalDetected: false, headlessAvailable: true }).find(
+    const headless = buildSendModeItems({ headlessAvailable: true }).find(
       (i) => i.mode === "headless",
     )!;
     expect(headless.detail).toMatch(/only read files and use the review tools/);
@@ -87,12 +74,8 @@ describe("buildSendModeItems", () => {
   });
 
   it("carries no jargon in any label, description, or detail", () => {
-    for (const [terminalDetected, headlessAvailable] of [
-      [true, false],
-      [false, false],
-      [false, true],
-    ] as const) {
-      for (const item of buildSendModeItems({ terminalDetected, headlessAvailable })) {
+    for (const headlessAvailable of [false, true]) {
+      for (const item of buildSendModeItems({ headlessAvailable })) {
         for (const field of [item.label, item.description, item.detail]) {
           if (!field) continue;
           for (const re of NO_JARGON) {
@@ -119,10 +102,8 @@ describe("picker/settings parity", () => {
 
   const pickerModes = [
     ...new Set(
-      [true, false].flatMap((terminalDetected) =>
-        [true, false].flatMap((headlessAvailable) =>
-          buildSendModeItems({ terminalDetected, headlessAvailable }).map((i) => i.mode),
-        ),
+      [true, false].flatMap((headlessAvailable) =>
+        buildSendModeItems({ headlessAvailable }).map((i) => i.mode),
       ),
     ),
   ] satisfies PickerSendMode[];

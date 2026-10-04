@@ -1,19 +1,12 @@
 import * as vscode from "vscode";
+import { terminalActivity, type Activity, type ShellEvent } from "./terminalTarget";
 
 const CLAUDE_CMD_RE = /^claude(?:\s|$)/;
 
-/**
- * Tracks which terminals were spawned by us and which appear to have a
- * `claude` REPL running based on shell-integration command-execution events.
- *
- * The shell-integration events (`onDidStartTerminalShellExecution` /
- * `onDidEndTerminalShellExecution`) are stable from VS Code 1.93+. Older
- * hosts simply skip that detection layer — terminal injection still works
- * via the name-match and active-terminal fallbacks.
- */
+// Shell-integration events exist from VS Code 1.93; older hosts record nothing, so activity falls back to the terminal's name.
 export class TerminalTracker implements vscode.Disposable {
-  private readonly owned = new Set<vscode.Terminal>();
-  private readonly claudeRunning = new Map<vscode.Terminal, boolean>();
+  private readonly events = new Map<vscode.Terminal, ShellEvent>();
+  private target: vscode.Terminal | undefined;
   private readonly disposables: vscode.Disposable[] = [];
 
   public activate(subs: vscode.Disposable[]): void {
@@ -33,53 +26,53 @@ export class TerminalTracker implements vscode.Disposable {
     if (typeof startEvent.onDidStartTerminalShellExecution === "function") {
       this.disposables.push(
         startEvent.onDidStartTerminalShellExecution((e) => {
-          const cmd = (e.execution.commandLine.value ?? "").trim();
-          this.claudeRunning.set(e.terminal, CLAUDE_CMD_RE.test(cmd));
+          const command = (e.execution.commandLine.value ?? "").trim();
+          this.events.set(e.terminal, { kind: "start", command });
         }),
       );
     }
     if (typeof startEvent.onDidEndTerminalShellExecution === "function") {
       this.disposables.push(
         startEvent.onDidEndTerminalShellExecution((e) => {
-          const cmd = (e.execution.commandLine.value ?? "").trim();
-          if (CLAUDE_CMD_RE.test(cmd)) this.claudeRunning.set(e.terminal, false);
+          this.events.set(e.terminal, { kind: "end" });
         }),
       );
     }
 
     this.disposables.push(
       vscode.window.onDidCloseTerminal((t) => {
-        this.owned.delete(t);
-        this.claudeRunning.delete(t);
+        this.events.delete(t);
+        if (this.target === t) this.target = undefined;
       }),
     );
     for (const d of this.disposables) subs.push(d);
   }
 
-  public markOwned(t: vscode.Terminal): void {
-    this.owned.add(t);
-    // Owned-and-just-spawned implies claude is starting up; we set true so
-    // the detection ladder picks the owned terminal even before any shell-
-    // integration start event fires.
-    this.claudeRunning.set(t, true);
+  public get lastTarget(): vscode.Terminal | undefined {
+    return this.target;
   }
 
-  public isOwned(t: vscode.Terminal): boolean {
-    return this.owned.has(t);
+  public setLastTarget(t: vscode.Terminal): void {
+    this.target = t;
   }
 
-  public hasClaudeEvidence(t: vscode.Terminal): boolean {
-    return this.claudeRunning.get(t) === true;
+  public markClaudeStarted(t: vscode.Terminal): void {
+    this.events.set(t, { kind: "start", command: "claude" });
+    this.target = t;
   }
 
-  /**
-   * Whether any open terminal is running a `claude` REPL. Used to auto-detect
-   * a send mode on first use (P3.1) — live evidence from a shell-integration
-   * event, not a name-match guess, so a terminal the user happened to call
-   * "claude" doesn't hijack the choice.
-   */
+  public activity(t: vscode.Terminal): Activity {
+    return terminalActivity(this.events.get(t), t.name);
+  }
+
+  public runningCommand(t: vscode.Terminal): string | undefined {
+    const event = this.events.get(t);
+    return event?.kind === "start" ? event.command : undefined;
+  }
+
+  // The running command, not the terminal's name: a terminal merely called "claude" must not count.
   public anyClaudeTerminal(): boolean {
-    return vscode.window.terminals.some((t) => this.hasClaudeEvidence(t));
+    return vscode.window.terminals.some((t) => CLAUDE_CMD_RE.test(this.runningCommand(t) ?? ""));
   }
 
   public dispose(): void {
@@ -90,7 +83,7 @@ export class TerminalTracker implements vscode.Disposable {
         /* swallow */
       }
     }
-    this.owned.clear();
-    this.claudeRunning.clear();
+    this.events.clear();
+    this.target = undefined;
   }
 }

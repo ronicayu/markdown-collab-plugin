@@ -254,7 +254,7 @@ async function onFinished(
     d.log.info("falling back to the terminal for this send", { reason: final.reason, detail: final.detail });
     void vscode.window.showWarningMessage(
       "Markdown Collab: Claude Code couldn't use the review tools here (MCP may be disabled for Claude), so " +
-        "this was sent to your Claude terminal instead. Run \"Markdown Collab: Reset Send Mode\" to try " +
+        "this was sent to your terminal instead. Run \"Markdown Collab: Reset Send Mode\" to try " +
         "running Claude for you again.",
     );
     await d.fallbackToTerminal();

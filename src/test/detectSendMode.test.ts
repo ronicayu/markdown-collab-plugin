@@ -5,7 +5,7 @@ describe("detectSendMode", () => {
   it("uses the terminal when a claude REPL is running", () => {
     const d = detectSendMode({ claudeTerminal: true })!;
     expect(d.mode).toBe("terminal");
-    expect(d.reason).toMatch(/terminal/i);
+    expect(d.reason).toBe("Claude is running in a terminal.");
   });
 
   it("returns null when nothing is detected, so the caller still asks", () => {

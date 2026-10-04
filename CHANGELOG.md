@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.35.27 — 2026-10-04 (GitHub only)
+
+### Changed: Send types into the terminal you're using
+
+Terminal send used to look for a Claude terminal first — one the extension
+started, one where `claude` had been run, one with "claude" in its name — and
+only then fall back to the active terminal, pasting the prompt and pressing
+Enter with no check. With any other agent, or after `claude` had exited, the
+prompt could land in a plain shell, which then ran it.
+
+It now goes by what is running, whichever agent that is:
+
+1. the active terminal, when something is running in it;
+2. otherwise the terminal the last prompt went to, while its program is still running;
+3. otherwise the only terminal with something running;
+4. several running and none of the above: a list to pick from, with each terminal's command;
+5. can't tell what the active terminal is running: one confirmation naming it, remembered for the session;
+6. nothing running anywhere, or no terminal open: nothing is pasted — "Start your agent in a terminal, then Send again", with **Copy instead**.
+
+A terminal known to be idle is never written to. To change the target, click
+the terminal you want and send. "Running" comes from shell-integration events;
+a terminal with none yet counts as running unless its title is a plain shell
+name.
+
+The send flow no longer offers **Start Claude in new terminal** (it typed
+`claude` whatever `claudePath` said, then pasted after a fixed wait).
+**Start Claude Review Terminal** stays in the palette, and its terminal becomes
+the target.
+
+### Changed: wording
+
+The send-mode picker, the retired-mode notice and the two headless fallbacks
+say "your terminal" / "your agent" instead of "your Claude terminal": the
+terminal mode never was Claude-only.
+
+### Tests
+
+- `terminalTarget`, `terminalTracker`, `terminal`: every row of the rule, the
+  tracker with and without shell integration, and the delivery itself,
+  including that an idle terminal gets nothing.
+- `sendModePicker`, `headlessDispatch`, `detectSendMode` migrated. Vitest 133
+  files / 2,483 tests. Playwright and the integration suite were not run.
+
 ## 0.35.26 — 2026-10-03 (GitHub only)
 
 ### Fixed: an agent's review landed without taking you to its first thread

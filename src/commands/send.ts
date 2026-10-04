@@ -110,8 +110,8 @@ export async function maybeShowLegacySendModeToast(workspaceState: vscode.Mement
   if (workspaceState.get<boolean>(LEGACY_SEND_MODE_TOAST_KEY)) return;
   await workspaceState.update(LEGACY_SEND_MODE_TOAST_KEY, true);
   void vscode.window.showInformationMessage(
-    "Markdown Collab: that send mode was retired — sends now go to the Claude terminal. " +
-      "Claude still uses the review tools when it has them.",
+    "Markdown Collab: that send mode was retired — sends now go to the active terminal. " +
+      "Your agent still uses the review tools when it has them.",
   );
 }
 
@@ -281,7 +281,6 @@ export async function dispatchReviewPayload(
           // auto-selected: nothing but the human's pick chooses it.
           const headless = await headlessAvailability(workspaceState, headlessLog);
           const picked = await pickSendMode(payload.unresolvedCount, intent, {
-            terminalDetected: tracker.anyClaudeTerminal(),
             headlessAvailable: headless.ok,
           });
           if (!picked) {
@@ -321,37 +320,7 @@ export async function dispatchReviewPayload(
    * MCP turned out to be unavailable, or the human signed in and asked for it.
    */
   const deliverToTerminal = async (suffix: string): Promise<void> => {
-    const sendResult = await sendViaTerminal(delivered, tracker, {
-      log,
-      offerStartTerminal: async () => {
-        const choice = await vscode.window.showInformationMessage(
-          "No Claude terminal detected.",
-          { modal: false },
-          "Start Claude in new terminal",
-          "Switch to clipboard",
-          "Cancel",
-        );
-        log.info("no Claude terminal detected", { choice: choice ?? "dismissed" });
-        if (choice === "Start Claude in new terminal") {
-          const terminal = startClaudeTerminal(tracker, log);
-          // Give the REPL a beat to initialize before we paste into it.
-          await new Promise((r) => setTimeout(r, 1500));
-          return terminal;
-        }
-        if (choice === "Switch to clipboard") {
-          await vscode.env.clipboard.writeText(delivered.prompt);
-          void vscode.window.showInformationMessage(
-            "Prompt copied — paste into your agent.",
-          );
-        }
-        return null;
-      },
-    });
-    if (!sendResult.ok && sendResult.reason === "no-target") {
-      // The clipboard fallback toast above already fired; nothing more to do.
-      log.warn("send abandoned: no terminal to deliver to");
-      return;
-    }
+    const sendResult = await sendViaTerminal(delivered, tracker, { log });
     if (!sendResult.ok) {
       log.info("send cancelled", { reason: sendResult.reason });
       return;
@@ -408,7 +377,7 @@ export async function dispatchReviewPayload(
     });
     void vscode.window.showWarningMessage(
       `Markdown Collab: couldn't run Claude for you — ${unavailableReasonText(headless.reason)}. ` +
-        "Sending to your Claude terminal instead.",
+        "Sending to your terminal instead.",
     );
     mode = "terminal";
   }
@@ -438,11 +407,11 @@ export async function dispatchReviewPayload(
 async function pickSendMode(
   unresolvedCount: number,
   intent: DispatchIntent = { kind: "address" },
-  opts: { terminalDetected: boolean; headlessAvailable: boolean },
+  opts: { headlessAvailable: boolean },
 ): Promise<SendMode | null> {
   const items: Array<vscode.QuickPickItem & { mode: SendMode }> = buildSendModeItems(opts);
   // The picker's own items already say "Claude" where a mode really is
-  // Claude-specific (headless, the Claude terminal) — this placeholder covers
+  // Claude-specific (headless) — this placeholder covers
   // every mode at once, so it stays agent-neutral (1.3).
   const placeHolder =
     intent.kind === "review-request"
