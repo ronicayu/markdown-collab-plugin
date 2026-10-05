@@ -18,6 +18,7 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import { parse } from "../../../inlineComments/format";
+import { NO_TERMINAL_MESSAGE, sendFixture } from "./sendHarness";
 
 const EXT_ID = "markdown-collab.markdown-collab-plugin";
 const STUB = path.resolve(__dirname, "..", "fixtures", "fake-claude.mjs");
@@ -230,29 +231,41 @@ function findNode(): string | null {
     assert.strictEqual(doc.getText().split("<!--mc:")[0], before.split("<!--mc:")[0]);
   });
 
-  test("when Claude Code can't load the tool server, the send falls back to the terminal and headless stops being offered", async () => {
-    const { bin } = wrapper("no-mcp");
-    await useClaude(bin);
-    await vscode.commands.executeCommand("markdownCollab.resetSendMode");
-    const doc = await openDoc("headless-nomcp.md", "# No MCP\n\nA sentence to review.\n");
-    await review(doc);
-    const run = await finishedRun("headless-nomcp.md");
-    assert.strictEqual(run.state.kind, "failed");
-    assert.strictEqual(run.state.reason, "mcp-unavailable");
-    assert.strictEqual(alive(run.pid), false, "the process outlived the run");
+  suite("fallback to the terminal", () => {
+    const fallback = sendFixture("ask");
 
-    const s = await waitFor(async () => {
-      const now = await status();
-      return now.lastFallback?.reason === "mcp-unavailable" ? now : undefined;
-    }, "no fallback to the terminal was recorded");
-    assert.strictEqual(s.mcpUnavailable, true);
-    assert.strictEqual(s.available, false);
-    assert.match(s.unavailableReason ?? "", /MCP may be disabled/);
-    assert.strictEqual(parse(doc.getText()).threads.length, 0);
+    test("when Claude Code can't load the tool server, the send falls back to the terminal and headless stops being offered", async () => {
+      const { bin } = wrapper("no-mcp");
+      await useClaude(bin);
+      await fallback.setMode("headless");
+      const { messages } = fallback.dialogs({ reply: "Copy instead" });
+      await vscode.commands.executeCommand("markdownCollab.resetSendMode");
+      const doc = await openDoc("headless-nomcp.md", "# No MCP\n\nA sentence to review.\n");
+      await review(doc);
+      const run = await finishedRun("headless-nomcp.md");
+      assert.strictEqual(run.state.kind, "failed");
+      assert.strictEqual(run.state.reason, "mcp-unavailable");
+      assert.strictEqual(alive(run.pid), false, "the process outlived the run");
 
-    // Reset Send Mode is how the human says "try again".
-    await vscode.commands.executeCommand("markdownCollab.resetSendMode");
-    assert.strictEqual((await status()).mcpUnavailable, false);
+      const s = await waitFor(async () => {
+        const now = await status();
+        return now.lastFallback?.reason === "mcp-unavailable" ? now : undefined;
+      }, "no fallback to the terminal was recorded");
+      assert.strictEqual(s.mcpUnavailable, true);
+      assert.strictEqual(s.available, false);
+      assert.match(s.unavailableReason ?? "", /MCP may be disabled/);
+      assert.strictEqual(parse(doc.getText()).threads.length, 0);
+
+      await waitFor(
+        async () => (await vscode.env.clipboard.readText()).includes("headless-nomcp.md"),
+        "the fallback never copied the prompt",
+      );
+      assert.ok(messages.includes(NO_TERMINAL_MESSAGE), JSON.stringify(messages));
+
+      // Reset Send Mode is how the human says "try again".
+      await vscode.commands.executeCommand("markdownCollab.resetSendMode");
+      assert.strictEqual((await status()).mcpUnavailable, false);
+    });
   });
 
   test("cancelling a hung run leaves no process and no temp files", async () => {
