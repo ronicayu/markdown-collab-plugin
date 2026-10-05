@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Changed: the UI no longer assumes the agent is Claude
+
+Markdown Collab works with any AI agent, but the buttons, notices and status text
+all said "Claude". There is now a `markdownCollab.agentName` setting (default
+`Claude`, so nothing changes until you set it) that labels the agent everywhere
+the UI mentions it: "Send to *name*", "→ *name*", "*name* is working…", "New from
+*name*", the status bar, toasts and input prompts, in both the live editor and
+the inline-comments view. It updates without reloading the window.
+
+Command-palette titles can't be templated by VS Code, so they are now neutral
+instead: *Ask AI to Review This Doc / These Docs*, *Next Unread from AI*,
+*Send Unresolved Comments to AI*, *Copy Review Prompt*. Command IDs, keybindings
+and settings keys are unchanged. Features that exist only for Claude Code (its
+terminal, skill install, MCP channel) keep their Claude names, and the on-disk
+comment author id (`"claude"`) is untouched since it is part of the file format.
+
 ## 0.34.96 — 2026-09-06 (GitHub only)
 
 ### Fixed: "Remove resolved" and "Finalize document" left the file unsaved

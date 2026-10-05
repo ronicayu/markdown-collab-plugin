@@ -20,7 +20,7 @@ the file. There is no sidecar and no database.
    and both are ordinary editor edits you can undo.
 5. **Resolve** when you're satisfied. Or reply, and go round again.
 
-**Flip it:** right-click a `.md` → **Ask Claude to Review This Doc**, optionally say what to
+**Flip it:** right-click a `.md` → **Ask AI to Review This Doc**, optionally say what to
 focus on, and Claude opens a thread per concern for you to triage. No cap — if thirty things
 warrant a thread, you get thirty.
 
@@ -78,7 +78,7 @@ Claude addresses each comment, edits the doc in place, and appends a reply with 
 
 ### Asking Claude to review (Claude-initiated threads)
 
-The flow above is human-to-Claude: you leave comments, Claude addresses them. v0.29 added the reverse direction — **Markdown Collab: Ask Claude to Review This Doc** (right-click a `.md` file or run from the command palette).
+The flow above is human-to-Claude: you leave comments, Claude addresses them. v0.29 added the reverse direction — **Markdown Collab: Ask AI to Review This Doc** (right-click a `.md` file or run from the command palette).
 
 The extension prompts for an optional **focus directive** — a free-form sentence telling Claude what to look for, e.g. *"check API examples for correctness"* or *"find marketing-y tone."* Leave it blank for a general review. The last five focus directives you've used are offered in a quick-pick so you don't retype the common ones.
 
@@ -131,9 +131,9 @@ again, and a passage that was edited after its comment gets re-read first.
 
 #### Reviewing a whole folder
 
-Real doc work is rarely one file, so the same command takes a **folder or a multi-select**: right-click a folder in the explorer → **Markdown Collab: Ask Claude to Review These Docs**, or select several `.md` files and use the same action. Every `.md` under the folder (excluding `node_modules`) goes into **one** review pass, so Claude can do the thing a per-file pass structurally can't — compare the documents against each other. Cross-document consistency is part of the pass: terminology that drifts between files, a claim in one file contradicted by another, duplicated guidance that has since diverged, and cross-references that no longer resolve. Such a thread is anchored in the file that's wrong and names the other file in its body.
+Real doc work is rarely one file, so the same command takes a **folder or a multi-select**: right-click a folder in the explorer → **Markdown Collab: Ask AI to Review These Docs**, or select several `.md` files and use the same action. Every `.md` under the folder (excluding `node_modules`) goes into **one** review pass, so Claude can do the thing a per-file pass structurally can't — compare the documents against each other. Cross-document consistency is part of the pass: terminology that drifts between files, a claim in one file contradicted by another, duplicated guidance that has since diverged, and cross-references that no longer resolve. Such a thread is anchored in the file that's wrong and names the other file in its body.
 
-One focus prompt covers the whole selection, and the 50 KB soft confirm applies to the summed size. Threads land per file; the Markdown Review tree shows the per-file counts, and **Next Unread from Claude** (the → button in that view's title bar) walks the unread threads across all the files in order, wrapping at the end.
+One focus prompt covers the whole selection, and the 50 KB soft confirm applies to the summed size. Threads land per file; the Markdown Review tree shows the per-file counts, and **Next Unread from AI** (the → button in that view's title bar) walks the unread threads across all the files in order, wrapping at the end.
 
 ### Comments that survive doc edits
 
@@ -283,12 +283,12 @@ Copies the prompt to the clipboard. Paste into Claude however you like.
 | `Markdown Collab: Open Inline Comments View` | Open the rendered view with an inline-threads sidebar. Comments are stored inside the `.md` file. The right-click action on `.md` files. |
 | `Markdown Collab: Open Live Editor` | Open the WYSIWYG live editor with the comment panel — you and Claude co-edit the same `.md` (single human + Claude, no relay). |
 | `Markdown Collab: Review PR / MR` | Review the Markdown files changed in a GitHub PR or GitLab MR via the `gh` / `glab` CLI. |
-| `Markdown Collab: Ask Claude to Review This Doc` | Ask Claude to act as the reviewer (v0.29+). Prompts for an optional focus directive, then sends a Review Mode payload through the configured send mode. Claude opens one thread per concern; you triage in the sidebar. |
-| `Markdown Collab: Ask Claude to Review These Docs` | Same, over a folder or a multi-select of `.md` files — one review pass across all of them, including cross-document consistency (v0.34.55+). Right-click a folder in the explorer. |
-| `Markdown Collab: Next Unread from Claude` | Jump to the next thread Claude opened that you haven't answered, walking across every file in the Markdown Review tree. Also the → button in that view's title bar. |
-| `Markdown Collab: Send Unresolved Comments to Claude` | Same as the **Send to Claude** button — usable from palette. |
+| `Markdown Collab: Ask AI to Review This Doc` | Ask Claude to act as the reviewer (v0.29+). Prompts for an optional focus directive, then sends a Review Mode payload through the configured send mode. Claude opens one thread per concern; you triage in the sidebar. |
+| `Markdown Collab: Ask AI to Review These Docs` | Same, over a folder or a multi-select of `.md` files — one review pass across all of them, including cross-document consistency (v0.34.55+). Right-click a folder in the explorer. |
+| `Markdown Collab: Next Unread from AI` | Jump to the next thread Claude opened that you haven't answered, walking across every file in the Markdown Review tree. Also the → button in that view's title bar. |
+| `Markdown Collab: Send Unresolved Comments to AI` | Same as the **Send to Claude** button — usable from palette. |
 | `Markdown Collab: Start Claude Review Terminal` | Spawn a fresh integrated terminal and launch `claude`. |
-| `Markdown Collab: Copy Claude Prompt` | Copy a short "address the comments on this file" prompt to clipboard. |
+| `Markdown Collab: Copy Review Prompt` | Copy a short "address the comments on this file" prompt to clipboard. |
 | `Markdown Collab: Reset Send Mode` | Clear the remembered `ask` choice for the current workspace. |
 | `Markdown Collab: Remove All Resolved Comments` | Delete every resolved thread from the file at once, markers and all. Open threads and pending suggestions are left alone. Modal confirm; one undo step. Also a **Remove N resolved** button in both comment panels, shown only when there is something to remove. |
 | `Markdown Collab: Show Logs` | Open the **Markdown Collab** output channel. Set its level to **Trace** (gear icon in the Output panel) to see per-send and per-tool-call detail. |
@@ -299,6 +299,7 @@ Copies the prompt to the clipboard. Paste into Claude however you like.
 | Setting | Default | Purpose |
 |---|---|---|
 | `markdownCollab.showLineNumbers` | `false` | Show the source line number beside each block in the inline comments view and the live editor. Numbers are lines in the `.md` file itself — frontmatter and the stored threads block are accounted for, so they match what you'd type into "Go to Line". |
+| `markdownCollab.agentName` | `Claude` | What the UI calls your AI agent — "Send to *name*", "*name* is working…", status text and notices. A label only: delivery is still chosen by `sendMode`. Command-palette titles are fixed and say "AI". |
 | `markdownCollab.sendMode` | `ask` | One of `ask`, `terminal`, `mcp`, `channel`, `mcp-channel`, `clipboard`. See [Choosing a send mode](#choosing-a-send-mode). |
 
 ## Storage layout

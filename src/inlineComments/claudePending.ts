@@ -29,6 +29,8 @@
 // Pure and vscode-free: the tracker takes an injected clock and scheduler so
 // the expiry path is testable without waiting ten minutes.
 
+import { agentName } from "../agentName";
+
 /** How long a thread may wait, with no signal at all, before we stop claiming Claude is working on it. */
 export const PENDING_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -342,8 +344,9 @@ export class ClaudePendingTracker {
  * guess and should read like one.
  */
 export function pendingLabel(status: Pick<PendingStatus, "evidence" | "phase" | "active">): string {
-  if (status.evidence !== "protocol") return "Claude is working…";
-  if (status.phase) return `Claude: ${status.phase}`;
-  if (status.active) return "Claude is working on this file…";
-  return "Sent to Claude…";
+  const name = agentName();
+  if (status.evidence !== "protocol") return `${name} is working…`;
+  if (status.phase) return `${name}: ${status.phase}`;
+  if (status.active) return `${name} is working on this file…`;
+  return `Sent to ${name}…`;
 }

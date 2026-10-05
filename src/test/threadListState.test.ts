@@ -139,7 +139,7 @@ describe("emptyListMessage", () => {
   });
 
   it("points at the review command when no claude threads exist", () => {
-    expect(emptyListMessage("claude-unread")).toMatch(/Ask Claude to Review/);
+    expect(emptyListMessage("claude-unread")).toMatch(/Ask AI to Review/);
   });
 
   it("blames the filter otherwise", () => {

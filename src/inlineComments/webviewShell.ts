@@ -52,7 +52,7 @@ export function inlineCommentsAppBody(): string {
         <label><input type="radio" name="filter" value="open" checked> Open</label>
         <label><input type="radio" name="filter" value="all"> All</label>
         <label><input type="radio" name="filter" value="resolved"> Resolved</label>
-        <label id="filter-claude-label" hidden><input type="radio" name="filter" value="claude-unread"> New from Claude</label>
+        <label id="filter-claude-label" hidden><input type="radio" name="filter" value="claude-unread"> <span id="filter-claude-text">New from Claude</span></label>
         <button id="send-to-claude" title="Send the prompt to a running Claude terminal (or your configured send mode).">Send to Claude</button>
         <button id="copy-prompt" class="btn-ghost" title="Copy the prompt to your clipboard.">Copy</button>
         <button id="suggest-mode-toggle" class="btn-ghost" role="switch" aria-checked="false" title="When on, Send to Claude asks Claude to propose edits as suggestions you accept or reject.">Suggest: off</button>

@@ -2,6 +2,7 @@ import * as crypto from "crypto";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
+import { AGENT_NAME_SETTING, syncAgentName } from "../agentConfig";
 import {
   addThreadAtOffsets,
   addThreadFromAnchor,
@@ -45,6 +46,8 @@ interface InitPayload {
   pendingThreadIds: string[];
   /** Wording for the waiting row — protocol evidence earns a specific phrase. */
   pendingLabel: string;
+  /** What the UI calls the AI agent (`markdownCollab.agentName`). */
+  agentName: string;
   /** Raw frontmatter block, shown in a dedicated read-only panel. "" when absent. */
   frontmatter: string;
   /** Webview URIs for resolving relative image src in the markdown. */
@@ -76,6 +79,7 @@ interface CommentsChangedPayload {
   pendingThreadIds: string[];
   /** Wording for the waiting row — protocol evidence earns a specific phrase. */
   pendingLabel: string;
+  agentName: string;
 }
 
 interface EditMessage {
@@ -450,6 +454,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         comments: commentsOf(source),
         suggestions: suggestionsOf(source),
         pendingThreadIds: waiting.threadIds,
+        agentName: syncAgentName(),
         pendingLabel: pendingLabel(waiting),
       } satisfies CommentsChangedPayload);
     };
@@ -478,6 +483,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
           comments: commentsOf(source),
           suggestions: suggestionsOf(source),
           pendingThreadIds: waiting.threadIds,
+          agentName: syncAgentName(),
           pendingLabel: pendingLabel(waiting),
           frontmatter: lastFrontmatter,
           lineMap: lineMapFor(source),
@@ -620,6 +626,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
 
     const configSub = vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("markdownCollab.showLineNumbers")) pushLineMap();
+      if (e.affectsConfiguration(AGENT_NAME_SETTING)) pushComments();
     });
 
     panel.onDidDispose(() => {
@@ -873,7 +880,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         const prompt = `Use the vs-markdown-collab skill to address the unresolved review comments on ${rel}.`;
         await vscode.env.clipboard.writeText(prompt);
         void vscode.window.showInformationMessage(
-          "Prompt copied — paste into Claude Code.",
+          `Prompt copied — paste into ${syncAgentName()}.`,
         );
       } catch (e) {
         this.log.info(

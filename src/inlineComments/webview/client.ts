@@ -7,6 +7,7 @@
 // underlying .md file — there is no in-webview cache of comments.
 
 import { createMarkdownRenderer, ensurePlantuml } from "../../webviewShared/markdownPipeline";
+import { agentName, setAgentName } from "../../agentName";
 import { isClaudeUnread } from "../claudeUnread";
 import { slugifyHeading } from "../linkParse";
 import { findCountLabel, findMatchesIn, stepIndex } from "../../webviewShared/findState";
@@ -126,6 +127,8 @@ interface InitMsg {
   pendingThreadIds?: string[];
   /** Host-decided wording for the waiting row (10x-plan-2 P0.2). */
   pendingLabel?: string;
+  /** What the UI calls the AI agent (`markdownCollab.agentName`). */
+  agentName?: string;
 }
 
 type SkillStatus = "missing" | "outdated" | "current";
@@ -142,6 +145,7 @@ interface UpdateMsg {
   suggestMode?: boolean;
   pendingThreadIds?: string[];
   pendingLabel?: string;
+  agentName?: string;
 }
 
 interface ReviewPendingMsg {
@@ -503,6 +507,22 @@ document.addEventListener("keydown", (e) => {
 dom.sendToClaude.addEventListener("click", () => {
   vscode.postMessage({ type: "send-to-claude" });
 });
+
+/**
+ * Re-label the static shell for the configured agent name. The shell markup
+ * (webviewShell.ts) ships the default wording so it reads right before the
+ * host's first message lands; this swaps it once the name is known. The
+ * thread cards carry the name as well, but every caller re-renders them next.
+ */
+function applyAgentLabels(): void {
+  const name = agentName();
+  dom.sendToClaude.textContent = `Send to ${name}`;
+  dom.sendToClaude.title = `Send the prompt to ${name} (via your configured send mode).`;
+  dom.claudeNext.title = `Jump to the next unread thread from ${name}.`;
+  const filterText = document.getElementById("filter-claude-text");
+  if (filterText) filterText.textContent = `New from ${name}`;
+  dom.suggestModeToggle.title = `When on, Send to ${name} asks ${name} to propose edits as suggestions you accept or reject.`;
+}
 dom.copyPrompt.addEventListener("click", () => {
   vscode.postMessage({ type: "copy-prompt" });
 });
@@ -670,7 +690,7 @@ let filter: ThreadFilter = "open";
 let pendingThreadIds: ReadonlySet<string> = new Set();
 // What the waiting row says. The host owns the wording because only it knows
 // whether the wait is inferred or protocol-backed.
-let pendingLabelText = "Claude is working\u2026";
+let pendingLabelText = `${agentName()} is working\u2026`;
 /** First click on "Accept all" arms it; the second applies (P3.3). */
 let acceptAllArmed = false;
 // How many thread cards the list is currently allowed to build. Grows by a
@@ -1449,8 +1469,8 @@ function renderThreadCard(t: ThreadState): HTMLElement {
   });
   const sendClaudeBtn = document.createElement("button");
   sendClaudeBtn.className = "btn-ghost";
-  sendClaudeBtn.textContent = "→ Claude";
-  sendClaudeBtn.title = "Send the whole thread (all comments + replies) to Claude";
+  sendClaudeBtn.textContent = `→ ${agentName()}`;
+  sendClaudeBtn.title = `Send the whole thread (all comments + replies) to ${agentName()}`;
   sendClaudeBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     vscode.postMessage({ type: "send-to-claude-comment", threadId: t.id });
@@ -1886,6 +1906,8 @@ window.addEventListener("message", (ev) => {
     user = msg.user;
     imageBaseUris = msg.imageBaseUris;
     ensurePlantumlInstalled(msg.plantuml);
+    setAgentName(msg.agentName);
+    applyAgentLabels();
     renderSkillWarning(msg.skillStatus);
     updateSuggestModeToggle(msg.suggestMode ?? false);
     pendingThreadIds = new Set(msg.pendingThreadIds ?? []);
@@ -1893,6 +1915,7 @@ window.addEventListener("message", (ev) => {
     currentDiff = msg.diff ?? null;
     render(msg.state);
   } else if (msg.type === "update") {
+    if (setAgentName(msg.agentName)) applyAgentLabels();
     updateSuggestModeToggle(msg.suggestMode ?? false);
     pendingThreadIds = new Set(msg.pendingThreadIds ?? []);
     if (msg.pendingLabel) pendingLabelText = msg.pendingLabel;

@@ -11,6 +11,7 @@
 // would be slower, costlier, and occasionally wrong.
 
 import type { InlineThread, ParsedDocument } from "./inlineComments/format";
+import { agentName } from "./agentName";
 import { staleThreadIds } from "./inlineComments/staleness";
 
 export interface DigestFile {
@@ -128,8 +129,8 @@ export function buildReviewDigest(
 
   // What the reader has to do next, stated before the detail.
   const next: string[] = [];
-  if (totals.awaitingHuman > 0) next.push(`${totals.awaitingHuman} waiting on you to read Claude's reply`);
-  if (totals.awaitingClaude > 0) next.push(`${totals.awaitingClaude} not yet answered by Claude`);
+  if (totals.awaitingHuman > 0) next.push(`${totals.awaitingHuman} waiting on you to read ${agentName()}'s reply`);
+  if (totals.awaitingClaude > 0) next.push(`${totals.awaitingClaude} not yet answered by ${agentName()}`);
   if (totals.suggestions > 0) next.push(`${totals.suggestions} suggestion(s) to accept or reject`);
   if (totals.stale > 0) next.push(`${totals.stale} anchored on text that has since changed`);
   if (next.length > 0) lines.push(`**Still open:** ${next.join("; ")}.`, "");
@@ -150,7 +151,7 @@ export function buildReviewDigest(
       for (const t of open) {
         const live = t.comments.filter((c2) => !c2.deleted);
         const flags: string[] = [];
-        if (live[0]?.author === "claude") flags.push("from Claude");
+        if (live[0]?.author === "claude") flags.push(`from ${agentName()}`);
         if (stale.has(t.id)) flags.push("text changed since");
         const suffix = flags.length > 0 ? ` _(${flags.join(", ")})_` : "";
         lines.push(`- **\`${t.id}\`** on "${gist(t.quote, 60)}" — ${gist(live[0]?.body ?? "")}${suffix}`);

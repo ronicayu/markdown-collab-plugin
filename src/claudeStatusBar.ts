@@ -12,6 +12,7 @@
 // timeout exists to avoid — just in a more prominent place.
 
 import * as vscode from "vscode";
+import { agentName } from "./agentName";
 import { claudePending, onPendingChanged } from "./claudePendingService";
 import type { PendingStatus } from "./inlineComments/claudePending";
 
@@ -19,9 +20,10 @@ import type { PendingStatus } from "./inlineComments/claudePending";
 export function statusBarText(status: PendingStatus, fileLabel: string): string | null {
   if (status.threadIds.length === 0) return null;
   if (status.evidence !== "protocol") return null;
-  if (status.phase) return `$(loading~spin) Claude: ${status.phase}`;
-  if (status.active) return `$(loading~spin) Claude is working on ${fileLabel}`;
-  return `$(loading~spin) Sent ${fileLabel} to Claude`;
+  const name = agentName();
+  if (status.phase) return `$(loading~spin) ${name}: ${status.phase}`;
+  if (status.active) return `$(loading~spin) ${name} is working on ${fileLabel}`;
+  return `$(loading~spin) Sent ${fileLabel} to ${name}`;
 }
 
 /**
@@ -30,7 +32,10 @@ export function statusBarText(status: PendingStatus, fileLabel: string): string 
  */
 export function activateClaudeStatusBar(): vscode.Disposable {
   const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  item.tooltip = "Markdown Collab: Claude is working through the review tools";
+  const refreshTooltip = (): void => {
+    item.tooltip = `Markdown Collab: ${agentName()} is working through the review tools`;
+  };
+  refreshTooltip();
 
   const refresh = (docKey: string): void => {
     let uri: vscode.Uri;
@@ -52,7 +57,10 @@ export function activateClaudeStatusBar(): vscode.Disposable {
     }
   };
 
-  const sub = onPendingChanged(refresh);
+  const sub = onPendingChanged((docKey) => {
+    refreshTooltip();
+    refresh(docKey);
+  });
   return {
     dispose(): void {
       sub.dispose();

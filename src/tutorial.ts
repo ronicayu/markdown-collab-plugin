@@ -46,7 +46,7 @@ The heading above is anchored to a comment. So is this sentence about tokenizers
 
 ## What comes next
 
-When you send comments to Claude, it reads them, edits the document, and replies
+When you send comments to your AI agent, it reads them, edits the document, and replies
 in the thread. Point it at a real doc when you're ready — this file has taught
 you the loop.
 `;

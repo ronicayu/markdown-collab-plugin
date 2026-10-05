@@ -2,6 +2,8 @@ import * as os from "os";
 import * as path from "path";
 import { repairIntegrity } from "./inlineComments/integrity";
 import * as vscode from "vscode";
+import { AGENT_NAME_SETTING, syncAgentName } from "./agentConfig";
+import { agentName } from "./agentName";
 import { createLogger, type Logger } from "./logging";
 import { setCliLogger } from "./pr/cli";
 import { folderForDocument } from "./workspaceFolder";
@@ -112,6 +114,15 @@ export function activate(context: vscode.ExtensionContext): void {
   // leaving the source view.
   context.subscriptions.push(activateEditorPresence(rootLog.scope("format")));
 
+  // The UI's name for the AI agent. Read once now and again on change, so the
+  // notifications below (which read it at call time) never lag the setting.
+  syncAgentName();
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration(AGENT_NAME_SETTING)) syncAgentName();
+    }),
+  );
+
   // Visible from anywhere while Claude works through the tools — the panels
   // own the per-thread row, this is for when the human has gone back to the
   // editor (10x-plan-2 P0.2).
@@ -190,8 +201,8 @@ export function activate(context: vscode.ExtensionContext): void {
         .update("proposeEditsAsSuggestions", next, vscode.ConfigurationTarget.Workspace);
       void vscode.window.showInformationMessage(
         next
-          ? "Suggest mode ON — Send to Claude will propose edits for you to accept/reject."
-          : "Suggest mode OFF — Claude applies edits directly.",
+          ? `Suggest mode ON — Send to ${agentName()} will propose edits for you to accept/reject.`
+          : `Suggest mode OFF — ${agentName()} applies edits directly.`,
       );
     }),
     vscode.commands.registerCommand(
@@ -317,7 +328,7 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         await vscode.env.clipboard.writeText(payload.prompt);
         void vscode.window.showInformationMessage(
-          "Thread prompt copied — paste into Claude Code.",
+          `Thread prompt copied — paste into ${agentName()}.`,
         );
       },
     ),
@@ -860,7 +871,7 @@ async function invokeCommentOnSelection(log: Logger): Promise<void> {
 
   const body = await vscode.window.showInputBox({
     prompt: `Comment on “${quote.length > 60 ? `${quote.slice(0, 59)}…` : quote}”`,
-    placeHolder: "What should Claude know about this passage?",
+    placeHolder: `What should ${agentName()} know about this passage?`,
     ignoreFocusOut: true,
     validateInput: (v) => (v.trim().length === 0 ? "A comment needs a body." : null),
   });
@@ -1015,7 +1026,7 @@ async function invokeCopyClaudePrompt(): Promise<void> {
   const prompt = `Use the vs-markdown-collab skill to address the unresolved review comments on ${rel}.`;
   await vscode.env.clipboard.writeText(prompt);
   void vscode.window.showInformationMessage(
-    "Prompt copied — paste into Claude Code.",
+    `Prompt copied — paste into ${agentName()}.`,
   );
 }
 
@@ -1207,10 +1218,10 @@ async function dispatchReviewPayload(
     log.info("prompt copied to the clipboard", { chars: payload.prompt.length });
     const msg =
       intent.kind === "review-request"
-        ? `Review-request prompt for \`${payload.file}\` copied — paste into Claude Code.`
+        ? `Review-request prompt for \`${payload.file}\` copied — paste into ${agentName()}.`
         : `Prompt for ${payload.unresolvedCount} comment${
             payload.unresolvedCount === 1 ? "" : "s"
-          } copied — paste into Claude Code.`;
+          } copied — paste into ${agentName()}.`;
     void vscode.window.showInformationMessage(`${msg}${rememberedSuffix}`);
     return;
   }
@@ -1253,7 +1264,7 @@ async function dispatchReviewPayload(
           // of the prompt, and a hand-paste needs it too.
           await vscode.env.clipboard.writeText(delivered.prompt);
           void vscode.window.showInformationMessage(
-            "Prompt copied — paste into Claude Code.",
+            `Prompt copied — paste into ${agentName()}.`,
           );
         }
         return null;
@@ -1276,7 +1287,7 @@ async function dispatchReviewPayload(
     await markPayloadPending(payload, folder, mode === "mcp" ? "protocol" : "inferred");
     const msg =
       intent.kind === "review-request"
-        ? `Claude is reviewing — threads will appear when it's done. (Sent to "${sendResult.terminalName}".)`
+        ? `${agentName()} is reviewing — threads will appear when it's done. (Sent to "${sendResult.terminalName}".)`
         : `Sent to "${sendResult.terminalName}".`;
     void vscode.window.showInformationMessage(`${msg}${rememberedSuffix}`);
     return;
@@ -1353,7 +1364,7 @@ async function pickSendMode(
       ? [
           {
             label: "Send to terminal + use the review tools",
-            description: "Claude edits through the editor (undoable, checked before it writes)",
+            description: `${agentName()} edits through the editor (undoable, checked before it writes)`,
             mode: "mcp" as SendMode,
           },
         ]
@@ -1371,16 +1382,16 @@ async function pickSendMode(
     },
     {
       label: "Copy to clipboard",
-      description: "Paste manually into Claude",
+      description: `Paste manually into ${agentName()}`,
       mode: "clipboard",
     },
   ];
   const placeHolder =
     intent.kind === "review-request"
-      ? `How to ask Claude to review${intent.hasFocus ? " (with focus)" : ""}? (Set markdownCollab.sendMode to skip this prompt.)`
+      ? `How to ask ${agentName()} to review${intent.hasFocus ? " (with focus)" : ""}? (Set markdownCollab.sendMode to skip this prompt.)`
       : `How to send ${unresolvedCount} unresolved comment${
           unresolvedCount === 1 ? "" : "s"
-        } to Claude? (Set markdownCollab.sendMode to skip this prompt.)`;
+        } to ${agentName()}? (Set markdownCollab.sendMode to skip this prompt.)`;
   const pick = await vscode.window.showQuickPick(items, { placeHolder });
   return pick?.mode ?? null;
 }
@@ -1470,7 +1481,7 @@ async function invokeAskClaudeToReviewSelection(
     void vscode.window.showWarningMessage(
       selection.length === 1 && isMarkdownFsPath(selection[0].fsPath)
         ? `Could not read ${path.basename(selection[0].fsPath)}.`
-        : "Ask Claude to Review only supports .md files — the selection contains none.",
+        : "Ask AI to Review only supports .md files — the selection contains none.",
     );
     return;
   }
@@ -1547,7 +1558,7 @@ async function invokeAskClaudeToReviewMulti(
   if (total > LARGE_DOC_WARN_BYTES) {
     const kb = Math.round(total / 1024);
     const pick = await vscode.window.showWarningMessage(
-      `Reviewing ${files.length} files (${kb} KB total) — Claude's review may take a while and use significant context.`,
+      `Reviewing ${files.length} files (${kb} KB total) — ${agentName()}'s review may take a while and use significant context.`,
       { modal: false },
       "Continue",
       "Cancel",
@@ -1608,7 +1619,7 @@ async function invokeNextUnreadFromClaude(
   if (unread.length === 0) {
     unreadWalkCursor = null;
     void vscode.window.showInformationMessage(
-      "No unread threads from Claude. Run 'Ask Claude to Review' to start a pass.",
+      `No unread threads from ${agentName()}. Run 'Ask AI to Review' to start a pass.`,
     );
     return;
   }
@@ -1637,7 +1648,7 @@ async function invokeNextUnreadFromClaude(
   }
   const position = ((currentIdx + 1) % unread.length) + 1;
   void vscode.window.setStatusBarMessage(
-    `Unread from Claude ${position}/${unread.length} — ${path.basename(next.docPath)}`,
+    `Unread from ${agentName()} ${position}/${unread.length} — ${path.basename(next.docPath)}`,
     5000,
   );
 }
@@ -1659,7 +1670,7 @@ async function invokeAskClaudeToReview(
   if (byteSize > LARGE_DOC_WARN_BYTES) {
     const kb = Math.round(byteSize / 1024);
     const pick = await vscode.window.showWarningMessage(
-      `This file is ${kb} KB — Claude's review may take a while and use significant context.`,
+      `This file is ${kb} KB — ${agentName()}'s review may take a while and use significant context.`,
       { modal: false },
       "Continue",
       "Cancel",
@@ -1675,7 +1686,7 @@ async function invokeAskClaudeToReview(
   if (result.kind === "unchanged") {
     // The whole point of a delta pass is not re-reading an unchanged file.
     void vscode.window.showInformationMessage(
-      `Nothing has changed in ${path.basename(doc.uri.fsPath)} since Claude's last review pass.`,
+      `Nothing has changed in ${path.basename(doc.uri.fsPath)} since ${agentName()}'s last review pass.`,
     );
     return;
   }
@@ -1721,12 +1732,12 @@ async function promptForFocus(
     const items: FocusItem[] = [
       {
         label: "$(edit) Enter a new focus…",
-        description: "Tell Claude what to look for",
+        description: `Tell ${agentName()} what to look for`,
         tag: "custom",
       },
       {
         label: "$(eye) General review (no focus)",
-        description: "Let Claude flag anything substantive",
+        description: `Let ${agentName()} flag anything substantive`,
         tag: "general",
       },
       ...history.map<FocusItem>((h) => ({
@@ -1736,7 +1747,7 @@ async function promptForFocus(
       })),
     ];
     const pick = await vscode.window.showQuickPick<FocusItem>(items, {
-      placeHolder: "What should Claude look for?",
+      placeHolder: `What should ${agentName()} look for?`,
       ignoreFocusOut: true,
     });
     if (!pick) return undefined;
@@ -1745,7 +1756,7 @@ async function promptForFocus(
     // fall through to InputBox for "custom"
   }
   const entered = await vscode.window.showInputBox({
-    prompt: "What should Claude look for? (leave blank for a general review)",
+    prompt: `What should ${agentName()} look for? (leave blank for a general review)`,
     placeHolder: "e.g. check API examples for correctness",
     ignoreFocusOut: true,
     validateInput: (v) => {

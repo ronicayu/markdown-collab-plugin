@@ -1,6 +1,6 @@
 ### Claude as the reviewer
 
-Right-click a `.md` file → **Ask Claude to Review This Doc**. You'll be asked
+Right-click a `.md` file → **Ask AI to Review This Doc**. You'll be asked
 what to focus on — *"check the API examples"*, *"find marketing-y tone"* — or you
 can leave it blank for a general pass.
 

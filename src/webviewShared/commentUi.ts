@@ -8,6 +8,7 @@
 // models leak in here: callers pass strings + callbacks.
 
 import type MarkdownIt from "markdown-it";
+import { agentName } from "../agentName";
 import { createCommentRenderer } from "./markdownPipeline";
 import { formatRelativeTime } from "../collab/relativeTime";
 
@@ -236,7 +237,7 @@ export function buildCommentCard(opts: CommentCardOptions): HTMLElement {
     dot.className = "mc-card__pending-dot";
     working.appendChild(dot);
     const label = document.createElement("span");
-    label.textContent = opts.pendingLabel ?? "Claude is working\u2026";
+    label.textContent = opts.pendingLabel ?? `${agentName()} is working\u2026`;
     working.appendChild(label);
     card.appendChild(working);
   }

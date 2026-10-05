@@ -18,6 +18,7 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
+import { AGENT_NAME_SETTING, syncAgentName } from "../agentConfig";
 import { imageResourceRootPaths } from "../webviewShared/resourceRoots";
 import { isInsideRoot } from "../pathUtils";
 import { checkClaudeSkill, type SkillStatus } from "../skill";
@@ -87,6 +88,8 @@ interface InitMessage {
   pendingThreadIds: string[];
   /** What to say under those threads — protocol evidence earns a specific phrase. */
   pendingLabel: string;
+  /** What the UI calls the AI agent (`markdownCollab.agentName`). */
+  agentName: string;
 }
 
 interface UpdateMessage {
@@ -96,6 +99,7 @@ interface UpdateMessage {
   suggestMode: boolean;
   pendingThreadIds: string[];
   pendingLabel: string;
+  agentName: string;
 }
 
 interface SkillStatusMessage {
@@ -395,6 +399,7 @@ export class InlineCommentsPanel {
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (
           e.affectsConfiguration("markdownCollab.proposeEditsAsSuggestions") ||
+          e.affectsConfiguration(AGENT_NAME_SETTING) ||
           e.affectsConfiguration("markdownCollab.showLineNumbers")
         ) {
           void this.pushState();
@@ -755,6 +760,7 @@ ${inlineCommentsAppBody()}
    * because that state IS a guess (10x-plan-2 P0.2).
    */
   private pendingLabelText(): string {
+    syncAgentName();
     return pendingLabel(claudePending.status(this.doc.uri.toString(), parse(this.doc.getText()).threads));
   }
 
@@ -867,6 +873,7 @@ ${inlineCommentsAppBody()}
       suggestMode: readSuggestMode(),
       pendingThreadIds: this.pendingThreadIds(),
       pendingLabel: this.pendingLabelText(),
+      agentName: syncAgentName(),
     };
     await this.panel.webview.postMessage(msg);
   }
@@ -895,6 +902,7 @@ ${inlineCommentsAppBody()}
       suggestMode: readSuggestMode(),
       pendingThreadIds: this.pendingThreadIds(),
       pendingLabel: this.pendingLabelText(),
+      agentName: syncAgentName(),
     };
     await this.panel.webview.postMessage(msg);
   }

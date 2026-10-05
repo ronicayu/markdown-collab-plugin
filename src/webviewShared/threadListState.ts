@@ -11,6 +11,7 @@
 // (SerializedState.threads vs CommentSummary), so these take the narrowest
 // structure each function needs rather than a shared nominal type.
 
+import { agentName } from "../agentName";
 import { isClaudeReviewed, isClaudeUnread } from "../inlineComments/claudeUnread";
 
 export type ThreadFilter = "open" | "all" | "resolved" | "claude-unread";
@@ -57,7 +58,7 @@ export function sidebarCountLabel(opts: {
 export interface ClaudeSummary {
   unread: number;
   reviewed: number;
-  /** Whether any Claude-initiated thread exists — the summary row's visibility. */
+  /** Whether any agent-initiated thread exists — the summary row's visibility. */
   hasAny: boolean;
   /** `"2 new from Claude · 1 reviewed"`. Empty when `hasAny` is false. */
   text: string;
@@ -75,7 +76,7 @@ export function claudeSummary(threads: ListThread[]): ClaudeSummary {
     else if (isClaudeReviewed(t)) reviewed++;
   }
   const hasAny = unread + reviewed > 0;
-  const unreadLabel = unread === 1 ? "1 new from Claude" : `${unread} new from Claude`;
+  const unreadLabel = `${unread} new from ${agentName()}`;
   const reviewedLabel = reviewed === 1 ? "1 reviewed" : `${reviewed} reviewed`;
   return {
     unread,
@@ -91,7 +92,7 @@ export function emptyListMessage(filter: ThreadFilter): string {
     return "No open comments. Select text in the preview to start a thread.";
   }
   if (filter === "claude-unread") {
-    return "No unread threads from Claude. Run 'Ask Claude to Review This Doc' to start one.";
+    return `No unread threads from ${agentName()}. Run 'Ask AI to Review This Doc' to start one.`;
   }
   return "No comments match this filter.";
 }

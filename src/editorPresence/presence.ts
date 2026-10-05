@@ -13,6 +13,7 @@
 // the wiring in `index.ts` stays thin enough to read.
 
 import type { InlineThread, ParsedDocument } from "../inlineComments/format";
+import { agentName } from "../agentName";
 import { isClaudeUnread } from "../inlineComments/claudeUnread";
 import { formatRelativeTime } from "../collab/relativeTime";
 
@@ -129,7 +130,7 @@ export function presenceLensLabel(parsed: ParsedDocument): string | null {
     else if (unresolved === 0) parts.push("all resolved");
   }
   const unread = parsed.threads.filter(isClaudeUnread).length;
-  if (unread > 0) parts.push(`${unread} new from Claude`);
+  if (unread > 0) parts.push(`${unread} new from ${agentName()}`);
   if (suggestions > 0) parts.push(`${suggestions} suggestion${suggestions === 1 ? "" : "s"}`);
 
   return `${parts.join(" · ")} — open review view`;

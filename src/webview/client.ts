@@ -43,6 +43,7 @@ import { sidebarCountLabel, threadSignature } from "../webviewShared/threadListS
 import { locateAnchorInLiveText, locateNthOccurrence } from "../collab/liveAnchorLocator";
 import { renderedRangeToPmRange, renderedTextOf } from "../collab/pmPositionMapper";
 import { slugifyHeading } from "../inlineComments/linkParse";
+import { agentName, setAgentName } from "../agentName";
 import { resolveImageSrc, type ImageBaseUris } from "../webviewShared/imageSrc";
 import { parseHtmlImage } from "../webviewShared/htmlImage";
 import { displayLine, topLevelBlockLines } from "../webviewShared/lineNumbers";
@@ -93,6 +94,8 @@ interface InitMessage {
   suggestions?: SuggestionSummary[];
   pendingThreadIds?: string[];
   pendingLabel?: string;
+  /** What the UI calls the AI agent (`markdownCollab.agentName`). */
+  agentName?: string;
   frontmatter?: string;
   imageBaseUris?: ImageBaseUris;
   /** Source line per prose line; present only when line numbers are on. */
@@ -131,6 +134,7 @@ interface SidecarChangedMessage {
   pendingThreadIds?: string[];
   /** Host-decided wording for the waiting row (10x-plan-2 P0.2). */
   pendingLabel?: string;
+  agentName?: string;
 }
 
 interface AddCommentResultMessage {
@@ -225,7 +229,7 @@ const sidebarState: {
   comments: [],
   suggestions: [],
   pending: new Set<string>(),
-  pendingLabel: "Claude is working\u2026",
+  pendingLabel: `${agentName()} is working\u2026`,
   hideResolved: false,
   collapsed: false,
   notice: null,
@@ -387,6 +391,7 @@ function setOutlineVisible(visible: boolean): void {
 
 async function init(msg: InitMessage): Promise<void> {
   userName = msg.user.name || "user";
+  setAgentName(msg.agentName);
   if (msg.imageBaseUris) imageBaseUris = msg.imageBaseUris;
   lineMap = Array.isArray(msg.lineMap) ? msg.lineMap : null;
 
@@ -585,11 +590,11 @@ function renderSidebar(): void {
         </div>
       </div>
       <div class="mdc-sidebar-actions">
-        <button type="button" class="mdc-icon-btn mdc-sidebar-action mdc-sidebar-action--primary" data-action="send-to-claude" ${open === 0 ? "disabled" : ""} title="${
-          open === 0 ? "No unresolved comments to send" : "Send unresolved comments to Claude Code"
-        }">
+        <button type="button" class="mdc-icon-btn mdc-sidebar-action mdc-sidebar-action--primary" data-action="send-to-claude" ${open === 0 ? "disabled" : ""} title="${escapeHtml(
+          open === 0 ? "No unresolved comments to send" : `Send unresolved comments to ${agentName()}`,
+        )}">
           <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M1.7 14.3 14.4 8 1.7 1.7v4.7L10 8l-8.3 1.6v4.7z"/></svg>
-          <span>Send to Claude</span>
+          <span>${escapeHtml(`Send to ${agentName()}`)}</span>
         </button>
         <button type="button" class="mdc-icon-btn mdc-sidebar-action" data-action="copy-prompt" title="Copy the prompt to your clipboard.">
           <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M4 1.5h7a1 1 0 0 1 1 1V12h-1V2.5H4v-1zM2 4.5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4.5zm1 0V14h7V4.5H3z"/></svg>
@@ -654,7 +659,7 @@ function renderNotice(): void {
     return;
   }
   if (noticeJump) {
-    slot.innerHTML = `<button type="button" class="mdc-banner mdc-banner--info mdc-banner--jump" title="Scroll to Claude's edit">${escapeHtml(sidebarState.notice)} ↗</button>`;
+    slot.innerHTML = `<button type="button" class="mdc-banner mdc-banner--info mdc-banner--jump" title="${escapeHtml(`Scroll to ${agentName()}'s edit`)}">${escapeHtml(sidebarState.notice)} ↗</button>`;
     slot.querySelector<HTMLButtonElement>(".mdc-banner--jump")?.addEventListener("click", () => {
       const mark = editorContainer?.querySelector<HTMLElement>(".mdc-claude-edit");
       mark?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -813,9 +818,9 @@ function renderCommentCard(c: CommentSummary): HTMLElement {
   const actions = document.createElement("div");
   actions.className = "mdc-thread-actions";
   actions.appendChild(
-    threadActionButton("→ Claude", "Send this thread to Claude", () => {
+    threadActionButton(`→ ${agentName()}`, `Send this thread to ${agentName()}`, () => {
       vscode.postMessage({ type: "invoke-command", command: "send-thread-claude", commentId: c.id });
-      showNotice("Sent this thread to Claude — your edits are saved");
+      showNotice(`Sent this thread to ${agentName()} — your edits are saved`);
     }),
   );
   actions.appendChild(
@@ -995,7 +1000,7 @@ function attachToolbarHandlers(): void {
       if (btn.disabled) return;
       if (action === "send-to-claude") {
         vscode.postMessage({ type: "invoke-command", command: "send-to-claude" });
-        showNotice("Sent to Claude — your edits are saved to disk");
+        showNotice(`Sent to ${agentName()} — your edits are saved to disk`);
       } else if (action === "copy-prompt") {
         vscode.postMessage({ type: "invoke-command", command: "copy-prompt" });
       } else if (action === "add-comment") {
@@ -2130,7 +2135,7 @@ function applyExternalChange(text: string, changed?: ChangeSummary | null): void
   // clickable notice. Falls back to a plain notice when there's no locatable
   // span (e.g. a pure deletion, or the range didn't map).
   const flashed = changed ? flashClaudeEdit(changed.text) : false;
-  const where = changed?.heading ? `Claude edited §${changed.heading}` : "Claude updated this document";
+  const where = changed?.heading ? `${agentName()} edited §${changed.heading}` : `${agentName()} updated this document`;
   showNotice(where, flashed);
 }
 
@@ -2289,6 +2294,8 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     sidebarState.suggestions = msg.suggestions ?? [];
     sidebarState.pending = new Set(msg.pendingThreadIds ?? []);
     if (msg.pendingLabel) sidebarState.pendingLabel = msg.pendingLabel;
+    const agentRenamed = setAgentName(msg.agentName);
+    if (agentRenamed) renderSidebar();
     reconcileComments();
     renderSuggestions();
     forceHighlightRefresh();
