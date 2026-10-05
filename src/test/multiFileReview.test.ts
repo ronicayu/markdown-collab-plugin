@@ -20,8 +20,20 @@ describe("buildMultiFileReviewPayload", () => {
     expect(order[2]).toBeGreaterThan(order[1]);
   });
 
+  it("names each file by its prompt path while the payload keeps the workspace-relative one", () => {
+    const p = buildMultiFileReviewPayload([
+      { rel: "docs/a.md", promptPath: "/beta/docs/a.md", bytes: 100 },
+      { rel: "docs/b.md", promptPath: "/beta/docs/b.md", bytes: 100 },
+    ]);
+    expect(p.prompt).toContain("- `/beta/docs/a.md`");
+    expect(p.prompt).toContain("- `/beta/docs/b.md`");
+    expect(p.prompt).not.toContain("`docs/a.md`");
+    expect(p.files).toEqual(["docs/a.md", "docs/b.md"]);
+  });
+
   it("invokes the skill in Review Mode", () => {
     const p = buildMultiFileReviewPayload(files("a.md", "b.md"));
+    expect(p.prompt).toContain("markdown-collab:review");
     expect(p.prompt).toContain("vs-markdown-collab");
     expect(p.prompt).toContain("Review Mode");
   });
@@ -45,10 +57,12 @@ describe("buildMultiFileReviewPayload", () => {
     );
   });
 
-  it("keeps the no-upper-bound and no-prose-edits terms", () => {
+  it("caps at five per file, with a per-file summary thread, and keeps the no-prose-edits term", () => {
     const p = buildMultiFileReviewPayload(files("a.md", "b.md"));
-    expect(p.prompt).toMatch(/no upper bound/i);
+    expect(p.prompt).toMatch(/five that matter most in each file/i);
+    expect(p.prompt).toMatch(/that file's own summary thread/i);
     expect(p.prompt).toMatch(/do not edit prose/i);
+    expect(p.prompt).not.toMatch(/no upper bound/i);
   });
 
   it("carries no existing comments — the pass creates threads from scratch", () => {

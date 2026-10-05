@@ -68,6 +68,22 @@ describe("countsFor", () => {
     expect(countsFor(parse(open(DOC, "nested lists", "?").source)).fromClaude).toBe(0);
   });
 
+  // Any agent's thread counts here, not just claude's — the
+  // old literal `=== "claude"` check missed a Codex-opened or Codex-answered
+  // thread entirely.
+  it("counts a codex-opened thread as fromClaude (any agent, despite the field name)", () => {
+    const codexThread = open(DOC, "nested lists", "Ordered lists aren't mentioned.", "codex");
+    expect(countsFor(parse(codexThread.source)).fromClaude).toBe(1);
+  });
+
+  it("counts a thread codex answered as awaitingHuman, not awaitingClaude", () => {
+    const t = open(DOC, "nested lists", "human question");
+    const answered = reply(t.source, t.thread.id, "codex answers", "codex");
+    const c = countsFor(parse(answered));
+    expect(c.awaitingHuman).toBe(1);
+    expect(c.awaitingClaude).toBe(0);
+  });
+
   it("counts resolved threads and stale ones", () => {
     const t = open(DOC, "nested lists", "?");
     const resolved = replaceThread(t.source, t.thread.id, {
@@ -127,6 +143,31 @@ describe("buildReviewDigest", () => {
     const digest = buildReviewDigest([{ rel: "docs/guide.md", parsed: parse(edited) }], NOW);
     expect(digest).toContain("from Claude");
     expect(digest).toContain("text changed since");
+  });
+
+  it("names Codex, not Claude, for a codex-opened thread", () => {
+    const t = open(DOC, "nested lists", "Ordered lists aren't mentioned.", "codex");
+    const digest = buildReviewDigest([{ rel: "docs/guide.md", parsed: parse(t.source) }], NOW);
+    expect(digest).toContain("from Codex");
+    expect(digest).not.toContain("from Claude");
+  });
+
+  it("names Codex in the 'Still open' headline when Codex answered, not Claude", () => {
+    const t = open(DOC, "nested lists", "human question");
+    const answered = reply(t.source, t.thread.id, "codex answers", "codex");
+    const digest = buildReviewDigest([{ rel: "docs/guide.md", parsed: parse(answered) }], NOW);
+    expect(digest).toContain("waiting on you to read Codex's reply");
+    expect(digest).not.toContain("Claude's reply");
+  });
+
+  it("says 'the agents'' when more than one distinct agent answered across the summary", () => {
+    let source = DOC;
+    const first = open(source, "nested lists", "q1");
+    source = reply(first.source, first.thread.id, "codex answers", "codex");
+    const second = open(source, "behind a setting", "q2");
+    source = reply(second.source, second.thread.id, "claude answers", "claude");
+    const digest = buildReviewDigest([{ rel: "docs/guide.md", parsed: parse(source) }], NOW);
+    expect(digest).toContain("waiting on you to read the agents' reply");
   });
 
   it("groups by file for a multi-file summary", () => {

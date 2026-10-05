@@ -1,20 +1,15 @@
-// "The text changed since this comment" (10x-plan-2 P1.3).
+// "The text changed since this comment".
 //
 // A thread whose anchored passage was rewritten after the last comment looks
-// exactly like a live one: same quote in the header, same replies, same badge.
-// The human triages against a comment that may no longer apply, and a delta
-// review has no way to tell either.
+// exactly like a live one, so the human triages against a comment that may no
+// longer apply, and a delta review has no way to tell either.
 //
-// The fix is one optional field. Each thread can carry a hash of its anchored
-// span as it read when the last comment was written; if the live span hashes
-// differently, the text moved since someone last looked at it. Three properties
-// make this cheap enough to be worth it:
+// Each thread can carry a hash of its anchored span as it read when the last
+// comment was written; if the live span hashes differently, the text moved
+// since someone last looked at it.
 //
-//   - The parser already re-reads every span on every pass, so the comparison
-//     is a string hash over text that's in hand.
-//   - The field is optional. A file written by an older version has no hash,
-//     and the answer for it is "unknown", never "unchanged" — an absent hash
-//     must never render as a clean bill of health.
+//   - The field is optional. A file without a hash gets "unknown", never
+//     "unchanged" — an absent hash must never render as a clean bill of health.
 //   - It lives inline like everything else. No sidecar, no migration.
 //
 // Deliberately NOT reusing `quote`: that field is the creation-time text kept
@@ -41,7 +36,6 @@ export function hashAnchorText(text: string): string {
   return (h >>> 0).toString(16).padStart(8, "0");
 }
 
-/** The live text between a thread's markers, or null when it has no anchor. */
 export function anchoredTextOf(parsed: ParsedDocument, threadId: string): string | null {
   const a = parsed.anchors.get(threadId);
   if (!a) return null;
@@ -49,8 +43,6 @@ export function anchoredTextOf(parsed: ParsedDocument, threadId: string): string
 }
 
 /**
- * Has this thread's anchored text changed since its last comment?
- *
  * `false` for a thread with no stored hash (unknown, not unchanged) and for an
  * unanchored thread (already surfaced as a broken anchor — two badges saying
  * different things about the same failure is worse than one).
@@ -63,7 +55,6 @@ export function isThreadStale(parsed: ParsedDocument, threadId: string): boolean
   return hashAnchorText(live) !== thread.anchorHash;
 }
 
-/** Every thread whose anchored text has moved since its last comment. */
 export function staleThreadIds(parsed: ParsedDocument): string[] {
   return parsed.threads.filter((t) => isThreadStale(parsed, t.id)).map((t) => t.id);
 }

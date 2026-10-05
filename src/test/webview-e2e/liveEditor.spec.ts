@@ -1,4 +1,4 @@
-// Click-level coverage for the live (Milkdown) editor webview — 10x-plan-2 P2.1.
+// Click-level coverage for the live (Milkdown) editor webview.
 //
 // Milkdown wouldn't boot under the earlier JSDOM-ish harness, so this surface
 // was only ever "verified by construction": its logic had unit tests, its
@@ -24,17 +24,17 @@ test("Milkdown renders the prose with the markers stripped", async ({ page }) =>
 });
 
 test("both threads render in the sidebar with their quotes", async ({ page }) => {
-  await expect(page.locator(".mdc-comment")).toHaveCount(2);
+  await expect(page.locator(".thread-card")).toHaveCount(2);
   await expect(
-    page.locator(`.mdc-comment[data-id="${fixture.answeredThreadId}"] .mdc-thread-quote`),
+    page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"] .thread-quote`),
   ).toHaveText("nested lists");
   await expect(
-    page.locator(`.mdc-comment[data-id="${fixture.answeredThreadId}"]`),
+    page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`),
   ).toContainText("ordered and bullet lists share the tokenizer");
 });
 
 test("Accept on a suggestion posts accept-suggestion for that anchor", async ({ page }) => {
-  const card = page.locator(".mdc-suggestions .mc-suggestion");
+  const card = page.locator("#threads-list .mc-suggestion");
   await expect(card).toHaveCount(1);
   await card.getByRole("button", { name: "Accept" }).click();
   expect(await awaitPosted(page, "accept-suggestion")).toEqual({
@@ -44,11 +44,22 @@ test("Accept on a suggestion posts accept-suggestion for that anchor", async ({ 
 });
 
 test("Reject on a suggestion posts reject-suggestion for that anchor", async ({ page }) => {
-  await page.locator(".mdc-suggestions .mc-suggestion").getByRole("button", { name: "Reject" }).click();
+  await page.locator("#threads-list .mc-suggestion").getByRole("button", { name: "Reject" }).click();
   expect(await awaitPosted(page, "reject-suggestion")).toEqual({
     type: "reject-suggestion",
     anchorId: fixture.suggestionId,
   });
+});
+
+test("the suggestion's anchored text is highlighted in the document, like a thread's is", async ({ page }) => {
+  // reviewFixture() anchors its one suggestion at the "Release notes" heading.
+  const mark = page.locator(".mdc-anchor-highlight--suggestion");
+  await expect(mark).toHaveCount(1);
+  await expect(mark).toHaveText("Release notes");
+  // A distinct class from a comment thread's highlight, not a variant of it —
+  // the two decoration sets are independent plugins (suggestionHighlightPlugin.ts),
+  // and both thread highlights are still there, unaffected.
+  await expect(page.locator(".mdc-anchor-highlight")).toHaveCount(2);
 });
 
 test("selecting text and adding a comment posts add-comment with the selected anchor", async ({ page }) => {
@@ -81,44 +92,41 @@ test("selecting text and adding a comment posts add-comment with the selected an
   expect(msg.author).toBe("ronica");
   const anchor = msg.anchor as { text: string; contextBefore: string; contextAfter: string };
   expect(anchor.text).toBe("Suggest");
-  expect(anchor.contextAfter).toContain(" mode ships");
-  // The host places the marker at these offsets in `fullMd` instead of
-  // re-finding the text, so an off-by-one here anchors the wrong span.
-  const fullMd = msg.fullMd as string;
-  expect(fullMd.slice(msg.selStart as number, msg.selEnd as number)).toBe("Suggest");
+  // Edit mode names the selection by structure for the host to find in the
+  // file's own bytes — its first and last
+  // characters, so an off-by-one here anchors the wrong span. Nothing the
+  // editor serialized goes with it.
+  expect(msg.fullMd).toBeUndefined();
+  const range = msg.editRange as { first: { offset: number; text: string }; last: { offset: number; text: string } };
+  expect(range.first.text.slice(range.first.offset, range.last.offset + 1)).toBe("Suggest");
 });
 
-test("Resolve and → Claude post the thread-scoped messages", async ({ page }) => {
-  const card = page.locator(`.mdc-comment[data-id="${fixture.openThreadId}"]`);
-  await card.getByRole("button", { name: "Resolve" }).click();
-  expect(await awaitPosted(page, "toggle-resolve-comment")).toEqual({
-    type: "toggle-resolve-comment",
-    commentId: fixture.openThreadId,
+test("Resolve and the card's Send post the thread-scoped messages", async ({ page }) => {
+  // The review view's messages: the sidebar is shared now.
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  await card.locator(".thread-actions").getByRole("button", { name: "Resolve", exact: true }).click();
+  expect(await awaitPosted(page, "toggle-resolve")).toEqual({
+    type: "toggle-resolve",
+    threadId: fixture.openThreadId,
   });
 
-  await card.getByRole("button", { name: "→ Claude" }).click();
-  expect(await awaitPosted(page, "invoke-command")).toEqual({
-    type: "invoke-command",
-    command: "send-thread-claude",
-    commentId: fixture.openThreadId,
+  await card.locator(".thread-actions .thread-send").click();
+  expect(await awaitPosted(page, "send-to-claude-comment")).toEqual({
+    type: "send-to-claude-comment",
+    threadId: fixture.openThreadId,
   });
 });
 
 test("deleting a thread needs a second click to confirm", async ({ page }) => {
-  // The button arms in place — its label becomes the confirmation, so the
-  // locator is positional rather than by name.
-  const del = page.locator(
-    `.mdc-comment[data-id="${fixture.openThreadId}"] .mdc-thread-actions .mc-btn--danger`,
-  );
-  await expect(del).toHaveText("Delete thread");
-  await del.click();
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  await card.locator(".thread-menu-btn").click();
+  await card.getByRole("menuitem", { name: "Delete", exact: true }).click();
   expect(await posted(page)).toEqual([]);
-  await expect(del).toHaveText("Confirm?");
 
-  await del.click();
-  expect(await awaitPosted(page, "delete-comment")).toEqual({
-    type: "delete-comment",
-    commentId: fixture.openThreadId,
+  await card.getByRole("menuitem", { name: "Confirm delete" }).click();
+  expect(await awaitPosted(page, "delete-thread")).toEqual({
+    type: "delete-thread",
+    threadId: fixture.openThreadId,
   });
 });
 
@@ -127,8 +135,8 @@ test("a pending thread shows 'Claude is working…' until the sidecar update cle
     type: "sidecar-changed",
     ...liveSidecar(fixture.source, { pendingThreadIds: [fixture.openThreadId] }),
   });
-  const card = page.locator(`.mdc-comment[data-id="${fixture.openThreadId}"]`);
-  await expect(card).toHaveClass(/mdc-comment--awaiting/);
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  await expect(card).toHaveClass(/awaiting-claude/);
   await expect(card.locator(".mc-card__pending")).toContainText("Claude is working");
 
   await pushToWebview(page, { type: "sidecar-changed", ...liveSidecar(fixture.source) });
@@ -136,10 +144,9 @@ test("a pending thread shows 'Claude is working…' until the sidecar update cle
 });
 
 test("the waiting row follows the phase Claude reports", async ({ page }) => {
-  // 10x-plan-2 P0.2. The reconciler skips cards whose content is unchanged, and
-  // a phase update changes nothing else about the thread — so this is also the
-  // regression test for the repaint.
-  const card = page.locator(`.mdc-comment[data-id="${fixture.openThreadId}"]`);
+  // A phase update changes nothing else about the thread — so
+  // this is also the regression test for the repaint.
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
   await pushToWebview(page, {
     type: "sidecar-changed",
     ...liveSidecar(fixture.source, { pendingThreadIds: [fixture.openThreadId] }),
@@ -155,7 +162,19 @@ test("the waiting row follows the phase Claude reports", async ({ page }) => {
   await expect(card.locator(".mc-card__pending")).toContainText("Claude: opening threads");
 });
 
-test("an external (Claude) change lands in the editor without echoing back an edit", async ({ page }) => {
+test("an external change with no heading to name says the document was updated outside this view", async ({ page }) => {
+  const nextProse = liveProse(fixture.source).replace(
+    "Suggest mode ships behind a setting.",
+    "Suggest mode ships behind a setting, off by default.",
+  );
+  await pushToWebview(page, { type: "externalChange", text: nextProse });
+  await expect(page.locator(".milkdown")).toContainText("off by default");
+  const banner = page.locator(".mdc-banner");
+  await expect(banner).toHaveText("This document was updated outside this view");
+  await expect(banner).not.toContainText("Claude");
+});
+
+test("an external change lands in the editor without echoing back an edit", async ({ page }) => {
   const nextProse = liveProse(fixture.source).replace(
     "Suggest mode ships behind a setting.",
     "Suggest mode ships behind a setting, off by default.",
@@ -168,22 +187,26 @@ test("an external (Claude) change lands in the editor without echoing back an ed
   });
 
   await expect(page.locator(".milkdown")).toContainText("off by default");
-  await expect(page.locator(".mdc-banner")).toContainText("Claude edited §Release notes");
+  // Who wrote it is unknown (an agent, another window, git all arrive alike): the banner names no one.
+  const banner = page.locator(".mdc-banner");
+  await expect(banner).toContainText("Edited outside this view: §Release notes");
+  await expect(banner).toHaveAttribute("title", "Scroll to the edit");
+  await expect(banner).not.toContainText("Claude");
   // Applying a disk-side change must not echo back as a human edit — that round
   // trip is how an external write gets overwritten by the editor's own state.
   // Waited out past the 250ms edit debounce, so a late post would be caught.
   await page.waitForTimeout(500);
-  expect((await posted(page)).filter((m) => m.type === "edit")).toEqual([]);
+  expect((await posted(page)).filter((m) => m.type === "edit" || m.type === "edit-blocks")).toEqual([]);
 });
 
 test("a thread whose passage was rewritten shows a 'text changed' badge", async ({ page }) => {
   const stale = editAnchoredText(fixture.source, fixture.openThreadId, "behind a different setting");
   await pushToWebview(page, { type: "sidecar-changed", ...liveSidecar(stale) });
 
-  const card = page.locator(`.mdc-comment[data-id="${fixture.openThreadId}"]`);
-  await expect(card.locator(".mc-badge--stale")).toHaveText("text changed");
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  await expect(card.locator(".badge.stale")).toHaveText("text changed");
   await expect(
-    page.locator(`.mdc-comment[data-id="${fixture.answeredThreadId}"] .mc-badge--stale`),
+    page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"] .badge.stale`),
   ).toHaveCount(0);
 
   // Replying resets the baseline: the replier read the passage as it now reads.
@@ -191,5 +214,5 @@ test("a thread whose passage was rewritten shows a 'text changed' badge", async 
     type: "sidecar-changed",
     ...liveSidecar(replyTo(stale, fixture.openThreadId, "Fine as rewritten.")),
   });
-  await expect(card.locator(".mc-badge--stale")).toHaveCount(0);
+  await expect(card.locator(".badge.stale")).toHaveCount(0);
 });

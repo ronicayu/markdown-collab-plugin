@@ -1,12 +1,6 @@
-// A playground document you can click through in the first minute (P3.1).
+// A playground document you can click through in the first minute.
 //
-// The install-to-value path currently runs: install the extension, install the
-// skill, open a file, select text, write a comment, configure a send mode, get
-// Claude running, wait. Every one of those can go wrong, and none of them shows
-// what the thing actually feels like — the accept/reject loop, a thread with a
-// reply in it, a suggestion sitting there waiting for a decision.
-//
-// So: a scratch document that arrives already mid-review, with threads, a reply,
+// A scratch document that arrives already mid-review, with threads, a reply,
 // and two pending suggestions. Nothing to configure, no Claude session, no
 // network. It is built by the real format engine, so what you click is the same
 // machinery a real review uses — a hand-written fixture would drift and would
@@ -34,7 +28,7 @@ Delete the file when you're done — nothing else depends on it.
    Accept applies it; Reject keeps the current wording. Both are undoable with
    Cmd+Z, like any edit you make yourself.
 4. **Resolve a thread** when you're satisfied with it.
-5. **Add your own.** Select any sentence in the preview and click Comment.
+5. **Add your own.** Select any sentence in the rendered document and click **+ Add comment**.
 
 ## How this works
 
@@ -46,7 +40,7 @@ The heading above is anchored to a comment. So is this sentence about tokenizers
 
 ## What comes next
 
-When you send comments to Claude, it reads them, edits the document, and replies
+When you send comments to your agent, it reads them, edits the document, and replies
 in the thread. Point it at a real doc when you're ready — this file has taught
 you the loop.
 `;
@@ -64,7 +58,6 @@ export function buildTutorialDocument(): string {
 
   let source = BODY;
 
-  // A thread Claude answered — shows the shape of a finished exchange.
   const [aStart, aEnd] = anchor(source, "review state survives a commit");
   const answered = addThread(source, aStart, aEnd, {
     author: "you",
@@ -86,7 +79,6 @@ export function buildTutorialDocument(): string {
     ),
   );
 
-  // A thread waiting on a reply — the state the "Reply" step acts on.
   const [bStart, bEnd] = anchor(source, "this sentence about tokenizers");
   const waiting = addThread(source, bStart, bEnd, {
     author: "you",
@@ -95,7 +87,6 @@ export function buildTutorialDocument(): string {
   });
   source = waiting.source;
 
-  // Two suggestions, so the "Accept all" affordance is visible too.
   const [cStart, cEnd] = anchor(source, "a sandbox");
   source = addSuggestion(source, cStart, cEnd, {
     author: "claude",
@@ -115,5 +106,4 @@ export function buildTutorialDocument(): string {
   return source;
 }
 
-/** Where the playground is written, relative to the workspace root. */
 export const TUTORIAL_REL = "markdown-collab-playground.md";

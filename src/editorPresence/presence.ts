@@ -1,22 +1,13 @@
-// What the raw text editor should show for a reviewed .md file (10x-plan-3 P0.1).
-//
-// The inline format is the product's core virtue — review state travels inside
-// the document — but its first impression in the plain text editor is
-// `<!--mc:a:x7k2p-->` marker soup and a wall of thread JSON at the bottom. The
-// extension knows exactly what every one of those bytes means and, until now,
-// said nothing: no decorations, no folding, no hovers. A collaborator opening
-// the file sees something that looks corrupted.
-//
-// This module is the pure half: given a parsed document it returns offset
-// ranges to decorate, a fold for the threads region, and the hover text for a
-// position. No `vscode` import, so the interesting logic is unit-testable and
-// the wiring in `index.ts` stays thin enough to read.
+// What the raw text editor should show for a reviewed .md file: given a parsed
+// document, the offset ranges to decorate, a fold for the threads region, and
+// the hover text for a position. No `vscode` import, so the logic is
+// unit-testable and the wiring in `index.ts` stays thin.
 
 import type { InlineThread, ParsedDocument } from "../inlineComments/format";
-import { isClaudeUnread } from "../inlineComments/claudeUnread";
+import { isClaudeUnread, unreadAgentSlug } from "../inlineComments/claudeUnread";
+import { agentGroupLabel } from "../agentIdentity";
 import { formatRelativeTime } from "../collab/relativeTime";
 
-/** Half-open `[start, end)` offsets into the document source. */
 export interface OffsetRange {
   start: number;
   end: number;
@@ -29,17 +20,13 @@ export interface PresenceRanges {
    * markers are how the format keeps its promise.
    */
   markers: OffsetRange[];
-  /** Anchored spans of open threads. */
   openSpans: OffsetRange[];
-  /** Anchored spans of resolved threads — same idea, quieter. */
   resolvedSpans: OffsetRange[];
-  /** Anchored originals of pending suggestions, which read as tracked changes. */
   suggestionSpans: OffsetRange[];
   /** Threads region including its fences, or null when the file has none. */
   threadsRegion: OffsetRange | null;
 }
 
-/** Everything the decoration pass needs, in one walk of the parse. */
 export function presenceRanges(parsed: ParsedDocument): PresenceRanges {
   const markers: OffsetRange[] = [];
   const openSpans: OffsetRange[] = [];
@@ -52,7 +39,6 @@ export function presenceRanges(parsed: ParsedDocument): PresenceRanges {
   for (const [id, a] of parsed.anchors) {
     markers.push({ start: a.openStart, end: a.openEnd });
     markers.push({ start: a.closeStart, end: a.closeEnd });
-    // The anchored text is what sits between the markers.
     const span = { start: a.openEnd, end: a.closeStart };
     if (span.end <= span.start) continue; // an empty anchor highlights nothing
     if (suggestionIds.has(id)) suggestionSpans.push(span);
@@ -69,12 +55,10 @@ export function presenceRanges(parsed: ParsedDocument): PresenceRanges {
   };
 }
 
-/** Does this document carry any inline review state at all? */
 export function hasPresence(parsed: ParsedDocument): boolean {
   return parsed.anchors.size > 0 || parsed.threadsRegion !== null;
 }
 
-/** 0-based line number containing `offset`. */
 export function lineAt(source: string, offset: number): number {
   let line = 0;
   const cap = Math.min(offset, source.length);
@@ -128,11 +112,14 @@ export function presenceLensLabel(parsed: ParsedDocument): string | null {
     if (unresolved > 0 && unresolved !== threads) parts.push(`${unresolved} unresolved`);
     else if (unresolved === 0) parts.push("all resolved");
   }
-  const unread = parsed.threads.filter(isClaudeUnread).length;
-  if (unread > 0) parts.push(`${unread} new from Claude`);
+  const unreadThreads = parsed.threads.filter(isClaudeUnread);
+  if (unreadThreads.length > 0) {
+    const agent = agentGroupLabel(unreadThreads.map((t) => unreadAgentSlug(t) ?? "agent")).noun;
+    parts.push(`${unreadThreads.length} new from ${agent}`);
+  }
   if (suggestions > 0) parts.push(`${suggestions} suggestion${suggestions === 1 ? "" : "s"}`);
 
-  return `${parts.join(" · ")} — open review view`;
+  return `${parts.join(" · ")} — open in Markdown Collab`;
 }
 
 /** The thread whose anchored span covers `offset`, innermost first. */
@@ -149,7 +136,6 @@ export function threadAt(parsed: ParsedDocument, offset: number): InlineThread |
   return best?.thread ?? null;
 }
 
-/** Author, age, and body of the newest comment that hasn't been deleted. */
 function latestLive(thread: InlineThread): { author: string; ts: string; body: string } | null {
   for (let i = thread.comments.length - 1; i >= 0; i--) {
     const c = thread.comments[i];
@@ -158,10 +144,24 @@ function latestLive(thread: InlineThread): { author: string; ts: string; body: s
   return null;
 }
 
-/** One quoted line of a comment body, short enough to live in a hover. */
 function gist(body: string, max = 220): string {
   const flat = body.replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
+/**
+ * Escape Markdown syntax characters in text that came from the document
+ * itself — a comment's author or body — so it renders as plain text inside
+ * the trusted `MarkdownString` `index.ts` builds, rather than becoming a
+ * link, an image, emphasis, or a heading. A comment body of
+ * `[Mark reviewed](command:markdownCollab.resolveThread?…)` must read as
+ * exactly that string; only the extension's own links, appended after this
+ * escaping runs, are ever live. Escaping `!` alongside `[`, `]`, `(`, and `)`
+ * together also keeps a `![alt](http://…)` from being interpreted as an
+ * image — nothing built from document text ever loads a remote image.
+ */
+function escapeMarkdown(text: string): string {
+  return text.replace(/[`*_()[\]!<>#|]/g, (c) => `\\${c}`);
 }
 
 /**
@@ -185,7 +185,14 @@ export function hoverFor(
 
   const badges: string[] = [];
   if (thread.status === "resolved") badges.push("resolved");
-  else if (isClaudeUnread(thread)) badges.push("new from Claude");
+  else if (isClaudeUnread(thread)) {
+    // `unreadAgentSlug` falls back to the comment's own `author` field when it
+    // isn't one of the known slugs (any string is legal there once `agent:
+    // true` is set) — document-derived like everything else here, so it gets
+    // the same escaping before it can reach the badge.
+    const noun = agentGroupLabel([unreadAgentSlug(thread) ?? "agent"]).noun;
+    badges.push(`new from ${escapeMarkdown(noun)}`);
+  }
   if (parsed.suggestions.some((s) => s.threadId === thread.id)) badges.push("has a suggestion");
   lines.push(
     `**Markdown Collab** — ${live.length} comment${live.length === 1 ? "" : "s"}` +
@@ -195,21 +202,28 @@ export function hoverFor(
   if (latest) {
     lines.push("");
     const when = formatRelativeTime(latest.ts, opts.now);
-    lines.push(`**${latest.author}**${when ? ` · ${when}` : ""}`);
+    lines.push(`**${escapeMarkdown(latest.author)}**${when ? ` · ${when}` : ""}`);
     lines.push("");
-    lines.push(gist(latest.body));
+    lines.push(escapeMarkdown(gist(latest.body)));
   }
 
   if (live.length > 1) {
     lines.push("");
-    lines.push(`_+${live.length - 1} earlier — open the review view to read the thread._`);
+    lines.push(`_+${live.length - 1} earlier — open it in Markdown Collab to read the thread._`);
   }
 
   if (opts.commandLinks && opts.file) {
     // Encoded as a JSON array, which is what VS Code expects in a command URI.
     const args = encodeURIComponent(JSON.stringify([opts.file, thread.id]));
+    // "Reopen" is the resolved-thread label; both labels point at the same
+    // command, which reads the thread's current status itself.
+    const resolveLabel = thread.status === "resolved" ? "Reopen" : "Resolve";
     lines.push("");
-    lines.push(`[Open in review view](command:markdownCollab.revealThread?${args})`);
+    lines.push(
+      `[Open in Markdown Collab](command:markdownCollab.revealThread?${args}) · ` +
+        `[Reply](command:markdownCollab.replyToThread?${args}) · ` +
+        `[${resolveLabel}](command:markdownCollab.resolveThread?${args})`,
+    );
   }
 
   return { thread, markdown: lines.join("\n") };

@@ -13,6 +13,20 @@ out/test/**
 node_modules/**
 !node_modules/mermaid/package.json
 !node_modules/mermaid/dist/mermaid.min.js
+# tsc emits one .js per source file into out/, but the host is the single
+# esbuild bundle at out/extension.js and the webviews are three more bundles;
+# nothing loads the per-file output. Ship the four bundles and their CSS only.
+out/**/*.js
+!out/extension.js
+!out/webview/client.js
+!out/inlineComments/client.js
+!out/pr/webview/client.js
+# Build intermediate: the runtime copy of the CLI is plugin/lib/mdc.mjs.
+out/skill/**
+# Build, release, and verification tooling — nothing here runs at runtime.
+scripts/**
+# Playwright MCP scratch output (gitignored, but vsce reads the working tree).
+.playwright-mcp/**
 tsconfig.json
 tsconfig.webview.json
 tsconfig.e2e.json
@@ -23,7 +37,15 @@ test-results/**
 .gitignore
 .github/**
 .claude/**
+# The GitHub marketplace manifest is for people installing the Claude Code
+# plugin without the extension. The extension ships plugin/ itself (see
+# src/claudePlugin.ts) and writes its own local marketplace around it.
+.claude-plugin/**
 .markdown-collab/**
+# README GIFs: committed for the marketplace listing, which
+# renders README.md straight from the repository — the .vsix itself never
+# shows them, so they'd only add dead weight to every install.
+media/gifs/**
 docs/**
 package-lock.json
 **/*.vsix

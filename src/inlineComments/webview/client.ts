@@ -1,12 +1,8 @@
-// Webview client for the inline-comments view (default storage in v0.27+).
-//
-// Renders the .md prose (with mc:* markup stripped) via markdown-it,
-// overlays a highlight on each anchored span, and runs a sidebar of
-// threads with add/reply/edit/resolve/delete UI. All state mutations
-// round-trip through the extension host as `WorkspaceEdit`s on the
+// All state mutations round-trip through the extension host as `WorkspaceEdit`s on the
 // underlying .md file — there is no in-webview cache of comments.
 
 import { createMarkdownRenderer, ensurePlantuml } from "../../webviewShared/markdownPipeline";
+import { isAgentComment } from "../../agentIdentity";
 import { isClaudeUnread } from "../claudeUnread";
 import { slugifyHeading } from "../linkParse";
 import { findCountLabel, findMatchesIn, stepIndex } from "../../webviewShared/findState";
@@ -14,21 +10,22 @@ import { createDiffNav, isNavKeyContext } from "../../webviewShared/diffNav";
 import { planHighlightSlices } from "../../webviewShared/highlightSlices";
 import {
   THREAD_RENDER_CHUNK,
+  adjacentThreadId,
   chunkThreads,
   claudeSummary,
-  emptyListMessage,
+  emptyState,
   filterThreads,
   matchesFilter,
   nextCollapseAllAction,
   nextUnreadThreadId,
   threadCountLabel,
+  type EmptyState,
   type ThreadFilter,
 } from "../../webviewShared/threadListState";
 import { buildComposer, buildCommentBody, buildCommentCard, buildSuggestionCard, type CardAction } from "../../webviewShared/commentUi";
+import { smoothScrollIntoView } from "../../webviewShared/scrollIntoView";
 import { resolveImageSrc, type ImageBaseUris } from "../../webviewShared/imageSrc";
 import { LINE_ATTR, LINE_ENV_KEY, displayLine } from "../../webviewShared/lineNumbers";
-// Scroll position comes from the DOM, which is what the reader actually sees;
-// headings are addressed by index, never by name.
 import { buildOutline } from "../../webviewShared/outline";
 import { buildOutlinePanel, type OutlinePanelHandle } from "../../webviewShared/outlinePanel";
 
@@ -53,6 +50,15 @@ interface InlineComment {
   id: string;
   parent?: string;
   author: string;
+  /** Set by the tools/CLI on every comment an agent writes. */
+  agent?: boolean;
+  /**
+   * How this comment reached the file — "tools" (MCP) or "cli" (`mdc`).
+   * Absent means it was typed straight into the file's text, by a human or by
+   * an agent editing directly. Only meaningful on an agent comment;
+   * `renderComment` gates the marker on `isAgentComment` first.
+   */
+  via?: "tools" | "cli";
   ts: string;
   body: string;
   editedTs?: string;
@@ -67,7 +73,7 @@ interface ThreadState {
   resolvedTs?: string;
   comments: InlineComment[];
   anchor: { proseStart: number; proseEnd: number } | null;
-  /** The anchored text changed after this thread's last comment (P1.3). */
+  /** The anchored text changed after this thread's last comment. */
   stale?: boolean;
 }
 
@@ -124,8 +130,16 @@ interface InitMsg {
   skillStatus?: SkillStatus;
   suggestMode?: boolean;
   pendingThreadIds?: string[];
-  /** Host-decided wording for the waiting row (10x-plan-2 P0.2). */
+  /** Host-decided wording for the waiting row. */
   pendingLabel?: string;
+  /**
+   * Display name of the agent that last wrote to this file — "Codex", "Cursor",
+   * etc. Absent means Claude, so an old host omitting the field reads as it
+   * always has. Used where the UI has no per-thread agent to name (the Send
+   * button and its title, the suggest-mode switch title, the default
+   * pending-row text).
+   */
+  agentName?: string;
 }
 
 type SkillStatus = "missing" | "outdated" | "current";
@@ -142,6 +156,7 @@ interface UpdateMsg {
   suggestMode?: boolean;
   pendingThreadIds?: string[];
   pendingLabel?: string;
+  agentName?: string;
 }
 
 interface ReviewPendingMsg {
@@ -176,9 +191,9 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
   if (srcIdx >= 0 && tok.attrs) {
     const original = tok.attrs[srcIdx][1];
     if (isDrawioSrc(original)) {
-      // .drawio files aren't a browser image format. Emit a placeholder;
-      // processDrawioPlaceholders() asks the host for the XML and renders
-      // it to an inline SVG. Carry the original href + alt for the swap.
+      // .drawio isn't a browser image format: emit a placeholder that
+      // processDrawioPlaceholders() swaps for an inline SVG rendered from
+      // host-read XML. Carry the original href + alt for the swap.
       const alt = tok.children ? self.renderInlineAsText(tok.children, options, env) : "";
       return `<span class="mc-drawio" data-drawio-href="${md.utils.escapeHtml(original)}" title="${md.utils.escapeHtml(alt)}">Loading diagram…</span>`;
     }
@@ -188,14 +203,10 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
   return defaultImageRule(tokens, idx, options, env, self);
 };
 
-/** True for hrefs a browser can't render as an image but the host can read + render. */
 function isDrawioSrc(src: string): boolean {
   const clean = (src || "").split(/[?#]/)[0].toLowerCase();
   return clean.endsWith(".drawio") || clean.endsWith(".drawio.xml") || clean.endsWith(".xml");
 }
-
-// resolveImageSrc + the `..`-aware joinUri now live in
-// ../../webviewShared/imageSrc (shared with the live editor).
 
 const dom = {
   preview: document.getElementById("preview") as HTMLElement,
@@ -224,6 +235,11 @@ const dom = {
   claudeNext: document.getElementById("claude-next") as HTMLButtonElement,
   collapseAll: document.getElementById("collapse-all") as HTMLButtonElement,
   claudeFilterLabel: document.getElementById("filter-claude-label") as HTMLLabelElement,
+  claudeFilterLabelText: document.getElementById("filter-claude-label-text") as HTMLElement,
+  overflowMenuBtn: document.getElementById("overflow-menu-btn") as HTMLButtonElement,
+  overflowMenu: document.getElementById("overflow-menu") as HTMLElement,
+  hintToggle: document.getElementById("hint-toggle") as HTMLButtonElement,
+  keysHint: document.getElementById("keys-hint") as HTMLElement,
   findBar: document.getElementById("find-bar") as HTMLElement,
   findInput: document.getElementById("find-input") as HTMLInputElement,
   findCount: document.getElementById("find-count") as HTMLElement,
@@ -237,10 +253,68 @@ const dom = {
   outlineToggle: document.getElementById("outline-toggle") as HTMLButtonElement,
 };
 
-// --- Document outline -----------------------------------------------------
+// One "…" menu is open at a time (the toolbar's or one thread card's), tracked
+// here so a click anywhere else closes it. Escape closes and returns focus to
+// the trigger; an outside click doesn't steal focus from where the user clicked.
+let openMenu: { trigger: HTMLButtonElement; panel: HTMLElement } | null = null;
+
+function closeOpenMenu(returnFocus: boolean): void {
+  if (!openMenu) return;
+  const { trigger, panel } = openMenu;
+  panel.hidden = true;
+  trigger.setAttribute("aria-expanded", "false");
+  openMenu = null;
+  if (returnFocus && trigger.isConnected) trigger.focus();
+}
+
+function openMenuAt(trigger: HTMLButtonElement, panel: HTMLElement): void {
+  closeOpenMenu(false);
+  panel.hidden = false;
+  trigger.setAttribute("aria-expanded", "true");
+  openMenu = { trigger, panel };
+  panel.querySelector<HTMLElement>('[role="menuitem"]:not([hidden])')?.focus();
+}
+
+function toggleMenuAt(trigger: HTMLButtonElement, panel: HTMLElement): void {
+  if (openMenu?.panel === panel) closeOpenMenu(false);
+  else openMenuAt(trigger, panel);
+}
+
+document.addEventListener("click", (e) => {
+  if (!openMenu) return;
+  const target = e.target as Node;
+  if (openMenu.panel.contains(target) || openMenu.trigger.contains(target)) return;
+  closeOpenMenu(false);
+});
+document.addEventListener("keydown", (e) => {
+  if (!openMenu) return;
+  if (e.key === "Escape") {
+    e.preventDefault();
+    e.stopPropagation();
+    closeOpenMenu(true);
+  }
+});
+
+dom.overflowMenuBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleMenuAt(dom.overflowMenuBtn, dom.overflowMenu);
+});
+
+function buildMenuItem(label: string, onClick: () => void, opts: { danger?: boolean } = {}): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.setAttribute("role", "menuitem");
+  if (opts.danger) btn.classList.add("danger");
+  btn.textContent = label;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onClick();
+  });
+  return btn;
+}
+
 // Built from the prose the preview renders, so its line numbers index the same
-// text the headings are found in. Visibility and per-node collapse both persist
-// via vscode.setState, like the other panel preferences.
+// text the headings are found in.
 const collapsedOutline: Set<string> = ((): Set<string> => {
   const saved = vscode.getState() as { collapsedOutline?: string[] } | undefined;
   return new Set(saved?.collapsedOutline ?? []);
@@ -282,19 +356,16 @@ dom.outlineToggle.addEventListener("click", () => {
 });
 
 /**
- * Scroll the preview to the Nth heading, counting in document order.
- *
  * Positional rather than by name: the outline and the renderer agree on how
  * many headings there are and in what order, but not always on how to spell
- * one. Two sections called "What changed" used to make the second entry inert.
+ * one, so duplicate heading names must not make an entry inert.
  */
 function scrollPreviewToHeadingIndex(index: number): void {
   const all = dom.preview.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6");
   const target = all[index];
-  if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (target) smoothScrollIntoView(target, "start");
 }
 
-/** Highlight the outline entry for whatever heading is at the top of the view. */
 function syncOutlineActive(): void {
   if (!outlineVisible || !currentState) return;
   const previewTop = dom.previewPane.getBoundingClientRect().top;
@@ -308,8 +379,6 @@ function syncOutlineActive(): void {
   outlinePanel.setActive(activeIndex);
 }
 
-// Thread IDs the user has collapsed (folded to just the quote). Persisted so
-// the choice survives a webview reload.
 const collapsedThreads: Set<string> = ((): Set<string> => {
   const saved = vscode.getState() as { collapsedThreadIds?: string[] } | undefined;
   return new Set(saved?.collapsedThreadIds ?? []);
@@ -322,11 +391,10 @@ function saveCollapsedThreads(): void {
 }
 
 /**
- * Set when the user fires "Ask Claude to Review This Doc". Holds the
- * thread IDs that existed at the time of the dispatch. On the next
- * render where new claude-unread threads appear (i.e. Claude's reply
- * has landed and the file was reloaded), we auto-scroll to the first
- * new one and clear the snapshot. Survives webview reloads via state.
+ * Thread IDs that existed when "Ask Agent to Review This Doc" fired. On the next
+ * render where new claude-unread threads appear (the reply landed and the file
+ * reloaded), scroll to the first new one and clear this. Persisted so it
+ * survives a webview reload.
  */
 let pendingReviewSnapshot: Set<string> | null = ((): Set<string> | null => {
   const saved = vscode.getState() as { pendingReviewIds?: string[] } | undefined;
@@ -341,8 +409,6 @@ function savePendingReviewSnapshot(): void {
   });
 }
 
-// Sidebar collapse state. Persisted across messages via vscode.setState so
-// the user's preference survives a webview reload.
 function setCollapsed(collapsed: boolean): void {
   dom.app.classList.toggle("threads-collapsed", collapsed);
   dom.expandThreads.hidden = !collapsed;
@@ -355,15 +421,8 @@ function setCollapsed(collapsed: boolean): void {
 dom.collapseThreads.addEventListener("click", () => setCollapsed(true));
 dom.expandThreads.addEventListener("click", () => setCollapsed(false));
 
-// ---------------------------------------------------------------------------
-// Find-in-preview
-// ---------------------------------------------------------------------------
-// Scoped find for the rendered prose. Walks text nodes inside #preview,
-// wraps matches in <mark class="mc-search">, tracks them as `findMatches`,
-// and lets the user step through with Enter / Shift+Enter / buttons.
-//
-// State is cleared whenever the preview re-renders (handled in the message
-// update path) so stale <mark> nodes don't survive a state change.
+// State is cleared whenever the preview re-renders so stale <mark> nodes
+// don't survive a state change.
 
 let findMatches: HTMLElement[] = [];
 let findIndex = -1;
@@ -462,7 +521,7 @@ function highlightCurrent(scroll: boolean): void {
   const cur = findMatches[findIndex];
   if (!cur) return;
   cur.classList.add("mc-search--current");
-  if (scroll) cur.scrollIntoView({ block: "center", behavior: "smooth" });
+  if (scroll) smoothScrollIntoView(cur, "center");
 }
 
 function findStep(delta: number): void {
@@ -489,8 +548,7 @@ dom.findNext.addEventListener("click", () => findStep(1));
 dom.findClose.addEventListener("click", () => findClose());
 
 document.addEventListener("keydown", (e) => {
-  // Cmd+F (macOS) / Ctrl+F (others) opens the find bar. The webview
-  // doesn't expose VS Code's editor find widget, so we own this shortcut.
+  // The webview doesn't expose VS Code's editor find widget, so we own Cmd/Ctrl+F.
   if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
     e.preventDefault();
     findOpen();
@@ -505,29 +563,44 @@ dom.sendToClaude.addEventListener("click", () => {
 });
 dom.copyPrompt.addEventListener("click", () => {
   vscode.postMessage({ type: "copy-prompt" });
+  closeOpenMenu(false);
 });
 dom.suggestModeToggle.addEventListener("click", () => {
   vscode.postMessage({ type: "toggle-suggest-mode" });
 });
 
-// The host owns the confirm and the write: this is a bulk delete of review
-// history, and the modal it shows is the same one the command uses. A webview
-// cannot show a modal of its own — VS Code blocks synchronous dialogs — and a
-// two-click arm is too quiet for something that removes many threads at once.
+// The host owns the confirm and the write: a webview cannot show a modal of its
+// own (VS Code blocks synchronous dialogs), and a two-click arm is too quiet for
+// a bulk delete.
 dom.removeResolved.addEventListener("click", () => {
   vscode.postMessage({ type: "remove-resolved" });
+  closeOpenMenu(false);
 });
 
-// Same host-owned confirm as remove-resolved, and even more deserved: this one
-// deletes open conversations too. The button only asks; the modal decides.
+// Same host-owned confirm as remove-resolved; this one also deletes open threads.
 dom.finalizeDoc.addEventListener("click", () => {
   vscode.postMessage({ type: "finalize" });
+  closeOpenMenu(false);
 });
 
+/**
+ * Sets the state a screen reader and CSS read from. The webview doesn't flip it
+ * on click: the setting is the host's, and the switch only reflects what comes back.
+ */
 function updateSuggestModeToggle(on: boolean): void {
-  dom.suggestModeToggle.textContent = on ? "Suggest: on" : "Suggest: off";
   dom.suggestModeToggle.setAttribute("aria-checked", String(on));
-  dom.suggestModeToggle.classList.toggle("active", on);
+  dom.suggestModeToggle.classList.toggle("on", on);
+}
+
+/**
+ * Put `agentName` into the toolbar wherever there's no per-thread agent to name:
+ * the Send button and its title, and the suggest-mode switch title. `agentName`
+ * already fell back to "Claude" in init/update, so this never needs to.
+ */
+function updateAgentUi(): void {
+  dom.sendToClaude.textContent = `Send to ${agentName}`;
+  dom.sendToClaude.title = `Send the prompt to a running ${agentName} terminal (or your configured send mode).`;
+  dom.suggestModeToggle.title = `When on, Send to ${agentName} asks ${agentName} to propose edits as suggestions you accept or reject.`;
 }
 
 dom.skillInstall.addEventListener("click", () => {
@@ -536,10 +609,6 @@ dom.skillInstall.addEventListener("click", () => {
   vscode.postMessage({ type: "install-skill" });
 });
 
-/**
- * Show / hide the "skill out of date" banner. `current` hides it; `outdated`
- * and `missing` show a one-line warning with an install button.
- */
 function renderSkillWarning(status: SkillStatus | undefined): void {
   if (!status || status === "current") {
     dom.skillWarning.hidden = true;
@@ -554,22 +623,19 @@ function renderSkillWarning(status: SkillStatus | undefined): void {
   dom.skillInstall.textContent = status === "missing" ? "Install skill" : "Update skill";
 }
 
-// Intercept anchor clicks inside the rendered preview. Without this
-// markdown links are inert (the webview sandbox swallows navigation).
-// Same-doc `#fragment` links scroll within the preview; everything else
-// is handed to the extension host for resolution + opening. Document-level so
-// links inside comment bodies are routed the same way — otherwise a comment
-// link (a `#section` or a relative `other.md`) falls through to the webview's
-// default and gets treated as an external web link.
+// Intercept anchor clicks inside the rendered preview: the webview sandbox
+// swallows navigation, so markdown links are otherwise inert. Same-doc
+// `#fragment` links scroll within the preview; everything else goes to the host.
+// Document-level so links inside comment bodies route the same way — otherwise
+// they fall through to the webview default and are treated as external web links.
 document.addEventListener("click", (e) => {
   const target = e.target instanceof Element ? e.target.closest("a[href]") : null;
   if (!target) return;
   const href = target.getAttribute("href");
   if (!href) return;
   e.preventDefault();
-  // Fragment-only links jump within the rendered preview by id. The
-  // markdown-it default renderer doesn't emit anchor ids on headings,
-  // so we fall back to text-matching when no element matches by id.
+  // The markdown-it default renderer doesn't emit anchor ids on headings, so
+  // fall back to text-matching when no element matches by id.
   if (href.startsWith("#")) {
     scrollPreviewToFragment(href.slice(1));
     return;
@@ -586,33 +652,28 @@ function scrollPreviewToFragment(fragment: string): void {
       return fragment;
     }
   })();
-  // 1. Try exact id match (in case anything in the preview has ids).
   const byId = dom.preview.querySelector<HTMLElement>(`[id="${cssEscape(decoded)}"]`);
   if (byId) {
-    byId.scrollIntoView({ behavior: "smooth", block: "start" });
+    smoothScrollIntoView(byId, "start");
     return;
   }
-  // 2. Match by slug against every heading in the preview.
   const headings = dom.preview.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6");
   for (const h of Array.from(headings)) {
     if (slugifyHeading(h.textContent || "") === decoded) {
-      h.scrollIntoView({ behavior: "smooth", block: "start" });
+      smoothScrollIntoView(h, "start");
       return;
     }
   }
 }
 
-
-// "Collapse all" / "Expand all" — operates on every thread, and its label
-// reflects whether they're all currently collapsed.
 function updateCollapseAllLabel(): void {
   const threads = currentState?.threads ?? [];
   const allCollapsed = threads.length > 0 && threads.every((t) => collapsedThreads.has(t.id));
   dom.collapseAll.textContent = allCollapsed ? "Expand all" : "Collapse all";
   dom.collapseAll.disabled = threads.length === 0;
 }
-// Fold/unfold a single thread in place (no re-render, so an in-progress reply
-// textarea on another card isn't wiped).
+// Folds in place with no re-render, so an in-progress reply textarea on
+// another card isn't wiped.
 function setThreadCollapsed(id: string, collapsed: boolean): void {
   if (collapsed) collapsedThreads.add(id);
   else collapsedThreads.delete(id);
@@ -633,26 +694,13 @@ dom.collapseAll.addEventListener("click", () => {
       collapsedThreads,
     ) === "collapse";
   for (const t of threads) setThreadCollapsed(t.id, collapse);
+  closeOpenMenu(false);
 });
 
 dom.claudeNext.addEventListener("click", () => {
   if (!currentState) return;
   const nextId = nextUnreadThreadId(currentState.threads, highlightedThreadId);
-  if (!nextId) return;
-  const target = currentState.threads.find((t) => t.id === nextId);
-  if (!target) return;
-  highlightedThreadId = target.id;
-  // Scroll the card into view, then scroll the preview to the anchor.
-  const card = dom.threadsList.querySelector<HTMLElement>(
-    `.thread-card[data-thread="${cssEscape(target.id)}"]`,
-  );
-  if (card) {
-    card.scrollIntoView({ behavior: "smooth", block: "center" });
-    for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
-      c.classList.toggle("highlighted", c.dataset.thread === target.id);
-    }
-  }
-  scrollPreviewTo(target);
+  if (nextId) focusThread(nextId);
 });
 
 function cssEscape(s: string): string {
@@ -661,7 +709,6 @@ function cssEscape(s: string): string {
 }
 
 let currentState: SerializedState | null = null;
-/** Uncommitted-diff overlay pushed by the host; null when diff mode is off. */
 let currentDiff: DiffState | null = null;
 let user: { name: string } = { name: "anonymous" };
 let filter: ThreadFilter = "open";
@@ -671,7 +718,8 @@ let pendingThreadIds: ReadonlySet<string> = new Set();
 // What the waiting row says. The host owns the wording because only it knows
 // whether the wait is inferred or protocol-backed.
 let pendingLabelText = "Claude is working\u2026";
-/** First click on "Accept all" arms it; the second applies (P3.3). */
+let agentName = "Claude";
+/** First click on "Accept all" arms it; the second applies. */
 let acceptAllArmed = false;
 // How many thread cards the list is currently allowed to build. Grows by a
 // chunk each time the user clicks "Show more"; resets when the filter changes,
@@ -686,6 +734,93 @@ let highlightedThreadId: string | null = null;
 // see nothing happen.
 const pendingDeleteThread = new Set<string>();
 const pendingDeleteComment = new Set<string>(); // composite "threadId:commentId"
+
+/**
+ * Move the "current card" state (`.highlighted` class + roving `tabindex`) to
+ * `id` without a re-render, so an in-progress reply textarea elsewhere in the
+ * list survives.
+ */
+function updateHighlightedCardDom(id: string): void {
+  for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
+    const match = c.dataset.thread === id;
+    c.classList.toggle("highlighted", match);
+    c.tabIndex = match ? 0 : -1;
+  }
+}
+
+/**
+ * Highlight `id`'s card, scroll it into view, and scroll the preview to its
+ * anchor. Raises the render cap first when the card hasn't been built yet: a
+ * thread past the chunk limit would otherwise scroll toward a card that isn't
+ * in the DOM.
+ */
+function focusThread(id: string): void {
+  if (!currentState) return;
+  const target = currentState.threads.find((t) => t.id === id);
+  if (!target) return;
+  highlightedThreadId = target.id;
+
+  const revealAndScroll = (): void => {
+    const card = dom.threadsList.querySelector<HTMLElement>(
+      `.thread-card[data-thread="${cssEscape(target.id)}"]`,
+    );
+    updateHighlightedCardDom(target.id);
+    if (card) {
+      smoothScrollIntoView(card, "center");
+      // Move DOM focus with the highlight (roving tabindex) so a keyboard user
+      // lands where the screen reader is looking. `preventScroll` because the
+      // line above already positioned the scroll.
+      card.focus({ preventScroll: true });
+    }
+    scrollPreviewTo(target);
+  };
+
+  const targetIndex = filterThreads(currentState.threads, filter).findIndex((t) => t.id === target.id);
+  if (targetIndex >= renderedThreadLimit) {
+    renderedThreadLimit = Math.ceil((targetIndex + 1) / THREAD_RENDER_CHUNK) * THREAD_RENDER_CHUNK;
+    renderThreads(currentState);
+    // Defer one frame so the freshly-rendered card is in the DOM.
+    requestAnimationFrame(revealAndScroll);
+  } else {
+    revealAndScroll();
+  }
+}
+
+function moveThreadHighlight(delta: 1 | -1): void {
+  if (!currentState) return;
+  const nextId = adjacentThreadId(currentState.threads, filter, highlightedThreadId, delta);
+  if (nextId) focusThread(nextId);
+}
+
+/**
+ * Expands a collapsed card first: the textarea is `display: none` inside it, so
+ * a `.focus()` would silently do nothing.
+ */
+function focusReplyOnHighlighted(): void {
+  if (!highlightedThreadId) return;
+  if (collapsedThreads.has(highlightedThreadId)) setThreadCollapsed(highlightedThreadId, false);
+  setReplyOpen(highlightedThreadId, true, true);
+}
+
+function resolveOrReopenHighlighted(): void {
+  if (!highlightedThreadId) return;
+  vscode.postMessage({ type: "toggle-resolve", threadId: highlightedThreadId });
+}
+
+function openHighlightedInEditor(): void {
+  if (!highlightedThreadId) return;
+  vscode.postMessage({ type: "open-in-editor", threadId: highlightedThreadId });
+}
+
+/**
+ * The segmented-control look is CSS driven off which radio is `:checked`, but
+ * some call sites flip `.checked` directly (no `change` fires) — a background
+ * thread landing while "New from Claude" is selected, for instance. Those call
+ * this so the active segment repaints too.
+ */
+function updateFilterSegments(): void {
+  for (const r of dom.filterRadios) r.closest("label")?.classList.toggle("active", r.checked);
+}
 
 function render(state: SerializedState): void {
   currentState = state;
@@ -707,43 +842,20 @@ function maybeScrollToNewReview(state: SerializedState): void {
     });
   if (newClaudeUnread.length === 0) return;
   const target = newClaudeUnread[0];
-  highlightedThreadId = target.id;
-  // A big review pass can push the first new thread past the render cap. Raise
-  // the budget far enough to include it and rebuild, or "Claude finished —
-  // here's the first finding" would scroll to a card that was never built.
-  const targetIndex = filterThreads(state.threads, filter).findIndex((t) => t.id === target.id);
-  if (targetIndex >= renderedThreadLimit) {
-    renderedThreadLimit =
-      Math.ceil((targetIndex + 1) / THREAD_RENDER_CHUNK) * THREAD_RENDER_CHUNK;
-    renderThreads(state);
-  }
   // Clear the snapshot first so re-entry doesn't loop on subsequent updates.
   pendingReviewSnapshot = null;
   savePendingReviewSnapshot();
-  // Defer one frame so the freshly-rendered card is in the DOM.
-  requestAnimationFrame(() => {
-    const card = dom.threadsList.querySelector<HTMLElement>(
-      `.thread-card[data-thread="${cssEscape(target.id)}"]`,
-    );
-    if (card) {
-      card.scrollIntoView({ behavior: "smooth", block: "center" });
-      for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
-        c.classList.toggle("highlighted", c.dataset.thread === target.id);
-      }
-    }
-    scrollPreviewTo(target);
-  });
+  focusThread(target.id);
 }
 
 let mermaidInitialized = false;
 
 function renderPreview(state: SerializedState): void {
-  // markdown-it renders the prose to HTML. Our source-offset plugin
-  // wraps every text/code token in `<span data-mc-src="START.END">…`,
-  // where START/END are prose-offset byte ranges. We then walk those
-  // spans to overlay anchor highlights — no fuzzy text matching.
-  // The env flag is what switches the per-block line attribute on, so the
-  // markup carries no line data at all unless the numbers are being shown.
+  // The source-offset plugin wraps every text/code token in
+  // `<span data-mc-src="START.END">` (prose offsets); anchor highlights are
+  // painted from those spans, with no fuzzy text matching. The env flag is what
+  // switches the per-block line attribute on, so the markup carries no line
+  // data unless the numbers are being shown.
   const showLines = Array.isArray(state.lineMap);
   dom.preview.innerHTML = md.render(state.prose, showLines ? { [LINE_ENV_KEY]: true } : {});
   dom.preview.classList.toggle("with-line-numbers", showLines);
@@ -777,21 +889,14 @@ function nearestDiffBlock(start: Element): HTMLElement | null {
   return null;
 }
 
-/**
- * Overlay uncommitted-change stripes. Walks every `[data-mc-src]` span the
- * offset plugin emitted, converts its prose-offset range to prose lines, and
- * marks the nearest block-ish ancestor when any of those lines is inside an
- * added/changed range from the host's prose diff. Same approach as the PR
- * review view, but in prose-line space instead of source-line space.
- */
 function paintDiffStripes(prose: string, diff: DiffState | null): void {
   document.body.classList.toggle("diff-mode", diff !== null);
   renderDiffBadge(diff);
   if (!diff) {
     diffNav.setStops([]);
+    updateKeysHint();
     return;
   }
-  // 1-based line for each prose offset, via a sorted line-start table.
   const lineStarts: number[] = [0];
   for (let i = 0; i < prose.length; i++) {
     if (prose[i] === "\n") lineStarts.push(i + 1);
@@ -825,12 +930,55 @@ function paintDiffStripes(prose: string, diff: DiffState | null): void {
     block.classList.add("mc-diff-changed");
   }
   paintDiffDeletions(prose, diff, lineStarts);
-  // Navigation stops: every stripe and every removed-text widget, in document
-  // order (querySelectorAll's order). Collected after both painters ran.
+  // Stops: every stripe and removed-text widget, in document order, collected
+  // after both painters ran.
   diffNav.setStops(
     Array.from(dom.preview.querySelectorAll<HTMLElement>(".mc-diff-changed, .mc-diff-removed")),
   );
+  updateKeysHint();
 }
+
+/**
+ * The hint names what n/p will actually do. They step changes whenever the
+ * change arrows are showing and walk threads otherwise, so the line follows
+ * the arrows' visibility rather than the diff badge: a diff with no changes
+ * has no arrows, and there n/p walk threads.
+ */
+function updateKeysHint(): void {
+  const target = dom.diffNav.hidden ? "threads" : "changes";
+  dom.keysHint.textContent = `n / p to move between ${target} · r reply · e resolve · o open in editor`;
+}
+
+// Hides itself the first time n/p/r/e/o is used; the "?" button brings it back
+// (or hides it again) as a manual override. Persisted so it doesn't reappear on
+// every webview reload once dismissed.
+let hintDismissed: boolean = ((): boolean => {
+  const saved = vscode.getState() as { hintDismissed?: boolean } | undefined;
+  return saved?.hintDismissed ?? false;
+})();
+
+function saveHintDismissed(): void {
+  vscode.setState({ ...(vscode.getState() as Record<string, unknown> | undefined), hintDismissed });
+}
+
+function applyHintVisibility(): void {
+  dom.keysHint.hidden = hintDismissed;
+  dom.hintToggle.setAttribute("aria-pressed", String(!hintDismissed));
+}
+applyHintVisibility();
+
+function dismissHintOnFirstUse(): void {
+  if (hintDismissed) return;
+  hintDismissed = true;
+  saveHintDismissed();
+  applyHintVisibility();
+}
+
+dom.hintToggle.addEventListener("click", () => {
+  hintDismissed = !hintDismissed;
+  saveHintDismissed();
+  applyHintVisibility();
+});
 
 const diffNav = createDiffNav({
   container: dom.diffNav,
@@ -840,16 +988,30 @@ const diffNav = createDiffNav({
   currentClass: "mc-diff-current",
 });
 
-// n/p step through changes, GitHub-style — but never while typing in the
-// find bar, a composer, or a reply box.
+// While the diff overlay is showing, n/p step through changed blocks;
+// otherwise they walk the highlight through the filtered thread list.
+// Deliberately no `a` for "accept" — a single-key accept with no visible target
+// is a footgun. Never fires with a modifier held or while typing in the find
+// bar, a composer, or a reply box.
 document.addEventListener("keydown", (e) => {
-  if (dom.diffNav.hidden || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
   if (!isNavKeyContext(e.target)) return;
-  if (e.key === "n") diffNav.step(1);
-  else if (e.key === "p") diffNav.step(-1);
+  if (e.key === "n" || e.key === "p") {
+    const delta = e.key === "n" ? 1 : -1;
+    if (!dom.diffNav.hidden) diffNav.step(delta);
+    else moveThreadHighlight(delta);
+  } else if (e.key === "r") {
+    focusReplyOnHighlighted();
+  } else if (e.key === "e") {
+    resolveOrReopenHighlighted();
+  } else if (e.key === "o") {
+    openHighlightedInEditor();
+  } else {
+    return;
+  }
+  dismissHintOnFirstUse();
 });
 
-/** The block that sits directly under #preview — never inside a list or table. */
 function topLevelBlock(el: Element): HTMLElement | null {
   let cur: Element | null = el;
   while (cur && cur.parentElement !== dom.preview) cur = cur.parentElement;
@@ -857,12 +1019,10 @@ function topLevelBlock(el: Element): HTMLElement | null {
 }
 
 /**
- * The "before" side of the diff: for each removed run, insert a widget showing
- * the deleted HEAD text where it used to sit. Without these, a deletion (or
- * the old half of a modification) is invisible — the reviewer sees only the
- * "after". Anchoring: the widget goes after the top-level block containing
- * (or last preceding) the prose line the run is anchored to; a run anchored
- * to line 0 goes above everything.
+ * Insert a widget showing the deleted HEAD text where each removed run sat;
+ * without it a deletion (or the old half of a modification) is invisible. The
+ * widget goes after the top-level block containing (or last preceding) the
+ * anchor line; a run anchored to line 0 goes above everything.
  */
 function paintDiffDeletions(prose: string, diff: DiffState, lineStarts: number[]): void {
   // A removed run that was only blank lines has nothing visible to show.
@@ -936,7 +1096,6 @@ function buildRemovedWidget(run: DiffRemovedRun): HTMLElement {
   return div;
 }
 
-/** Small header pill so it's obvious the panel is in uncommitted-diff mode. */
 function renderDiffBadge(diff: DiffState | null): void {
   const badge = document.getElementById("diff-mode-badge");
   if (!badge) return;
@@ -950,11 +1109,9 @@ function renderDiffBadge(diff: DiffState | null): void {
 }
 
 /**
- * Turn each block's prose line into the source line the user would find it on,
- * and hand it to CSS as `data-mc-srcline`. A block whose line the map doesn't
- * cover gets no number rather than a guess — the map is built from the same
- * document revision the prose came from, but a push can race a keystroke, and
- * a confidently wrong line number is worse than a missing one.
+ * A block whose line the map doesn't cover gets no number rather than a guess:
+ * a push can race a keystroke, and a confidently wrong line number is worse
+ * than a missing one.
  */
 function paintLineNumbers(lineMap: number[]): void {
   for (const el of Array.from(dom.preview.querySelectorAll<HTMLElement>(`[${LINE_ATTR}]`))) {
@@ -984,12 +1141,9 @@ async function runMermaid(): Promise<void> {
       return;
     }
   }
-  // mermaid.run mutates `<pre class="mermaid">` in place by replacing its
-  // content with an SVG. Anchored highlight spans inside the block (if
-  // any) survive only as data attributes on the source-offset span we
-  // wrap around the code; the SVG itself isn't selectable, so anchored
-  // text inside a mermaid block won't visually highlight (but the
-  // sidebar card still works).
+  // mermaid.run replaces `<pre class="mermaid">` content with an SVG, which isn't
+  // selectable, so anchored text inside a mermaid block won't visually highlight
+  // (the sidebar card still works).
   try {
     await mermaid.run({ querySelector: "pre.mermaid" });
   } catch (e) {
@@ -997,11 +1151,9 @@ async function runMermaid(): Promise<void> {
   }
 }
 
-// --- drawio diagrams ------------------------------------------------------
-// `.drawio` files aren't a browser image format. The host reads the XML and
-// we render it to an inline SVG here. Cache by href so frequent preview
-// re-renders reuse a rendered diagram instead of re-fetching, and so a result
-// arriving after a re-render still paints the current placeholders.
+// Cached by href so frequent preview re-renders reuse a rendered diagram
+// instead of re-fetching, and a result arriving after a re-render still paints
+// the current placeholders.
 
 interface DrawioReadResult {
   type: "drawio-read-result";
@@ -1083,7 +1235,6 @@ interface ProseSpan {
   proseEnd: number;
 }
 
-/** All `[data-mc-src]` spans in the preview, in document order, with parsed offsets. */
 function collectProseSpans(): ProseSpan[] {
   const out: ProseSpan[] = [];
   const nodes = dom.preview.querySelectorAll<HTMLElement>("[data-mc-src]");
@@ -1101,10 +1252,8 @@ function collectProseSpans(): ProseSpan[] {
 }
 
 /**
- * For each thread with an anchor range, find every prose span that
- * overlaps the anchor and wrap the overlapping slice of the span's text
- * in a `<mark class="mc-hl">`. Because span boundaries align with
- * source-offset boundaries exactly, a single mark per span suffices.
+ * Because span boundaries align with source-offset boundaries exactly, a
+ * single mark per span suffices.
  */
 function applyAnchorHighlights(state: SerializedState): void {
   const spans = collectProseSpans();
@@ -1135,16 +1284,11 @@ function applyAnchorHighlights(state: SerializedState): void {
 }
 
 /**
- * Wrap chars [textStart, textEnd) of a prose span's text in a `<mark>`.
- *
  * Offsets are over the span's *concatenated* text, so the walk covers every
- * text node under the span rather than just the first one: a paragraph with
- * two comments in it gets marked twice, and the second mark lands in whatever
- * node the first one split off. (Before this, only the first text node was
- * considered, so the second thread in a paragraph silently went unhighlighted.)
- * Text already inside a `<mark>` still counts toward the offsets but is never
- * wrapped again — nested highlights would render as a single darker blob and
- * tell the reader nothing.
+ * text node under the span: a paragraph with two comments gets marked twice,
+ * and the second mark lands in whatever node the first one split off. Text
+ * already inside a `<mark>` still counts toward the offsets but is never
+ * wrapped again — nested highlights would render as a single darker blob.
  */
 function wrapSpanRange(
   span: ProseSpan,
@@ -1169,8 +1313,7 @@ function wrapSpanRange(
 
   for (const slice of slices) {
     const mark = buildHighlightMark(threadId, status, suggestionId);
-    // splitText leaves the pieces in place, so surrounding text keeps its
-    // order — the old rebuild-by-appendChild did not.
+    // splitText leaves the pieces in place, so surrounding text keeps its order.
     const rest = nodes[slice.index].splitText(slice.from);
     rest.splitText(slice.to - slice.from);
     mark.textContent = rest.data;
@@ -1178,7 +1321,6 @@ function wrapSpanRange(
   }
 }
 
-/** Is this text node already inside a highlight mark within `root`? */
 function isInsideMark(node: Node, root: HTMLElement): boolean {
   for (let p = node.parentNode; p && p !== root; p = p.parentNode) {
     if ((p as HTMLElement).tagName === "MARK") return true;
@@ -1193,8 +1335,6 @@ function buildHighlightMark(
 ): HTMLElement {
   const mark = document.createElement("mark");
   if (suggestionId) {
-    // A suggestion's original text — mark it distinctly and scroll the sidebar
-    // to the suggestion card on click.
     mark.className = "mc-hl mc-hl--suggestion";
     mark.dataset.suggestionId = suggestionId;
     mark.addEventListener("click", (e) => {
@@ -1202,7 +1342,7 @@ function buildHighlightMark(
       const card = dom.threadsList.querySelector<HTMLElement>(
         `[data-suggestion-id="${cssEscape(suggestionId)}"]`,
       );
-      card?.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (card) smoothScrollIntoView(card, "center");
     });
   } else {
     mark.className = `mc-hl ${status === "resolved" ? "mc-hl-resolved" : ""}`;
@@ -1211,9 +1351,7 @@ function buildHighlightMark(
       e.stopPropagation();
       highlightedThreadId = threadId;
       scrollSidebarTo(threadId);
-      for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
-        c.classList.toggle("highlighted", c.dataset.thread === threadId);
-      }
+      updateHighlightedCardDom(threadId);
     });
   }
   return mark;
@@ -1221,13 +1359,40 @@ function buildHighlightMark(
 
 /**
  * In-progress reply textarea content keyed by thread id. Preserved across
- * re-renders (which fire on every external update — e.g., when the AI's
- * reply lands and the file changes) so the user doesn't lose their typing
- * mid-sentence. Also tracks which thread had the focused textarea so we
- * can restore it.
+ * re-renders (which fire on every external update, e.g. when the agent's reply
+ * lands) so the user doesn't lose their typing mid-sentence; also tracks which
+ * thread had the focused textarea so it can be restored.
  */
 const pendingReplyText = new Map<string, string>();
 let focusedReplyThreadId: string | null = null;
+
+/**
+ * Threads whose reply composer is expanded, via the card's Reply button or the
+ * `r` key. Collapsed by default so a review with many threads isn't many
+ * always-open textareas.
+ */
+const openReplyThreadIds = new Set<string>();
+
+/** A thread with an unsent draft stays open across a re-render even if the
+ * user never explicitly opened it this pass — losing sight of typed text
+ * behind a collapsed composer would be worse than the composer being open. */
+function replyShouldBeOpen(id: string): boolean {
+  return openReplyThreadIds.has(id) || (pendingReplyText.get(id)?.length ?? 0) > 0;
+}
+
+function setReplyOpen(id: string, open: boolean, focus: boolean): void {
+  if (open) openReplyThreadIds.add(id);
+  else openReplyThreadIds.delete(id);
+  const card = dom.threadsList.querySelector<HTMLElement>(`.thread-card[data-thread="${cssEscape(id)}"]`);
+  const box = card?.querySelector<HTMLElement>(".reply-box");
+  const shown = replyShouldBeOpen(id);
+  box?.classList.toggle("open", shown);
+  card?.querySelector(".thread-reply-toggle")?.setAttribute("aria-expanded", String(shown));
+  // Synchronous, not deferred to a frame: the `display` flip above already took
+  // effect, and the `r` key handler expects the textarea focused by the time it
+  // returns.
+  if (shown && focus) box?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+}
 
 function captureReplyState(): void {
   for (const card of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
@@ -1243,6 +1408,10 @@ function captureReplyState(): void {
 function renderThreads(state: SerializedState): void {
   captureReplyState();
   const list = dom.threadsList;
+  // A per-card "…" menu is about to be torn down with the rest of the list;
+  // otherwise `openMenu` would point at a detached panel. The toolbar's menu
+  // lives outside `list` and is untouched.
+  if (openMenu && list.contains(openMenu.panel)) closeOpenMenu(false);
   list.innerHTML = "";
 
   // Pending suggestions render above the comment threads, regardless of the
@@ -1254,30 +1423,33 @@ function renderThreads(state: SerializedState): void {
 
   const filtered = filterThreads(state.threads, filter);
   dom.threadCount.textContent = threadCountLabel(state.threads);
-  // Offered only when it would do something. A permanent button for an action
-  // that usually has no effect is noise, and its absence says "nothing to
-  // clean up" more clearly than a disabled control would.
+  // Offered only when it would do something; its absence says "nothing to clean
+  // up" more clearly than a disabled control would.
   const resolvedCount = state.threads.filter((t) => t.status === "resolved").length;
   dom.removeResolved.hidden = resolvedCount === 0;
   dom.removeResolved.textContent = `Remove ${resolvedCount} resolved`;
-  // Finalize appears whenever there is any review data to strip — the review
-  // that just ended is exactly when this file has threads or suggestions.
   dom.finalizeDoc.hidden = state.threads.length === 0 && state.suggestions.length === 0;
   renderClaudeSummary(state);
   if (filtered.length === 0) {
     if (state.suggestions.length === 0) {
-      const empty = document.createElement("p");
-      empty.className = "empty";
-      empty.textContent = emptyListMessage(filter);
-      list.appendChild(empty);
+      list.appendChild(
+        buildEmptyStateEl(
+          emptyState({
+            filter,
+            totalThreads: state.threads.length,
+          }),
+        ),
+      );
     }
     return;
   }
-  // Build at most a chunk of cards per pass. A 300-thread review used to build
-  // every card before the panel painted anything; the rest arrive on click.
+  // Build at most a chunk of cards per pass; the rest arrive on click.
   const chunk = chunkThreads(filtered, renderedThreadLimit);
-  for (const t of chunk.visible) {
-    list.appendChild(renderThreadCard(t));
+  for (let i = 0; i < chunk.visible.length; i++) {
+    // posinset/setsize are against the full filtered list, not just what's
+    // built so far — a screen reader announcing "3 of 300" should say the
+    // list's real shape, even though only the first chunk has DOM behind it.
+    list.appendChild(renderThreadCard(chunk.visible[i], i + 1, filtered.length));
   }
   if (chunk.moreLabel) {
     const more = document.createElement("button");
@@ -1291,11 +1463,29 @@ function renderThreads(state: SerializedState): void {
   }
 }
 
-/**
- * "Accept all N" — only worth showing when there is more than one, and armed
- * with a two-step confirm because it rewrites the document in one go (P3.3).
- * The same confirm affordance the destructive card actions use.
- */
+function buildEmptyStateEl(state: EmptyState): HTMLElement {
+  if (state.kind === "filtered") {
+    const p = document.createElement("p");
+    p.className = "empty";
+    p.textContent = state.message;
+    return p;
+  }
+  const card = document.createElement("div");
+  card.className = "mc-empty-state";
+  const headline = document.createElement("div");
+  headline.className = "mc-empty-state__headline";
+  headline.textContent = state.headline;
+  const hint = document.createElement("div");
+  hint.className = "mc-empty-state__hint";
+  hint.textContent = state.hint;
+  const action = document.createElement("button");
+  action.textContent = state.action.label;
+  action.addEventListener("click", () => vscode.postMessage(state.action.message));
+  card.append(headline, hint, action);
+  return card;
+}
+
+/** Armed with a two-step confirm because it rewrites the document in one go. */
 function renderAcceptAll(count: number): HTMLElement {
   const row = document.createElement("div");
   row.className = "accept-all-row";
@@ -1339,7 +1529,7 @@ function renderSuggestion(s: SuggestionState): HTMLElement {
     onClick: s.anchor
       ? () => {
           const mark = dom.preview.querySelector<HTMLElement>(`[data-suggestion-id="${cssEscape(s.anchorId)}"]`);
-          mark?.scrollIntoView({ behavior: "smooth", block: "center" });
+          if (mark) smoothScrollIntoView(mark, "center");
         }
       : undefined,
   });
@@ -1350,20 +1540,23 @@ function renderSuggestion(s: SuggestionState): HTMLElement {
 function renderClaudeSummary(state: SerializedState): void {
   const summary = claudeSummary(state.threads);
   dom.claudeSummary.hidden = !summary.hasAny;
-  // The "New from Claude" filter chip is only relevant when there are
-  // Claude threads to look at. Hide it (and snap filter back to "open")
-  // when none exist so the chip doesn't sit there in dead state.
+  // The "New from <agent>" chip is only relevant when there are agent threads;
+  // hide it (and snap filter back to "open") when none exist. Its wording follows
+  // `claudeSummary`'s `agentNoun` rule.
   dom.claudeFilterLabel.hidden = !summary.hasAny;
+  dom.claudeFilterLabelText.textContent = `New from ${summary.agentNoun}`;
+  dom.claudeNext.title = `Jump to the next unread thread from ${summary.agentNoun}. (Cmd/Ctrl+K, Cmd/Ctrl+Alt+N)`;
   if (!summary.hasAny && filter === "claude-unread") {
     filter = "open";
     for (const r of dom.filterRadios) r.checked = r.value === "open";
+    updateFilterSegments();
   }
   if (!summary.hasAny) return;
   dom.claudeSummaryText.textContent = summary.text;
   dom.claudeNext.disabled = summary.unread === 0;
 }
 
-function renderThreadCard(t: ThreadState): HTMLElement {
+function renderThreadCard(t: ThreadState, posinset: number, setsize: number): HTMLElement {
   const card = document.createElement("section");
   card.className = "thread-card";
   if (t.status === "resolved") card.classList.add("resolved");
@@ -1371,15 +1564,26 @@ function renderThreadCard(t: ThreadState): HTMLElement {
   if (isClaudeUnread(t)) card.classList.add("claude-unread");
   if (collapsedThreads.has(t.id)) card.classList.add("collapsed");
   card.dataset.thread = t.id;
+  // The list is a `role="feed"`, so each card reads as an article with its
+  // position in that feed and a label a screen reader can announce unexpanded.
+  card.setAttribute("role", "article");
+  card.setAttribute("aria-posinset", String(posinset));
+  card.setAttribute("aria-setsize", String(setsize));
+  const root = t.comments[0];
+  if (root) {
+    card.setAttribute("aria-label", `${root.author}: ${root.body.slice(0, 60)}`);
+  }
+  // Roving tabindex: only the highlighted card is in the Tab order. Before
+  // anything is explicitly highlighted, the first card in the feed takes the
+  // role instead of leaving the whole feed unreachable by keyboard.
+  card.tabIndex = (highlightedThreadId ? t.id === highlightedThreadId : posinset === 1) ? 0 : -1;
   card.addEventListener("click", () => {
     highlightedThreadId = t.id;
     scrollPreviewTo(t);
-    // Update only the .highlighted class on cards; do NOT re-render the
-    // list, because that would blow away any in-progress reply textarea
-    // content the user has typed on a different card.
-    for (const c of dom.threadsList.querySelectorAll<HTMLElement>(".thread-card")) {
-      c.classList.toggle("highlighted", c.dataset.thread === t.id);
-    }
+    // Update only the .highlighted class (and roving tabindex) on cards; do
+    // NOT re-render the list, because that would blow away any in-progress
+    // reply textarea content the user has typed on a different card.
+    updateHighlightedCardDom(t.id);
   });
 
   const head = document.createElement("header");
@@ -1408,7 +1612,7 @@ function renderThreadCard(t: ThreadState): HTMLElement {
     quote.appendChild(badge);
   } else if (t.stale) {
     // Only when the anchor is intact: a broken anchor is already the louder
-    // problem, and two badges about one failure is noise (P1.3).
+    // problem, and two badges about one failure is noise.
     const badge = document.createElement("span");
     badge.className = "badge stale";
     badge.textContent = "text changed";
@@ -1419,8 +1623,23 @@ function renderThreadCard(t: ThreadState): HTMLElement {
   headRow.appendChild(quote);
   head.appendChild(headRow);
 
+  // Visible per-card actions: Reply, Resolve/Reopen and Send. Every other
+  // per-thread action lives in the "…" menu below — a thirty-thread review
+  // would otherwise put six equal-weight buttons on every one of them.
   const actions = document.createElement("div");
   actions.className = "thread-actions";
+
+  const replyOpenNow = replyShouldBeOpen(t.id);
+  const replyToggleBtn = document.createElement("button");
+  replyToggleBtn.type = "button";
+  replyToggleBtn.className = "btn-ghost thread-reply-toggle";
+  replyToggleBtn.textContent = "Reply";
+  replyToggleBtn.setAttribute("aria-expanded", String(replyOpenNow));
+  replyToggleBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setReplyOpen(t.id, !replyShouldBeOpen(t.id), true);
+  });
+
   const resolveBtn = document.createElement("button");
   resolveBtn.className = "btn-ghost";
   resolveBtn.textContent = t.status === "resolved" ? "Reopen" : "Resolve";
@@ -1428,53 +1647,71 @@ function renderThreadCard(t: ThreadState): HTMLElement {
     e.stopPropagation();
     vscode.postMessage({ type: "toggle-resolve", threadId: t.id });
   });
-  const armed = pendingDeleteThread.has(t.id);
-  const deleteBtn = document.createElement("button");
-  deleteBtn.className = "btn-ghost danger";
-  deleteBtn.textContent = armed ? "Confirm delete" : "Delete";
-  deleteBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (pendingDeleteThread.has(t.id)) {
-      pendingDeleteThread.delete(t.id);
-      vscode.postMessage({ type: "delete-thread", threadId: t.id });
-    } else {
-      pendingDeleteThread.add(t.id);
-      // Auto-disarm after a few seconds so a stale "Confirm delete"
-      // button doesn't sit there waiting to bite.
-      setTimeout(() => {
-        if (pendingDeleteThread.delete(t.id) && currentState) renderThreads(currentState);
-      }, 4000);
-      renderThreads(currentState!);
-    }
-  });
-  const sendClaudeBtn = document.createElement("button");
-  sendClaudeBtn.className = "btn-ghost";
-  sendClaudeBtn.textContent = "→ Claude";
-  sendClaudeBtn.title = "Send the whole thread (all comments + replies) to Claude";
-  sendClaudeBtn.addEventListener("click", (e) => {
+
+  const sendBtn = document.createElement("button");
+  sendBtn.type = "button";
+  sendBtn.className = "btn-ghost thread-send";
+  sendBtn.textContent = "Send";
+  sendBtn.title = `Send this thread to ${agentName}`;
+  sendBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     vscode.postMessage({ type: "send-to-claude-comment", threadId: t.id });
   });
-  const copyClaudeBtn = document.createElement("button");
-  copyClaudeBtn.className = "btn-ghost";
-  copyClaudeBtn.textContent = "Copy";
-  copyClaudeBtn.title = "Copy this thread's prompt to clipboard";
-  copyClaudeBtn.addEventListener("click", (e) => {
+
+  const menuWrap = document.createElement("span");
+  menuWrap.className = "mc-menu-wrap";
+  const menuBtn = document.createElement("button");
+  menuBtn.type = "button";
+  menuBtn.className = "btn-ghost thread-menu-btn";
+  menuBtn.textContent = "…";
+  menuBtn.title = "More thread actions";
+  menuBtn.setAttribute("aria-haspopup", "menu");
+  menuBtn.setAttribute("aria-expanded", "false");
+  menuBtn.setAttribute("aria-label", "More actions for this thread");
+  const menu = document.createElement("div");
+  menu.className = "mc-menu";
+  menu.setAttribute("role", "menu");
+  menu.hidden = true;
+  menuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    vscode.postMessage({ type: "copy-claude-comment", threadId: t.id });
+    toggleMenuAt(menuBtn, menu);
   });
-  actions.append(sendClaudeBtn, copyClaudeBtn, resolveBtn, deleteBtn);
-  if (armed) {
-    const cancelBtn = document.createElement("button");
-    cancelBtn.className = "btn-ghost";
-    cancelBtn.textContent = "Cancel";
-    cancelBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      pendingDeleteThread.delete(t.id);
-      renderThreads(currentState!);
-    });
-    actions.append(cancelBtn);
-  }
+
+  const openInEditorItem = buildMenuItem("Open in editor", () => {
+    vscode.postMessage({ type: "open-in-editor", threadId: t.id });
+    closeOpenMenu(false);
+  });
+  const copyThreadItem = buildMenuItem("Copy prompt", () => {
+    vscode.postMessage({ type: "copy-claude-comment", threadId: t.id });
+    closeOpenMenu(false);
+  });
+  // Two-click confirm, armed in place (no re-render) so the open menu stays
+  // open across the arm step — the existing auto-disarm still applies.
+  const deleteItem = buildMenuItem(
+    pendingDeleteThread.has(t.id) ? "Confirm delete" : "Delete",
+    () => {
+      if (pendingDeleteThread.has(t.id)) {
+        pendingDeleteThread.delete(t.id);
+        vscode.postMessage({ type: "delete-thread", threadId: t.id });
+        closeOpenMenu(false);
+        return;
+      }
+      pendingDeleteThread.add(t.id);
+      deleteItem.textContent = "Confirm delete";
+      // Auto-disarm after a few seconds so a stale "Confirm delete"
+      // item doesn't sit there waiting to bite.
+      setTimeout(() => {
+        if (pendingDeleteThread.delete(t.id) && deleteItem.isConnected) {
+          deleteItem.textContent = "Delete";
+        }
+      }, 4000);
+    },
+    { danger: true },
+  );
+  menu.append(openInEditorItem, copyThreadItem, deleteItem);
+  menuWrap.append(menuBtn, menu);
+
+  actions.append(replyToggleBtn, resolveBtn, sendBtn, menuWrap);
   head.appendChild(actions);
   card.appendChild(head);
 
@@ -1487,12 +1724,13 @@ function renderThreadCard(t: ThreadState): HTMLElement {
   }
   if (awaitingClaude) card.classList.add("awaiting-claude");
 
-  // Reply composer. We stop click propagation on the box and its children
-  // so clicking inside doesn't bubble to the card's click handler (which
-  // would re-highlight the thread and trigger a re-render that wipes the
-  // textarea content the user just typed).
+  // Reply composer. Stop click propagation on the box and its children so
+  // clicking inside doesn't bubble to the card's click handler (which would
+  // re-highlight the thread and re-render, wiping the text just typed).
+  // Collapsed until Reply is clicked or `r` is pressed on the highlighted card;
+  // a non-empty draft stays open across a re-render (`replyShouldBeOpen`).
   const replyBox = document.createElement("div");
-  replyBox.className = "reply-box";
+  replyBox.className = replyOpenNow ? "reply-box open" : "reply-box";
   replyBox.addEventListener("click", (e) => e.stopPropagation());
   replyBox.addEventListener("mousedown", (e) => e.stopPropagation());
   const composer = buildComposer({
@@ -1501,12 +1739,13 @@ function renderThreadCard(t: ThreadState): HTMLElement {
     rows: 2,
     // Restore in-progress text captured before the most recent re-render.
     initialValue: pendingReplyText.get(t.id) ?? "",
-    // Always-on reply box — don't grab focus on every thread re-render.
+    // The composer opens (and focuses) through `setReplyOpen`, not on mount.
     autofocus: false,
     onSubmit: (body) => {
       vscode.postMessage({ type: "reply", threadId: t.id, body });
       composer.textarea.value = "";
       pendingReplyText.delete(t.id);
+      setReplyOpen(t.id, false, false);
     },
   });
   // Persist what's typed so a re-render (e.g. highlight refresh) doesn't lose it.
@@ -1528,11 +1767,28 @@ function renderThreadCard(t: ThreadState): HTMLElement {
   return card;
 }
 
+/**
+ * Human comments never get a marker. An unrecognized `via` reads the same as
+ * absent — "via file" — a safe guess: it just means "not through the tools or
+ * `mdc`", true of anything hand-edited.
+ */
+function viaMarker(c: InlineComment): { label: string; title: string } | undefined {
+  if (!isAgentComment(c)) return undefined;
+  const kind: "tools" | "cli" | "file" = c.via === "tools" || c.via === "cli" ? c.via : "file";
+  const title = {
+    tools: "The agent wrote this through the review tools (MCP), not by hand-editing the file.",
+    cli: "The agent wrote this through the `mdc` command-line tool.",
+    file: "The agent edited the file's text directly — not through the review tools or `mdc`.",
+  }[kind];
+  return { label: `via ${kind}`, title };
+}
+
 function renderComment(thread: ThreadState, c: InlineComment, pending = false): HTMLElement {
   if (c.deleted) {
     const card = buildCommentCard({
       author: c.author,
       timestamp: c.ts,
+      via: viaMarker(c),
       body: "(comment deleted)",
       reply: !!c.parent,
     });
@@ -1560,6 +1816,7 @@ function renderComment(thread: ThreadState, c: InlineComment, pending = false): 
       author: c.author,
       timestamp: c.ts,
       note: c.editedTs ? "edited" : undefined,
+      via: viaMarker(c),
       bodyEl: composer.el,
       reply: !!c.parent,
     });
@@ -1611,26 +1868,26 @@ function renderComment(thread: ThreadState, c: InlineComment, pending = false): 
     author: c.author,
     timestamp: c.ts,
     note: c.editedTs ? "edited" : undefined,
+    via: viaMarker(c),
     bodyEl,
     reply: !!c.parent,
     actions,
     pending,
     pendingLabel: pendingLabelText,
+    pendingAriaLive: true,
   });
 }
 
-
-
 function scrollSidebarTo(id: string): void {
   const el = dom.threadsList.querySelector<HTMLElement>(`[data-thread="${id}"]`);
-  if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (el) smoothScrollIntoView(el, "center");
 }
 
 function scrollPreviewTo(t: ThreadState): void {
   if (!t.anchor) return;
   const el = dom.preview.querySelector<HTMLElement>(`mark[data-thread="${t.id}"]`);
   if (el) {
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    smoothScrollIntoView(el, "center");
     el.classList.add("flash");
     setTimeout(() => el.classList.remove("flash"), 1200);
   }
@@ -1643,7 +1900,6 @@ function positionFloatingButton(): void {
     pendingSelection = null;
     return;
   }
-  // Ensure selection is inside the preview.
   if (!dom.preview.contains(sel.anchorNode) || !dom.preview.contains(sel.focusNode)) {
     dom.floating.hidden = true;
     pendingSelection = null;
@@ -1662,9 +1918,8 @@ function positionFloatingButton(): void {
     pendingSelection = null;
     return;
   }
-  // Guard: refuse selections that fall inside a fenced/indented code
-  // block. The parser strips anchor markers in code regions, so the
-  // resulting thread would be orphaned. Tell the user up-front.
+  // Refuse selections inside a code block: the parser strips anchor markers in
+  // code regions, so the thread would be orphaned.
   if (selectionTouchesCode(range)) {
     dom.floating.hidden = true;
     dom.floating.title = "Comments inside code blocks are not supported.";
@@ -1680,18 +1935,12 @@ function positionFloatingButton(): void {
 }
 
 /**
- * Map a (node, offset) pair from a DOM Range endpoint into a prose-byte
- * offset. Walks up to the nearest `[data-mc-src]` ancestor and adds the
- * char position within that ancestor's text.
- *
- * Returns null when the endpoint isn't inside a tagged span — which
- * happens, by design, in code blocks (we don't annotate fenced blocks at
- * char granularity because anchors there get stripped by the parser) or
- * in stretches of pure markup markdown-it adds without a token (e.g.,
- * around table structural cells with no inline children).
+ * Returns null when the endpoint isn't inside a tagged span — by design in code
+ * blocks (anchors there are stripped by the parser, so they aren't annotated at
+ * char granularity) or in markup markdown-it adds without a token (e.g. table
+ * structural cells with no inline children).
  */
 function endpointToProse(node: Node, offset: number, which: "start" | "end"): number | null {
-  // Resolve the span that owns this endpoint.
   let host: HTMLElement | null = null;
   let charOffset = 0;
   if (node.nodeType === Node.TEXT_NODE) {
@@ -1706,8 +1955,6 @@ function endpointToProse(node: Node, offset: number, which: "start" | "end"): nu
       // offset is child-index. Translate to char position by walking children.
       charOffset = childIndexToCharOffset(el, offset);
     } else {
-      // Look for a [data-mc-src] inside the children up to `offset`, or
-      // walk up to find an ancestor span.
       const ancestor = findSpanAncestor(el);
       if (ancestor) {
         host = ancestor;
@@ -1722,7 +1969,6 @@ function endpointToProse(node: Node, offset: number, which: "start" | "end"): nu
           charOffset = textLengthOfSpan(ancestor);
         }
       } else {
-        // Fall back: try the nearest sibling span.
         host = nearestSiblingSpan(el, offset, which);
         if (host) {
           charOffset = which === "start" ? 0 : textLengthOfSpan(host);
@@ -1808,11 +2054,10 @@ function childIndexToCharOffset(el: HTMLElement, childIndex: number): number {
 }
 
 /**
- * When the selection endpoint lands on an element node whose closest
- * `[data-mc-src]` ancestor is the preview itself (i.e., between block
- * elements), pick the adjacent tagged span — previous one for the END,
- * next one for the START — so that selecting whole blocks still yields
- * a usable range. Returns null when no such neighbor exists.
+ * For an element-node endpoint whose nearest `[data-mc-src]` ancestor is the
+ * preview itself (between block elements): the adjacent tagged span — previous
+ * one for END, next for START — so selecting whole blocks still yields a usable
+ * range. Null when no such neighbor exists.
  */
 function nearestSiblingSpan(el: HTMLElement, offset: number, which: "start" | "end"): HTMLElement | null {
   const child = el.childNodes[which === "start" ? offset : offset - 1];
@@ -1860,7 +2105,6 @@ function openComposer(sel: { proseStart: number; proseEnd: number }): void {
   dom.composer.appendChild(composer.el);
 }
 
-// Follow the reader down the document so the outline shows where they are.
 dom.previewPane.addEventListener("scroll", () => syncOutlineActive(), { passive: true });
 document.addEventListener("selectionchange", () => positionFloatingButton());
 window.addEventListener("scroll", () => positionFloatingButton(), true);
@@ -1868,12 +2112,14 @@ window.addEventListener("scroll", () => positionFloatingButton(), true);
 dom.filterRadios.forEach((r) =>
   r.addEventListener("change", () => {
     filter = (r.value as typeof filter);
+    updateFilterSegments();
     // A different filter is a different list — start its render budget over
     // rather than carrying a limit the user raised for the previous one.
     renderedThreadLimit = THREAD_RENDER_CHUNK;
     if (currentState) render(currentState);
   }),
 );
+updateFilterSegments();
 
 window.addEventListener("message", (ev) => {
   const msg = ev.data as InitMsg | UpdateMsg | ReviewPendingMsg | ScrollToMsg | DrawioReadResult | SkillStatusMsg;
@@ -1889,13 +2135,17 @@ window.addEventListener("message", (ev) => {
     renderSkillWarning(msg.skillStatus);
     updateSuggestModeToggle(msg.suggestMode ?? false);
     pendingThreadIds = new Set(msg.pendingThreadIds ?? []);
-    if (msg.pendingLabel) pendingLabelText = msg.pendingLabel;
+    agentName = msg.agentName || "Claude";
+    updateAgentUi();
+    pendingLabelText = msg.pendingLabel ?? `${agentName} is working…`;
     currentDiff = msg.diff ?? null;
     render(msg.state);
   } else if (msg.type === "update") {
     updateSuggestModeToggle(msg.suggestMode ?? false);
     pendingThreadIds = new Set(msg.pendingThreadIds ?? []);
-    if (msg.pendingLabel) pendingLabelText = msg.pendingLabel;
+    agentName = msg.agentName || "Claude";
+    updateAgentUi();
+    pendingLabelText = msg.pendingLabel ?? `${agentName} is working…`;
     currentDiff = msg.diff ?? null;
     render(msg.state);
   } else if (msg.type === "review-pending") {
@@ -1908,14 +2158,7 @@ window.addEventListener("message", (ev) => {
   }
 });
 
-/**
- * Scroll the rendered preview so the source-offset span enclosing
- * `proseOffset` is visible. Used by the host to support "open inline
- * view at line N" (and the heading-jump variant of cross-file links).
- *
- * Defers one frame so the call works even when fired immediately after
- * init, before the preview HTML has been painted.
- */
+/** Defers one frame so it works when fired right after init, before the preview is painted. */
 function scrollPreviewToProseOffset(proseOffset: number): void {
   requestAnimationFrame(() => {
     const spans = dom.preview.querySelectorAll<HTMLElement>("[data-mc-src]");
@@ -1941,10 +2184,10 @@ function scrollPreviewToProseOffset(proseOffset: number): void {
       }
     }
     if (!best) return;
-    best.scrollIntoView({ behavior: "smooth", block: "start" });
+    smoothScrollIntoView(best, "start");
   });
 }
 
-void user; // silence unused for now; will use when threading authorship UI hints
+void user; // silence unused
 
 vscode.postMessage({ type: "ready" });

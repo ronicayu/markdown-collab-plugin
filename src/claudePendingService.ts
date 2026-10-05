@@ -1,4 +1,4 @@
-// The one place that knows which threads are waiting on Claude (10x-plan P1.2).
+// The one place that knows which threads are waiting on Claude.
 //
 // The tracker itself is pure and lives in `inlineComments/claudePending.ts`.
 // This module owns the single host-wide instance and the fan-out to whichever

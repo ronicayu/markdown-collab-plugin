@@ -8,7 +8,6 @@
  * actual words are untouched. A raw `git diff` can't do that, hence this
  * in-process diff.
  *
- * Pure and vscode-free so it unit-tests directly.
  */
 
 import type { LineRange } from "../pr/diff";
@@ -39,9 +38,9 @@ export interface ProseDiff {
  * new lines in `addedRanges` and its old lines as a `RemovedRun` anchored just
  * above them.
  *
- * Implemented as a Myers O(ND) diff over lines with a linear-space-unfriendly
- * but simple full trace — documents here are markdown prose, not megabyte
- * logs, and the panel recomputes at most once per document change.
+ * A Myers O(ND) diff over lines with a simple full trace — documents here are
+ * markdown prose, not megabyte logs, and the panel recomputes at most once per
+ * document change.
  */
 export function diffProse(oldText: string | null, newText: string): ProseDiff {
   const newLines = splitLines(newText);
@@ -70,7 +69,6 @@ export function addedLineRangesBetween(oldText: string | null, newText: string):
   return diffProse(oldText, newText).addedRanges;
 }
 
-/** Split into lines without a phantom trailing entry for a final newline. */
 function splitLines(text: string): string[] {
   if (text.length === 0) return [];
   const lines = text.split("\n");
@@ -146,7 +144,6 @@ function commonLines(a: string[], b: string[]): { oldKeep: boolean[]; newKeep: b
   }
   trace.push(Int32Array.from(v));
 
-  // Trace back from (n, m), marking the diagonal (common) steps.
   let x = n;
   let y = m;
   for (let d = dFound; d > 0 && (x > 0 || y > 0); d--) {
@@ -160,7 +157,6 @@ function commonLines(a: string[], b: string[]): { oldKeep: boolean[]; newKeep: b
     }
     const prevX = vPrev[prevK + max];
     const prevY = prevX - prevK;
-    // Diagonal run at the end of this d-step is common lines.
     while (x > prevX && y > prevY) {
       x--;
       y--;
@@ -168,7 +164,6 @@ function commonLines(a: string[], b: string[]): { oldKeep: boolean[]; newKeep: b
       newKeep[y] = true;
     }
     if (d > 0) {
-      // The single non-diagonal step (insert or delete) is not common.
       x = prevX;
       y = prevY;
     }
@@ -183,7 +178,6 @@ function commonLines(a: string[], b: string[]): { oldKeep: boolean[]; newKeep: b
   return { oldKeep, newKeep };
 }
 
-/** Collapse the non-kept new-side lines into 1-based inclusive ranges. */
 function coalesce(lineCount: number, keep: boolean[]): LineRange[] {
   const out: LineRange[] = [];
   let start = -1;

@@ -1,12 +1,8 @@
-/**
- * Types shared by the PR/MR review feature. Posted comments end up as
- * native GitHub PR review comments or GitLab MR discussion notes — the
- * `.md` file is never modified.
- */
+// Posted comments end up as native GitHub PR review comments or GitLab MR discussion
+// notes — the `.md` file is never modified.
 
 export type Platform = "github" | "gitlab";
 
-/** A single in-progress or about-to-submit review comment. */
 export interface PrComment {
   /** Repo-relative path of the changed file (head side). */
   path: string;
@@ -20,13 +16,11 @@ export interface PrComment {
   startLine?: number;
 }
 
-/** Local draft form — augments `PrComment` with bookkeeping fields. */
 export interface PrDraft extends PrComment {
   id: string;
   createdAt: string;
 }
 
-/** Result of probing the local checkout and the platform CLI. */
 export interface PrContext {
   platform: Platform;
   remoteUrl: string;
@@ -49,7 +43,6 @@ export interface PrContext {
    * store and diffing the working tree. Absent means "same as `headSha`".
    */
   localHeadSha?: string;
-  /** Human-friendly base ref name, e.g. "main". */
   baseRef: string;
   /** Pull request number (GitHub) or merge request IID (GitLab). */
   prNumber: number;
@@ -59,9 +52,7 @@ export interface PrContext {
   startSha?: string;
   /** URL to the PR/MR page; used in success toasts. */
   prUrl: string;
-  /** Owner / namespace from the remote URL. */
   owner: string;
-  /** Repo name from the remote URL. */
   repo: string;
   /** Resolved host (e.g. "github.com", "gitlab.example.com"). */
   host: string;
@@ -75,11 +66,6 @@ export interface SubmitReviewInput {
   comments: PrComment[];
 }
 
-/**
- * A comment that already exists on the PR/MR — fetched from the platform
- * API. v1 surfaces these as read-only cards alongside the reviewer's own
- * drafts; reply support is deferred.
- */
 export interface ExistingPrComment {
   /** Platform-side comment id (string for cross-platform safety). */
   id: string;
@@ -101,17 +87,31 @@ export interface ExistingPrComment {
   url: string;
   /** Resolved / outdated state when the platform tracks it. */
   resolved?: boolean;
+  /**
+   * Can this thread be resolved/unresolved at all? GitHub: true for every
+   * review-thread comment (the REST comments this feature fetches are
+   * always part of a resolvable `PullRequestReviewThread`). GitLab: mirrors
+   * the note's own `resolvable` flag — false for a non-resolvable
+   * discussion or a plain MR note. Undefined means unknown (e.g. the
+   * GitHub GraphQL enrichment failed) — treat the same as false.
+   */
+  resolvable?: boolean;
+  /**
+   * The id to pass to `PrPlatform.resolveThread`. GitHub: the GraphQL
+   * `PullRequestReviewThread` node id — deliberately NOT the same value as
+   * `threadId` above, which is the REST root-comment id `replyToComment`
+   * expects; the two ids are different shapes and neither endpoint accepts
+   * the other's. GitLab: the discussion id, same value as `threadId`.
+   * Present only when `resolvable` is true.
+   */
+  resolveId?: string;
 }
 
 export interface PrPlatform {
   readonly name: Platform;
-  /** Quick stdout/stderr-safe check that the CLI is installed and authenticated for `host`. */
   ensureReady(host: string): Promise<{ ok: true } | { ok: false; reason: string }>;
-  /** Resolve PR context from the local checkout. */
   loadContext(repoRoot: string, remoteUrl: string, host: string): Promise<PrContext>;
-  /** Submit a batch review. Returns the URL of the resulting review. */
   submitReview(ctx: PrContext, input: SubmitReviewInput): Promise<{ url: string }>;
-  /** Fetch every existing line-anchored review comment on the PR/MR. */
   listExistingComments(ctx: PrContext): Promise<ExistingPrComment[]>;
   /**
    * Post a reply to an existing comment thread, identified by the
@@ -120,4 +120,11 @@ export interface PrPlatform {
    * review. Returns the URL of the new reply.
    */
   replyToComment(ctx: PrContext, threadId: string, body: string): Promise<{ url: string }>;
+  /**
+   * Resolve or unresolve a thread, identified by `ExistingPrComment.resolveId`.
+   * Only ever called for a comment whose `resolvable` was true — callers
+   * (the webview, and this platform's own tests) are responsible for that
+   * gate; the adapter itself doesn't re-check it.
+   */
+  resolveThread(ctx: PrContext, resolveId: string, resolved: boolean): Promise<void>;
 }

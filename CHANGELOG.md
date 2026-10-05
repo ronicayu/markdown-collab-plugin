@@ -1,5 +1,1793 @@
 # Changelog
 
+## 0.35.45 — 2026-10-05 (GitHub only)
+
+### Added: Connect an Agent installs the review skill for Codex, Cursor, Copilot and Windsurf
+
+Agents other than Claude Code only had the short AGENTS.md section. Connect an
+Agent now also writes the full review workflow as a skill in
+`~/.agents/skills/markdown-collab/`, a folder those four agents read. It is one
+copy for the whole machine, so Disconnect leaves it in place, and the extension
+refreshes it on startup when it changes. A skill someone else put at that path
+is never overwritten, and neither is anything behind a symlink; the Connect
+message says so. Send prompts now name the skill under each of its names. The
+standalone Claude skill tells an agent that isn't Claude Code to use the new one
+instead, so it shows the update prompt once. (#25)
+
+### Tests
+
+- The skill's text, the by-hand rules it shares with AGENTS.md, and the install,
+  update, refresh and symlink cases, all against a temporary home directory.
+- Connect writes AGENTS.md and the skill with one message for Codex and Cursor's
+  in-app agent, and the skill is not written for Claude Code.
+- The startup refresh runs once in a trusted window and not in Restricted Mode.
+
+## 0.35.44 — 2026-10-05 (GitHub only)
+
+### Fixed: in a multi-root window, an agent started in another folder found no config
+
+Connect an Agent always wrote `.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`
+and AGENTS.md into the first folder, whichever folder you were working in. With
+more than one folder open it now asks which one, unless the active file already
+says, and Disconnect, the `.mcp.json` answer, the Codex port refresh at startup
+and the connected check all follow that choice. A single-folder window behaves
+exactly as before. (#24)
+
+### Tests
+
+- A single-folder window writes in its folder with no question and keeps the same
+  stored keys as before.
+- With two folders, Connect writes AGENTS.md and the Codex config only in the
+  folder of the active file, or the one you pick; cancelling the pick writes nothing.
+- Disconnect, the startup refreshes, the `.mcp.json` consent and the connected
+  check all use the chosen folder; a folder that has since been closed falls back
+  to the first one.
+
+## 0.35.43 — 2026-10-05 (GitHub only)
+
+### Fixed: a file with broken comment anchors was not flagged when you opened it
+
+Damage that was already in a file when the window opened got no warning and no
+Repair offer until the file picked up a new, different problem. Opening such a
+file in the review view now shows the warning, with Repair, once per problem
+per window. A file the watcher already warned about is not warned about again
+when you open it. (#23)
+
+### Tests
+
+- A file already damaged at startup is announced when opened in the review view,
+  once; a healthy file, and damage the watcher already announced, are not.
+- Damage that returns after a repair, or a different problem, is announced again.
+- Opening a document in the review view passes its path and text to the check,
+  and the activated extension wires that check to the review tree.
+
+## 0.35.42 — 2026-10-05 (GitHub only)
+
+### Fixed: the send prompt assumed every agent had the Markdown Collab skill
+
+An agent without the skill, such as Cursor, Copilot, Windsurf or Codex, was told
+to use the skill or the `mdc` CLI, neither of which it has. The prompt now says
+to use the skill if you have it, and otherwise to follow the "Markdown review
+comments" section of AGENTS.md, or the format spec when there is none. Suggest
+mode names `mc_suggest`, `mdc suggest` and writing the suggestion by hand.
+
+### Changed: the AGENTS.md section says how to suggest an edit and anchor a heading
+
+Connect an Agent refreshes an untouched section to the new text. It now shows
+the exact line for a pending suggestion, restates `"agent":true` in a new
+thread's first comment, and says where the markers go on a heading line or the
+document title. (#4)
+
+### Tests
+
+- The comment, single-thread, review and multi-file prompts name the skill,
+  AGENTS.md's section and the format spec, and only offer `mdc` to a reader
+  whose skill provides it.
+- Suggest mode names all three routes; the headless prompt is unchanged.
+- A suggestion and a heading anchor written exactly as the AGENTS.md section
+  says parse, pass the integrity check, and the suggestion can be accepted.
+- The previous AGENTS.md section is refreshed to the new one.
+
+## 0.35.41 — 2026-10-05 (GitHub only)
+
+### Fixed: the agent edited the wrong folder's copy in a multi-root window
+
+With several folders open, the prompt now names the document by its full path,
+and the review tools accept that path. A relative path that exists in more than
+one folder is refused with the folder names, instead of silently using the
+first. A file outside every open folder is named by its full path too. With one
+folder open, prompts are unchanged.
+
+### Fixed: Connect an Agent blamed the wrong thing with no folder open
+
+With no folder open it now says to open one, instead of asking you to reload
+the window. Toggling suggest mode there saves it to your user settings instead
+of failing. (#12)
+
+### Tests
+
+- Two folders holding `docs/README.md`: the prompt for the second names its
+  absolute path, a tool call with that path edits only that copy, and the bare
+  relative path is refused as ambiguous with neither file changed.
+- A relative path in only one folder, an absolute path outside every folder,
+  and the single-folder prompt are covered.
+- A loose file's prompt carries its absolute path.
+- Connect an Agent with and without a folder open, and suggest mode saved to
+  the right place with and without one.
+- A send from the second folder still marks that folder's document as waiting.
+
+## 0.35.40 — 2026-10-05 (GitHub only)
+
+### Added: Windsurf is listed as an agent
+
+Connect an Agent now has a Windsurf (Cascade) entry. It writes AGENTS.md, then
+offers a scratch document with the config to paste into Windsurf's MCP settings
+and where it goes. Nothing else is written to disk. The "Other agent…" document
+no longer says "VS Code". The extension's description and keywords name Windsurf
+too. The Windsurf config keys are unverified on a real install; the document
+says so and includes the generic snippet as a fallback.
+
+### Fixed: a stale token left no trace in the log
+
+When a request is refused for a wrong or missing token, the Markdown Collab log
+now says so, once a minute at most. The usual cause is a config pasted before
+the last window reload. (#11)
+
+### Tests
+
+- Connect an Agent lists Windsurf between Cursor and Codex, and picking it opens
+  the scratch document with `serverUrl`, the URL, the token, the config path and
+  the "not verified" note, writing nothing but AGENTS.md.
+- The description and keywords name Windsurf; the "Other agent…" text is
+  unchanged apart from the wording.
+- A wrong token is refused and reported once for a burst, without the token.
+
+## 0.35.39 — 2026-10-05 (GitHub only)
+
+### Fixed: the startup prompts assumed you use Claude Code
+
+The ".mcp.json" prompt now appears only when Claude Code is on your machine, no
+longer mentions a send mode that doesn't exist, and a dismissed prompt is asked
+again later instead of counting as "Not now". "No agent is connected yet" is no
+longer shown when you've already connected Copilot, Cursor or another agent
+(or AGENTS.md has the Markdown Collab section), and is shown once instead of
+again after each update. Copilot and Cursor are now reconnected before the
+".mcp.json" prompt, so leaving it unanswered no longer holds them up. (#7)
+
+### Tests
+
+- The ".mcp.json" prompt: not asked without Claude Code, never stored when
+  dismissed, stored as no only for "Not now", the remembered yes still refreshes
+  the port, and Register Review Tools asks without checking for Claude Code.
+- The "no agent is connected" nudge: skipped for Copilot, Cursor, an AGENTS.md
+  section or an accepted `.mcp.json`; shown once per machine; the out-of-date
+  nudge still shows once per skill version.
+- Activation reconnects agents before the ".mcp.json" prompt even when it is
+  never answered.
+
+## 0.35.38 — 2026-10-05 (GitHub only)
+
+### Fixed: setting up Claude Code on a machine without it said "installed"
+
+With no `claude` command and no `~/.claude` folder, Set Up Claude Code and
+Connect an Agent → Claude Code created a skill folder anyway and reported
+success. They now write nothing and show a warning: install Claude Code, or set
+`markdownCollab.claudePath` if it's installed where your editor can't see it,
+with a button to Connect an Agent for any other agent. If `~/.claude` exists,
+the standalone skill is still installed as before.
+
+### Changed: the Get Started walkthrough asks which agent you use
+
+Step 2 is now "Connect your agent", which lists Claude Code, Cursor, Codex,
+Copilot and others, in place of a Claude Code-only setup step and the "Using
+Cursor, Codex, or Copilot?" step at the end. (#8)
+
+### Tests
+
+- Without `claude` and without `~/.claude`, nothing is written, the warning is
+  shown with a Connect an Agent button, and Connect an Agent registers no
+  `.mcp.json`; with `~/.claude`, the standalone skill is installed.
+- The walkthrough has no Claude Code-only step, step 2 is the connect step, and
+  every step's media file exists.
+
+## 0.35.37 — 2026-10-05 (GitHub only)
+
+### Fixed: control characters in a document's comments could end a terminal paste early
+
+When a prompt is typed into a terminal, control characters (including escape
+sequences) in the document's comments, the conventions file or file paths are
+now removed first, so they can no longer end the paste early. Newlines and tabs
+are kept; the clipboard copy is unchanged.
+
+### Fixed: the tool server wrote its descriptor through a symlink
+
+If `.markdown-collab/.mcp-server.json` or `.markdown-collab/.gitignore` is a
+symlink, the tool server now leaves it alone instead of writing to its target.
+
+### Tests
+
+- A prompt carrying a paste-end sequence reaches the terminal with exactly one,
+  at the end; control characters are removed and ordinary text is untouched.
+- A symlinked descriptor or `.gitignore`, dangling or not, is never written
+  through.
+
+## 0.35.36 — 2026-10-05 (GitHub only)
+
+### Added: Markdown Collab now opens in Restricted Mode
+
+It used to stay off in a workspace you hadn't trusted. Now you can open the
+review view, read threads, add, reply to and resolve comments, and copy prompts
+to the clipboard. Sending to a terminal, running Claude, the review tool server,
+agent setup (AGENTS.md, `.mcp.json`, the Claude Code plugin), the playground,
+the conventions editor and the Git and PR views are off until you trust the
+workspace, and each says so when you use it.
+Prompts you copy leave out the workspace's conventions file. Trust the
+workspace and everything starts without a reload. (#13)
+
+### Tests
+
+- The manifest declares limited support and lists the settings that are ignored
+  in Restricted Mode.
+- Sending always copies, a terminal never receives text, `claude` is never
+  probed or run, the tool server never starts, and `git`/`gh`/`glab` never run
+  while the workspace is untrusted.
+- Setup, connect, disconnect, the playground and the conventions editor write
+  nothing and show one warning; no Claude terminal opens.
+- The Uncommitted Markdown tree shows no repo without running git or logging an
+  error, and fills in once trust is granted.
+- Granting trust starts the tool server and the skill check once.
+- A guard fails when a new file starts a subprocess without a trust gate.
+
+## 0.35.35 — 2026-10-05 (GitHub only)
+
+### Fixed: commands said "Open a Markdown file first" while the review view was open
+
+With the review view or the Welcome page focused, Send to Claude, Ask Agent to
+Review, Remove Resolved Comments, Finalize and the other palette commands didn't
+see the Markdown file on screen. They now use the file in the focused review
+view, or the one Markdown file open in another editor group when the Welcome
+page has focus. Comment on Selection still needs a text editor with a selection.
+(#17)
+
+### Tests
+
+- The active-file lookup picks the text editor, then the focused tab, then the
+  one Markdown file in the other groups, and gives up when two compete.
+- Send, review and comment commands run with only the review view focused.
+- In a real editor, Send to Claude from the palette copies the prompt for the
+  file open in the review view.
+
+## 0.35.34 — 2026-10-05 (GitHub only)
+
+### Fixed: no warning when an agent broke a comment marker, and the Comment Threads view never appeared
+
+The workspace was only scanned for comment threads after you opened the Comment
+Threads view or ran Next Unread. But that view stays hidden until a scan finds
+threads, so neither happened by itself: the view never showed up, and a marker
+broken by hand got no warning or Repair offer. The scan now starts when the
+extension activates, and again when you add or remove a workspace folder. The
+warning is for damage that appears while the window is open; files already
+damaged when it opens are not announced. (#18)
+
+### Tests
+
+- Activation alone shows the Comment Threads view for a workspace with an open
+  thread, and a marker broken afterwards raises the warning.
+- The startup scan stays quiet about a file that was already damaged, and a new,
+  different problem in it is still reported.
+- The tree asking mid-scan doesn't scan twice, Next Unread waits for a scan
+  already running, and a workspace folder change rescans.
+
+## 0.35.33 — 2026-10-05 (GitHub only)
+
+### Fixed: updating an older Markdown Collab skill was presented as a conflict
+
+Clicking Update on an older standalone skill in `~/.claude/skills/vs-markdown-collab/`
+asked whether to overwrite "a different Markdown Collab skill". A skill with our
+name is now just updated, and the helper script with it. Only a file that isn't
+ours still asks, and that prompt no longer mentions the Claude Code plugin. (#14)
+
+### Tests
+
+- `installClaudeSkill`: an earlier skill is updated without asking, a file with
+  another name is left alone, and `force` still overwrites it.
+- The conflict warning and the update message in Set up Claude Code.
+
+## 0.35.32 — 2026-10-05 (GitHub only)
+
+### Fixed: stale copy that named VS Code, Claude or a first-click behaviour that isn't true
+
+- The skill and the Claude Code plugin quoted a "Claude is working…" row; they
+  now quote the "Waiting for the agent…" row the review view actually shows.
+- Walkthrough, README and the Copilot message say "your editor" instead of
+  "VS Code", since most installs are in Cursor, Windsurf or VSCodium.
+- The send walkthrough said the first click works out the mode from what's
+  running. That's only true when Claude Code is in a terminal; otherwise the
+  first Send asks, and remembers your answer. (#19)
+
+## 0.35.31 — 2026-10-05 (GitHub only)
+
+### Fixed: Connect told you to restart an agent in a terminal that can't see the tools
+
+The review tools' address and token reach a command-line agent through the
+terminal's environment, and only terminals opened in this window after Markdown
+Collab started get them. Restarting `cursor-agent` in a terminal that was
+already open kept the old environment. The Cursor CLI and Codex messages (and
+the README and walkthrough) now say to open a new terminal in this window and
+start the agent there. (#10)
+
+## 0.35.30 — 2026-10-05 (GitHub only)
+
+### Fixed: adding a comment failed when the system has no name for your user
+
+In a container started with an arbitrary `--user`, the OS has no username to
+fall back on, and adding a comment or a reply threw. The author is now
+`collab.userName`, then your OS username, then "anonymous". (#16)
+
+### Tests
+
+- `authorName`: the setting wins, the OS username fills in when it's empty, and
+  a missing OS user entry gives "anonymous".
+
+## 0.35.29 — 2026-10-05 (GitHub only)
+
+### Fixed: a send you didn't go through with left threads "Waiting for the agent…"
+
+When Claude was already working in the folder and you kept that run, the new
+send was dropped, but its threads still showed "Waiting for the agent…" until
+the timeout. They now clear straight away. A thread that was already waiting
+on the run you kept keeps its row. (#20)
+
+### Tests
+
+- `dispatchOutcome`: a declined headless send leaves no thread waiting, leaves
+  an already-waiting one alone, and a started one still waits.
+  `claudePending`: `unmark`.
+
+## 0.35.28 — 2026-10-05 (GitHub only)
+
+### Fixed: the sidebar said "Sent" when nothing was sent
+
+Send now knows how it ended — delivered, copied, or cancelled — and the
+sidebar says so. A send that was only copied (clipboard mode, or **Copy
+instead** from a terminal dialog) shows "Copied — paste it into your agent";
+a cancelled one shows nothing. Before, anything short of an error read
+"Sent to your agent". (#5)
+
+### Fixed: a copied prompt didn't start the waiting row
+
+Clipboard mode and **Copy instead** now mark the sent threads as waiting, like
+a terminal or headless send, so the row is there for an agent that lives in a
+side panel. A review request copied from a terminal dialog starts its
+status-bar watch too. (#9)
+
+### Fixed: a send mode was remembered before it had worked
+
+The mode you pick is remembered once a send in it is delivered (or, for
+clipboard, copied). Picking the terminal and then cancelling, or taking
+**Copy instead**, remembers nothing: the next Send asks again. (#6)
+
+### Changed: Reset Send Mode is in the command palette
+
+Toasts, the README and the walkthrough all say to run it, and it was hidden.
+(#6)
+
+### Tests
+
+- `dispatchOutcome`: every outcome, the waiting row, and when the mode is
+  remembered. `sidebarHost`, `collabEditorProvider`, `suggestModeDispatch`,
+  `titleBarAndKeybindings` and the `liveSidebar` Playwright spec migrated,
+  with the copied and cancelled notices added. Vitest 134 files / 2,511;
+  Playwright `liveSidebar` 121. The rest of the Playwright suite was not run
+  locally.
+
+## 0.35.27 — 2026-10-04 (GitHub only)
+
+### Changed: Send types into the terminal you're using
+
+Terminal send used to look for a Claude terminal first — one the extension
+started, one where `claude` had been run, one with "claude" in its name — and
+only then fall back to the active terminal, pasting the prompt and pressing
+Enter with no check. With any other agent, or after `claude` had exited, the
+prompt could land in a plain shell, which then ran it.
+
+It now goes by what is running, whichever agent that is:
+
+1. the active terminal, when something is running in it;
+2. otherwise the terminal the last prompt went to, while its program is still running;
+3. otherwise the only terminal with something running;
+4. several running and none of the above: a list to pick from, with each terminal's command;
+5. can't tell what the active terminal is running: one confirmation naming it, remembered for the session;
+6. nothing running anywhere, or no terminal open: nothing is pasted — "Start your agent in a terminal, then Send again", with **Copy instead**.
+
+A terminal known to be idle is never written to. To change the target, click
+the terminal you want and send. "Running" comes from shell-integration events;
+a terminal with none yet counts as running unless its title is a plain shell
+name.
+
+The send flow no longer offers **Start Claude in new terminal** (it typed
+`claude` whatever `claudePath` said, then pasted after a fixed wait).
+**Start Claude Review Terminal** stays in the palette, and its terminal becomes
+the target.
+
+### Changed: wording
+
+The send-mode picker, the retired-mode notice and the two headless fallbacks
+say "your terminal" / "your agent" instead of "your Claude terminal": the
+terminal mode never was Claude-only.
+
+### Tests
+
+- `terminalTarget`, `terminalTracker`, `terminal`: every row of the rule, the
+  tracker with and without shell integration, and the delivery itself,
+  including that an idle terminal gets nothing.
+- `sendModePicker`, `headlessDispatch`, `detectSendMode` migrated. Vitest 133
+  files / 2,483 tests. Playwright and the integration suite were not run.
+
+## 0.35.26 — 2026-10-03 (GitHub only)
+
+### Fixed: an agent's review landed without taking you to its first thread
+
+After **Ask agent to review**, the first new thread is meant to become the
+current card and the document is meant to scroll to its passage. In Reading
+mode the document half never happened: the sidebar jumped before the
+document's highlights included the new threads, found no highlight for the
+thread, and showed "Couldn't locate this comment's anchor in the document".
+The highlights are now refreshed before the sidebar renders, so the jump
+lands and the passage pulses. Found while re-recording the README GIF.
+
+### Tests
+
+- `liveSidebarEmptyState`: the existing review-landing test now also
+  requires the document jump, and a new one covers a first review of a file
+  with no threads. Both fail without the fix. Playwright 395; vitest 130
+  files / 2,421 tests.
+
+## 0.35.25 — 2026-10-03 (GitHub only)
+
+### Changed: the UI names an agent only when it knows which one
+
+Most people using this extension run Cursor, Codex or Copilot as well as, or
+instead of, Claude Code. Where the extension didn't know which agent it was
+talking to, its wording said "Claude" anyway — the empty state offered
+"Review with Claude" to everyone. The rule now: name the agent when the file
+or a tool call says who it is; otherwise say "the agent". Features that really
+are Claude Code (Run Claude for me, Set Up Claude Code, Start Claude Review
+Terminal, the Claude terminal detection) still say Claude.
+
+- **Empty state:** "Ask agent to review", whatever the send mode.
+- **A change made outside the view** now reads "Edited outside this view:
+  §Heading" / "This document was updated outside this view". It used to say
+  "Claude edited", but the extension can't tell who wrote the file — another
+  window or git looks the same.
+- **Until an agent has written in a file** the sidebar names none: the
+  waiting row reads "Waiting for the agent…", a send says "Sent to your
+  agent", and the Send and suggest-mode tooltips say "your agent". Once an
+  agent has written, they name it as before.
+- **Generic wording** replaces "Claude" in the review-focus prompts, the
+  review progress status bar and its tooltips, the size warnings, the review
+  summary, "Copy Prompt" (was "Copy Claude Prompt") and its toast, two
+  settings' descriptions, the walkthrough's Send and Ask-for-review steps,
+  the tutorial playground and the review-conventions template.
+- **The "Claude skill isn't installed" banner** shows only when Claude Code
+  (the `claude` binary) is on the machine. It reuses the lookup Run Claude
+  for me already does, so it costs no extra probe.
+- **The extension's description** no longer opens with Claude: "Review
+  Markdown with your AI agent — comments anchored in the file itself,
+  suggestions you accept or reject. Works with Claude Code, Cursor, Codex and
+  Copilot."
+- **README** follows the same rule, and catches up with the view: Editing is
+  in the toolbar above the document, suggest mode is in the menu beside Send,
+  and `classicReviewView` is a fallback a later release removes. Both GIFs
+  are re-recorded from the Markdown Collab view instead of the classic one;
+  the first is now `media/gifs/ask-agent-to-review.gif`. The
+  `liveEditor.readOnly` and `classicReviewView` setting descriptions say the
+  same.
+- Unchanged: the classic review view's own wording, author names on
+  comments and suggestions, and the skill text agents read.
+
+### Tests
+
+- The skill banner's gating, the generic and named forms of every changed
+  string, and the empty state in both views. Playwright 394; vitest 130
+  files / 2,421 tests.
+
+## 0.35.24 — 2026-10-01 (GitHub only)
+
+### Changed: the collapse chevron is at the right end of each card
+
+Decided from mockups. The chevron was the first thing in a card's head row,
+which pushed the quote one step to the right of everything under it.
+
+- **Thread and suggestion cards end their head row with the chevron,** above
+  the card's "…". Expanded it points down; collapsed it points left, at the
+  folded text. A collapsed thread reads: quote · "2 comments" · chevron.
+- **The quote, the Reply row and the comments share one left edge.** Reply
+  was indented to clear the old chevron.
+- Same in the PR review view, which uses the same cards: its head row is
+  quote · badge · count · line label · chevron.
+- Unchanged: what a click does, `aria-expanded`, the saved collapse state,
+  Collapse all. The classic review view keeps its own triangle on the left.
+
+### Tests
+
+- New in `liveSidebarChrome` and `prReview`: the chevron is last in the row
+  and at the card's right edge, on threads, suggestions and PR cards; the
+  collapsed order and rotation; Reply within 2 px of the quote's left edge.
+- Playwright 388; vitest 129 files / 2,407 tests.
+
+## 0.35.23 — 2026-10-01 (GitHub only)
+
+### Changed: sending one thread, and copying the prompt, are one click again
+
+Decided from mockups. 0.35.12 moved a thread's own send into its "…" menu,
+and 0.35.19 moved Copy prompt into the Send button's ▾ menu; both are used
+too often for two clicks.
+
+- **Each thread card has a Send button:** Reply · Resolve · Send · "…". It
+  sends that thread alone, the way "Send this thread" in the menu did, and
+  that menu item is gone. The card's "…" menu holds Open in editor, Copy
+  prompt and Delete. Same change in the classic review view.
+- **Copy prompt is its own button in the sidebar footer,** to the right of
+  Send and its ▾. The ▾ menu holds only "Ask for suggestions instead of
+  edits".
+- **The footer's Send label names no agent:** "Send 2 comments", or "Send 2
+  comments as suggestions". The name it carried was whichever agent wrote in
+  the file last, and "Claude" before any had — not who the send goes to, and
+  wrong in Cursor or Windsurf on a new file. The name stays in the tooltip.
+- Unchanged: every element id and every sidebar-to-host message. No
+  extension-host changes. The classic view's header keeps its own "Send to
+  Claude" label and Copy prompt in its "…" menu.
+
+### Tests
+
+- `liveSidebar`, `liveEditor`, `inlineView`, `liveSidebarChrome` and
+  `liveSidebarToolbar` migrated from the menu items to the buttons and to the
+  new label; a card's Send must post exactly one message. New: the footer's
+  three controls share one row and height with suggest mode on.
+- Playwright 383; vitest 129 files / 2,407 tests. `modeToggle.spec.ts:597`
+  (reveal scrolls a change into view, from 0.35.22) fails about 4 runs in 10
+  with two workers, on this release and on 0.35.22 alike; it passes with one.
+
+## 0.35.22 — 2026-10-01 (GitHub only)
+
+### Fixed: Cmd+Z scrolled to the end of the document; Cmd+B also toggled the side bar
+
+One cause (`docs/editor-undo-and-keys.md`). A key pressed in the editor was
+handled by the editor and then forwarded to the workbench, which ran its own
+binding for it too. Cmd+B made text bold and toggled the side bar. Cmd+Z ran
+two undo systems: the editor's own history and VS Code's undo of the file.
+The file undo came back as an "outside change", was announced as "Claude
+updated this document", and was applied by replacing the whole document —
+which moved all remaining undo history to the end of the file, so the next
+Cmd+Z undid nothing and jumped there.
+
+- **One undo history: the file's.** In Editing mode Cmd+Z / Cmd+Shift+Z
+  (Ctrl+Z / Ctrl+Y) undo and redo the last change to the file, in place. The
+  editor's separate history is gone. Keystrokes still in the debounce are
+  written first, the view goes to the change, there is no "Claude updated"
+  notice, and the undo is saved to disk like any edit. Cmd+Z undoes whatever
+  changed the file last — an agent's edit or an accepted suggestion included,
+  as in the text editor.
+- **An outside change replaces only what differs,** at character precision,
+  never the whole document. The cursor stays on its text when an agent edits
+  above it (it used to be restored to its old absolute offset).
+- **Keys the editor handles are the editor's alone** while the caret is in
+  the document in Editing mode: Cmd+B, Cmd+Shift+B, Cmd+I, Cmd+E, Cmd+Z,
+  Cmd+Shift+Z, Ctrl+Y. With the caret anywhere else, or in Reading mode,
+  they keep their workbench meaning. In Cursor this means Cmd+I and Cmd+E
+  are italic and inline code while typing in the document.
+
+### Tests
+
+- `npm run verify:editor-keys` (`scripts/verify-editor-keys.mjs`): a real
+  VS Code driven with real key presses, sixteen steps — bold without the side
+  bar moving, two undos in place with the scroll position unchanged and the
+  file following, redo, and the side bar toggling again outside the document.
+  Opens a window; not part of CI.
+- Page: undo/redo post to the host after the pending edit; the host's answer
+  is applied in place; `reveal` scrolls to the change; an identical document
+  dispatches nothing; five before/after shapes round-trip exactly; focus is
+  reported. Host: undo/redo run in the write queue; a change with reason
+  Undo/Redo is pushed quietly; the typing context follows focus, view state,
+  mode and dispose. Manifest: the no-op command and the seven keybindings.
+- Playwright 380; vitest 129 files / 2,407 tests; integration 64 passing.
+
+## 0.35.21 — 2026-10-01 (GitHub only)
+
+### Changed: the PR review view speaks the same language as the comment sidebar
+
+`docs/pr-review-redesign.md`, decided from mockups. The view's own header,
+pill chips, per-comment links and four-row submit bar are gone; it now uses
+the comment sidebar's structure, class names and stylesheets, so the two
+cannot drift apart.
+
+- **One open link per thread.** A single open-in-browser icon at the end
+  of each thread's action row replaces the "↗ Open" under every comment.
+- **One list under tabs.** Open · All · Resolved with counts, Open first,
+  hidden when the file has no threads. The "Drafts" and "Existing
+  comments" sections and the hint line are gone.
+- **Drafts pinned on top** as dashed cards with a `draft` badge, on every
+  tab. Editing a draft keeps its card, quote and badge.
+- **Thread header quotes the commented line** as the reader sees it; click
+  it to jump. The line number (`L3`, `L3–5`) sits at the right. Collapsed,
+  a thread shows the quote, its comment count and the line.
+- **Reply and Resolve together** as quiet text under the header; the reply
+  box opens under the comments.
+- **Submit area in two rows.** Comment · Approve · Request changes as a
+  segmented control, then a button that says what it does: "Submit 2
+  comments", "Approve with 2 comments", "Request changes with 2 comments".
+  "Add summary" opens the summary box, which never hides while it has text.
+  The area is hidden until there is a draft; submitting still needs one.
+- **Toolbar above the preview:** change arrows as icon buttons on the left,
+  and a comments toggle on the right that hides the sidebar and carries the
+  open count while it is hidden. Clicking a line marker brings a hidden
+  sidebar back.
+- The "…" menu holds Collapse all / Expand all; `+` in the title row
+  comments on the current selection.
+- Unchanged: the preview, line markers, every message to and from the
+  extension, GitHub and GitLab calls, which cards you collapsed.
+
+### Fixed
+
+- Menu items in both sidebars show a pointer cursor again (lost in 0.35.20).
+
+### Tests
+
+- `prReview.spec.ts` migrated to the new layout, 12 → 35 cases: the single
+  open link, tabs and default, pinned drafts, the submit area and its
+  labels, the summary toggle, the sidebar toggle and badge, the menu, the
+  quote jump and range label, editing a draft, no class-less button.
+  Playwright 366; vitest 129 files / 2,393 tests.
+
+## 0.35.20 — 2026-09-30 (GitHub only)
+
+### Changed: the buttons inside comment cards
+
+0.35.19 restyled the sidebar's header and footer and left every button
+inside a card in the old style. Phase 2 of
+`docs/sidebar-chrome-redesign.md`:
+
+- **Reply, Resolve / Reopen, Reject, Edit and Cancel are quiet text
+  buttons.** Delete stays red. Accept, and a composer's submit, are the only
+  primary buttons inside a card.
+- **The per-thread "…" is an icon button** at the right end of the action
+  row.
+- **Collapse is one chevron icon that rotates,** on threads and suggestions,
+  instead of a text triangle.
+- "Accept all N", "Show N more" and the menu items use the shared classes
+  too. The sidebar's generic `button` rule, which painted any class-less
+  button primary blue, is gone, and a test asserts the sidebar renders no
+  button without a class.
+- The restyle is in the shared card module, so the PR review view's draft
+  Edit / Delete buttons pick it up. The rest of that view is a separate
+  redesign, not in this release.
+
+### Fixed: switching to Reading right after typing showed an error
+
+In Editing mode, switching to Reading within about 200 ms of a keystroke
+raised "Context editorView not found" in the view, which 0.35.18 then
+reported as a failure notice. The edit itself was saved. The editor
+library's change listener keeps a pending timer after the editor is
+destroyed; the view now unsubscribes before tearing the editor down.
+Reproduced in 0.35.18 and 0.35.19. The test that covers it only failed on a busy machine
+(16 of 40 runs); it now waits past the timer and passes 40 of 40 under load.
+
+### Tests
+
+- Three new cases in `liveSidebarChrome.spec.ts`; `liveSidebar` and
+  `modeToggle` migrated. Playwright 347; vitest 129 files / 2,391 tests.
+
+## 0.35.19 — 2026-09-30 (GitHub only)
+
+### Changed: the comment sidebar's chrome
+
+The live editor's sidebar header was five rows of controls before the first
+comment, mixed four button styles, and held two controls that act on the
+document rather than the comments. Redesigned per
+`docs/sidebar-chrome-redesign.md`:
+
+- **Header is two rows.** Title row: `Comments`, `+ Add comment`, `⋯`. The
+  filter is a row of tabs that carry their counts (Open 2 · All 2 ·
+  Resolved 0). Both the tabs and the counts are hidden when there are no
+  threads.
+- **Reading/Editing and Outline moved to a document toolbar** above the
+  editor. The mode can now be switched while the sidebar is hidden. The
+  floating collapse arrow is gone; a comments toggle in the toolbar hides
+  and shows the sidebar and carries the open count while it is hidden.
+- **Send is a footer split button that names what it sends:** "Send 2
+  comments to Claude". Suggest mode and Copy prompt moved into its ▾ menu,
+  next to the action they modify; with suggest mode on the label ends "as
+  suggestions", so the setting is never on silently. The footer is hidden
+  when nothing is open to send.
+- **The keyboard-shortcut hint** shows on first run only, with an ×.
+  "Keyboard shortcuts" in the ⋯ menu brings it back. It stays hidden until
+  the first thread exists, since the keys act on threads.
+- **One control style** for the toolbar and the header — ghost icon button,
+  segmented control, primary button — in a new `controls.css`. Dead sidebar
+  and host CSS removed.
+- Unchanged: every element id, every sidebar-to-host message, and the
+  persisted filter/collapse/hint state. No extension-host changes. The
+  classic review view and the PR review webview keep their own chrome.
+
+### Tests
+
+- New `liveSidebarChrome.spec.ts`, 20 cases, including a guard that the
+  header stays at most 80 px tall with threads showing. `liveSidebarToolbar`,
+  `liveSidebar`, `modeToggle` and `liveEditorDiff` migrated to the new DOM.
+  Playwright 344 (was 325); vitest 129 files / 2,391 tests.
+
+## 0.35.18 — 2026-09-30 (GitHub only)
+
+A code review of everything since 0.35.15 — correctness, silent failures,
+test coverage and security, each by a separate reviewer — and the fixes.
+Every bug below got a test that failed before its fix. 0.35.17 was never
+tagged; this release includes it.
+
+### Fixed: Editing mode could lose typing or change text you didn't touch
+
+These were all in 0.35.16's Editing mode. Reading mode, the default, was
+not affected.
+
+- **Lost typing.** If the file changed on disk while the view was switching
+  to Editing, every later keystroke was discarded without a word. An
+  outside change now waits for the editor to finish building, and an edit
+  the extension can't place re-renders the view with a notice instead of
+  being dropped.
+- **Paragraphs fusing.** Pressing Enter after "Intro:" above a list, lifting
+  a list item out, or deleting a heading with text right under it merged
+  the new text into its neighbour. A blank line now separates the new text
+  from both sides.
+- **Link definitions deleted.** Deleting or merging blocks removed
+  `[docs]: https://…` definitions between them. They are kept.
+- **Text turned into frontmatter.** Deleting the first paragraph of a
+  document with two `---` rules made the text between them frontmatter.
+  Refused.
+- **Comments rewrote the file.** A comment added in Editing mode rewrote
+  the whole file in the editor's Markdown style. It now adds two markers,
+  as in Reading mode.
+- **Tight lists went loose** on every edit (milkdown's list serializers pass
+  `spread` as a string). They stay tight.
+- **CRLF files** got LF line endings in edited blocks. They keep CRLF.
+- A drag-and-drop move lost the moved block's comments; two Enters at the
+  end of the file broke the next edit; keystrokes typed during the switch
+  back to Reading were dropped. All fixed.
+
+Underneath all of it, a safety net: before any edit is written, the result
+must read back as the blocks the editor shows, the frontmatter must be
+unchanged, and the comment markers must gain no new problem. An edit that
+fails is refused and the view reloaded — it no longer reaches the file. A
+seeded test of 400 random edits across the test documents had 52 failures
+before this release and none now; the block-by-block gate grew to 1,754
+blocks over 24 documents, including CRLF and no-final-newline files.
+
+### Fixed: failures that only reached the log
+
+An error while saving an edit, a failed save, a failed sidebar action, and
+a view that failed to load all used to be logged and nothing else. Each now
+tells you, with Show Logs or Reload. A failed save also stops Send: "Not
+sent: guide.md couldn't be saved, so your agent would read the old
+version." The "Sent to Claude" notice waits for the extension to confirm.
+Every write to the document — edits, sidebar actions, comments, autosave —
+now runs one at a time, which closes the race 0.35.16 listed as known: a
+reply sent while a keystroke was pending lost the keystroke. A save that
+format-on-save rewrites is sent back to the view.
+
+### Fixed: draw.io diagrams rendered empty
+
+0.35.14 said draw.io "renders again". It stopped crashing, but mxgraph
+could not find its own classes, so every diagram rendered as an empty
+image, and the test only checked that an image existed. Diagrams render
+now, in both views, and the test checks their labels. The decoder can only
+build the few parts a diagram needs, script evaluation is off, and labels
+are plain text, so a `.drawio` file can't run script or load anything.
+
+### Security
+
+- **Hover links.** Text from a document is escaped in the hover, so a
+  comment can't plant a working `command:` link or a remote image. Reply,
+  Resolve and Reveal act only on a `.md` file inside the workspace.
+- **Review tools.** The MCP tools edit only `.md` files, never inside `.git`
+  or `.vscode`, and never through a symlink out of the workspace. `mdc`
+  forwards only to the local tool server.
+- **The token.** It is written to one file,
+  `.markdown-collab/.mcp-server.json`, readable only by you, git-ignored,
+  and deleted when the window closes. It is no longer kept in VS Code's
+  terminal-environment cache. The README said it was never written to a
+  file; the README is corrected.
+- **PR review.** A thread id from the page must be one the extension just
+  fetched and must have the right format before it reaches `gh` or `glab`;
+  text values go with `-f`, so a value starting with `@` is never read as a
+  file.
+- **Config files.** Writes to `AGENTS.md`, `.mcp.json`, `.cursor/mcp.json`
+  and `.codex/config.toml` refuse symlinks. The Codex TOML edit handles a
+  commented header and multi-line strings and keeps keys you added.
+- **Large suggestions** no longer freeze the view: the word diff is capped
+  at 2,000 words per side and built only when shown.
+- **PlantUML** waits for a 1-second pause before sending an edited diagram
+  to the server, instead of sending every keystroke. The README has a
+  privacy note: diagram source goes to plantuml.com by default.
+
+### Fixed: PR review
+
+A thread with more than 100 comments lost its Resolve button. A GitLab
+resolve is now checked against the response instead of trusting exit 0.
+Comment pages that fail to load are logged and flagged once.
+
+### Tests
+
+New: the Uncommitted Markdown tree, Next Unread landing on each file in a
+real VS Code, the headless "done" toast, walkthrough links, the renamed
+titles, the mermaid theme, and malformed saved sidebar state in both
+views.
+
+### Known
+
+An outside change applied between the extension reading the document and
+its edit landing can still make a block edit use stale offsets. The check
+after the write catches it and reloads, but the bytes are already written.
+The threads block is written with LF in a CRLF file.
+
+## 0.35.17 — 2026-09-29 (GitHub only)
+
+### Changed: the view is called Markdown Collab
+
+"Open Review View" was one "review" too many next to PR review,
+Uncommitted Changes and Review Session Summary, and it named neither of the
+view's two modes. The command is **Open in Markdown Collab** (no category
+prefix, so the palette doesn't say it twice); Open With… shows
+**Markdown Collab**; the Explorer tree is **Comment Threads**; the sidebar's
+mode control is a **Reading · Editing** segmented switch instead of an Edit
+toggle. Every hover link, status-bar action, hint and README sentence that
+said "review view" follows. Command IDs, settings and keybindings are
+unchanged.
+
+### Added: PR review can resolve a thread, and every comment collapses
+
+Resolve / Unresolve on a review thread now goes to the platform: GitHub
+through the `resolveReviewThread` / `unresolveReviewThread` mutations on the
+thread's node id, which the existing GraphQL fetch now returns alongside
+`isResolved`; GitLab through `PUT …/discussions/:id` with `resolved` on a
+resolvable discussion. The button appears only where the platform allows
+it; a failure shows the platform's message and puts the button back. The
+resolved state, badge and collapse change when the platform confirms, not
+optimistically.
+
+Every card on the page — review threads, non-resolvable notes, and your own
+drafts — has a chevron; the header toggles on click, Enter or Space, with
+`aria-expanded`. A collapsed card shows the author, a one-line gist and the
+reply count, and keeps its Resolved badge. Resolved threads start
+collapsed, everything else expanded; resolving collapses, unresolving
+expands; a manual toggle is kept for the session and survives a refresh
+that doesn't change the thread's resolved state. **Collapse all / Expand
+all** in the toolbar covers drafts and threads alike.
+
+### Added: every card in the Markdown Collab view collapses
+
+Suggestion cards fold like thread cards do — the collapsed header names the
+agent and the gist of the change and keeps Accept and Reject one click away.
+A resolved thread starts collapsed under the All and Resolved filters; open
+threads and pending suggestions start expanded; resolving collapses,
+reopening expands; a manual toggle is remembered across updates and across
+a Reading ↔ Editing re-init. Collapse all / Expand all in the overflow menu
+covers every kind, and `n`/`p`/`r`/`e`/`o` keep working on collapsed cards.
+
+### Fixed: mermaid diagrams follow the theme
+
+The Markdown Collab view initialised mermaid with the light theme
+regardless of the editor theme; a dark window got light diagrams. It now
+picks `dark` for dark and high-contrast themes, as the classic panel did.
+
+## 0.35.16 — 2026-09-29 (GitHub only)
+
+One view. Phase B of `docs/10x-plan-6.md` P4 (design in
+`docs/one-view-design.md`): the live editor is now the review view, and
+every way into a review view opens it. The rendered preview with the
+markdown-it renderer is a one-release fallback behind
+`markdownCollab.classicReviewView`.
+
+### Changed: the review view is the live editor, read-only by default
+
+**Open Review View**, the title-bar icon, the `.md` menus, `Cmd+K Cmd+Alt+V`,
+the CodeLens, the hover's "Open in review view", the Review Threads tree, the
+Uncommitted Markdown tree, **Next Unread from Agent**, the status bar's
+"Open review view", the headless "done" toast, and the walkthrough all go
+through one router (`src/commands/reviewViewRouter.ts`) to the custom
+editor. It opens read-only: highlights are placed by source position, and a
+comment is written into the file's original bytes. An **Edit** switch in the
+sidebar turns editing on for that panel; `markdownCollab.liveEditor.readOnly`
+(now `true`) only sets the mode a new panel opens in. A `.md` link clicked
+inside the review view opens the review view, as the old panel did. A
+revealed thread arriving behind the first render still lands.
+**Open Live Editor (experimental)** is a hidden alias; the custom editor is
+called "Markdown Collab review view" in Open With….
+
+### Added: sidebar parity
+
+The live editor's threads pane is the review view's, extracted into
+`src/webviewShared/threadSidebar.ts` and rendered from a state object:
+segmented filters (Open / All / Resolved / New from *agent*), **Send to
+*agent***, the suggest-mode switch, the overflow menu (Copy prompt, Collapse
+all, Remove resolved, Remove all review data), the "?" hint toggle, the
+unread banner with **Next**, Reply collapsed until asked, Resolve / Reopen,
+per-card menus with the two-click Delete, comment cards with the *via*
+marker, suggestion cards with the word diff and **Accept all**, the "broken
+anchor" and "text changed" badges, `n`/`p`/`r`/`e`/`o`, the loading
+placeholder, the empty state, pending "*agent* is working…" rows, the skill
+banner, and the scroll to the first new thread after a review. Highlights
+follow the filter: a filtered-out thread's highlight hides, a resolved one
+shown under All or Resolved is grey. The host side is one shared module
+(`src/collab/sidebarHost.ts`); every mutation from the sidebar goes through
+the document ops on the original source, never through the editor's
+serialization. The thread filter is remembered across a read/edit reload.
+
+### Added: uncommitted-changes review in the live editor
+
+Opening a file from the Uncommitted Markdown tree stripes the changed
+blocks, shows removed text struck through where it used to be, and steps
+between changes with arrows or `n`/`p`, mapped through the same source
+positions. A block the table can't map is never striped by guess. Open
+panels refresh when the tree does.
+
+### Changed: an edit rewrites only the block you typed in
+
+Edit mode used to serialize the whole document on every change, rewriting
+3 to 624 untouched lines per keystroke on the corpus. The webview now
+reports which top-level blocks changed and their Markdown; the host splices
+each into the block's source range, taken from a table of the file as last
+written, and re-anchors only the threads inside that block. Splits and
+merges are one splice over the union. If the block mapping is inconsistent
+the write is refused, the editor re-renders from the file, and a toast says
+why — whole-document serialization is never the fallback. The gate is a test
+over all 1,596 top-level blocks of the 17 corpus documents: one character
+typed in each, every byte outside the block identical. A comment added in
+edit mode still adopts the editor's serialization of the document; add
+comments read-only (the default) for a byte-exact result.
+
+### Removed: the live-editor freeze
+
+The bundle-size budget that froze the live editor is retired; a bound with
+headroom replaces it in `src/test/liveEditorBundle.test.ts` and
+`scripts/verify-package.mjs`. The host now declares
+`mdast-util-from-markdown`, `mdast-util-gfm` and `micromark-extension-gfm`,
+which the block table uses to parse exactly as the editor does.
+
+### Known
+
+`markdownCollab.classicReviewView` and the inline panel go away in the next
+release. A comment operation's full-document write can still land on top of
+an in-flight block edit; the window is the edit debounce.
+
+## 0.35.15 — 2026-09-29 (GitHub only)
+
+Phase A of the one-view merge (`docs/10x-plan-6.md` P4, design in
+`docs/one-view-design.md`): the live editor gains a read-only mode that is
+as exact as the review view, and renders everything the review view
+renders.
+
+### Added: read-only mode anchored by source position
+
+`markdownCollab.liveEditor.readOnly` (off by default until the views
+merge) opens the live editor without editing. In this mode a remark plugin
+records, for every paragraph, heading and table cell, the source range and
+the text runs it came from; the schema carries that as an attribute, and
+each rendered character is aligned to the source bytes it came from, with
+escapes and character references kept whole so a marker can never split
+them. Nothing is searched, so the wrong-occurrence bug is gone: the host
+sends each comment's and suggestion's source range, and the webview
+decorates exactly those characters. A new comment maps the selection back
+through the same table and is written into the original bytes with
+`opOpenAt`; nothing is re-serialized. A selection that has no text, touches
+code, or starts or ends in a block the table couldn't map is refused with a
+toast rather than guessed; a thread without markers gets no highlight
+rather than a guessed one.
+
+Two gates, both tests against the review view as oracle: 0 of 164 thread
+probes and 0 of 19 suggestion probes misplaced (the old locator: 12 and 1);
+0 prose lines changed by adding a comment on all 17 corpus documents (the
+old path: 3 to 624). The probes and the three fixture documents live under
+`src/test/fixtures/alignment/`. Edit mode is unchanged and still has both
+problems; the block-splice write-back is the next phase.
+
+### Fixed: a drag in the live editor selected only part of the text
+
+The floating "+ Add comment" button appeared under the pointer mid-drag,
+and with `editable: false` nothing kept the browser's selection inside the
+editor, so "Suggest" came back as "Su". The button stays hidden while a
+mouse button is held, in both modes.
+
+### Added: the live editor renders what the review view renders
+
+PlantUML fences render through the same server and format settings, with
+the fence hidden once the image loads. `![alt](diagram.drawio)` renders the
+diagram, not a broken image. A mermaid diagram hides its source once
+rendered and keeps it visible on error. Task-list items show a checkbox,
+clickable in edit mode only. An inline `<br>` renders as a line break — the
+commonmark preset's empty-line plugin was deleting every `<br>` node in the
+tree, not only its own placeholder; a remark plugin registered ahead of it
+reclassifies a `<br>` embedded in a line of text as a real break. A
+suggestion's anchored text is highlighted with its own style, by source
+position in read-only mode.
+
+## 0.35.14 — 2026-09-29 (GitHub only)
+
+Two bugs the one-view spike (`docs/spike-one-view.md`) found in shipping
+code, both in the surfaces that get the most use.
+
+### Fixed: the live editor dropped pending suggestions and the checkpoint
+
+Every edit or new comment made in the live editor deleted the file's
+pending suggestions and its review checkpoint. `buildBridge` strips the
+threads region before the editor sees the prose, and the three write paths
+in `src/collab/inlineBridge.ts` then rebuilt the file with `withThreads`
+from that bare prose — so the "keep what's already there" default had
+nothing to keep. `addThreadAtOffsets` and `assembleMarkedSource` (shared by
+`mergeProseEdit` and `placeAnchorsInProse`) now carry the suggestions and
+the checkpoint through explicitly, and a suggestion's anchor markers are
+re-placed after an edit with the same tiered text matching a thread's are,
+so a suggestion survives the edit anchored rather than orphaned. Four tests
+seed a thread, a suggestion and a checkpoint and drive each path.
+
+### Fixed: draw.io rendered in neither view
+
+The bundles are strict mode. mxgraph's factory is written for sloppy mode:
+it assigns to `this` expecting the global object, and creates globals by
+bare assignment. Called bare, `this` was undefined and it threw "Cannot set
+properties of undefined (setting 'mxBasePath')"; called with `globalThis`,
+it then threw `ReferenceError: mxForceIncludes is not defined`. `loadMx`
+now calls the factory with `globalThis` and pre-declares the two bootstrap
+globals the existing hoist missed. A webview e2e spec renders a `.drawio`
+reference in both the review view and the live editor and asserts an
+`<svg>` appears; it failed on the old code with the exact reported error.
+
+## 0.35.13 — 2026-09-29 (GitHub only)
+
+Round 6, P0–P3 and P5 of `docs/10x-plan-6.md`. The plan came out of a
+conversation about what actually gets used, after the UX review shipped;
+its first table lists the six judgements that changed. P4, the merge of the
+review view and the live editor, is a spike this version doesn't include.
+
+### Changed: the terminal is the normal way to send (P0)
+
+The README, the walkthrough, the send-mode setting and the picker all led
+with headless "Run Claude for me". Nobody uses it. The terminal is now the
+recommended path everywhere; headless and clipboard are "Other ways to
+send", and headless says what it is for — not keeping a terminal open — and
+what it still needs: Claude Code installed and signed in. The empty state's
+"Review with Claude" button used to force a headless run when one was
+possible; it now goes through the remembered send mode like every other
+send. "Survives a commit, a branch switch, and a colleague opening the
+file" became what it does in practice: the state stays in the file
+overnight and across sessions, and you strip it before you commit. PR
+review has its own section: a review client for a colleague's Markdown,
+with the comments on the platform.
+
+### Changed: for other agents, the file format is the contract (P1)
+
+The only loop anyone has run with a non-Claude agent was Copilot, by
+copying the prompt and pasting it; Copilot edited the markers by hand and
+they survived. `mdc` is on PATH only inside Claude Code sessions, so no other
+agent has it anyway. **Connect an Agent…** for Cursor, Codex, Copilot and
+Other now writes or refreshes the `AGENTS.md` snippet first and then offers
+the MCP registration as a second, optional step — "also register the review
+tools so its edits are undoable?" — and still writes the snippet when the
+tool server isn't up. The snippet is fourteen lines: the format is the
+contract, use the MCP tools if you have them, otherwise the hand-edit rules,
+then check or ask the human to run Repair Comment Anchors. A section that
+matches an earlier shipped snippet is replaced in place; one someone edited
+is left alone. **Disconnect an Agent…** never touches `AGENTS.md`.
+
+`docs/format.md` is the contract itself, derived from the parser and its
+tests: markers, the threads block, every thread and comment field, the
+suggestion record, the checkpoint, the integrity rules `mdc check` enforces
+and what Repair will and won't fix, and how to write the file by hand. The
+README's "Other agents" section is three lines plus an "Optional: undoable
+edits through MCP" subsection holding the client table.
+
+Every comment an agent writes now records how it arrived: `via: "tools"` for
+the MCP tools (including `mdc` forwarded through them), `via: "cli"` for a
+direct `mdc` write, and nothing for a hand edit. The field is written only
+when set, so existing files re-serialize byte for byte. The card shows it —
+*via tools*, *via cli*, *via file* — on agent comments, so "how did Copilot
+write back?" has an answer in the file instead of a guess.
+
+### Changed: suggest mode is enforced, and suggestions are readable (P2)
+
+Suggest mode was off in practice because the agent ignored it and edited
+directly, and because a suggestion that rewrote a paragraph showed as one
+`-` line and one `+` line. Now `mc_edit` and `mc_rewrite` refuse with
+`suggest_mode_on` while the workspace setting is on, pointing at
+`mc_suggest`; forwarded `mdc edit` / `mdc rewrite` inherit the refusal. The
+Claude Code PostToolUse hook reports a direct Edit or Write to a reviewed
+`.md` when `.vscode/settings.json` in the hook's working directory has
+suggest mode on. `mc_suggest` refuses a replacement longer than three times
+the quote or 300 characters, whichever is larger, with `suggestion_too_large`
+and "split it". The skill says one suggestion changes one sentence or one
+list item.
+
+The suggestion card shows the change inside the sentence — the changed
+words as `<del>` and `<ins>`, themed with the diff-editor colours — and falls
+back to the old two-line form, with a toggle, when more than 60% of the
+tokens changed or either side is over 600 characters. The word diff is a
+hundred dependency-free lines shared by the review view, the live editor and
+PR review. Turning suggest mode on by default for review passes waits for a
+yes on plan-6's question 2.
+
+### Changed: a review pass opens five threads, then a summary (P3)
+
+"There is no cap; if thirty things warrant a thread, you get thirty"
+produced too many. The agent now ranks concerns by severity, opens threads
+for the five that matter most — per file in a multi-file pass — and puts the
+rest in one summary thread anchored to the title, "Also noticed (N): …", one
+line per item, so you can ask for any of them by number. The focus
+directive can raise or remove the cap ("give me ten", "everything"). The
+skill, the review prompts, the README and the walkthrough all say so.
+
+### Added: a reminder when staging a file that still carries threads (P5)
+
+The Uncommitted Markdown tree shows "· 3 threads" on a file that still has
+review data. Staging it from the tree shows one toast — "3 threads are still
+in guide.md — Remove All Review Data strips them before you commit" — with
+**Remove review data** (runs the usual confirm) and **Keep them**. Once per
+file per window. Nothing is ever finalized automatically; threads live
+across days on purpose.
+
+### Changed: the review view names the agent
+
+The Send button, its tooltip, the suggest-mode switch and the default
+pending text use the display name of the agent that last wrote to the file,
+sent by the host as `agentName`; "Claude" when none has.
+
+### Known
+
+The `package.json` marketplace description still leads with "runs that need
+no terminal" and claims Cursor, Codex and Copilot; plan-6 question 5 decides
+it. The README GIFs were re-recorded from this version's bundle.
+
+## 0.35.12 — 2026-09-28 (GitHub only)
+
+Everything here comes from `docs/ux-review-2026-09.md`, a product and UX
+review of 0.35.11. The numbers are its item numbers.
+
+### Fixed: `mdc` could corrupt a file and then call it clean (0.1)
+
+`mdc open guide.md --quote alpha --body x --occurrence banana` exited 0,
+reported `"quote":"alpha"`, and wrote `<!--mc:a:ID--><!--mc:/a:ID-->` at byte
+0 with an empty quote in the thread; `mdc check` then said `ok: true`.
+`Number("banana")` is `NaN`, and `locatePassage` guarded against 0 and
+out-of-range but not that. Both front ends now validate through one
+`parseOccurrence` in docOps, so the MCP tools also stop coercing `"0x2"` and
+`""`. Integrity reports an empty quote as `empty-quote` — a warning, not
+repairable, since there is nothing to re-anchor to — so `check` exits 2 on the
+document the old bug produced. The repro is a test on both front ends.
+
+### Changed: `mdc` writes through the running extension (0.2)
+
+The MCP tools have always applied edits as a WorkspaceEdit: undoable, ordered
+against whatever is unsaved in the editor. `mdc` wrote the file directly, and
+an unsaved edit in the text editor could collide with it. Now, when
+`MARKDOWN_COLLAB_MCP_URL` and `MARKDOWN_COLLAB_MCP_TOKEN` are in the
+environment — every terminal VS Code opens has them — the eight mutating verbs
+call the extension's `mc_*` tool instead, and the result JSON says
+`"via": "extension"`. `--author` is carried as the session's client name.
+
+It falls back to the direct write, with one line on stderr saying so, when the
+server isn't reachable, refuses the token, answers with something that isn't
+the protocol, or reports the file is outside that window's workspace. It does
+not fall back when a `tools/call` went out and got no answer: the write may
+already have landed, and repeating it would duplicate a reply. That case exits
+1 with `no_answer` and says to run `mdc list` before retrying. `--direct`
+forces the old path; `list` and `check` never leave the machine.
+
+### Fixed: three smaller `mdc` holes (0.5, 0.6, 0.7)
+
+A flag value that began with `--` was read as the next flag, so
+`--body "--this"` failed with "missing required --body". The boolean flags are
+now declared, and every other flag takes the next token as its value.
+
+An agent's reply to a resolved thread left it resolved, filtered out of the
+default Open view. It now reopens the thread, and the result — CLI and
+`mc_reply` — carries `"reopened": true`. A human's reply still leaves the
+status alone.
+
+`--help` claimed "All commands print JSON to stdout"; failures went to stderr
+as prose. A failure is now `{"ok":false,"code":…,"message":…}` on stdout with
+the human line still on stderr, the same shape as an MCP refusal.
+`mdc <verb> --help` prints the usage and exits 0 instead of 1.
+
+### Fixed: a comment added from the keyboard now saves (0.3)
+
+`Comment on Selection` applied its edit and left the buffer dirty; the review
+view saves after every mutation. Both save now, so an agent reading the file
+sees the comment. The "Comment added" toast is a four-second status-bar
+message.
+
+### Changed: one setup command, and its inverse (1.1, 4.4)
+
+**Connect an Agent… → Claude Code** installs or updates the plugin and writes
+the `.mcp.json` entry in one go, and one toast says what it did. **Set Up
+Claude Code** and **Register Review Tools with Claude Code** still work but are
+hidden from the palette. The first-activation nudge offers Connect an Agent.
+**Disconnect an Agent…** is new: it removes the `.mcp.json`, `.cursor/mcp.json`
+or `.codex/config.toml` entry, leaving other entries alone, or unregisters a
+live Cursor or Copilot registration.
+
+### Changed: the copy follows the agent (1.3, 1.4, 2.4, 2.5, 2.6)
+
+Since 0.35 the terminal and clipboard paths can reach Cursor, Codex, and
+Copilot, but the prompt opener named a Claude Code skill, five toasts said
+"paste into Claude Code", the status-bar tooltip said Claude while its text
+said Codex, and the walkthrough never mentioned another agent. The opener now
+names both paths in one sentence; the toasts say "your agent"; the tooltip
+uses the agent the text uses; the picker labels the terminal option by what it
+does. Command titles: **Ask Agent to Review This Doc / These Docs / What
+Changed**, **Next Unread from Agent**, **Send Unresolved Comments to Agent**,
+**Open Review View**, **Open PR Review**, **Open Uncommitted Changes**. Claude stays in the names of Claude-only things: the plugin, the
+`claude` REPL detection, headless runs, `claudePath`, `headlessModel`.
+The `AGENTS.md` snippet taught every agent to hand-edit markers; it now says
+MCP tools first, `mdc` second, hand-edit last. The walkthrough gained a step
+for other agents, lists headless as a delivery mode, and no longer quotes a
+picker label that didn't exist. The sidebar is "the review view" everywhere;
+"anchor" is the markup, "thread" the review object, "comment" one message.
+
+### Changed: less in the host (2.1, 2.2, 2.3)
+
+The two Explorer trees were visible in every workspace, git or not; they now
+appear only when the workspace has a git repository, collapsed. The six
+entries the extension put in every `.md` file's right-click menu are one
+**Markdown Collab** submenu plus Open Review View; the editor menus get the
+same. Eleven commands leave the palette (two icon-only refreshes, the
+folder-review variant that reviewed only the active file when run from the
+palette, and the hidden aliases above).
+
+The review had also proposed gating the live editor behind a setting and
+labelling PR review a preview. Both were dropped before this shipped: they
+are the two most-used surfaces. The README now says what PR review is — a
+review client for a colleague's Markdown, with comments on the platform — and
+that the review view and the live editor are on their way to becoming one
+view.
+
+### Changed: the review view (3.1–3.6)
+
+The filters are a segmented control on one row. The second row is the Send
+button, a labelled suggest-mode switch, and an overflow menu holding Copy
+prompt, Collapse all, Remove resolved, and Remove all review data. Each card
+shows Reply and Resolve; Open in editor, Send this thread, Copy prompt, and
+Delete (still two-click) are in a per-card menu. The reply box is collapsed
+until Reply or `r`. The panel shows "Loading…" instead of nothing while the
+first state arrives. With the outline open, a narrow split now collapses to
+one column — `#app.with-outline` had outranked the breakpoint rule. Highlight
+colours derive from theme tokens, the danger red is one variable, high
+contrast gets outlines, and a very long comment scrolls inside its card. The
+keyboard hint hides after the first `n`/`p`/`r`/`e`/`o`; `?` brings it back.
+
+### Added: Reply and Resolve from the hover (3.7)
+
+Hovering a commented passage in the text editor offers Reply, Resolve (or
+Reopen), and Open in review view. They go through the same document ops as
+the review view and save.
+
+### Changed: the reference locators are test support (4.3)
+
+`src/anchor.ts` and `src/collab/anchorLocator.ts` had no production
+importers; they were the oracle for six alignment tests. They live under
+`src/test/support/` now.
+
+### Known
+
+The README GIFs show 0.35.11's toolbar and cards; `npm run record:gifs`
+re-records them from the shipped bundle.
+
+## 0.35.11 — 2026-09-28 (GitHub only)
+
+### Changed: the package ships 30 files instead of 158
+
+The host extension has been a single esbuild bundle since 0.34.44, but
+`.vscodeignore` never excluded the per-file JavaScript that `tsc` also emits
+under `out/`, so every one of those 108 files rode along in the `.vsix` with
+nothing loading them. So did the build and release scripts, a build
+intermediate of the `mdc` CLI, and a Playwright scratch directory that
+`.gitignore` hides but the packager reads from the working tree. The packager
+had been warning about it on every release.
+
+What ships now is what runs: the four bundles and their stylesheets, mermaid,
+the icon and walkthrough pages, and the Claude Code plugin. The package is 2.75
+MB, down from 3.1, and the warning is gone. `verify-package` refuses any other
+JavaScript under `out/` and any file under `scripts/`, `.playwright-mcp/`,
+`out/skill/`, or `out/test/`, so the weight can't creep back; run against the
+0.35.10 package, it fails as it should.
+
+## 0.35.10 — 2026-09-28 (GitHub only)
+
+### Changed: the README is written for the marketplace page again
+
+Round 4 landed in eleven versions, and each one patched the README where it
+touched it. The result read like its history: setup explained three times, a
+changelog-voice paragraph about the status bar with raw `$(clock)` icon codes
+the marketplace shows literally, version archaeology ("v0.29 added…"), and
+nothing at all about the text-editor presence, uncommitted-changes review,
+Remove All Review Data, the outline, the session summary, four settings, and
+nine commands.
+
+Rewritten from the top for someone deciding whether to install: what it does,
+three steps to the first review, the loop, then every surface and every mode
+once each. Down from 4,700 words to 3,150 with more of the product covered.
+Every feature claim was checked against the code before it went in; two that
+weren't true were corrected.
+
+Building, testing, and releasing moved to `CONTRIBUTING.md`, where they belong.
+That file also documents `npm run verify:keys` and `npm run record:gifs`.
+
+## 0.35.9 — 2026-09-28 (GitHub only)
+
+### Changed: a headless run's token never touches disk
+
+The `--mcp-config` file a headless run hands to Claude Code used to hold the
+tool server's bearer token, in a 0600 temp directory deleted when the run
+ended. If VS Code quit or crashed mid-run, the directory could outlive it. The
+file now names the token by environment variable, `${MARKDOWN_COLLAB_MCP_TOKEN}`,
+and only that run's child process receives the variable. Claude Code expands it
+when it connects, verified against 2.1.283: the server reported connected and
+the file contained no token. A leftover directory now holds nothing secret, and
+the extension sweeps any older than a run can live on its next activation.
+
+### Added: the keybindings are proven in a real VS Code
+
+`npm run verify:keys` launches the downloaded VS Code build through
+Playwright's Electron support, opens a document with two unread threads, and
+presses the chords for real: `Cmd+K Cmd+Alt+N` from the text editor, then the
+same chord from inside the review view's webview, then again to wrap, then `n`.
+All four were observed on VS Code 1.139. Neither existing suite could reach
+this: the Extension Host suite can't press keys, and the Chromium harness has
+no VS Code keybinding service. It opens a window, so it isn't part of CI; run it
+after touching the keybindings or the webview's key handling.
+
+## 0.35.8 — 2026-09-27 (GitHub only)
+
+### Added: a pulse for review requests sent through the terminal or clipboard (10x-plan-4 P2.2)
+
+"Ask Claude to Review" in `terminal` or `clipboard` mode used to produce one
+toast and then silence until threads happened to land. Nothing told a thinking
+Claude apart from a paste that never arrived. The status bar now follows every
+review request, and each state it shows is something the extension actually
+observed:
+
+- `Sent for review · 1m 20s` while the dispatch is all that's known.
+- `Claude: <phase>` or `Claude is reviewing <file>` once a tool call shows
+  Claude is working.
+- `Review in progress · N new comments` while threads are landing. The skill
+  opens threads one at a time, so the first one arriving doesn't mean the pass
+  is done.
+- `Review arrived: N new comments`, or "no concerns found", once every file is
+  finished. A file counts as finished on Claude's closing check, on a review
+  checkpoint written after the request went out, or after 90 seconds with
+  nothing new.
+- `Review sent 10m ago — nothing arrived` after ten minutes without anything at
+  all, with Resend, Dismiss, and Show logs on click.
+
+Threads are noticed whether they arrive through an open editor or as a plain
+write to disk, so a terminal Claude using the `mdc` CLI is covered with no panel
+open. Headless runs keep their own, richer status. The toast after a terminal
+send no longer claims "Claude is reviewing"; it says the prompt was sent and
+that the status bar will show when comments arrive.
+
+### Fixed: `mdc check` now records the review checkpoint, like `mc_check`
+
+The README has said the checkpoint that makes "Review Changes Since Last Pass"
+incremental is written when Claude works through the MCP tools or the `mdc`
+CLI. Only `mc_check` ever wrote it. A terminal Claude using the CLI could review
+a file every day and never get an incremental second pass. Both now call one
+shared operation: `mdc check <file>` on a healthy document stamps the checkpoint
+and reports `checkpointed: <ts>`. `--repair` and the plugin's `--hook` are
+unchanged, and the hook stays read-only.
+
+## 0.35.7 — 2026-09-27 (GitHub only)
+
+### Changed: the live editor is frozen, and says so (10x-plan-4 P3.1)
+
+The live editor is labelled experimental wherever it's named: the command, the
+"Reopen with" entry, and the README. It costs like a primary surface, with a
+4.4 MB bundle and 11 of the 76 fixes in this changelog, while being a secondary
+one. No new features land there, and bugs are triaged rather than hunted. The
+packaging check now fails if its bundle grows past a measured budget, so the
+freeze doesn't depend on anyone remembering it.
+
+### Added: diagnostics that cover the new paths (10x-plan-4 P3.4)
+
+**Report a Problem** now says:
+
+- whether `claude` resolves, where, and at which version, or why not;
+- whether a headless run could start right now, and how the last one ended
+  (turns, estimated cost, failure reason), never the prompt or the report;
+- which agent clients are connected, from `.mcp.json`, `.cursor/mcp.json`, and
+  `.codex/config.toml` plus the in-process Copilot and Cursor registrations.
+
+### Added: two GIFs, and a listing that leads with the one-button path (10x-plan-4 P3.3)
+
+The README opens with **Review with Claude**: click it, and triage the
+comments Claude leaves. There's a GIF for each direction of the loop, recorded
+by `npm run record:gifs` from the same harness the webview e2e suite drives, so
+they can be re-recorded instead of going stale. They live in the repository,
+not the `.vsix`. The marketplace description and keywords now say the product
+works with Cursor, Codex, and Copilot agents too.
+
+The text editor's decorations, hover, and CodeLens aren't in a GIF. They're
+drawn by VS Code's own editor, which the harness can't record, and a staged
+imitation would misrepresent them.
+
+### Fixed: an empty "Next" bar at the top of every comment sidebar
+
+The "N new from Claude" bar is hidden when no thread came from Claude, but its
+`display: flex` outranked the browser's rule for the `hidden` attribute. Since
+0.29 an empty bar with a lone "Next" link sat above every thread list. Recording
+the GIFs made it obvious. A spec now checks that the bar stays hidden.
+
+## 0.35.6 — 2026-09-27 (GitHub only)
+
+### Added: the agent has a name, and it isn't always "claude" (10x-plan-4 P1.2)
+
+Every agent-written comment used to be stamped `author: "claude"`, and every
+check for "is this the agent's move or the human's?" compared against that one
+word. That held while Claude Code was the only thing that could call the tools.
+It stopped holding when Connect an Agent (0.35.3) let Cursor, Codex, Copilot,
+and anything else that speaks MCP connect: a Codex reply showed up as Claude's.
+
+The tool server now issues an `Mcp-Session-Id` on `initialize` and remembers
+which agent each session belongs to, from the client's own name. The map lives
+in memory, holds at most 64 sessions, and nothing is written to disk. Every
+`mc_*` call is attributed to the agent that made it: `claude`, `codex`,
+`cursor`, `copilot`, `gemini`, or a slug taken from an unfamiliar client's
+name. Checked against a real Claude Code 2.1.283, which identifies itself,
+keeps the session, and lands as `claude`.
+
+Comments and suggestions an agent writes also carry `"agent": true` next to
+`author`, so an agent the extension has no name for still counts as an agent.
+The field is optional: files written before this parse exactly as they did,
+recognized by the same short list of names the old check hard-coded, and the
+golden corpus has a two-agent case to hold that. `mdc` gained a matching
+`--author` flag that defaults to `claude`.
+
+What changed on screen follows who did the work. The sidebar's "N new from…"
+line, the status bar, the review digest, the comment card's author label, and
+the text-editor hover and CodeLens name the agent: its own name when there's
+one, "agents" when several answered. Copy that names Claude by design, like
+Send to Claude and Ask Claude to Review, still does. Whether that copy should
+itself depend on which agent a workspace uses is a question for a later round.
+
+## 0.35.5 — 2026-09-27 (GitHub only)
+
+### Added: an empty state that teaches (10x-plan-4 P2.4)
+
+A document nobody has commented on used to show one grey line. It now shows a
+small card: how to start a comment (select text and click Comment, or
+`Cmd+K Cmd+Alt+M` / `Ctrl+K Ctrl+Alt+M` in the text editor), and one button.
+The button reads **Review with Claude** when a headless run can go straight
+through, and runs the review in headless mode whatever your send mode is set
+to, since a one-click button shouldn't land you in a picker. Otherwise it reads
+**Ask Claude to review this doc** and follows your send mode as usual. Either
+way it is the same Ask Claude to Review command, focus prompt included. A
+filter that merely hides existing threads still gets the one-line message.
+
+The view never waits on Claude Code to draw that card. Whether headless is
+available depends on a `claude --version` probe, which can take seconds on a
+cold start. The card renders with the non-headless wording at once and updates
+when the probe lands, and the probe now runs in the background at activation,
+so the answer is usually there before the view opens.
+
+### Added: from the review view back to the source
+
+Each thread card has a small `↗` button, and `o` does the same from the
+keyboard. It opens the text editor in the current group with the anchored
+passage selected and centered. A thread whose passage was deleted says so
+instead of opening nothing.
+
+### Changed: the review views work with a screen reader
+
+- The "Claude is working…" row and the "N new from Claude" line are live
+  regions, so changes are announced.
+- The thread list is a feed of articles, each labelled with its author and the
+  start of its first comment, with its position in the list.
+- The highlighted card holds keyboard focus as `n` and `p` move it, with a
+  visible focus ring, using a roving tabindex rather than only a CSS class.
+- Every smooth scroll and flash animation in all three review surfaces respects
+  `prefers-reduced-motion`. A test fails if a new smooth scroll bypasses the
+  shared helper.
+
+## 0.35.4 — 2026-09-27 (GitHub only)
+
+### Added: the Claude side ships as a Claude Code plugin (10x-plan-4 P0.2)
+
+**Markdown Collab: Install Claude Skill** is now **Set Up Claude Code**. It
+installs the Markdown Collab plugin, which brings three things:
+
+- the review workflow as a skill, also runnable as `/markdown-collab:review`;
+- the `mdc` CLI on Claude's PATH, so every instruction says `mdc check <file>`
+  instead of a path into your home directory;
+- a check after every edit. After each Edit or Write to a reviewed `.md`, the
+  plugin runs `mdc check --hook`, and if the edit broke a comment marker, Claude
+  is told in the same turn, with the list of problems. Round 1 could only ask
+  for that in prose.
+
+The hook reports real damage only: an unpaired marker, a malformed thread
+line, a duplicate id. A thread left unanchored because its passage was deleted
+is the intended outcome of a deletion, so it doesn't trigger the hook, which
+would otherwise fire on every later edit and push Claude to re-anchor onto
+unrelated text. The hook runs node directly rather than through a shell, so it
+doesn't depend on one being there.
+
+The plugin ships inside the extension and installs from a marketplace the
+extension writes on your machine, so the Claude side is always exactly the
+extension's version: no fingerprint, no drift, no network. When a new version
+ships you're offered **Update** once. The standalone skill in
+`~/.claude/skills/vs-markdown-collab/` is removed when the plugin installs,
+since both at once would register the workflow twice. It is still the fallback
+when `claude` isn't found or has no plugin support, and the toast says which
+route it took and why. To get the Claude side without the extension, run
+`claude plugin marketplace add ronicayu/markdown-collab-plugin`, then
+`claude plugin install markdown-collab@markdown-collab`.
+
+Verified against Claude Code 2.1.283. `claude plugin validate --strict` passes
+for the plugin and both marketplaces. A full install, re-install, and update
+ran in an isolated config directory, and a real session saw the hook's report
+after an edit that broke a marker.
+
+### Added: the workflow travels with the server (10x-plan-4 P1.3)
+
+Any agent that connects to the review tools now gets the workflow, not just
+ten tool descriptions: list, act, and finish with `mc_check`; only the human
+resolves; review mode never edits prose and has no thread cap; suggest mode
+routes everything through `mc_suggest`. It arrives as the server's
+`instructions` (under 2 KB), and in full from a new **`mc_help`** tool. Every
+tool that writes now says "If unsure of the workflow, call mc_help first."
+
+The standalone skill, the plugin's skill, the headless system prompt, and the
+server instructions are four renderings of one text, so they can't disagree.
+The standalone rendering is byte-identical to 0.35.3's apart from three
+deliberate edits, and a test holds it to that.
+
+### Changed: `mc_edit` can delete an anchored passage
+
+An `old` that spans a thread's open marker, its text, and its close marker
+removes all three, and the thread is left unanchored by design, as the
+workflow has always said a deletion should. A range holding only one marker of
+a pair, or splitting one, is still refused. Headless runs had no way to delete
+a commented passage before this.
+
+### Changed: smaller things
+
+- Prompts name the skill both ways: `markdown-collab:review`, or
+  `vs-markdown-collab` on older installs. The terminal directive mentions
+  `mc_edit` for prose outside anchors.
+- The inline view's "skill missing" banner and **Report a Problem** count an
+  installed plugin as installed, and the report names its version. Detection
+  honors `CLAUDE_CONFIG_DIR`.
+- CI fails if the committed plugin drifts from what the build generates.
+
+## 0.35.3 — 2026-09-27 (GitHub only)
+
+### Added: Connect an Agent (10x-plan-4 P1.1)
+
+The review tool server never cared which agent called it. Now the rest of the
+extension doesn't either. **Markdown Collab: Connect an Agent…** hooks the
+server up to whichever client you use, and each choice writes the smallest
+correct thing:
+
+- **Claude Code**: the same `.mcp.json` entry as before. *Register Review Tools
+  with Claude Code* still works as an alias.
+- **Cursor, in-app agent**: registered directly through Cursor's extension API,
+  with nothing written to disk. Cursor's agent doesn't run in a terminal, so the
+  environment-variable approach can't reach it. Listed only inside Cursor.
+- **Cursor CLI** (`cursor-agent`): `.cursor/mcp.json` with `${env:…}`
+  references, so there is no port and no token in the file.
+- **Codex**: a `[mcp_servers.markdown-collab]` table in `.codex/config.toml`
+  with `bearer_token_env_var`. Codex can't expand variables in a URL, so the
+  file holds the loopback port and is rewritten when the port moves. It never
+  holds the token.
+- **GitHub Copilot, agent mode**: a live MCP server definition through VS Code's
+  own provider API, with nothing on disk. The API is feature-detected, so
+  `engines.vscode` stays at `^1.80.0` and older forks lose nothing.
+- **Other agents**: a scratch document with the URL, the header, and a generic
+  snippet, noting that the token changes every session.
+
+Gemini CLI is under "Other" deliberately. Its settings only expand environment
+variables for servers it launches itself, so connecting it to this server would
+mean writing the token into a project file.
+
+The server's URL and token now also live in the extension host's own
+environment, not only in VS Code terminals. A CLI agent that another extension
+starts after this one, such as Claude Code's or Codex's own VS Code extension,
+inherits them the same way a terminal does, so the `.mcp.json` and
+`bearer_token_env_var` references resolve there too. They're removed when the
+server stops.
+
+Connections that go stale across a restart re-establish themselves on the next
+activation: Cursor's in-app registration and Copilot's provider get the new
+token, and Codex's table gets the new port. Nothing is written that you didn't
+ask for, and no file ever holds a token.
+
+Not yet tried against a real Cursor or Codex install. The writers are
+unit-tested against each client's documented config format, and the Copilot
+provider and the environment export are tested on a real VS Code 1.139 host.
+
+## 0.35.2 — 2026-09-27 (GitHub only)
+
+### Added: Run Claude for me (10x-plan-4 P0.1)
+
+A fourth send mode, `headless`, labelled **Run Claude for me**. On send, the
+extension starts Claude Code itself: `claude -p` in the workspace folder,
+pointed at the extension's own review tool server. The run shows in the status
+bar as `Claude is reviewing guide.md · 1m 20s`, or as the phase Claude reports
+with `mc_status`. The tooltip names the last tool and the call count, and a
+click offers Cancel run, Show logs, and Open review view. When it finishes, a
+notification carries the first line of Claude's report, with Show report (the
+whole message, plus turns and an estimated cost) and Open review view. Nobody
+has to find a terminal.
+
+The run has a closed tool set: Read, Glob, Grep, and the markdown-collab tools.
+There is no Edit, no Write, and no Bash, and `--strict-mcp-config` keeps the
+project's other MCP servers from starting. Every change Claude makes goes
+through the tool server, so it lands as an editor edit you can undo, checked
+before it lands. The user's own Claude Code hooks are switched off for the run:
+a SessionStart hook that injects a persona would rewrite the report, and a Stop
+hook would fire for a review nobody is watching. Managed hooks still run. The
+token travels in a 0600 temp file that is deleted when the process exits, and
+the prompt goes over stdin, so neither is ever on a command line.
+
+It is offered, never chosen for you. The first-send picker lists it first, as
+the recommended choice, only when Claude Code is found (on PATH, in the usual
+install locations, or at the new `markdownCollab.claudePath`), the workspace is
+trusted, and the tool server is running. A running Claude terminal is still
+picked automatically, as before. If headless is your mode but can't run at send
+time, the send goes to the terminal and the toast says why. If Claude Code can't
+load the tools because MCP is disabled by policy, that send goes to the terminal
+and headless stops being offered in the workspace until Reset Send Mode. If it
+isn't signed in, you're offered a terminal to sign in from. A run stops itself
+after 30 minutes. `markdownCollab.headlessModel` picks the model.
+
+Tested end to end against a real Claude Code 2.1.283: a review of the tutorial
+document finished in 56 seconds and 10 turns, every change arriving through the
+tool server with no permission denials.
+
+### Added: `mc_edit` and `mdc edit`
+
+A headless run has no Edit tool, so prose outside anchored spans needed a
+marker-safe path. `mc_edit(file, old, new, occurrence?)` replaces exact text the
+way the Edit tool does, and refuses (`not_editable`) anything that touches a
+review marker or the threads region. Ambiguous text is refused with the match
+count unless `occurrence` is given. The CLI gets the same verb over the same
+shared operation, and interactive sessions can keep using the Edit tool.
+
+### Changed: prompts say where the workflow lives
+
+Headless prompts open with "Follow the Markdown Collab review workflow in your
+instructions…" instead of naming a skill that isn't installed there, because the
+skill text rides along as the system prompt. Everything after the opener is the
+same text.
+
+### Fixed: a sample threads block in a code fence became the live one
+
+A document that shows the storage format, such as a README or the walkthrough,
+carries an example `<!--mc:threads:begin-->` block inside a fenced code block.
+The parser took the last begin marker at face value, so the first comment on
+such a file was written inside the fence, and the sample's own thread came back
+unanchored. The headless end-to-end run found it on the walkthrough document.
+Markers inside code were already inert for anchors; the threads region now
+follows the same rule. A region at the end of the file is always accepted, so an
+unterminated fence earlier in the document can't hide it.
+
+### Fixed: tool refusals logged as "unknown"
+
+The log line for a refused tool call read the refusal code from the wrong level
+of the result, so every refusal was logged with code `unknown`.
+
+## 0.35.1 — 2026-09-27 (GitHub only)
+
+### Added: a title-bar icon and keybindings (10x-plan-4 P2.1)
+
+The review view finally has a way in that isn't the command palette: a comment
+icon in the title bar of every Markdown file, next to the built-in preview's.
+It opens the view in the current editor group, as 0.34.94 settled.
+
+Three keybindings, all scoped to Markdown:
+
+- `Cmd+K Cmd+Alt+V` opens the review view.
+- `Cmd+K Cmd+Alt+M` comments on the selection.
+- `Cmd+K Cmd+Alt+N` jumps to the next unread thread from Claude.
+
+On Windows and Linux they are the same with `Ctrl`. Round 3 of the plan had
+proposed `Cmd+K Cmd+M` and `Cmd+K Cmd+C`, but VS Code already binds both, to
+Toggle Maximize Editor Group and Add Line Comment. Taking `Cmd+K Cmd+C` in
+Markdown would have broken commenting-out for everyone who uses it. The chords
+above were checked against VS Code 1.139's own keybindings and those of its
+bundled extensions, and nothing claims them.
+
+### Added: n, p, r, e in the review view
+
+`n` and `p` walk the highlight through the threads the current filter shows,
+wrapping at both ends. When the diff overlay's change arrows are showing, they
+step through changes instead, as they already did. `r` puts the cursor in the
+highlighted thread's reply box, expanding a collapsed card first. `e` resolves
+or reopens it. There is deliberately no key for accepting a suggestion: a
+one-key accept with no visible target is a footgun. A muted line under the
+filters names the keys, and says "changes" instead of "threads" whenever that
+is what `n` and `p` will do. The scrolls these keys trigger respect
+`prefers-reduced-motion`.
+
+"Next unread from Claude", the new keys, and the jump to Claude's first finding
+after a review now share one routine for "make this the thread the reviewer is
+looking at". There used to be three copies of it.
+
+## 0.35.0 — 2026-09-27 (GitHub only)
+
+### Removed: the `mcp`, `channel`, and `mcp-channel` send modes (10x-plan-4 P0.3)
+
+Five send modes were three ideas under five names. `channel` (an event log
+plus a tailer Claude had to watch with `Monitor`) and `mcp-channel` (Claude
+Code's research-preview channels, which only accept allowlisted plugins and so
+could never reach a `server:` entry outside
+`--dangerously-load-development-channels`) existed for harness setups that no
+longer describe how anyone runs Claude Code. `mcp` was `terminal` plus one line
+of prompt.
+
+All three are gone, with `src/transports/eventLog.ts`,
+`src/transports/mcpChannel.ts`, and the `mdc-tail.mjs` / `mdc-channel.mjs`
+helpers. The skill installer deletes those two helpers if an older install left
+them behind. A `markdownCollab.sendMode` setting or a remembered workspace
+choice of `mcp`, `channel`, `mcp-channel`, or the ancient `ipc` now behaves as
+`terminal`, with one toast per workspace saying so.
+
+### Changed: every send asks Claude to use the review tools if it has them
+
+The line that used to be the whole of `mcp` mode now goes out on every terminal
+and clipboard send. It is worded to be harmless when the tools are absent, since
+the skill already falls back to the `mdc` CLI. Nobody has to pick a mode to get
+undoable, checked edits any more; registering the tools is enough.
+
+### Changed: "Claude is working…" is earned by a tool call, not by the mode
+
+Every dispatch now starts as an inferred wait. The first real tool call against
+the document upgrades it to a protocol-backed one, mid-flight, and the closing
+`mc_check` clears it whichever grade it reached. Before, the grade was fixed at
+dispatch by which mode you had picked.
+
+### Changed: a picker with two choices, in plain words
+
+"Send to your Claude terminal (recommended)" and "Copy to clipboard". The item
+list is a pure builder now, and a test holds it and the settings enum in
+lockstep. The settings descriptions say when you would want each mode instead
+of how it is implemented.
+
+### Changed: the skill is 30% shorter
+
+6,477 words down to 4,570. The channel sections are gone, the MCP-tool and CLI
+reference tables are one table, and "Anti-patterns" folded into the invariants
+it repeated. The Review Mode rubric, the worked examples, the no-upper-bound
+rule, and the hand-editing appendix are untouched. A test caps it at 5,000
+words; the cap counts words rather than lines, because un-wrapping a paragraph
+shrinks the line count without removing anything Claude has to read.
+
+README, walkthrough, Settings, Commands, Storage layout, and Troubleshooting
+dropped their channel-mode material.
+
+## 0.34.97 — 2026-09-27 (GitHub only)
+
+### Changed: `extension.ts` split into per-family command modules (10x-plan-4 P3.2)
+
+`extension.ts` had grown to 1848 lines: activation, every command
+registration, and all of the send, dispatch, picker, review, and comment logic
+in one file. Each command family now lives in its own module under
+`src/commands/` (send, review, comments, setup, diagnostics) behind a
+`registerXCommands(deps)` entry point, and `extension.ts` is activation and
+wiring only, at 198 lines. A test keeps it under 400.
+
+Purely internal: no command id, setting, string, or behavior changed. Every
+moved function is byte-identical to the original. The guard tests that read
+`extension.ts` as text now read the modules the logic moved to, and each was
+checked to still fail when the thing it forbids is reintroduced.
+
+This lands first because the rest of round 4 adds code to the send path, and
+it should land in the right file.
+
 ## 0.34.96 — 2026-09-06 (GitHub only)
 
 ### Fixed: "Remove resolved" and "Finalize document" left the file unsaved

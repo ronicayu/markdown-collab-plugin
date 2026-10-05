@@ -1,33 +1,39 @@
-// "Claude is working…" — which threads are awaiting a reply (10x-plan P1.2),
-// and how sure we are (10x-plan-2 P0.2).
+// "Claude is working…" — which threads are awaiting a reply, and how sure we are.
 //
-// Sending comments to Claude is the one moment in the workflow with no
-// feedback: you click, the payload goes out, and nothing changes until the
-// file is rewritten underneath you. The extension already knows more than it
-// shows — it dispatched a payload for specific threads and hasn't seen a reply
-// land in the threads block yet — so this turns that knowledge into a per-card
-// indicator.
+// The extension dispatched a payload for specific threads and hasn't seen a
+// reply land in the threads block yet; this turns that knowledge into a
+// per-card indicator.
 //
 // There are two grades of knowledge here, and the difference matters:
 //
-//   "inferred"  — a payload went out over a transport with no back channel
-//                 (terminal paste, event log). Resolution is comment-shaped:
-//                 a thread stops waiting when a comment authored by Claude
-//                 appears that wasn't there at dispatch. A timeout exists only
-//                 because a dispatch can go unanswered forever (the user closed
-//                 Claude, the paste never ran) and a permanent "working…" is a
-//                 lie — not because elapsed time means anything.
+//   "inferred"  — every dispatch starts here. Resolution is
+//                 comment-shaped: a thread stops waiting when a comment
+//                 authored by Claude appears that wasn't there at dispatch. A
+//                 timeout exists only because a dispatch can go unanswered
+//                 forever (the user closed Claude, the paste never ran) and a
+//                 permanent "working…" is a lie — not because elapsed time
+//                 means anything.
 //
-//   "protocol"  — the dispatch asked Claude to work through the extension's MCP
-//                 tools, so the tool calls themselves are evidence. A call says
+//   "protocol"  — Claude actually called one of the extension's MCP tools, so
+//                 the tool calls themselves are evidence — a call upgrades any
+//                 "inferred" wait on that document (`noteActivity`), says
 //                 "active", `mc_status` says what phase, and the pass's final
-//                 `mc_check` says finished. The timeout stops being a guess
-//                 about Claude's lifetime and becomes a silence detector: it
-//                 runs from the last signal, not from dispatch, so a long pass
-//                 that keeps reporting never expires mid-work.
+//                 `mc_check` (`noteComplete`) says finished. The timeout stops
+//                 being a guess about Claude's lifetime and becomes a silence
+//                 detector: it runs from the last signal, not from dispatch, so
+//                 a long pass that keeps reporting never expires mid-work.
 //
 // Pure and vscode-free: the tracker takes an injected clock and scheduler so
 // the expiry path is testable without waiting ten minutes.
+//
+// Naming the agent (the wording rule: name the agent when the code knows it,
+// say "the agent" when it doesn't): an "inferred" wait names no one — the
+// extension only knows it sent something, not who read it. A "protocol" wait's
+// evidence IS a tool call, and a tool call carries the calling agent's slug,
+// so `noteActivity`/`noteComplete` learn it there and `pendingLabel` names
+// whichever agent is actually doing the work.
+
+import { agentDisplayName, isAgentComment, sentenceLead, WAITING_FOR_AGENT } from "../agentIdentity";
 
 /** How long a thread may wait, with no signal at all, before we stop claiming Claude is working on it. */
 export const PENDING_TIMEOUT_MS = 10 * 60 * 1000;
@@ -50,14 +56,12 @@ export interface PendingThread {
   lastSignal: number;
 }
 
-/** The shape this module needs from a parsed thread. */
 export interface PendingInputThread {
   id: string;
   status: "open" | "resolved";
-  comments: Array<{ author: string; deleted?: boolean }>;
+  comments: Array<{ author: string; deleted?: boolean; agent?: boolean }>;
 }
 
-/** What the views need to render the wait. */
 export interface PendingStatus {
   threadIds: string[];
   /** The strongest evidence among the waiting threads. */
@@ -66,13 +70,19 @@ export interface PendingStatus {
   phase?: string;
   /** True once Claude has actually called a tool for this document. */
   active: boolean;
+  /**
+   * The agent slug protocol evidence was last recorded under, when there is
+   * any (`noteActivity`/`noteComplete` learn it from the tool call). Absent
+   * for a purely "inferred" wait — that path never learns who picked up the
+   * terminal send, and it is always Claude anyway.
+   */
+  agent?: string;
 }
 
-function liveComments(t: PendingInputThread): Array<{ author: string; deleted?: boolean }> {
+function liveComments(t: PendingInputThread): Array<{ author: string; deleted?: boolean; agent?: boolean }> {
   return t.comments.filter((c) => !c.deleted);
 }
 
-/** Snapshot the threads a dispatch covers, so their replies can be detected. */
 export function snapshotPending(
   threads: PendingInputThread[],
   threadIds: string[],
@@ -94,23 +104,21 @@ export function snapshotPending(
 /**
  * Has this thread been answered since its snapshot?
  *
- * Answered means: a new comment arrived AND the last one is Claude's. Counting
- * alone would clear the indicator when the *human* adds a note while waiting;
- * checking only the author would clear it on a thread Claude had already
- * replied to before the dispatch.
+ * Answered means: a new comment arrived AND the last one is an agent's (any
+ * agent — whichever one picked up the reply, the human isn't the one still owed
+ * an answer). Counting alone would clear the indicator when the *human* adds a
+ * note while waiting; checking only the author would clear it on a thread an
+ * agent had already replied to before the dispatch.
  */
 export function isAnswered(snapshot: PendingThread, thread: PendingInputThread | undefined): boolean {
   if (!thread) return true; // deleted while waiting — nothing left to wait for
   if (thread.status === "resolved") return true;
   const live = liveComments(thread);
   if (live.length <= snapshot.commentCount) return false;
-  return live[live.length - 1]!.author === "claude";
+  return isAgentComment(live[live.length - 1]!);
 }
 
-/**
- * The snapshots still waiting: not yet answered, not yet silent for too long.
- * Threads that have been answered or that have aged out drop off the list.
- */
+/** The snapshots still waiting: not yet answered, not yet silent for too long. */
 export function stillPending(
   snapshots: PendingThread[],
   threads: PendingInputThread[],
@@ -123,12 +131,13 @@ export function stillPending(
   );
 }
 
-/** Per-document protocol state, separate from the per-thread snapshots. */
 interface DocSignals {
   /** Claude has called at least one tool since the dispatch. */
   active: boolean;
   /** Latest `mc_status` note. */
   phase?: string;
+  /** Slug of the agent the last tool call for this document came from. */
+  agent?: string;
 }
 
 /**
@@ -161,7 +170,6 @@ export class ClaudePendingTracker {
     private readonly cancel: (t: ReturnType<typeof setTimeout>) => void = (t) => clearTimeout(t),
   ) {}
 
-  /** Record that a payload covering `threadIds` just went out for `docKey`. */
   public mark(
     docKey: string,
     threads: PendingInputThread[],
@@ -186,14 +194,20 @@ export class ClaudePendingTracker {
   /**
    * Claude called a tool against this document. Upgrades the wait from "sent"
    * to "active", records the phase when one came with it, and pushes the
-   * silence deadline out — this is the signal the timeout used to stand in for.
+   * silence deadline out.
+   *
+   * A tool call is itself protocol evidence, whatever the wait started as: every
+   * dispatch is marked "inferred" up front, so this is the only place a wait
+   * ever becomes "protocol" — and it upgrades every snapshot for the document,
+   * not just ones that already had it.
    */
-  public noteActivity(docKey: string, opts: { phase?: string } = {}): void {
+  public noteActivity(docKey: string, opts: { phase?: string; agent?: string } = {}): void {
     const snapshots = this.byDoc.get(docKey);
     const previous = this.signals.get(docKey);
     const next: DocSignals = {
       active: true,
       phase: opts.phase ?? previous?.phase,
+      agent: opts.agent ?? previous?.agent,
     };
     this.signals.set(docKey, next);
     if (!snapshots || snapshots.length === 0) {
@@ -204,7 +218,7 @@ export class ClaudePendingTracker {
     const now = this.now();
     this.byDoc.set(
       docKey,
-      snapshots.map((s) => (s.evidence === "protocol" ? { ...s, lastSignal: now } : s)),
+      snapshots.map((s) => ({ ...s, evidence: "protocol", lastSignal: now })),
     );
     this.armTimer(docKey);
     this.onChange(docKey);
@@ -216,15 +230,17 @@ export class ClaudePendingTracker {
    * of them, and dropping it would leave the row silent for exactly the long
    * passes the beacon exists for.
    */
-  public noteActivityEverywhere(opts: { phase?: string } = {}): void {
+  public noteActivityEverywhere(opts: { phase?: string; agent?: string } = {}): void {
     for (const docKey of [...this.byDoc.keys()]) this.noteActivity(docKey, opts);
   }
 
   /**
    * Claude finished its pass on this document — the skill's closing `mc_check`.
-   * Clears the wait outright: with a protocol signal there is nothing left to
-   * infer, and waiting for a reply-shaped file change would keep the indicator
-   * up after a pass that (legitimately) left no reply.
+   * Clears the wait outright, regardless of whether it was still "inferred" or
+   * had already been upgraded to "protocol": `mc_check` is itself a tool call,
+   * so it can be the very first signal a file gets. Waiting for a reply-shaped
+   * file change instead would keep the indicator up after a pass that
+   * (legitimately) left no reply.
    */
   public noteComplete(docKey: string): void {
     const had = (this.byDoc.get(docKey)?.length ?? 0) > 0;
@@ -243,7 +259,6 @@ export class ClaudePendingTracker {
     return this.status(docKey, threads).threadIds;
   }
 
-  /** The full wait state for a document: ids plus how much we actually know. */
   public status(docKey: string, threads: PendingInputThread[]): PendingStatus {
     const snapshots = this.byDoc.get(docKey);
     if (!snapshots || snapshots.length === 0) {
@@ -263,6 +278,7 @@ export class ClaudePendingTracker {
       evidence: remaining.some((s) => s.evidence === "protocol") ? "protocol" : "inferred",
       phase: signals?.phase,
       active: signals?.active ?? false,
+      agent: signals?.agent,
     };
   }
 
@@ -283,7 +299,22 @@ export class ClaudePendingTracker {
       evidence: snapshots.some((s) => s.evidence === "protocol") ? "protocol" : "inferred",
       phase: signals?.phase,
       active: signals?.active ?? false,
+      agent: signals?.agent,
     };
+  }
+
+  public unmark(docKey: string, threadIds: string[]): void {
+    const snapshots = this.byDoc.get(docKey);
+    if (!snapshots) return;
+    const left = snapshots.filter((s) => !threadIds.includes(s.threadId));
+    if (left.length === snapshots.length) return;
+    if (left.length === 0) {
+      this.clear(docKey);
+    } else {
+      this.byDoc.set(docKey, left);
+      this.armTimer(docKey);
+    }
+    this.onChange(docKey);
   }
 
   public clear(docKey: string): void {
@@ -340,10 +371,19 @@ export class ClaudePendingTracker {
  * The line the views show under a waiting thread. Protocol-grade evidence earns
  * a specific claim; inferred evidence keeps the vaguer one, because it is a
  * guess and should read like one.
+ *
+ * The wording rule: name the agent when the code knows which one, otherwise
+ * say "the agent". An inferred wait is only a guess that something read the
+ * prompt, and the extension doesn't know who — "Waiting for the agent…". A
+ * protocol wait names whichever agent's tool call actually earned it, and reads
+ * generic ("Agent: …", "The agent is working…") when a caller has evidence but
+ * hasn't learned who from (`status`/`peek` built before any tool call carried
+ * a slug).
  */
-export function pendingLabel(status: Pick<PendingStatus, "evidence" | "phase" | "active">): string {
-  if (status.evidence !== "protocol") return "Claude is working…";
-  if (status.phase) return `Claude: ${status.phase}`;
-  if (status.active) return "Claude is working on this file…";
-  return "Sent to Claude…";
+export function pendingLabel(status: Pick<PendingStatus, "evidence" | "phase" | "active" | "agent">): string {
+  if (status.evidence !== "protocol") return WAITING_FOR_AGENT;
+  const agent = agentDisplayName(status.agent ?? "agent");
+  if (status.phase) return `${agent.noun}: ${status.phase}`;
+  if (status.active) return `${sentenceLead(agent)} is working on this file…`;
+  return `Sent to ${agent.sentence}…`;
 }

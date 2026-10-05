@@ -1,11 +1,8 @@
 // Summarize a disk-side (Claude / external) prose change for the live editor's
-// presence affordances (10x-plan P1.2).
-//
-// Given the editor's previous prose and the new prose, compute the single
-// changed span (a prefix/suffix diff — good enough to point the eye at "what
-// changed") and the nearest heading above it, so the editor can flash the span
-// and show "Claude edited §Heading". Pure and offset-based; the webview maps
-// the returned prose range to editor positions.
+// presence affordances: the single changed span (a prefix/suffix diff — enough
+// to point the eye at "what changed") and the nearest heading above it, so the
+// editor can flash the span and show "Claude edited §Heading". Offset-based;
+// the webview maps the returned prose range to editor positions.
 
 export interface ChangeSummary {
   /** Changed span in the NEW prose, half-open `[start, end)`. */
@@ -49,7 +46,6 @@ export function summarizeChange(oldText: string, newText: string): ChangeSummary
   return { start, end, text: newText.slice(start, end), heading: nearestHeadingAbove(newText, start) };
 }
 
-/** `externalChange` push that brings the live editor up to date after a host-side write. */
 export interface ProseRefreshMessage {
   type: "externalChange";
   text: string;

@@ -1,5 +1,4 @@
-// The raw-editor providers, driven through VS Code's own provider commands
-// (10x-plan-3 P0.1 / P0.3).
+// The raw-editor providers, driven through VS Code's own provider commands.
 //
 // `setDecorations` is write-only, so decorations themselves can't be read back
 // — the pure range model is unit-tested instead, and what is asserted here is

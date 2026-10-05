@@ -1,10 +1,4 @@
-// A human-readable summary of a review pass (10x-plan-2 P3.2).
-//
-// After a pass the state is all there — who opened what, what got resolved,
-// which suggestions are still waiting — but reading it means scrolling a sidebar
-// thread by thread. The thing people actually want next is a paragraph they can
-// paste into a PR description or a message: what was reviewed, what came out of
-// it, what is still open.
+// A human-readable summary of a review pass, for pasting into a PR description or a message.
 //
 // A pure function over parsed documents. No Claude round-trip: everything it
 // says is already in the files, and asking a model to restate facts it can read
@@ -12,6 +6,7 @@
 
 import type { InlineThread, ParsedDocument } from "./inlineComments/format";
 import { staleThreadIds } from "./inlineComments/staleness";
+import { agentDisplayName, agentGroupLabel, isAgentComment } from "./agentIdentity";
 
 export interface DigestFile {
   /** Workspace-relative path. */
@@ -30,7 +25,7 @@ export interface DigestCounts {
   /** Open threads Claude answered and the human hasn't come back to. */
   awaitingHuman: number;
   suggestions: number;
-  /** Threads whose anchored text moved after their last comment (P1.3). */
+  /** Threads whose anchored text moved after their last comment. */
   stale: number;
 }
 
@@ -55,11 +50,15 @@ export function countsFor(parsed: ParsedDocument): DigestCounts {
     if (t.status === "resolved") counts.resolved++;
     else counts.open++;
     const live = t.comments.filter((c) => !c.deleted);
-    if (live[0]?.author === "claude") counts.fromClaude++;
+    // Names stay per-field (fromClaude/awaitingClaude/awaitingHuman) — renaming
+    // them is churn a digest reader never sees — but the check underneath is
+    // "any agent", not the literal "claude": a thread Codex
+    // opened or answered counts here exactly like one of Claude's would.
+    if (live[0] && isAgentComment(live[0])) counts.fromClaude++;
     if (stale.has(t.id)) counts.stale++;
     if (t.status === "open") {
       const last = lastLive(t);
-      if (last?.author === "claude") counts.awaitingHuman++;
+      if (last && isAgentComment(last)) counts.awaitingHuman++;
       else if (last) counts.awaitingClaude++;
     }
   }
@@ -70,15 +69,12 @@ function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-/** First line of a comment body, trimmed for a bullet. */
 function gist(body: string, max = 120): string {
   const line = body.split("\n").find((l) => l.trim().length > 0)?.trim() ?? "";
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
 /**
- * The digest as Markdown.
- *
  * Written to be pasted somewhere else, so: no VS Code-only affordances, thread
  * ids included (they are how a reader finds the thread), and quotes trimmed to
  * one line so a long anchor doesn't swallow the summary.
@@ -127,9 +123,28 @@ export function buildReviewDigest(
   );
 
   // What the reader has to do next, stated before the detail.
+  //
+  // `awaitingHuman` names whichever agent(s) actually answered (the wording
+  // rule: name the agent when the code knows it) — that's a fact about the
+  // document, knowable the same way the per-thread "from Claude" flag is.
+  // `awaitingClaude` is a thread nobody has answered YET, so there is no agent
+  // to name: it says "an agent", same as `agentGroupLabel` reading generic for
+  // an empty group.
+  const answeredBy = new Set<string>();
+  for (const f of files) {
+    for (const t of f.parsed.threads) {
+      if (t.status !== "open") continue;
+      const last = lastLive(t);
+      if (last && isAgentComment(last)) answeredBy.add(last.author.toLowerCase());
+    }
+  }
   const next: string[] = [];
-  if (totals.awaitingHuman > 0) next.push(`${totals.awaitingHuman} waiting on you to read Claude's reply`);
-  if (totals.awaitingClaude > 0) next.push(`${totals.awaitingClaude} not yet answered by Claude`);
+  if (totals.awaitingHuman > 0) {
+    const agent = agentGroupLabel(answeredBy);
+    const whose = agent.noun === "Agents" ? "the agents'" : `${agent.sentence}'s`;
+    next.push(`${totals.awaitingHuman} waiting on you to read ${whose} reply`);
+  }
+  if (totals.awaitingClaude > 0) next.push(`${totals.awaitingClaude} not yet answered by an agent`);
   if (totals.suggestions > 0) next.push(`${totals.suggestions} suggestion(s) to accept or reject`);
   if (totals.stale > 0) next.push(`${totals.stale} anchored on text that has since changed`);
   if (next.length > 0) lines.push(`**Still open:** ${next.join("; ")}.`, "");
@@ -150,7 +165,7 @@ export function buildReviewDigest(
       for (const t of open) {
         const live = t.comments.filter((c2) => !c2.deleted);
         const flags: string[] = [];
-        if (live[0]?.author === "claude") flags.push("from Claude");
+        if (live[0] && isAgentComment(live[0])) flags.push(`from ${agentDisplayName(live[0].author).noun}`);
         if (stale.has(t.id)) flags.push("text changed since");
         const suffix = flags.length > 0 ? ` _(${flags.join(", ")})_` : "";
         lines.push(`- **\`${t.id}\`** on "${gist(t.quote, 60)}" — ${gist(live[0]?.body ?? "")}${suffix}`);

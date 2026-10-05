@@ -1,16 +1,3 @@
-/**
- * Preview-mode PR review surface. Renders the head-side markdown of a
- * changed file in a webview, paints a left stripe along any rendered
- * block whose source byte range overlaps an added-line range from the
- * PR diff, and lets the reviewer select prose to draft a PR comment.
- *
- * Storage stays with `PrReviewController` (workspaceState drafts). This
- * panel is a UI layer over the same draft store the legacy source-mode
- * CommentController used.
- *
- * One panel per (file, PR) pair, keyed by `${prKey}:${relPath}`.
- */
-
 import * as crypto from "crypto";
 import * as path from "path";
 import * as vscode from "vscode";
@@ -19,6 +6,7 @@ import {
   type LineRange,
 } from "./diff";
 import { stripAllInlineMarkup } from "../inlineComments/format";
+import { prReviewAppBody } from "./prReviewShell";
 import type {
   ExistingPrComment,
   PrContext,
@@ -35,7 +23,8 @@ interface DraftHost {
   deleteDraft(id: string): Promise<void>;
   submit(verdict: ReviewVerdict, body: string | undefined): Promise<void>;
   getExistingCommentsFor(relPath: string): Promise<ExistingPrComment[]>;
-  replyToExisting(threadId: string, body: string): Promise<{ url: string }>;
+  replyToExisting(relPath: string, threadId: string, body: string): Promise<{ url: string }>;
+  resolveThread(relPath: string, resolveId: string, resolved: boolean): Promise<void>;
 }
 
 interface InitMessage {
@@ -63,6 +52,12 @@ interface ExistingCommentsMessage {
 interface ReplyErrorMessage {
   type: "reply-error";
   threadId: string;
+  error: string;
+}
+
+interface ResolveThreadErrorMessage {
+  type: "resolve-thread-error";
+  resolveId: string;
   error: string;
 }
 
@@ -101,13 +96,20 @@ interface ReplyRequest {
   body: string;
 }
 
+interface ResolveThreadRequest {
+  type: "resolve-thread";
+  resolveId: string;
+  resolved: boolean;
+}
+
 type ClientToHost =
   | ReadyMessage
   | AddDraftRequest
   | EditDraftRequest
   | DeleteDraftRequest
   | SubmitRequest
-  | ReplyRequest;
+  | ReplyRequest
+  | ResolveThreadRequest;
 
 const VIEW_TYPE = "markdownCollab.prReviewView";
 const panels = new Map<string, PrReviewPanel>();
@@ -156,10 +158,9 @@ export class PrReviewPanel {
   }
 
   /**
-   * Fully re-render every open panel for this PR — re-reads the file from
-   * disk, recomputes diff ranges, and re-fetches platform comments. Used by
-   * the Changed Files refresh button. The caller is responsible for clearing
-   * any cached comments on the shared host first.
+   * Re-reads the file from disk, recomputes diff ranges, and re-fetches platform
+   * comments. Used by the Changed Files refresh button; the caller must clear any
+   * cached comments on the shared host first.
    */
   static refreshAll(prCtx: PrContext): void {
     const prefix = `${prKeyFor(prCtx)}::`;
@@ -224,8 +225,7 @@ export class PrReviewPanel {
       plantuml: readPlantumlConfig(),
     };
     await this.panel.webview.postMessage(msg);
-    // Existing comments arrive after init so the preview renders fast;
-    // they show up in the sidebar once the API call settles.
+    // Existing comments arrive after init so the preview renders fast.
     void this.host.getExistingCommentsFor(this.relPath).then(async (comments) => {
       const m: ExistingCommentsMessage = { type: "existing-comments", comments };
       await this.panel.webview.postMessage(m);
@@ -265,18 +265,18 @@ export class PrReviewPanel {
         return this.host.submit(msg.verdict, msg.body);
       case "reply":
         return this.handleReply(msg.threadId, msg.body);
+      case "resolve-thread":
+        return this.handleResolveThread(msg.resolveId, msg.resolved);
     }
   }
 
   /**
-   * Post a reply to an existing comment thread, then re-fetch this file's
-   * comments and push them so the reply shows nested under its thread. On
-   * failure, tell the webview (so it re-enables the composer) and surface
-   * the error to the user.
+   * Post a reply, then re-fetch and push this file's comments. On failure, tell the
+   * webview (so it re-enables the composer) and surface the error to the user.
    */
   private async handleReply(threadId: string, body: string): Promise<void> {
     try {
-      await this.host.replyToExisting(threadId, body);
+      await this.host.replyToExisting(this.relPath, threadId, body);
       const comments = await this.host.getExistingCommentsFor(this.relPath);
       const m: ExistingCommentsMessage = { type: "existing-comments", comments };
       await this.panel.webview.postMessage(m);
@@ -285,6 +285,28 @@ export class PrReviewPanel {
       const m: ReplyErrorMessage = { type: "reply-error", threadId, error };
       await this.panel.webview.postMessage(m);
       void vscode.window.showErrorMessage(`Failed to post reply: ${error}`);
+    }
+  }
+
+  /**
+   * Resolve or unresolve a thread, then re-fetch and push this file's comments — the
+   * confirmed `resolved` value drives the card's collapse in the webview, not an
+   * optimistic guess here. On failure, tell the webview (so it re-enables the button)
+   * and surface the platform's own error message to the user.
+   */
+  private async handleResolveThread(resolveId: string, resolved: boolean): Promise<void> {
+    try {
+      await this.host.resolveThread(this.relPath, resolveId, resolved);
+      const comments = await this.host.getExistingCommentsFor(this.relPath);
+      const m: ExistingCommentsMessage = { type: "existing-comments", comments };
+      await this.panel.webview.postMessage(m);
+    } catch (e) {
+      const error = (e as Error).message ?? String(e);
+      const m: ResolveThreadErrorMessage = { type: "resolve-thread-error", resolveId, error };
+      await this.panel.webview.postMessage(m);
+      void vscode.window.showErrorMessage(
+        `Failed to ${resolved ? "resolve" : "unresolve"} thread: ${error}`,
+      );
     }
   }
 
@@ -318,46 +340,7 @@ export class PrReviewPanel {
 <title>PR review</title>
 </head>
 <body>
-<div id="app">
-  <div id="preview-pane">
-    <header id="preview-toolbar">
-      <span id="diff-nav" hidden>
-        <button id="diff-prev" class="btn-link" title="Previous change (p)" aria-label="Previous change">↑</button>
-        <span id="diff-nav-count"></span>
-        <button id="diff-next" class="btn-link" title="Next change (n)" aria-label="Next change">↓</button>
-      </span>
-    </header>
-    <article id="preview"></article>
-    <button id="floating-add" hidden>+ Comment on selection</button>
-  </div>
-  <aside id="drafts-pane">
-    <header id="drafts-header">
-      <div class="title-row">
-        <h2>Drafts</h2>
-        <span id="draft-count"></span>
-      </div>
-      <p class="hint">Click a draft to jump to its line.</p>
-    </header>
-    <div id="drafts-list"></div>
-    <div id="composer" hidden></div>
-    <section id="existing-section" hidden>
-      <h3 class="section-title">Existing comments</h3>
-      <div id="existing-filter" role="radiogroup" aria-label="Filter existing comments" hidden></div>
-      <p id="existing-status" class="hint">Loading…</p>
-      <div id="existing-list"></div>
-    </section>
-    <footer id="submit-bar">
-      <div class="verdict-row" role="radiogroup" aria-label="Review verdict">
-        <label><input type="radio" name="verdict" value="comment" checked> Comment</label>
-        <label><input type="radio" name="verdict" value="approve"> Approve</label>
-        <label><input type="radio" name="verdict" value="request-changes"> Request changes</label>
-      </div>
-      <textarea id="review-body" rows="2" placeholder="Optional review summary (posted alongside the inline comments)"></textarea>
-      <button id="submit-review" type="button" disabled>Submit review</button>
-      <p id="submit-hint" class="hint">No drafts yet.</p>
-    </footer>
-  </aside>
-</div>
+${prReviewAppBody()}
 <script src="${mermaidUri}"></script>
 <script src="${scriptUri}"></script>
 </body>

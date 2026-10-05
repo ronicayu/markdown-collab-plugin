@@ -1,4 +1,4 @@
-// Contract tests for the inline-comments host↔webview protocol (10x-plan P2.4).
+// Contract tests for the inline-comments host↔webview protocol.
 //
 // Each test is a recorded message applied to a document, asserting the
 // document that comes back. This is the layer the CHANGELOG's regression
@@ -415,7 +415,7 @@ describe("addThread offset contract", () => {
   });
 });
 
-// 10x-plan-2 P3.3: accepting suggestions one at a time is fine for one; a
+// Accepting suggestions one at a time is fine for one; a
 // review pass that proposes twelve makes it a chore with twelve chances to
 // mis-click.
 describe("accept-all-suggestions", () => {
@@ -464,5 +464,35 @@ Suggest mode ships behind a setting.
     expect(result.warning).toContain("skipped 1");
     expect(parse(result.source).suggestions).toHaveLength(1);
     expect(parse(result.source).suggestions[0]!.anchorId).toBe(orphanId);
+  });
+});
+
+// `via` names the path an agent's write took. The human's own
+// comments from the view carry none, and editing an agent's comment leaves the
+// record of how it arrived alone.
+describe("via", () => {
+  const seeded = () => {
+    const at = DOC.indexOf("exponential backoff");
+    return addThread(DOC, at, at + "exponential backoff".length, {
+      author: "codex",
+      agent: true,
+      via: "tools",
+      body: "cap is 30s",
+      ts: TS,
+    });
+  };
+
+  it("a comment or reply from the view carries none", () => {
+    const opened = commentOn(DOC, "exponential backoff", "which cap?").source;
+    const id = parse(opened).threads[0]!.id;
+    const replied = apply(opened, { type: "reply", threadId: id, body: "and why?" }).source;
+    expect(parse(replied).threads[0]!.comments.every((c) => !("via" in c))).toBe(true);
+    expect(replied).not.toContain('"via"');
+  });
+
+  it("editing an agent's comment keeps its via", () => {
+    const { source, thread } = seeded();
+    const edited = apply(source, { type: "edit-comment", threadId: thread.id, commentId: "c1", body: "cap is 60s" }).source;
+    expect(parse(edited).threads[0]!.comments[0]).toMatchObject({ body: "cap is 60s", via: "tools" });
   });
 });

@@ -15,7 +15,7 @@
 // the bare one. Resolution would succeed but to the wrong passage.
 
 import { describe, expect, it } from "vitest";
-import { resolve } from "../anchor";
+import { resolve } from "./support/anchor";
 import { buildAnchorFromSelection } from "../collab/anchorExtractor";
 
 describe("buildAnchorFromSelection", () => {

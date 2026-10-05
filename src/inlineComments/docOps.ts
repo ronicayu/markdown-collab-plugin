@@ -1,25 +1,24 @@
 // The review operations, as pure source→source functions.
 //
-// WHY THIS EXISTS (10x-plan-2 P0.1): `mdc` (the CLI Claude runs) and the
-// extension-hosted MCP server expose the same seven verbs. Implementing them
-// twice would mean two definitions of "reply" that drift — one of them
-// eventually accepting an edit the other refuses. So the verbs live here, once,
-// as functions over a markdown string, and each front end supplies only its own
-// I/O and error reporting:
+// `mdc` (the CLI Claude runs) and the extension-hosted MCP server expose the
+// same seven verbs. Implementing them twice would mean two definitions of
+// "reply" that drift — one of them eventually accepting an edit the other
+// refuses. So the verbs live here, once, as functions over a markdown string,
+// and each front end supplies only its own I/O and error reporting:
 //
 //   mdc.ts        → readFileSync / writeFileSync, exit codes
 //   mcpServer/    → WorkspaceEdit on the open TextDocument, JSON-RPC errors
 //
 // Every mutating op validates integrity BEFORE returning, and throws rather
-// than handing back a document that is worse than the one it was given. That is
-// the difference from the CLI's original design, which wrote first and checked
-// after: a rejected operation now never reaches the file at all.
+// than handing back a document that is worse than the one it was given: a
+// rejected operation never reaches the file at all.
 
 import {
   acceptSuggestion,
   addSuggestion,
   addThread,
   appendReply,
+  inspect,
   parse,
   finalizeSource,
   rejectSuggestion,
@@ -27,33 +26,34 @@ import {
   withThreads,
   type InlineThread,
   type ReviewCheckpoint,
+  type WriteVia,
 } from "./format";
 import { checkpointFor } from "./deltaReview";
 import { checkIntegrity, type IntegrityIssue } from "./integrity";
 import { hashAnchorText, staleThreadIds, withRefreshedAnchorHash } from "./staleness";
+import { isAgentComment } from "../agentIdentity";
 
-/** Machine-readable reason an operation refused. */
 export type DocOpCode =
-  /** No thread with that id in the document. */
   | "thread_not_found"
-  /** No pending suggestion with that anchor id. */
   | "suggestion_not_found"
-  /** The quoted passage isn't in the prose. */
   | "passage_not_found"
-  /** The passage appears more than once and no occurrence was given. */
   | "passage_ambiguous"
   /** The thread/suggestion has no anchor markers, so its span can't be placed. */
   | "unanchored"
   /** The span can't carry an anchor (frontmatter, threads region, code). */
   | "not_anchorable"
-  /** An empty or inverted range was given where a passage was required. */
   | "empty_selection"
-  /** The given range falls outside the document. */
   | "out_of_range"
   /** The operation had nothing to act on; the document is unchanged. */
   | "nothing_to_do"
-  /** The result would introduce integrity problems; nothing was changed. */
-  | "integrity";
+  /**
+   * The matched text can't be edited with a plain replacement: it touches
+   * the threads region or a review marker.
+   */
+  | "not_editable"
+  | "integrity"
+  /** An argument is malformed — an `occurrence` that isn't a non-negative integer. */
+  | "invalid_arguments";
 
 /**
  * A refused operation. Carries a code so callers can map to their own error
@@ -70,7 +70,6 @@ export class DocOpError extends Error {
   }
 }
 
-/** A mutating op's output: the new source plus what to report about it. */
 export interface OpOutcome<T> {
   next: string;
   result: T;
@@ -78,21 +77,39 @@ export interface OpOutcome<T> {
 
 /**
  * Refuse a mutation that would leave the document with more integrity problems
- * than it started with. Pre-write, unlike the check-after-write the CLI used to
- * do: the caller can surface a structured refusal while the file still holds
- * its last good state.
+ * than it started with. Pre-write, so the caller can surface a structured
+ * refusal while the file still holds its last good state.
+ *
+ * `opts.expectedUnanchored` names anchor ids whose `unanchored-thread` issue is
+ * the INTENDED outcome of this write, not damage — `opEdit` passes the ids of
+ * threads whose complete marker pair it just deleted. Those specific issues are
+ * left out of the before/after count so a deliberate "broken anchor" doesn't
+ * refuse its own edit. Nothing else is exempted: an `unanchored-suggestion`
+ * issue for the same id still counts in full — a suggestion has no quote
+ * fallback, so losing one is always damage.
  */
-export function assertNoNewIssues(before: string, after: string): IntegrityIssue[] {
+export function assertNoNewIssues(
+  before: string,
+  after: string,
+  opts?: { expectedUnanchored?: ReadonlySet<string> },
+): IntegrityIssue[] {
   const wasBroken = checkIntegrity(before).issues.length;
   const report = checkIntegrity(after);
-  if (report.issues.length > wasBroken) {
-    const introduced = report.issues.length - wasBroken;
+  const expected = opts?.expectedUnanchored;
+  const countable =
+    expected && expected.size > 0
+      ? report.issues.filter(
+          (i) => !(i.kind === "unanchored-thread" && i.threadId !== undefined && expected.has(i.threadId)),
+        )
+      : report.issues;
+  if (countable.length > wasBroken) {
+    const introduced = countable.length - wasBroken;
     throw new DocOpError(
       "integrity",
-      `refusing to write — the change would introduce ${introduced} integrity problem(s): ${report.issues
+      `refusing to write — the change would introduce ${introduced} integrity problem(s): ${countable
         .map((i) => i.message)
         .join("; ")}`,
-      { issues: report.issues },
+      { issues: countable },
     );
   }
   return report.issues;
@@ -106,10 +123,30 @@ function findThread(source: string, threadId: string): InlineThread {
   return t;
 }
 
-/** Last non-deleted comment — used to decide whether a thread awaits Claude. */
 function lastLiveComment(t: InlineThread) {
   const live = t.comments.filter((c) => !c.deleted);
   return live[live.length - 1];
+}
+
+/**
+ * Validate an `occurrence` argument, from either front end: a number, or a
+ * string of digits (the CLI's flag). Absent means 0.
+ *
+ * NaN slips past every range check below — `NaN < 0` and `NaN >= n` are both
+ * false — so an unvalidated `Number("banana")` would anchor an empty thread at
+ * byte 0 and report success.
+ */
+export function parseOccurrence(value: unknown): number {
+  if (value === undefined || value === null) return 0;
+  const n = typeof value === "string" && /^\s*\d+\s*$/.test(value) ? Number(value) : value;
+  if (typeof n !== "number" || !Number.isInteger(n) || n < 0) {
+    throw new DocOpError(
+      "invalid_arguments",
+      `occurrence must be a non-negative integer (1-based; 0 means "the only one"), got ${JSON.stringify(value)}`,
+      { occurrence: value },
+    );
+  }
+  return n;
 }
 
 /**
@@ -118,6 +155,11 @@ function lastLiveComment(t: InlineThread) {
  * 1-based; 0 means "there must be exactly one".
  */
 export function locatePassage(source: string, quote: string, occurrence = 0): number {
+  parseOccurrence(occurrence);
+  // An empty needle matches everywhere and never advances the scan below.
+  if (quote === "") {
+    throw new DocOpError("empty_selection", "quote must not be empty — give the exact text to anchor to", { quote });
+  }
   const parsed = parse(source);
   const limit = parsed.threadsRegion ? parsed.threadsRegion.start : source.length;
   const hits: number[] = [];
@@ -156,17 +198,19 @@ export interface ListedThread {
   status: "open" | "resolved";
   quote: string;
   anchored: boolean;
-  /** The live text between the markers — what the reviewer is pointing at. */
   anchoredText: string | null;
-  /** The anchored text changed after the thread's last comment (P1.3). */
+  /** The anchored text changed after the thread's last comment. */
   stale: boolean;
-  comments: Array<{ id: string; author: string; ts: string; body: string }>;
+  /** `via` only on a comment the tools or the CLI wrote. */
+  comments: Array<{ id: string; author: string; ts: string; body: string; via?: WriteVia }>;
 }
 
 export interface ListedSuggestion {
   anchorId: string;
   threadId?: string;
   author: string;
+  /** Same as a listed comment's `via`. */
+  via?: WriteVia;
   anchored: boolean;
   original: string;
   proposed: string;
@@ -182,7 +226,10 @@ export interface ListResult {
 
 /**
  * The document's review state. `actionable` narrows to threads that are open
- * and whose last word is not Claude's — the ones still owed a reply.
+ * and whose last comment isn't an agent's — the ones still owed a reply.
+ *
+ * "Not an agent's" rather than "not Claude's": a reply from ANY agent — Codex
+ * answering a thread Claude opened, say — means the human isn't waiting.
  */
 export function opList(source: string, actionable = false): ListResult {
   const parsed = parse(source);
@@ -192,7 +239,7 @@ export function opList(source: string, actionable = false): ListResult {
       if (!actionable) return true;
       if (t.status !== "open") return false;
       const last = lastLiveComment(t);
-      return last !== undefined && last.author !== "claude";
+      return last !== undefined && !isAgentComment(last);
     })
     .map((t) => {
       const a = parsed.anchors.get(t.id);
@@ -207,7 +254,7 @@ export function opList(source: string, actionable = false): ListResult {
         stale: stale.has(t.id),
         comments: t.comments
           .filter((c) => !c.deleted)
-          .map((c) => ({ id: c.id, author: c.author, ts: c.ts, body: c.body })),
+          .map((c) => ({ id: c.id, author: c.author, ts: c.ts, body: c.body, ...(c.via ? { via: c.via } : {}) })),
       };
     });
   const suggestions = parsed.suggestions.map((s) => {
@@ -216,6 +263,7 @@ export function opList(source: string, actionable = false): ListResult {
       anchorId: s.anchorId,
       threadId: s.threadId,
       author: s.author,
+      ...(s.via ? { via: s.via } : {}),
       anchored: a !== undefined,
       original: s.original,
       proposed: s.proposed,
@@ -230,36 +278,53 @@ export function opList(source: string, actionable = false): ListResult {
   };
 }
 
+/**
+ * Append a reply. `agent` is true for every front end today; it is a parameter
+ * so the reopen rule below is decided by the comment actually written, not
+ * assumed.
+ *
+ * An agent replying to a resolved thread reopens it: the sidebar shows Open by
+ * default, so an answer left on a resolved thread lands where the human isn't
+ * looking. A human replying keeps the status they chose. `reopened` says which
+ * happened, so the caller never has to diff the status itself.
+ *
+ * `via` is the front end's own name for the path the write took — `"tools"`
+ * from the MCP server, `"cli"` from `mdc` writing directly. Left undefined, the
+ * comment carries no such field.
+ */
 export function opReply(
   source: string,
   threadId: string,
   body: string,
   now = () => new Date().toISOString(),
-): OpOutcome<{ threadId: string; commentId: string }> {
+  author = "claude",
+  agent = true,
+  via?: WriteVia,
+): OpOutcome<{ threadId: string; commentId: string; reopened: boolean }> {
   const thread = findThread(source, threadId);
+  const appended = appendReply(thread, { author, agent, via, body, ts: now() });
+  const reply = appended.comments[appended.comments.length - 1]!;
+  const reopened = thread.status === "resolved" && isAgentComment(reply);
   // Claude just read this passage to answer about it, so its reply is the new
-  // baseline for "text changed since this comment" (P1.3).
+  // baseline for "text changed since this comment".
   const replied = withRefreshedAnchorHash(
     parse(source),
-    appendReply(thread, { author: "claude", body, ts: now() }),
+    reopened ? { ...appended, status: "open", resolvedBy: undefined, resolvedTs: undefined } : appended,
   );
   const next = replaceThread(source, threadId, replied);
   assertNoNewIssues(source, next);
   const updated = findThread(next, threadId);
   return {
     next,
-    result: { threadId, commentId: updated.comments[updated.comments.length - 1]!.id },
+    result: { threadId, commentId: updated.comments[updated.comments.length - 1]!.id, reopened },
   };
 }
 
 /**
- * Replace the text between a thread's markers.
- *
- * This is the operation the skill's marker-surgery instructions were for, and
- * the one most likely to drop a marker by hand: the markers sit flush against
- * the text, so a bare-text edit either fails to match or eats one. Here the
- * markers are never part of the edit — we splice between them and update the
- * thread's `quote`, which is the fallback locator.
+ * Replace the text between a thread's markers. The markers sit flush against
+ * the text, so a bare-text edit either fails to match or eats one; here they
+ * are never part of the edit — we splice between them and update the thread's
+ * `quote`, which is the fallback locator.
  */
 export function opRewrite(
   source: string,
@@ -289,17 +354,179 @@ export function opRewrite(
   return { next, result: { threadId, previous, replacement } };
 }
 
+/**
+ * Replace exact text anywhere in the prose, marker-safe by construction.
+ *
+ * A headless run gives Claude the MCP tools/CLI but no Edit tool, so prose
+ * outside an anchored span — a sentence, a heading, a line of frontmatter —
+ * would otherwise have no way to change. This is a literal `old` →
+ * `replacement` substitution over the raw document text (markers included in
+ * what "exact" means), refused wherever it would touch a review marker or the
+ * threads region. To change the text INSIDE a thread's anchor, use `opRewrite`.
+ *
+ * The one exception: `old` may contain one or more anchor pairs COMPLETE — both
+ * the open marker and its matching close marker, wholly inside the matched
+ * range. That is the only way a headless run can delete an anchored passage.
+ * The thread(s) come out unanchored ON PURPOSE: `parse().unanchoredThreadIds`
+ * lists them, the human sees a broken anchor, and the thread must never be
+ * silently re-anchored to nearby text — that is now a human call. See the
+ * marker-range check below for what still refuses, and `assertNoNewIssues`'s
+ * `expectedUnanchored` for how the resulting `unanchored-thread` issues are
+ * kept from refusing the very edit that created them.
+ */
+export function opEdit(
+  source: string,
+  old: string,
+  replacement: string,
+  occurrence = 0,
+): OpOutcome<{ occurrence: number; occurrences: number; line: number; unanchored: string[] }> {
+  parseOccurrence(occurrence);
+  if (old === "") {
+    throw new DocOpError("empty_selection", "old text must not be empty — give the exact text to replace", { old });
+  }
+  if (old === replacement) {
+    throw new DocOpError(
+      "nothing_to_do",
+      "old and new text are identical; the document is unchanged",
+    );
+  }
+
+  const parsed = parse(source);
+  const regionStart = parsed.threadsRegion ? parsed.threadsRegion.start : source.length;
+
+  // Scan like locatePassage does: non-overlapping matches, left to right.
+  const matches: number[] = [];
+  let from = 0;
+  for (;;) {
+    const at = source.indexOf(old, from);
+    if (at === -1) break;
+    matches.push(at);
+    from = at + old.length;
+  }
+  if (matches.length === 0) {
+    throw new DocOpError(
+      "passage_not_found",
+      `text not found: ${JSON.stringify(old.slice(0, 60))}`,
+      { old },
+    );
+  }
+
+  // Candidates are matches that START before the threads region. A match
+  // that starts inside the region is never a candidate and never counts
+  // toward ambiguity: every thread line quotes its anchored passage
+  // verbatim, so counting those would make an ordinary prose edit
+  // "ambiguous" against text the caller never asked to touch.
+  const candidates = matches.filter((at) => at < regionStart);
+  if (candidates.length === 0) {
+    throw new DocOpError(
+      "not_editable",
+      "that text is only inside the review threads region; reply with mc_reply instead of editing thread records",
+      { old },
+    );
+  }
+  if (candidates.length > 1 && occurrence === 0) {
+    throw new DocOpError(
+      "passage_ambiguous",
+      `text appears ${candidates.length} times; pass occurrence 1..${candidates.length} to say which one you mean`,
+      { old, occurrences: candidates.length },
+    );
+  }
+  const index = occurrence === 0 ? 0 : occurrence - 1;
+  if (index < 0 || index >= candidates.length) {
+    throw new DocOpError(
+      "passage_not_found",
+      `occurrence ${occurrence} is out of range (text appears ${candidates.length} time(s))`,
+      { old, occurrences: candidates.length },
+    );
+  }
+
+  const start = candidates[index]!;
+  const end = start + old.length;
+
+  // A candidate starts before the region but can still run into it (the
+  // match straddles the boundary) — refuse rather than splice through it.
+  if (parsed.threadsRegion && start < parsed.threadsRegion.end && parsed.threadsRegion.start < end) {
+    throw new DocOpError(
+      "not_editable",
+      "that text runs into the review threads region; reply with mc_reply instead of editing thread records",
+      { old },
+    );
+  }
+
+  // Marker rule: touching a review marker refuses UNLESS the range holds one
+  // or more anchor pairs COMPLETE — both the open and close marker of the same
+  // id wholly inside [start, end). That is how an anchored passage is deleted
+  // without an Edit tool: the thread becomes unanchored by design, never
+  // silently re-attached elsewhere. (A suggestion's pair passes this check but
+  // not the integrity gate below: a suggestion has no quote to fall back on, so
+  // losing its span is still damage.)
+  //
+  // Everything else that involves a marker still refuses:
+  //   - splitting a marker (the range starts or ends partway through it, or
+  //     sits wholly inside it) — never safe, complete pair or not.
+  //   - containing only one marker of a pair — its partner still points at
+  //     live text, so removing one alone would leave it dangling.
+  //   - touching an unpaired marker (from inspect().unpairedMarkers) — it has
+  //     no partner, so it can never be "complete".
+  // Editing strictly BETWEEN a pair (touching neither marker) is unaffected;
+  // staleness tracking will flag the thread.
+  const touchesRange = (m: { start: number; end: number }) => m.start < end && start < m.end;
+  const wholeInRange = (m: { start: number; end: number }) => start <= m.start && m.end <= end;
+  const MARKER_MESSAGE =
+    "that text contains only one of a thread's two markers (or splits a marker); to delete an anchored passage include both markers and the text between them; to change text inside an anchor use mc_rewrite";
+
+  // Anchor ids (thread or suggestion) whose complete pair falls inside the
+  // range — passed to assertNoNewIssues so the resulting unanchored-thread
+  // issue(s) don't refuse the very edit that created them on purpose.
+  const removedPairIds = new Set<string>();
+  for (const [id, a] of parsed.anchors) {
+    const open = { start: a.openStart, end: a.openEnd };
+    const close = { start: a.closeStart, end: a.closeEnd };
+    const openTouches = touchesRange(open);
+    const closeTouches = touchesRange(close);
+    if (!openTouches && !closeTouches) continue;
+    if (openTouches && closeTouches && wholeInRange(open) && wholeInRange(close)) {
+      removedPairIds.add(id);
+      continue;
+    }
+    throw new DocOpError("not_editable", MARKER_MESSAGE, { old });
+  }
+  for (const m of inspect(source).unpairedMarkers) {
+    if (touchesRange(m)) {
+      throw new DocOpError("not_editable", MARKER_MESSAGE, { old });
+    }
+  }
+
+  const next = source.slice(0, start) + replacement + source.slice(end);
+  assertNoNewIssues(source, next, { expectedUnanchored: removedPairIds });
+
+  return {
+    next,
+    result: {
+      occurrence: index + 1,
+      occurrences: candidates.length,
+      line: source.slice(0, start).split("\n").length,
+      // Threads only: a removed pair can also be an orphan anchor (markers
+      // whose thread was already gone), which leaves nothing unanchored.
+      unanchored: parsed.threads.filter((t) => removedPairIds.has(t.id)).map((t) => t.id),
+    },
+  };
+}
+
+/** Open a thread on a quoted passage. `via` as in `opReply`. */
 export function opOpen(
   source: string,
   quote: string,
   body: string,
   occurrence = 0,
   now = () => new Date().toISOString(),
+  author = "claude",
+  via?: WriteVia,
 ): OpOutcome<{ threadId: string; quote: string }> {
   const at = locatePassage(source, quote, occurrence);
   let result;
   try {
-    result = addThread(source, at, at + quote.length, { author: "claude", body, ts: now() });
+    result = addThread(source, at, at + quote.length, { author, agent: true, via, body, ts: now() });
   } catch (e) {
     // addThread refuses frontmatter, the threads region, and code.
     throw new DocOpError("not_anchorable", (e as Error).message, { quote });
@@ -309,14 +536,13 @@ export function opOpen(
 }
 
 /**
- * Open a thread on an exact source range, for a caller that already knows
- * where the passage is (10x-plan-3 P0.2 — a selection in the text editor).
+ * Open a thread on an exact source range, for a caller that already knows where
+ * the passage is (a selection in the text editor).
  *
- * Distinct from `opOpen`, which finds the passage by its text: Claude describes
- * a quote and must be refused when it is ambiguous, whereas a human has pointed
- * at one specific range and "that quote appears three times" would be a
- * nonsense answer to a selection. Same integrity gate, same refusals from
- * `addThread` (frontmatter, the threads region, code spans).
+ * Unlike `opOpen`, which finds the passage by its text and must refuse an
+ * ambiguous quote, a human has pointed at one specific range, so "that quote
+ * appears three times" would be a nonsense answer. Same integrity gate, same
+ * refusals from `addThread` (frontmatter, the threads region, code spans).
  */
 export function opOpenAt(
   source: string,
@@ -346,13 +572,31 @@ export function opResolve(
   source: string,
   threadId: string,
   now = () => new Date().toISOString(),
+  author = "claude",
 ): OpOutcome<{ threadId: string }> {
   const thread = findThread(source, threadId);
   const next = replaceThread(source, threadId, {
     ...thread,
     status: "resolved",
-    resolvedBy: "claude",
+    resolvedBy: author,
     resolvedTs: now(),
+  });
+  assertNoNewIssues(source, next);
+  return { next, result: { threadId } };
+}
+
+/**
+ * The inverse of `opResolve`: status back to open, the resolver's mark cleared.
+ * Same shape the review view's own Reopen produces (mutations.ts), so a thread
+ * reopened from the hover is indistinguishable from one reopened from the card.
+ */
+export function opReopen(source: string, threadId: string): OpOutcome<{ threadId: string }> {
+  const thread = findThread(source, threadId);
+  const next = replaceThread(source, threadId, {
+    ...thread,
+    status: "open",
+    resolvedBy: undefined,
+    resolvedTs: undefined,
   });
   assertNoNewIssues(source, next);
   return { next, result: { threadId } };
@@ -361,18 +605,12 @@ export function opResolve(
 /**
  * Remove every resolved thread from the document, markers and all.
  *
- * Resolved threads are the sediment of a long review: settled, unread, and in
- * the way of the ones that still need an answer. Deleting them one at a time
- * through the two-click confirm is the tedium this replaces.
+ * Only `resolved` threads: an open thread is never touched, and neither is a
+ * pending suggestion — one nobody has accepted or rejected is unfinished
+ * business even when the thread beside it is closed.
  *
- * Deliberately all-or-nothing about *what* it removes: only threads whose
- * status is `resolved`. An open thread is never touched, and neither is a
- * pending suggestion — a suggestion nobody has accepted or rejected is
- * unfinished business, not sediment, even when the thread beside it is closed.
- *
- * Returns the ids it removed so a caller can say how many, and refuses with
- * `nothing_to_do` when there are none — a command that silently does nothing
- * is indistinguishable from one that is broken.
+ * Refuses with `nothing_to_do` when there are none — a command that silently
+ * does nothing is indistinguishable from one that is broken.
  */
 export function opPurgeResolved(source: string): OpOutcome<{ removed: string[] }> {
   const parsed = parse(source);
@@ -382,9 +620,8 @@ export function opPurgeResolved(source: string): OpOutcome<{ removed: string[] }
   }
   let next = source;
   for (const t of resolved) {
-    // `replaceThread(…, null)` drops the record and strips its markers. One at
-    // a time rather than a bulk rewrite so each removal goes through the same
-    // path a single delete does.
+    // One at a time rather than a bulk rewrite so each removal goes through the
+    // same path a single delete does.
     next = replaceThread(next, t.id, null);
   }
   assertNoNewIssues(source, next);
@@ -393,18 +630,15 @@ export function opPurgeResolved(source: string): OpOutcome<{ removed: string[] }
 
 /**
  * Finalize the document: strip every trace of review data and hand back the
- * clean markdown a finished review commits (issue #1).
+ * clean markdown a finished review commits.
  *
- * Everything goes — open threads, resolved threads, all anchor markers, the
- * review checkpoint, and the threads region itself. A pending suggestion is
- * treated as rejected: its markers and record are removed and the ORIGINAL
- * text stays, because silently applying an edit nobody accepted would be
- * worse than dropping a proposal the caller was warned about. Frontmatter is
- * untouched — it belongs to the document, not to the review.
+ * A pending suggestion is treated as rejected: its markers and record are
+ * removed and the ORIGINAL text stays, because silently applying an edit nobody
+ * accepted would be worse than dropping a proposal. Frontmatter is untouched —
+ * it belongs to the document, not to the review.
  *
- * This is `opPurgeResolved`'s terminal sibling: purge clears the sediment
- * mid-review, finalize ends the review. Both are all-or-nothing and both
- * refuse with `nothing_to_do` rather than silently rewriting a clean file.
+ * Unlike `opPurgeResolved` (mid-review), this ends the review. Both refuse with
+ * `nothing_to_do` rather than silently rewriting a clean file.
  */
 export function opFinalize(source: string): OpOutcome<{
   removedOpen: number;
@@ -427,22 +661,23 @@ export function opFinalize(source: string): OpOutcome<{
   };
 }
 
-/**
- * Propose an edit: wrap the passage's original text and record the proposal.
- * The file still renders as the original — the human accepts or rejects.
- */
+/** Propose an edit: wrap the passage's original text and record the proposal. `via` as in `opReply`. */
 export function opSuggest(
   source: string,
   quote: string,
   proposed: string,
   opts: { note?: string; occurrence?: number; threadId?: string } = {},
   now = () => new Date().toISOString(),
+  author = "claude",
+  via?: WriteVia,
 ): OpOutcome<{ anchorId: string; original: string; proposed: string }> {
   const at = locatePassage(source, quote, opts.occurrence ?? 0);
   let result;
   try {
     result = addSuggestion(source, at, at + quote.length, {
-      author: "claude",
+      author,
+      agent: true,
+      via,
       proposed,
       note: opts.note,
       threadId: opts.threadId,
@@ -526,12 +761,11 @@ export function opCheck(source: string): CheckResult {
 }
 
 /**
- * Record "this document was reviewed in this state" (10x-plan-2 P1.1).
+ * Record "this document was reviewed in this state".
  *
  * Called by `mc_check`, which the skill runs at the end of every file — the one
- * moment we actually know a pass finished. The record is what makes the *next*
- * pass incremental, so writing it anywhere earlier would claim a review that
- * hadn't happened yet.
+ * moment we actually know a pass finished. Writing it anywhere earlier would
+ * claim a review that hadn't happened yet.
  *
  * Refuses on a broken document: checkpointing damage would tell the next pass
  * that the damage was reviewed and approved.
@@ -551,4 +785,35 @@ export function opCheckpoint(
   const next = withThreads(source, parse(source).threads, undefined, checkpoint);
   assertNoNewIssues(source, next);
   return { next, result: { checkpoint } };
+}
+
+/** What `opCheck` + a conditional `opCheckpoint` hands back — `next`/`checkpoint` are only present when the document was healthy and got a fresh checkpoint. */
+export interface CheckAndCheckpointResult {
+  report: CheckResult;
+  next?: string;
+  checkpoint?: ReviewCheckpoint;
+}
+
+/**
+ * `mc_check` and `mdc check` (no `--repair`) both want the integrity report and,
+ * on a healthy document, a fresh review checkpoint. One function, called by
+ * both, so they can't diverge.
+ *
+ * A broken document is reported and left untouched — same refusal
+ * `opCheckpoint` makes on its own.
+ */
+export function opCheckAndCheckpoint(
+  source: string,
+  now: () => string = () => new Date().toISOString(),
+  gitRef?: string,
+): CheckAndCheckpointResult {
+  const report = opCheck(source);
+  if (!report.ok) return { report };
+  try {
+    const stamped = opCheckpoint(source, now, gitRef);
+    return { report, next: stamped.next, checkpoint: stamped.result.checkpoint };
+  } catch {
+    // The checkpoint is a nicety; never turn a clean check into a failure.
+    return { report };
+  }
 }

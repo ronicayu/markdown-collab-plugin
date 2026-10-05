@@ -288,3 +288,145 @@ describe("addThread — heading anchors", () => {
     expect(source.slice(a.openEnd, a.closeStart)).toBe("Heading 2");
   });
 });
+
+describe("inlineComments/format - threads region inside code", () => {
+  const FENCED_SAMPLE = [
+    "# Format",
+    "",
+    "The storage looks like this:",
+    "",
+    "```markdown",
+    "The <!--mc:a:k7q3p-->quick fox<!--mc:/a:k7q3p--> jumps.",
+    "",
+    "<!--mc:threads:begin-->",
+    '<!--mc:t {"id":"k7q3p","quote":"quick fox","status":"open","comments":[{"id":"c1","author":"r","ts":"2026-05-13T12:00:00Z","body":"x"}]}-->',
+    "<!--mc:threads:end-->",
+    "```",
+    "",
+    "A real sentence to comment on.",
+    "",
+  ].join("\n");
+
+  it("does not treat a fenced sample region as the live one", () => {
+    const r = parse(FENCED_SAMPLE);
+    expect(r.threads).toEqual([]);
+  });
+
+  it("writes the first real thread after the fence, leaving the sample intact", () => {
+    const at = FENCED_SAMPLE.indexOf("A real sentence");
+    const { source } = addThread(FENCED_SAMPLE, at, at + "A real sentence".length, {
+      author: "r",
+      body: "note",
+      ts: TS,
+    });
+    // Everything up to the commented sentence — the fenced sample included —
+    // is byte-for-byte what it was.
+    const beforeSentence = FENCED_SAMPLE.slice(0, FENCED_SAMPLE.indexOf("A real sentence"));
+    expect(source.startsWith(beforeSentence)).toBe(true);
+    const r = parse(source);
+    expect(r.threads.map((t) => t.quote)).toEqual(["A real sentence"]);
+    expect(source.lastIndexOf("<!--mc:threads:begin-->")).toBeGreaterThan(beforeSentence.length);
+  });
+
+  it("uses the real tail region when a fenced sample precedes it", () => {
+    const at = FENCED_SAMPLE.indexOf("A real sentence");
+    const { source } = addThread(FENCED_SAMPLE, at, at + "A real sentence".length, {
+      author: "r",
+      body: "note",
+      ts: TS,
+    });
+    const r = parse(source);
+    expect(r.threads).toHaveLength(1);
+    expect(r.threads[0].comments[0].body).toBe("note");
+  });
+
+  it("still finds a tail region after an unterminated fence", () => {
+    const doc = "Intro.\n\n```js\nconst x = 1;\n\n" + [
+      "<!--mc:threads:begin-->",
+      '<!--mc:t {"id":"aa1","quote":"Intro.","status":"open","comments":[{"id":"c1","author":"r","ts":"2026-05-13T12:00:00Z","body":"x"}]}-->',
+      "<!--mc:threads:end-->",
+      "",
+    ].join("\n");
+    expect(parse(doc).threads.map((t) => t.id)).toEqual(["aa1"]);
+  });
+
+  it("ignores a begin marker mentioned in inline code", () => {
+    expect(parse("Look for `<!--mc:threads:begin-->` and `<!--mc:threads:end-->` in the file.\n").threads).toEqual([]);
+  });
+
+  it("keeps accepting a real region that has prose after it", () => {
+    const doc = [
+      "Hello.",
+      "",
+      "<!--mc:threads:begin-->",
+      '<!--mc:t {"id":"bb2","quote":"Hello.","status":"open","comments":[{"id":"c1","author":"r","ts":"2026-05-13T12:00:00Z","body":"x"}]}-->',
+      "<!--mc:threads:end-->",
+      "",
+      "Someone appended this later.",
+      "",
+    ].join("\n");
+    expect(parse(doc).threads.map((t) => t.id)).toEqual(["bb2"]);
+  });
+});
+
+// `via` is optional and additive. A file written before it
+// existed must re-serialize to the same bytes, a value this version doesn't
+// know reads as absent, and the two known values survive every rewrite.
+describe("inlineComments/format - the via field", () => {
+  const region = (thread: string, suggestion?: string) =>
+    [
+      "Doc with <!--mc:a:aa111-->a passage<!--mc:/a:aa111--> and <!--mc:a:bb222-->another<!--mc:/a:bb222-->.",
+      "",
+      "<!--mc:threads:begin-->",
+      thread,
+      ...(suggestion ? [suggestion] : []),
+      "<!--mc:threads:end-->",
+      "",
+    ].join("\n");
+  const LEGACY_THREAD =
+    '<!--mc:t {"id":"aa111","quote":"a passage","status":"open","anchorHash":"0badf00d","comments":[' +
+    '{"id":"c1","author":"ronica","ts":"2026-05-12T10:00:00.000Z","body":"why?"},' +
+    '{"id":"c2","author":"claude","agent":true,"ts":"2026-05-12T10:01:00.000Z","body":"because","parent":"c1"}]}-->';
+  const LEGACY_SUGGESTION =
+    '<!--mc:s {"anchorId":"bb222","author":"claude","agent":true,"ts":"2026-05-12T10:02:00.000Z","original":"another","proposed":"one more"}-->';
+
+  it("a file without it re-serializes byte for byte", () => {
+    const md = region(LEGACY_THREAD, LEGACY_SUGGESTION);
+    const parsed = parse(md);
+    expect(withThreads(md, parsed.threads, parsed.suggestions)).toBe(md);
+    expect(parsed.threads[0]!.comments.every((c) => !("via" in c))).toBe(true);
+    expect(parsed.suggestions[0]!.via).toBeUndefined();
+  });
+
+  it("tools and cli survive parse → serialize → parse on comments and suggestions", () => {
+    const md = region(
+      LEGACY_THREAD.replace('"agent":true,', '"agent":true,"via":"cli",'),
+      LEGACY_SUGGESTION.replace('"agent":true,', '"agent":true,"via":"tools",'),
+    );
+    const parsed = parse(md);
+    expect(parsed.threads[0]!.comments.map((c) => c.via)).toEqual([undefined, "cli"]);
+    expect(parsed.suggestions[0]!.via).toBe("tools");
+    expect(withThreads(md, parsed.threads, parsed.suggestions)).toBe(md);
+  });
+
+  it("an unknown value reads as absent and is not written back", () => {
+    const md = region(
+      LEGACY_THREAD.replace('"agent":true,', '"agent":true,"via":"file",'),
+      LEGACY_SUGGESTION.replace('"agent":true,', '"agent":true,"via":{"x":1},'),
+    );
+    const parsed = parse(md);
+    expect(parsed.threads[0]!.comments.map((c) => c.via)).toEqual([undefined, undefined]);
+    expect(parsed.suggestions[0]!.via).toBeUndefined();
+    expect(withThreads(md, parsed.threads, parsed.suggestions)).toBe(region(LEGACY_THREAD, LEGACY_SUGGESTION));
+  });
+
+  it("appendReply and addThread write it only when given", () => {
+    const md = "The quick brown fox.";
+    const plain = addThread(md, 4, 9, { author: "a", body: "b", ts: TS });
+    expect(plain.source).not.toContain('"via"');
+    const stamped = addThread(md, 4, 9, { author: "codex", agent: true, via: "tools", body: "b", ts: TS });
+    expect(stamped.thread.comments[0]).toMatchObject({ via: "tools" });
+    expect(appendReply(plain.thread, { author: "r", body: "x", ts: TS }).comments[1]).not.toHaveProperty("via");
+    expect(appendReply(plain.thread, { author: "c", body: "x", ts: TS, via: "cli" }).comments[1]!.via).toBe("cli");
+  });
+});

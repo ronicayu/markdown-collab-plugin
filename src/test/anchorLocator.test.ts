@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { stripInlineMarkup } from "../collab/anchorExtractor";
-import { locateAnchorInRendered, mdRangeToRenderedRange } from "../collab/anchorLocator";
+import { locateAnchorInRendered, mdRangeToRenderedRange } from "./support/anchorLocator";
 
 function strip(md: string): { stripped: string; map: number[] } {
   return stripInlineMarkup(md);

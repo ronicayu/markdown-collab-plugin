@@ -1,10 +1,5 @@
 // One log channel, with levels, scopes, and nothing secret in it.
 //
-// The extension used to have 46 `output.appendLine` calls and 63 silent
-// `catch {}` blocks. When a send didn't arrive, or a tool call refused, or a
-// panel came up empty, the channel said nothing at all — every diagnosis
-// started by adding logging and asking the user to reproduce.
-//
 // This is a `LogOutputChannel`, not a plain one: VS Code stamps each line with
 // a timestamp and a level, and the Output panel gets a level picker, so a user
 // can turn on trace for one reproduction without a setting or a reload. The
@@ -18,6 +13,7 @@ import * as vscode from "vscode";
 export type LogScope =
   | "activation"
   | "send"
+  | "headless"
   | "terminal"
   | "mcp"
   | "mcp-tool"
@@ -39,14 +35,12 @@ export interface Logger {
   warn(message: string, data?: unknown): void;
   /** Something failed. Errors log their stack. */
   error(message: string, err?: unknown): void;
-  /** A child logger that tags every line with `scope`. */
   scope(scope: LogScope): Logger;
   /**
    * Time an operation and log its outcome at trace (success) or error
    * (throw), including the elapsed milliseconds. Rethrows unchanged.
    */
   time<T>(label: string, fn: () => Promise<T>): Promise<T>;
-  /** Reveal the channel in the Output panel. */
   show(): void;
 }
 
@@ -66,7 +60,6 @@ const REDACTIONS: Array<[RegExp, string]> = [
   [/\b[0-9a-f]{32,}\b/g, "«redacted»"],
 ];
 
-/** Strip anything credential-shaped from a line. Exported for tests. */
 export function redact(line: string): string {
   let out = line;
   for (const [re, replacement] of REDACTIONS) out = out.replace(re, replacement);
@@ -97,14 +90,13 @@ export function formatData(data: unknown): string {
   return text;
 }
 
-/** Compose the final line: `[scope] message — data`, redacted. */
 export function composeLine(scope: LogScope | null, message: string, data?: unknown): string {
   const tag = scope ? `[${scope}] ` : "";
   const rendered = formatData(data);
   return redact(rendered ? `${tag}${message} — ${rendered}` : `${tag}${message}`);
 }
 
-/** The sink a Logger writes to. `LogOutputChannel` satisfies it; tests fake it. */
+/** The sink a Logger writes to. `LogOutputChannel` satisfies it. */
 export interface LogSink {
   trace(message: string): void;
   info(message: string): void;
@@ -151,7 +143,6 @@ class ScopedLogger implements Logger {
   }
 }
 
-/** Build a Logger over any sink. Used by tests and by `createLogger`. */
 export function loggerFor(sink: LogSink): Logger {
   return new ScopedLogger(sink, null);
 }

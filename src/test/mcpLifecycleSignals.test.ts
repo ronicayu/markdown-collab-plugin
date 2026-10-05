@@ -1,4 +1,4 @@
-// The mapping from tool calls to lifecycle signals (10x-plan-2 P0.2).
+// The mapping from tool calls to lifecycle signals.
 //
 // `pendingSignalsFromToolCalls` lives in a vscode-importing module, so this
 // tests the rule it encodes against the tracker directly — the same three
@@ -94,8 +94,14 @@ describe("the host wires the same rule", () => {
     expect(extension).toMatch(/onToolCall:\s*pendingSignalsFromToolCalls/);
   });
 
-  it("marks protocol evidence only for the mcp send mode", () => {
-    const extension = readFileSync(resolve(__dirname, "../extension.ts"), "utf8");
-    expect(extension).toMatch(/markPayloadPending\(payload, folder, mode === "mcp" \? "protocol" : "inferred"\)/);
+  it("every dispatch marks inferred — a tool call is what earns protocol", () => {
+    // The deleted `mcp` mode used to mark "protocol" up
+    // front. dispatchReviewPayload lives in src/commands/send.ts since the
+    // earlier P3.2 split out of extension.ts; markPayloadPending there no
+    // longer takes an evidence argument at all — noteActivity is the only
+    // place a wait becomes "protocol" now (see claudePending.ts).
+    const send = readFileSync(resolve(__dirname, "../commands/send.ts"), "utf8");
+    expect(send).toMatch(/markPayloadPending\(payload, folder\)/);
+    expect(send).not.toMatch(/"protocol"/);
   });
 });

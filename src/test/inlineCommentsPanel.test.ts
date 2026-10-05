@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { addThread, parse } from "../inlineComments/format";
-import { serialize } from "../inlineComments/inlineCommentsPanel";
+import { mostRecentAgentName, serialize } from "../inlineComments/inlineCommentsPanel";
 
 describe("inlineComments/panel - serialize", () => {
   it("maps anchor positions into prose-offset space", () => {
@@ -59,5 +59,63 @@ describe("inlineComments/panel - serialize", () => {
     const ser = serialize(parse(md));
     expect(ser.threads[0].anchor).toBeNull();
     expect(ser.prose.trim()).toBe("Plain.");
+  });
+});
+
+// The host tells the webview who to name instead of it
+// hardcoding "Claude" — the agent behind whichever comment or suggestion in
+// the file has the latest timestamp, among agent-authored ones only.
+describe("mostRecentAgentName", () => {
+  const withThreadsBlock = (...lines: string[]) =>
+    ["Plain.", "", "<!--mc:threads:begin-->", ...lines, "<!--mc:threads:end-->"].join("\n");
+
+  it("defaults to Claude when no agent has written to the file", () => {
+    expect(mostRecentAgentName(parse("No threads at all."))).toBe("Claude");
+  });
+
+  it("defaults to Claude when every comment is a human's", () => {
+    const md = withThreadsBlock(
+      `<!--mc:t {"id":"t1","quote":"a","status":"open","comments":[{"id":"c1","author":"ronica","ts":"2026-01-01T00:00:00Z","body":"note"}]}-->`,
+    );
+    expect(mostRecentAgentName(parse(md))).toBe("Claude");
+  });
+
+  it("names the agent behind the single agent-authored comment", () => {
+    const md = withThreadsBlock(
+      `<!--mc:t {"id":"t1","quote":"a","status":"open","comments":[{"id":"c1","author":"codex","agent":true,"ts":"2026-01-01T00:00:00Z","body":"fixed"}]}-->`,
+    );
+    expect(mostRecentAgentName(parse(md))).toBe("Codex");
+  });
+
+  it("picks the latest-timestamped agent write across threads", () => {
+    const md = withThreadsBlock(
+      `<!--mc:t {"id":"t1","quote":"a","status":"open","comments":[{"id":"c1","author":"claude","agent":true,"ts":"2026-01-01T00:00:00Z","body":"x"}]}-->`,
+      `<!--mc:t {"id":"t2","quote":"b","status":"open","comments":[{"id":"c1","author":"codex","agent":true,"ts":"2026-01-02T00:00:00Z","body":"y"}]}-->`,
+    );
+    expect(mostRecentAgentName(parse(md))).toBe("Codex");
+  });
+
+  it("ignores a later human reply — only agent writes count for the timestamp", () => {
+    const md = withThreadsBlock(
+      `<!--mc:t {"id":"t1","quote":"a","status":"open","comments":[` +
+        `{"id":"c1","author":"claude","agent":true,"ts":"2026-01-01T00:00:00Z","body":"x"},` +
+        `{"id":"c2","author":"ronica","ts":"2026-01-05T00:00:00Z","body":"thanks"}]}-->`,
+    );
+    expect(mostRecentAgentName(parse(md))).toBe("Claude");
+  });
+
+  it("counts a pending suggestion, not just comments", () => {
+    const md = withThreadsBlock(
+      `<!--mc:t {"id":"t1","quote":"a","status":"open","comments":[{"id":"c1","author":"claude","agent":true,"ts":"2026-01-01T00:00:00Z","body":"x"}]}-->`,
+      `<!--mc:s {"anchorId":"s1","author":"cursor","agent":true,"ts":"2026-02-01T00:00:00Z","original":"foo","proposed":"bar"}-->`,
+    );
+    expect(mostRecentAgentName(parse(md))).toBe("Cursor");
+  });
+
+  it("recognizes a known agent slug written before the explicit `agent` flag existed", () => {
+    const md = withThreadsBlock(
+      `<!--mc:t {"id":"t1","quote":"a","status":"open","comments":[{"id":"c1","author":"codex","ts":"2026-01-01T00:00:00Z","body":"legacy"}]}-->`,
+    );
+    expect(mostRecentAgentName(parse(md))).toBe("Codex");
   });
 });

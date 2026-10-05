@@ -5,17 +5,14 @@
 // the user can see. The URL is built correctly and the picture still doesn't
 // appear, which makes this the single most confusing way an image can fail.
 //
-// The rule used to be "the workspace folder, or — when the file is loose — the
-// file's own directory". That misses the commonest relative path in real
-// documentation: `![](../diagrams/x.png)`. For a loose file it climbs straight
-// out of the only granted root, and in a multi-root workspace only the folder
-// owning the document was granted, so an image in a sibling root was refused
-// too.
-//
-// Pure and path-based so it can be tested without a webview. `docDir` and its
-// parent are granted because a relative image reference can climb at most one
-// level in the overwhelming majority of documents; deeper climbs still need the
-// workspace folder to cover them, which it normally does.
+// Granting only the workspace folder (or, for a loose file, the file's own
+// directory) misses the commonest relative path in real documentation:
+// `![](../diagrams/x.png)`. For a loose file it climbs straight out of the only
+// granted root, and in a multi-root workspace an image in a sibling root is
+// refused too. So `docDir` and its parent are granted, because a relative image
+// reference can climb at most one level in the overwhelming majority of
+// documents; deeper climbs still need the workspace folder to cover them, which
+// it normally does.
 
 import * as path from "path";
 
@@ -62,7 +59,6 @@ export function imageResourceRootPaths(input: ResourceRootInput): string[] {
   );
 }
 
-/** Is `child` at or below `parent`? */
 function isInside(child: string, parent: string): boolean {
   const rel = path.relative(parent, child);
   return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);

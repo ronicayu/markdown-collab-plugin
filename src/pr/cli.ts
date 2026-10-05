@@ -27,7 +27,6 @@ export type CliRunner = (
   opts?: RunCliOptions,
 ) => Promise<RunCliResult>;
 
-/** Default runner — real subprocess. Tests inject a stub. */
 export const runCli: CliRunner = (bin, args, opts = {}) =>
   new Promise((resolve, reject) => {
     const child = spawn(bin, args, {
@@ -67,6 +66,13 @@ export function setCliRunner(runner: CliRunner): void {
   activeRunner = runner;
 }
 
+let cliAllowed: () => boolean = () => true;
+export function setCliGate(allowed: () => boolean): void {
+  cliAllowed = allowed;
+}
+
+const disabledInRestrictedMode = (): Error => new Error("disabled in Restricted Mode");
+
 /**
  * Where CLI invocations are logged, when a logger has been installed. PR/MR
  * work is entirely `gh`/`glab` subprocesses, so "the review didn't post" is
@@ -78,13 +84,27 @@ export function setCliLogger(log: Logger | null): void {
 }
 
 /**
+ * The logger installed via `setCliLogger`, for a warning that isn't tied to
+ * one CLI invocation's own exit code — e.g. a page of already-successful
+ * output that failed to parse. Null before activation installs one (or in a
+ * unit test that never calls `setCliLogger`); callers must tolerate that.
+ */
+export function getLogger(): Logger | null {
+  return cliLog;
+}
+
+/**
  * The runner every caller goes through: the active runner, wrapped so each
  * invocation is logged with its exit code and duration. Request bodies are
  * omitted (they carry comment text) and the output is truncated by the
  * logger; redaction strips anything token-shaped.
  */
 export function getCliRunner(): CliRunner {
-  const runner = activeRunner;
+  const inner = activeRunner;
+  const runner: CliRunner = async (bin, args, opts) => {
+    if (!cliAllowed()) throw disabledInRestrictedMode();
+    return inner(bin, args, opts);
+  };
   if (!cliLog) return runner;
   const log = cliLog;
   return async (bin, args, opts) => {
@@ -108,6 +128,7 @@ export async function runCliOrThrow(
   args: string[],
   opts: RunCliOptions = {},
 ): Promise<RunCliResult> {
+  if (!cliAllowed()) throw disabledInRestrictedMode();
   const res = await activeRunner(bin, args, opts);
   if (res.code !== 0) {
     throw new Error(

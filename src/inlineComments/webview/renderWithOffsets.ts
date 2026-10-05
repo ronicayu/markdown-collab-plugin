@@ -6,17 +6,11 @@
 // the rendered HTML in `<span data-mc-src="START.END">…</span>` so the
 // webview can read source positions directly from the DOM rather than
 // re-searching for matching text.
-//
-// This is what makes highlighting + selection-to-source mapping work
-// reliably inside tables, code blocks, entity-containing text, and any
-// nesting markdown-it produces — we don't depend on whitespace-collapse
-// heuristics at all.
 
 import type MarkdownIt from "markdown-it";
 import type Token from "markdown-it/lib/token.mjs";
 import type { RenderRule } from "markdown-it/lib/renderer.mjs";
 
-// markdown-it's "Token.meta" field is typed as `any`. Tag it with our keys.
 interface TokenMeta {
   mcStart?: number;
   mcEnd?: number;
@@ -116,8 +110,6 @@ function annotateTokenStream(tokens: Token[], source: string, lineStarts: number
   for (const tok of tokens) {
     const own = rangeForMap(tok.map, lineStarts);
     if (own) {
-      // Pop any siblings off the stack that ended before us; push this
-      // range onto the stack with a cursor that starts at its beginning.
       while (stack.length > 0 && stack[stack.length - 1].end <= own.start) stack.pop();
       stack.push({ start: own.start, end: own.end, cursor: own.start });
     }
@@ -168,7 +160,6 @@ function annotateInline(children: Token[], source: string, blockStart: number, b
       const nl = source.indexOf("\n", cursor);
       if (nl !== -1 && nl < blockEnd) cursor = nl + 1;
     } else if (child.type === "html_inline") {
-      // Skip over the raw HTML in source.
       const idx = source.indexOf(child.content, cursor);
       if (idx !== -1 && idx + child.content.length <= blockEnd) {
         cursor = idx + child.content.length;

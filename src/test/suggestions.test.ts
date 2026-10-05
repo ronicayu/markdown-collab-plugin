@@ -1,4 +1,4 @@
-// Suggestion storage + transforms (10x-plan P1.1).
+// Suggestion storage + transforms.
 //
 // A suggestion keeps the ORIGINAL text in the prose (wrapped in the same
 // paired anchor markers a comment uses) and stores the PROPOSED replacement

@@ -54,6 +54,21 @@ describe("githubPlatform.replyToComment", () => {
     setCliRunner(async () => ({ code: 1, stdout: "", stderr: "boom" }) as RunCliResult);
     await expect(githubPlatform.replyToComment(ctx(), "1", "x")).rejects.toThrow(/reply failed/);
   });
+
+  it("refuses an @/etc/passwd-shaped id before any spawn", async () => {
+    const calls: unknown[] = [];
+    setCliRunner(async (...args) => {
+      calls.push(args);
+      return { code: 0, stdout: "{}", stderr: "" } as RunCliResult;
+    });
+    // A REST comment id is always a positive integer; `gh api -F` also reads
+    // a leading `@` as "read this path and send its contents" — either
+    // reason is enough to refuse it before `gh` ever runs.
+    await expect(githubPlatform.replyToComment(ctx(), "@/etc/passwd", "hi")).rejects.toThrow(
+      /doesn't look like one/,
+    );
+    expect(calls).toHaveLength(0);
+  });
 });
 
 describe("gitlabPlatform.replyToComment", () => {
@@ -66,16 +81,19 @@ describe("gitlabPlatform.replyToComment", () => {
       ...o,
     });
 
+  /** A realistic-shaped GitLab discussion id — 40 hex chars, like a SHA1. */
+  const DISC_ID = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
+
   it("POSTs a note to the discussion and builds the note url", async () => {
     const calls: { args: string[]; stdin?: string }[] = [];
     setCliRunner(async (_bin, args, opts) => {
       calls.push({ args, stdin: opts?.stdin });
       return { code: 0, stdout: JSON.stringify({ id: 555 }), stderr: "" } as RunCliResult;
     });
-    const res = await gitlabPlatform.replyToComment(glabCtx(), "disc99", "thanks");
+    const res = await gitlabPlatform.replyToComment(glabCtx(), DISC_ID, "thanks");
     expect(res.url).toBe("https://gitlab.com/o/r/-/merge_requests/7#note_555");
     expect(calls[0].args).toContain(
-      "projects/o%2Fr/merge_requests/7/discussions/disc99/notes",
+      `projects/o%2Fr/merge_requests/7/discussions/${DISC_ID}/notes`,
     );
     expect(calls[0].args).toContain("POST");
     expect(JSON.parse(calls[0].stdin!)).toEqual({ body: "thanks" });
@@ -89,8 +107,20 @@ describe("gitlabPlatform.replyToComment", () => {
 
   it("throws when glab exits non-zero", async () => {
     setCliRunner(async () => ({ code: 1, stdout: "", stderr: "nope" }) as RunCliResult);
-    await expect(gitlabPlatform.replyToComment(glabCtx(), "d", "x")).rejects.toThrow(
+    await expect(gitlabPlatform.replyToComment(glabCtx(), DISC_ID, "x")).rejects.toThrow(
       /reply failed/,
     );
+  });
+
+  it("refuses a ../x id before any spawn", async () => {
+    const calls: unknown[] = [];
+    setCliRunner(async (...args) => {
+      calls.push(args);
+      return { code: 0, stdout: "{}", stderr: "" } as RunCliResult;
+    });
+    await expect(gitlabPlatform.replyToComment(glabCtx(), "../x", "hi")).rejects.toThrow(
+      /isn't a discussion id/,
+    );
+    expect(calls).toHaveLength(0);
   });
 });

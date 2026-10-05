@@ -1,7 +1,5 @@
-// Map a range in the rendered text (offsets into doc.textContent) onto
-// ProseMirror positions, by walking the doc's text nodes and
-// accumulating their nodeSize. Pure module so we can unit-test the
-// boundary cases the webview's anchor highlighter depends on.
+// Map a range in the rendered text onto ProseMirror positions, by walking the
+// doc's text nodes and accumulating their nodeSize.
 //
 // Convention:
 //   - For the START of the rendered range we use a STRICT upper bound:
@@ -31,16 +29,13 @@ export interface DocLike {
  * The rendered text these offsets are measured against: every text node's
  * content, concatenated in document order, nothing in between.
  *
- * This is NOT `doc.textContent`, and the difference is the whole point.
- * PM's `textContent` also emits a leaf node's `leafText`, and Milkdown's
- * hardbreak declares `leafText: () => "\n"` — so `textContent` carries one
- * character per hard break that the text-node walk below never counts.
- * Locating an anchor in `textContent` and then mapping that offset through
- * `renderedRangeToPmRange` therefore drifted one character further into the
- * text for every hard break above it: a doc with six of them highlighted a
- * span starting six characters late, mid-word.
+ * This is NOT `doc.textContent`: PM's `textContent` also emits a leaf node's
+ * `leafText`, and Milkdown's hardbreak declares `leafText: () => "\n"` — so
+ * `textContent` carries one character per hard break that the text-node walk
+ * below never counts, and an offset found in it would map one character
+ * further into the text for every hard break above it.
  *
- * Dropping the hard break from the text also matches how anchors are built:
+ * Dropping the hard break also matches how anchors are built:
  * `stripInlineMarkup` skips newlines entirely, so an anchor spanning a hard
  * break has no newline in it to match against one here.
  */

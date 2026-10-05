@@ -12,7 +12,7 @@
 
 import { describe, expect, it } from "vitest";
 import { stripInlineMarkup } from "../collab/anchorExtractor";
-import { locateAnchorInRendered } from "../collab/anchorLocator";
+import { locateAnchorInRendered } from "./support/anchorLocator";
 
 function strip(md: string): string {
   return stripInlineMarkup(md).stripped;

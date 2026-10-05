@@ -1,5 +1,4 @@
-// The regressions that actually happened, replayed in a real Extension Host
-// (10x-plan P2.4, move 3).
+// The regressions that actually happened, replayed in a real Extension Host.
 //
 // Each scenario below maps to a CHANGELOG entry from the anchoring and
 // live-editor failure classes. Unit tests cover the same transforms on
@@ -302,8 +301,8 @@ suite("Historical regressions (real host)", () => {
     });
     const doc = await openFixture(name, source);
     const config = vscode.workspace.getConfiguration("markdownCollab");
-    const prevMode = config.get<string>("sendMode", "ask");
-    const prevSuggest = config.get<boolean>("proposeEditsAsSuggestions", false);
+    const prevMode = config.inspect("sendMode")?.workspaceValue;
+    const prevSuggest = config.inspect("proposeEditsAsSuggestions")?.workspaceValue;
     try {
       await config.update("sendMode", "clipboard", vscode.ConfigurationTarget.Workspace);
       await config.update("proposeEditsAsSuggestions", false, vscode.ConfigurationTarget.Workspace);

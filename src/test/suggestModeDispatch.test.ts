@@ -104,11 +104,14 @@ describe("every send path reads the suggest-mode toggle", () => {
   // A source-level guard, deliberately: the bug was a caller forgetting an
   // optional argument, which type-checks fine and which builder tests can't
   // see. Anything that dispatches a payload has to consult the setting.
-  const HOSTS = ["extension.ts", "inlineComments/inlineCommentsPanel.ts"];
+  //
+  // "extension.ts" until these call sites moved into
+  // src/commands/send.ts along with the rest of the send family.
+  const HOSTS = ["commands/send.ts", "inlineComments/inlineCommentsPanel.ts"];
 
   it("finds the call sites it means to guard", () => {
     const sites = HOSTS.flatMap(payloadCallSites);
-    // 2 in extension.ts (per-thread send + copy) + 1 (send all)
+    // 2 in commands/send.ts (per-thread send + copy) + 1 (send all)
     // + 4 in the panel (send, copy, per-thread send, per-thread copy).
     expect(sites.length).toBeGreaterThanOrEqual(6);
   });
@@ -142,7 +145,8 @@ describe("dispatch marks its threads pending", () => {
   // Marking lives in `dispatchReviewPayload`'s delivery branches rather than
   // in each command, so a new send path cannot forget it — the earlier draft
   // of this feature marked at call sites and immediately missed one.
-  const source = fs.readFileSync(path.join(__dirname, "..", "extension.ts"), "utf8");
+  // dispatchReviewPayload lives in src/commands/send.ts.
+  const source = fs.readFileSync(path.join(__dirname, "..", "commands/send.ts"), "utf8");
 
   function dispatcherBody(): string {
     const start = source.indexOf("async function dispatchReviewPayload(");
@@ -156,12 +160,13 @@ describe("dispatch marks its threads pending", () => {
     expect(dispatcherBody()).toMatch(/markPayloadPending\(payload, folder\)/);
   });
 
-  it("marks on every delivery branch that actually reaches Claude", () => {
-    // terminal + channel/mcp-channel. Clipboard is deliberately excluded:
-    // nothing has been delivered until the human pastes it, so claiming
-    // Claude is working would be a guess.
-    const marks = dispatcherBody().match(/markPayloadPending\(/g) ?? [];
-    expect(marks.length).toBeGreaterThanOrEqual(2);
+  it("marks on every branch that delivers or copies, and not on a cancelled send", () => {
+    const body = dispatcherBody();
+    const clipboard = body.slice(body.indexOf('if (mode === "clipboard")'));
+    expect(clipboard).toMatch(/markPayloadPending\(payload, folder\)/);
+    const copiedInTerminal = body.slice(body.indexOf("const deliverToTerminal"), body.indexOf("const settle"));
+    expect(copiedInTerminal).toMatch(/reason !== "copied"\) return "cancelled";\s+await markPayloadPending\(payload, folder\)/);
+    expect((body.match(/markPayloadPending\(/g) ?? []).length).toBe(4);
   });
 
   it("derives the threads from the payload rather than a caller argument", () => {

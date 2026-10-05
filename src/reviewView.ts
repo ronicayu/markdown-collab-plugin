@@ -1,24 +1,22 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import type { Logger } from "./logging";
+import { isMarkdownPath } from "./pathUtils";
 import { isClaudeUnread } from "./inlineComments/claudeUnread";
 import { parse, type InlineThread } from "./inlineComments/format";
-import { IntegrityGuard, summarize, type GuardDecision } from "./inlineComments/integrityGuard";
+import { IntegrityGuard, evaluateDocument, summarize, type GuardDecision } from "./inlineComments/integrityGuard";
 
 export type ReviewNode =
   | { kind: "file"; docPath: string; unresolvedCount: number }
   | { kind: "comment"; docPath: string; thread: InlineThread };
 
 interface CacheEntry {
-  /** Open (unresolved) inline threads in document order. */
   openThreads: InlineThread[];
 }
 
 /** Dependency-injected hooks — the defaults talk to the real filesystem/vscode. */
 export interface ReviewViewDeps {
-  /** Return every `.md` URI under a workspace folder. */
   findFiles?: (folder: vscode.WorkspaceFolder) => Promise<vscode.Uri[]>;
-  /** Read a file's text, or null when it can't be read. */
   readFile?: (fsPath: string) => Promise<string | null>;
   /**
    * Install change/delete listeners and return a disposable. The default wires
@@ -42,11 +40,6 @@ const FILE_CHANGE_DEBOUNCE_MS = 100;
 const MARKDOWN_GLOB = "**/*.{md,markdown}";
 const THREADS_MARKER = "<!--mc:threads:begin-->";
 
-function isMarkdownPath(p: string): boolean {
-  const lower = p.toLowerCase();
-  return lower.endsWith(".md") || lower.endsWith(".markdown");
-}
-
 /** Skip vendored trees the full scan also excludes, so the watcher and scan agree. */
 function isVendored(p: string): boolean {
   return /(^|[\\/])node_modules[\\/]/.test(p);
@@ -55,10 +48,10 @@ function isVendored(p: string): boolean {
 /**
  * Cross-file overview of every `.md` in the workspace that has at least one
  * unresolved inline-comment thread (`<!--mc:t ...-->` with `status:"open"`).
- * Root nodes are files; leaf nodes are individual open threads. The scan is
- * lazy — the filesystem isn't walked until the user first expands the view —
- * and a `.md` filesystem watcher refreshes single files as they change so
- * rapid reply/resolve sequences don't trigger a full rescan.
+ * Root nodes are files; leaf nodes are individual open threads. The activation
+ * code starts the scan via `ensureScanned`, and a `.md` filesystem watcher
+ * refreshes single files as they change so rapid reply/resolve sequences don't
+ * trigger a full rescan.
  */
 export class ReviewView
   implements vscode.TreeDataProvider<ReviewNode>, vscode.Disposable
@@ -69,7 +62,7 @@ export class ReviewView
   /** docPath (md fsPath) -> cached open-thread summary */
   private readonly cache = new Map<string, CacheEntry>();
 
-  private scanStarted = false;
+  private scan: Promise<void> | null = null;
   private scanComplete = false;
   private lastHasAny = false;
 
@@ -77,6 +70,7 @@ export class ReviewView
   private readonly readFile: NonNullable<ReviewViewDeps["readFile"]>;
   private readonly onIntegrityIssues: NonNullable<ReviewViewDeps["onIntegrityIssues"]>;
   private readonly guard = new IntegrityGuard();
+  private readonly announced = new Map<string, string>();
 
   private readonly subs: vscode.Disposable[] = [];
   /** mdPath -> pending change timer, for per-path coalescing. */
@@ -105,18 +99,17 @@ export class ReviewView
       }),
     );
 
-    // Workspace folder changes invalidate the entire cache and re-scan.
     this.subs.push(
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         this.cache.clear();
-        this.scanStarted = false;
+        this.scan = null;
         this.scanComplete = false;
         this.syncHasReviewContext();
+        void this.ensureScanned();
         this._onDidChangeTreeData.fire();
       }),
     );
 
-    // Seed context key to false on construction.
     this.syncHasReviewContext();
   }
 
@@ -132,7 +125,6 @@ export class ReviewView
       item.contextValue = "markdownCollab.reviewFile";
       return item;
     }
-    // kind === "comment"
     const head = headComment(element.thread);
     const snippet = truncate(element.thread.quote || "(unanchored)", 40);
     const item = new vscode.TreeItem(snippet, vscode.TreeItemCollapsibleState.None);
@@ -154,10 +146,9 @@ export class ReviewView
 
   public getChildren(element?: ReviewNode): ReviewNode[] | Thenable<ReviewNode[]> {
     if (!element) {
-      if (!this.scanStarted) {
-        this.scanStarted = true;
+      if (!this.scan) {
         // Fire-and-forget — the view refreshes via onDidChangeTreeData when done.
-        void this.runFullScan();
+        void this.ensureScanned();
         return [];
       }
       return this.buildFileNodes();
@@ -175,14 +166,14 @@ export class ReviewView
   }
 
   /**
-   * Run the initial filesystem scan if the user hasn't expanded the tree yet.
-   * Cross-file commands (the unread walk) need the cache populated even when
-   * the view was never opened; expanding the tree stays the lazy path.
+   * Start the initial filesystem scan unless one has started, and wait for it.
+   * Activation calls this because the tree's `when` clause hides it until a
+   * scan finds threads, so nothing else would ever start it; the unread walk
+   * calls it to wait for the cache.
    */
   public async ensureScanned(): Promise<void> {
-    if (this.scanStarted) return;
-    this.scanStarted = true;
-    await this.runFullScan();
+    this.scan ??= this.runFullScan();
+    await this.scan;
   }
 
   /**
@@ -205,6 +196,7 @@ export class ReviewView
     this.disposed = true;
     for (const timer of this.changeTimers.values()) clearTimeout(timer);
     this.changeTimers.clear();
+    this.announced.clear();
     for (const d of this.subs) {
       try {
         d.dispose();
@@ -221,10 +213,6 @@ export class ReviewView
       false,
     );
   }
-
-  // -------------------------------------------------------------------------
-  // Internal: scan & cache management
-  // -------------------------------------------------------------------------
 
   private buildFileNodes(): ReviewNode[] {
     const nodes: ReviewNode[] = [];
@@ -258,7 +246,7 @@ export class ReviewView
         for (const uri of uris) {
           const mdPath = uri.fsPath;
           tasks.push(async () => {
-            const entry = await this.readEntry(mdPath);
+            const entry = await this.readEntry(mdPath, false);
             if (!entry || entry.openThreads.length === 0) return null;
             return { mdPath, entry };
           });
@@ -281,15 +269,19 @@ export class ReviewView
     }
   }
 
-  /** Parse a `.md` file and collect its open inline threads. */
-  private async readEntry(mdPath: string): Promise<CacheEntry | null> {
+  /**
+   * Parse a `.md` file and collect its open inline threads. `notify` is false
+   * for the full scan, which only records damage that was there before the
+   * window opened.
+   */
+  private async readEntry(mdPath: string, notify: boolean): Promise<CacheEntry | null> {
     const text = await this.readFile(mdPath);
     if (text === null) return null;
     // Integrity runs before the threads-region fast-path below: a document
     // whose threads region was destroyed but whose anchor markers survive is
     // exactly the damage worth reporting, and it has no threads region to
     // pass that check.
-    this.runIntegrityGuard(mdPath, text);
+    this.runIntegrityGuard(mdPath, text, notify);
     // Fast-path: skip the full code-mask/marker parse for the overwhelming
     // majority of docs that carry no threads region at all.
     if (!text.includes(THREADS_MARKER)) return { openThreads: [] };
@@ -300,10 +292,10 @@ export class ReviewView
   }
 
   private scheduleFileChange(mdPath: string): void {
-    // Ignore until the first scan has started (the lazy scan will pick up the
-    // current state on expand) and skip non-markdown / vendored paths the scan
-    // itself excludes, so the watcher and scan never disagree.
-    if (this.disposed || !this.scanStarted || !isMarkdownPath(mdPath) || isVendored(mdPath)) {
+    // Ignore until the first scan has started (it will pick up the current
+    // state) and skip non-markdown / vendored paths the scan itself excludes,
+    // so the watcher and scan never disagree.
+    if (this.disposed || !this.scan || !isMarkdownPath(mdPath) || isVendored(mdPath)) {
       return;
     }
     const existing = this.changeTimers.get(mdPath);
@@ -316,11 +308,10 @@ export class ReviewView
     this.changeTimers.set(mdPath, timer);
   }
 
-  /** Re-read a single `.md` (keyed by path) and update the cache. */
   private async invalidateOne(mdPath: string): Promise<void> {
     if (this.disposed) return;
     if (!this.folderForPath(mdPath)) return;
-    const entry = await this.readEntry(mdPath);
+    const entry = await this.readEntry(mdPath, true);
     const existed = this.cache.has(mdPath);
     if (!entry || entry.openThreads.length === 0) {
       if (existed) {
@@ -337,25 +328,47 @@ export class ReviewView
 
   /**
    * Check a document's marker integrity and notify at most once per distinct
-   * problem set. Never throws into the watcher path — a guard failure must
+   * problem set. The guard's memory is updated even when `notify` is false, so
+   * damage seen by the scan isn't announced again on the next unchanged read.
+   * Never throws into the watcher path — a guard failure must
    * not take down the tree refresh.
    */
-  private runIntegrityGuard(mdPath: string, text: string): void {
+  private runIntegrityGuard(mdPath: string, text: string, notify: boolean): void {
     try {
       const decision = this.guard.consider(mdPath, text);
       if (!decision) return;
       for (const issue of decision.issues) {
         this.log.warn("integrity issue", { file: path.basename(mdPath), kind: issue.kind, message: issue.message });
       }
-      this.onIntegrityIssues(decision);
+      if (notify) {
+        this.announced.set(mdPath, decision.signature);
+        this.onIntegrityIssues(decision);
+      }
     } catch (e) {
       this.log.error(`integrity check failed for ${mdPath}`, e);
     }
   }
 
+  public onDocumentOpened(mdPath: string, text: string): void {
+    if (this.disposed) return;
+    try {
+      const decision = evaluateDocument(mdPath, text);
+      if (!decision) {
+        this.announced.delete(mdPath);
+        return;
+      }
+      if (this.announced.get(mdPath) === decision.signature) return;
+      this.announced.set(mdPath, decision.signature);
+      this.onIntegrityIssues(decision);
+    } catch (e) {
+      this.log.error(`integrity check on open failed for ${mdPath}`, e);
+    }
+  }
+
   private removeFile(mdPath: string): void {
-    if (this.disposed || !this.scanStarted) return;
+    if (this.disposed || !this.scan) return;
     this.guard.forget(mdPath);
+    this.announced.delete(mdPath);
     const t = this.changeTimers.get(mdPath);
     if (t) {
       clearTimeout(t);
@@ -457,7 +470,6 @@ function defaultIntegrityNotifier(decision: GuardDecision): void {
     });
 }
 
-/** Default watcher: a `**​/*.md` filesystem watcher plus markdown save events. */
 function defaultWatch(handlers: {
   onChange: (fsPath: string) => void;
   onDelete: (fsPath: string) => void;
@@ -495,10 +507,6 @@ function truncate(s: string, n: number): string {
   return s.slice(0, n - 1) + "…";
 }
 
-/**
- * Tiny concurrency-limited map. Runs `tasks` with at most `limit` in flight,
- * preserving order of results. Kept inline to avoid adding a dependency.
- */
 async function pMap<T, R>(
   tasks: T[],
   limit: number,

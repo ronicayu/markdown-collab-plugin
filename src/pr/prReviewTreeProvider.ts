@@ -1,12 +1,3 @@
-/**
- * Tree view of the markdown files changed in the active PR / MR.
- *
- * Replaces the QuickPick file picker. Directory nesting mirrors the
- * Explorer (paths split on `/`). Each leaf shows the file's diff status
- * plus the number of unsubmitted drafts on it. Clicking a leaf opens
- * the file in the preview-mode PR review panel.
- */
-
 import * as path from "path";
 import * as vscode from "vscode";
 import type { ChangedFile } from "./diff";
@@ -28,9 +19,7 @@ interface FileNode {
 type TreeNode = DirNode | FileNode;
 
 export interface PrReviewTreeDeps {
-  /** Click handler — invoked when the user activates a file leaf. */
   onOpenFile: (file: ChangedFile) => void;
-  /** Returns the current draft count for `relPath`. */
   getDraftCount: (relPath: string) => number;
 }
 
@@ -42,7 +31,6 @@ export class PrReviewTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
   constructor(private readonly deps: PrReviewTreeDeps) {}
 
-  /** Reset the tree to reflect a new set of changed files. */
   setFiles(files: ChangedFile[]): void {
     this.rootChildren = buildTree(files, this.deps.getDraftCount);
     this.emitter.fire();
@@ -141,7 +129,6 @@ function buildTree(files: ChangedFile[], getDraftCount: (p: string) => number): 
   return toNodes(root);
 }
 
-/** Best-effort: derive a short directory-only display path for a file. */
 export function directoryOnly(p: string): string {
   const dir = path.dirname(p);
   return dir === "." ? "" : dir;

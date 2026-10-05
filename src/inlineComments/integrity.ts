@@ -32,14 +32,13 @@ export type IntegrityIssueKind =
   | "unpaired-marker"
   /** A `<!--mc:t ...-->` line that produced no thread (bad JSON / no id). */
   | "malformed-thread-json"
-  /** The same thread id on more than one thread line. */
   | "duplicate-thread-id"
-  /** Anchor markers in the prose with no matching thread. */
   | "orphan-anchor"
-  /** A thread in the threads region with no anchor markers in the prose. */
   | "unanchored-thread"
   /** A suggestion whose anchor markers are missing — its original text is lost. */
-  | "unanchored-suggestion";
+  | "unanchored-suggestion"
+  /** An anchored thread with an empty quote — it was opened on nothing. */
+  | "empty-quote";
 
 export interface IntegrityIssue {
   kind: IntegrityIssueKind;
@@ -54,7 +53,6 @@ export interface IntegrityIssue {
 }
 
 export interface IntegrityReport {
-  /** True when there are no issues at all. */
   ok: boolean;
   issues: IntegrityIssue[];
   counts: {
@@ -137,6 +135,27 @@ export function checkIntegrity(source: string): IntegrityReport {
     });
   }
 
+  // A thread with an empty quote was opened on nothing. Keyed on the quote,
+  // not the anchor's width: a zero-width anchor whose quote survives is the
+  // valid result of deleting the passage a thread was about, and stays
+  // unreported. Not repairable — there is no text to re-anchor to. Unanchored
+  // threads are already reported above.
+  for (const t of insp.parsed.threads) {
+    const a = insp.parsed.anchors.get(t.id);
+    if (!a || t.quote !== "") continue;
+    issues.push({
+      kind: "empty-quote",
+      severity: "warning",
+      message:
+        a.openEnd === a.closeStart
+          ? `Thread ${t.id} is anchored to an empty span and has an empty quote — it points at no text.`
+          : `Thread ${t.id} has an empty quote, so it cannot be re-anchored if its markers are lost.`,
+      threadId: t.id,
+      offset: a.openStart,
+      repairable: false,
+    });
+  }
+
   for (const id of insp.parsed.unanchoredSuggestionIds) {
     // A suggestion's original text lives in its anchored span; losing the
     // markers means we no longer know where the change applies. Not
@@ -173,7 +192,6 @@ export interface RepairAction {
 export interface RepairResult {
   source: string;
   repairs: RepairAction[];
-  /** Issues still present after repair. */
   remaining: IntegrityIssue[];
 }
 
@@ -315,5 +333,4 @@ function truncate(s: string, max = 80): string {
   return s.length <= max ? s : `${s.slice(0, max)}…`;
 }
 
-/** Re-export so consumers need only one import. */
 export { withThreads };

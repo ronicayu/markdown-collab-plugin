@@ -1,15 +1,13 @@
-// Locate a comment's anchor inside the live editor's rendered text
-// (Milkdown's `view.state.doc.textContent`). Mirrors src/anchor.ts:resolve
-// semantically: prefer unique exact match; when duplicates exist,
-// disambiguate by requiring ALL stored (non-empty) context sides to
-// match; orphan (null) if 0 or >1 candidates pass.
+// Locate a comment's anchor inside the live editor's rendered text (Milkdown's
+// `view.state.doc.textContent`): prefer a unique exact match; when duplicates
+// exist, require ALL stored (non-empty) context sides to match; orphan (null)
+// if 0 or >1 candidates pass.
 //
 // Context comparison uses whitespace-normalised neighborhoods because
-// stripInlineMarkup and live textContent collapse whitespace
-// differently from the stored markdown source — a strict byte-level
-// endsWith would spuriously reject correct hits (e.g. when stored
-// contextBefore was "Section B\n" but the stripped form drops the
-// newline).
+// stripInlineMarkup and live textContent collapse whitespace differently from
+// the stored markdown source — a strict byte-level endsWith would spuriously
+// reject correct hits (e.g. stored contextBefore "Section B\n" but the stripped
+// form drops the newline).
 
 import { stripInlineMarkup } from "./anchorExtractor";
 
@@ -60,8 +58,6 @@ export function locateAnchorInLiveText(
     return null;
   }
 
-  // No (or ambiguous-on-context) exact hits → try whitespace-normalised
-  // needle search.
   const nNeedle = normalizeWs(needle);
   if (nNeedle.length === 0) return null;
   const { normalized, map } = collapseWs(haystack);
@@ -96,9 +92,9 @@ export function locateAnchorInLiveText(
 /**
  * Locate the `ordinal`-th (0-based) occurrence of `text` in `haystack`. Used by
  * the live highlight, which already knows which occurrence is anchored (from the
- * marker's position) and so needs no surrounding context — sidestepping the
- * whole class of bugs where the context carried markdown structure (table `|`,
- * heading `#`, separator rows) that isn't present in the rendered text.
+ * marker's position) and so needs no surrounding context — which could carry
+ * markdown structure (table `|`, heading `#`, separator rows) that isn't present
+ * in the rendered text.
  *
  * Exact match first; falls back to a whitespace-normalised search so a stored
  * span with collapsed runs still resolves. If the ordinal is out of range

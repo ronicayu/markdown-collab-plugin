@@ -108,8 +108,8 @@ body { overflow: hidden; }
 
 .mdc-editor-pane {
   height: 100vh;
-  overflow: auto;
-  padding: var(--mdc-space-4) var(--mdc-space-5);
+  display: flex;
+  flex-direction: column;
   border-right: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
 }
 .mdc-editor-pane .milkdown {
@@ -117,6 +117,36 @@ body { overflow: hidden; }
   color: inherit;
   max-width: none;
   width: 100%;
+}
+
+/* Document toolbar (sidebar-chrome-redesign): outline on the left, the
+   Reading/Editing switch and the comments toggle on the right. A fixed-height
+   sibling of the scrolling content below, not a child of it, so it spans the
+   pane's full width and never scrolls with the document. */
+.mdc-doc-toolbar {
+  flex: 0 0 auto;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: var(--mdc-space-2);
+  padding: 0 var(--mdc-space-3);
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
+  background: var(--vscode-editor-background);
+}
+.mdc-doc-toolbar__right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--mdc-space-2);
+}
+
+/* The pane's own padding and scrolling, split out of `.mdc-editor-pane` so the
+   toolbar above can sit outside both (docs/sidebar-chrome-redesign.md). */
+.mdc-editor-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--mdc-space-4) var(--mdc-space-5);
 }
 
 /* Read-only frontmatter panel, shown above the editor body. */
@@ -166,28 +196,6 @@ body { overflow: hidden; }
   flex-direction: column;
 }
 
-.mdc-sidebar-toggle {
-  position: fixed;
-  top: var(--mdc-space-2);
-  right: calc(var(--mdc-sidebar-width) + var(--mdc-space-2));
-  z-index: 999;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--vscode-button-secondaryBackground, rgba(127, 127, 127, 0.18));
-  color: var(--vscode-button-secondaryForeground, inherit);
-  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.25));
-  border-radius: var(--mdc-radius);
-  padding: 4px 6px;
-  cursor: pointer;
-}
-.mdc-layout--collapsed .mdc-sidebar-toggle {
-  right: var(--mdc-space-2);
-}
-.mdc-sidebar-toggle:hover {
-  background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.1));
-}
-
 /* ===========================================================
    Connection banner
    =========================================================== */
@@ -215,52 +223,9 @@ body { overflow: hidden; }
 }
 
 /* ===========================================================
-   Sidebar header (title, filter chip, peer stack, toolbar)
+   Peer stack (kept: check before touching, per the redesign notes — no
+   TypeScript builds it today, but it isn't part of this pass)
    =========================================================== */
-
-.mdc-sidebar-header {
-  padding: var(--mdc-space-3) var(--mdc-space-4);
-  border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
-}
-.mdc-sidebar-header-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--mdc-space-2);
-  align-items: center;
-  justify-content: space-between;
-}
-.mdc-sidebar-titles {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.mdc-sidebar-title {
-  font-weight: 600;
-  font-size: 13px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--vscode-sideBarTitle-foreground, var(--vscode-foreground));
-}
-.mdc-filter-chip {
-  align-self: flex-start;
-  font: inherit;
-  font-size: 11px;
-  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
-  background: transparent;
-  color: var(--vscode-foreground, inherit);
-  padding: 2px 8px;
-  border-radius: 999px;
-  cursor: pointer;
-  opacity: 0.85;
-}
-.mdc-filter-chip:hover { opacity: 1; }
-.mdc-filter-chip--active {
-  background: var(--vscode-badge-background, rgba(127, 127, 127, 0.3));
-  color: var(--vscode-badge-foreground, var(--vscode-foreground));
-  border-color: transparent;
-}
 
 .mdc-peer-stack {
   display: flex;
@@ -290,34 +255,6 @@ body { overflow: hidden; }
   font-size: 9px;
 }
 
-.mdc-sidebar-toolbar {
-  display: flex;
-  gap: var(--mdc-space-1);
-  align-items: center;
-  flex: 0 0 auto;
-}
-
-/* Send to Claude / Copy shown directly under the header (not in an overflow
-   menu), mirroring the inline-comments view. */
-.mdc-sidebar-actions {
-  display: flex;
-  gap: var(--mdc-space-1);
-  margin-top: var(--mdc-space-2);
-}
-.mdc-sidebar-action {
-  flex: 1;
-  justify-content: center;
-}
-.mdc-sidebar-action--primary {
-  background: var(--vscode-button-background, #0e639c);
-  color: var(--vscode-button-foreground, white);
-  border-color: transparent;
-  font-weight: 500;
-}
-.mdc-sidebar-action--primary:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground, #1177bb);
-}
-
 .mdc-icon-btn {
   display: inline-flex;
   align-items: center;
@@ -338,15 +275,6 @@ body { overflow: hidden; }
 .mdc-icon-btn:disabled {
   opacity: 0.45;
   cursor: default;
-}
-.mdc-icon-btn--primary {
-  background: var(--vscode-button-background, #0e639c);
-  color: var(--vscode-button-foreground, white);
-  border-color: transparent;
-  font-weight: 500;
-}
-.mdc-icon-btn--primary:hover {
-  background: var(--vscode-button-hoverBackground, #1177bb);
 }
 .mdc-icon-btn--small {
   padding: 3px 5px;
@@ -497,6 +425,12 @@ body { overflow: hidden; }
 @keyframes mdc-card-flash {
   0% { background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 220, 0, 0.45)); }
   100% { background-color: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.05)); }
+}
+/* 10x-plan-4 P2.4: cut every keyframe animation on this surface when the OS
+   asked for reduced motion — these are jump-here emphasis, not information,
+   so removing them loses nothing a click didn't already convey. */
+@media (prefers-reduced-motion: reduce) {
+  .mdc-comment--flash { animation: none; }
 }
 
 .mdc-comment-header {
@@ -662,12 +596,22 @@ body { overflow: hidden; }
 .mdc-anchor-highlight:hover {
   background: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 220, 0, 0.45));
 }
+/* A resolved thread, highlighted when the sidebar's filter lists resolved
+   threads — the review view's resolved tint. */
+.mdc-anchor-highlight--resolved,
+.mdc-anchor-highlight--resolved:hover {
+  background: var(--vscode-diffEditor-insertedTextBackground, rgba(120, 120, 120, 0.22));
+  border-bottom-color: transparent;
+}
 .mdc-anchor-highlight--pulse {
   animation: mdc-anchor-pulse 1s ease;
 }
 @keyframes mdc-anchor-pulse {
   0% { background: var(--vscode-editor-findMatchBackground, rgba(255, 180, 0, 0.7)); }
   100% { background: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 220, 0, 0.25)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mdc-anchor-highlight--pulse { animation: none; }
 }
 
 /* The span Claude just edited (externalChange). Green insert-tint that fades
@@ -681,6 +625,15 @@ body { overflow: hidden; }
   0% { background: color-mix(in srgb, var(--vscode-charts-green, #4caf50) 42%, transparent); }
   70% { background: color-mix(in srgb, var(--vscode-charts-green, #4caf50) 30%, transparent); }
   100% { background: color-mix(in srgb, var(--vscode-charts-green, #4caf50) 0%, transparent); }
+}
+/* This tint is information (what Claude just changed), not just emphasis, so
+   reduced motion keeps a flat mid-tone instead of removing it outright — it
+   just stops animating out on its own. */
+@media (prefers-reduced-motion: reduce) {
+  .mdc-claude-edit {
+    animation: none;
+    background: color-mix(in srgb, var(--vscode-charts-green, #4caf50) 30%, transparent);
+  }
 }
 
 /* The presence notice, when clickable (scrolls to Claude's edit). */

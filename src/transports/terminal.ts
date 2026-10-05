@@ -1,103 +1,126 @@
 import * as vscode from "vscode";
 import type { Logger } from "../logging";
 import type { ReviewPayload } from "../sendToClaude";
+import { chooseTarget, type TerminalCandidate } from "./terminalTarget";
 import type { TerminalTracker } from "./terminalTracker";
 
 const BP_START = "\x1b[200~";
 const BP_END = "\x1b[201~";
 
+// Workspace text can carry ESC [201~, which would end the paste early and type what follows as live keystrokes.
+export function sanitizeForTerminal(text: string): string {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, "");
+}
+
 export type SendResult =
   | { ok: true; terminalName: string }
-  | { ok: false; reason: "cancelled" | "no-target" };
+  | { ok: false; reason: "cancelled" | "no-target" | "copied" };
 
-interface Resolution {
-  terminal: vscode.Terminal;
-  reliability: "high" | "medium" | "low";
-  source: string;
+async function copyInstead(payload: ReviewPayload): Promise<SendResult> {
+  await vscode.env.clipboard.writeText(payload.prompt);
+  void vscode.window.showInformationMessage("Prompt copied — paste into your agent.");
+  return { ok: false, reason: "copied" };
 }
 
-/**
- * Locate the best terminal to inject the prompt into.
- * Higher-reliability matches short-circuit lower ones.
- */
-function resolveTerminal(tracker: TerminalTracker): Resolution | null {
-  const terminals = vscode.window.terminals;
-
-  for (const t of terminals) {
-    if (tracker.isOwned(t)) {
-      return { terminal: t, reliability: "high", source: "owned" };
-    }
-  }
-  for (const t of terminals) {
-    if (tracker.hasClaudeEvidence(t)) {
-      return { terminal: t, reliability: "high", source: "shell-integration" };
-    }
-  }
-  for (const t of terminals) {
-    if (/claude/i.test(t.name)) {
-      return { terminal: t, reliability: "medium", source: "name-match" };
-    }
-  }
-  const active = vscode.window.activeTerminal;
-  if (active) {
-    return { terminal: active, reliability: "low", source: "active" };
-  }
-  return null;
+async function declineOrCopy(
+  payload: ReviewPayload,
+  message: string,
+  dismissed: SendResult,
+): Promise<SendResult> {
+  const choice = await vscode.window.showInformationMessage(message, "Copy instead");
+  return choice === "Copy instead" ? copyInstead(payload) : dismissed;
 }
 
-/**
- * Inject the prompt into the resolved terminal using bracketed paste so
- * multi-line content lands as one TUI input rather than being split on
- * newlines. Returns whether the send actually happened (a confirmation
- * dialog can return false when reliability is medium/low).
- */
 export async function sendViaTerminal(
   payload: ReviewPayload,
   tracker: TerminalTracker,
-  options?: { offerStartTerminal?: () => Promise<vscode.Terminal | null>; log?: Logger },
+  options?: { log?: Logger },
 ): Promise<SendResult> {
+  if (!vscode.workspace.isTrusted) return copyInstead(payload);
   const log = options?.log;
-  let resolution = resolveTerminal(tracker);
-  // Which terminal, and on what evidence. When a paste lands in the wrong
-  // place — a plain shell instead of the Claude REPL — this line is the
-  // difference between "it silently did nothing" and a one-look diagnosis.
-  log?.trace("terminal resolution", {
-    open: vscode.window.terminals.length,
-    picked: resolution?.terminal.name ?? null,
-    via: resolution?.source ?? null,
-    reliability: resolution?.reliability ?? null,
-  });
+  const terminals: TerminalCandidate<vscode.Terminal>[] = vscode.window.terminals.map((t) => ({
+    terminal: t,
+    name: t.name,
+    activity: tracker.activity(t),
+    command: tracker.runningCommand(t),
+  }));
+  const decision = chooseTarget(terminals, vscode.window.activeTerminal, tracker.lastTarget);
 
-  if (!resolution) {
-    if (options?.offerStartTerminal) {
-      const started = await options.offerStartTerminal();
-      if (!started) return { ok: false, reason: "no-target" };
-      resolution = { terminal: started, reliability: "high", source: "owned-just-spawned" };
-    } else {
-      return { ok: false, reason: "no-target" };
+  const write = (terminal: vscode.Terminal): SendResult => {
+    // Bracketed paste, so a multi-line prompt lands as one input.
+    terminal.sendText(BP_START + sanitizeForTerminal(payload.prompt) + BP_END, false);
+    terminal.sendText("", true);
+    terminal.show(true);
+    tracker.setLastTarget(terminal);
+    log?.trace("bracketed paste written", {
+      terminal: terminal.name,
+      chars: payload.prompt.length,
+    });
+    return { ok: true, terminalName: terminal.name };
+  };
+
+  let picked: vscode.Terminal | undefined;
+  let result: SendResult;
+
+  switch (decision.kind) {
+    case "send":
+      picked = decision.terminal;
+      result = write(picked);
+      break;
+    case "pick": {
+      const choice = await vscode.window.showQuickPick(
+        decision.terminals.map((c) => ({ label: c.name, description: c.command, terminal: c.terminal })),
+        { placeHolder: "Which terminal should get the prompt?" },
+      );
+      picked = choice?.terminal;
+      result = picked ? write(picked) : { ok: false, reason: "cancelled" };
+      break;
     }
+    case "confirm": {
+      const choice = await vscode.window.showInformationMessage(
+        `Send to terminal "${decision.terminal.name}"? Markdown Collab can't tell what's running there.`,
+        "Send",
+        "Copy instead",
+      );
+      if (choice === "Send") {
+        picked = decision.terminal;
+        result = write(picked);
+      } else {
+        result = choice === "Copy instead" ? await copyInstead(payload) : { ok: false, reason: "cancelled" };
+      }
+      break;
+    }
+    case "idle":
+      result = await declineOrCopy(
+        payload,
+        "Nothing is running in your terminals. Start your agent in one, then Send again.",
+        { ok: false, reason: "no-target" },
+      );
+      break;
+    case "none":
+      result = await declineOrCopy(
+        payload,
+        "No terminal open. Start your agent in a terminal, then Send again.",
+        { ok: false, reason: "no-target" },
+      );
+      break;
   }
 
-  const { terminal } = resolution;
-  terminal.sendText(BP_START + payload.prompt + BP_END, false);
-  terminal.sendText("", true);
-  terminal.show(true);
-  log?.trace("bracketed paste written", {
-    terminal: terminal.name,
-    chars: payload.prompt.length,
+  log?.trace("terminal resolution", {
+    decision: decision.kind,
+    picked: picked?.name ?? null,
+    terminals: terminals.map((c) => ({ name: c.name, activity: c.activity })),
   });
-  return { ok: true, terminalName: terminal.name };
+  return result;
 }
 
-/**
- * Spawn a new terminal, run `claude`, and register it as ours so the
- * detection ladder picks it up on subsequent sends. Caller is responsible
- * for the post-spawn delay if it wants to inject immediately.
- */
-export function startClaudeTerminal(tracker: TerminalTracker, log?: Logger): vscode.Terminal {
+export function startClaudeTerminal(tracker: TerminalTracker, log?: Logger): vscode.Terminal | undefined {
+  if (!vscode.workspace.isTrusted) return undefined;
   const terminal = vscode.window.createTerminal({ name: "Claude Review" });
   log?.info("spawned a Claude terminal");
-  tracker.markOwned(terminal);
+  tracker.markClaudeStarted(terminal);
   terminal.sendText("claude", true);
   terminal.show(true);
   return terminal;

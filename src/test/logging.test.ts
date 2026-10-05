@@ -143,7 +143,21 @@ describe("logging invariants", () => {
   it("nothing else in the extension creates its own output channel", () => {
     // A second channel is a second place to look, which defeats the point.
     const offenders: string[] = [];
-    for (const rel of ["src/extension.ts", "src/mcpServer/index.ts", "src/pr/prReviewController.ts", "src/reviewView.ts", "src/collab/collabEditorProvider.ts"]) {
+    for (const rel of [
+      "src/extension.ts",
+      // The command registrations were split out of extension.ts
+      // into these — the guard has to follow them or it stops meaning anything.
+      "src/commands/deps.ts",
+      "src/commands/send.ts",
+      "src/commands/review.ts",
+      "src/commands/comments.ts",
+      "src/commands/setup.ts",
+      "src/commands/diagnostics.ts",
+      "src/mcpServer/index.ts",
+      "src/pr/prReviewController.ts",
+      "src/reviewView.ts",
+      "src/collab/collabEditorProvider.ts",
+    ]) {
       if (read(rel).includes("createOutputChannel")) offenders.push(rel);
     }
     expect(offenders).toEqual([]);

@@ -1,55 +1,57 @@
-// Webview client for the Markdown Collab editor.
-//
-// Major UX rework (v0.19.0). Architecture:
-//   - Milkdown WYSIWYG editor on the left.
-//   - Comments sidebar on the right with: connection-status banner,
-//     "+ Add comment" as the prominent primary button, an overflow menu
-//     for Claude integrations, a clickable filter chip ("3 open · 5 total"
-//     toggles "hide resolved"), the comment list, and an inline
-//     composer / reply / delete-confirm slot.
-//   - Single human + Claude: the human edits here; Claude edits the .md on
-//     disk; the two converge through the file (an "externalChange" push
-//     re-parses the document into the editor). No network relay, no Yjs.
-//   - Bidirectional comment navigation: every comment's anchor is
-//     highlighted in the editor; clicking the highlight scrolls the
-//     sidebar to the matching card and flashes it; clicking a card
-//     scrolls the editor to its anchor and flashes it.
-//   - Responsive: below 720px, the sidebar collapses to a drawer with a
-//     toggle in the editor area.
-//   - Editor follows the user's VSCode theme (no more forced Nord).
-
 import {
   Editor,
   defaultValueCtx,
   editorViewCtx,
+  editorViewOptionsCtx,
   parserCtx,
   prosePluginsCtx,
   rootCtx,
   serializerCtx,
 } from "@milkdown/core";
-import { commonmark } from "@milkdown/preset-commonmark";
-import { gfm } from "@milkdown/preset-gfm";
+import { bulletListSchema, commonmark } from "@milkdown/preset-commonmark";
+import { extendListItemSchemaForTask, gfm } from "@milkdown/preset-gfm";
+import type { Ctx } from "@milkdown/ctx";
+import type { NodeSchema } from "@milkdown/transformer";
 import { listener, listenerCtx } from "@milkdown/plugin-listener";
-import { history } from "@milkdown/plugin-history";
 import { nord } from "@milkdown/theme-nord";
 import "@milkdown/theme-nord/style.css";
 import "./host.css";
-import { Plugin, PluginKey, TextSelection } from "prosemirror-state";
+import "./plugins/plugins.css";
+import { NodeSelection, Plugin, PluginKey, TextSelection, type Transaction } from "prosemirror-state";
 import { CellSelection } from "@milkdown/prose/tables";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import type { Node as PmDocNode } from "prosemirror-model";
-import { buildCommentBody, buildCommentCard, buildComposer, buildSuggestionCard, type ComposerHandle } from "../webviewShared/commentUi";
-import { sidebarCountLabel, threadSignature } from "../webviewShared/threadListState";
+import { buildComposer, type ComposerHandle } from "../webviewShared/commentUi";
+import { createThreadSidebar } from "../webviewShared/threadSidebar";
+import type { DispatchOutcome, SidebarMessage, SidebarState, SidebarThread, SkillStatus } from "../webviewShared/sidebarProtocol";
+import { matchesFilter, type ThreadFilter } from "../webviewShared/threadListState";
 import { locateAnchorInLiveText, locateNthOccurrence } from "../collab/liveAnchorLocator";
 import { renderedRangeToPmRange, renderedTextOf } from "../collab/pmPositionMapper";
+import {
+  buildSourceIndex,
+  editorSelectionPoints,
+  editorSelectionToSource,
+  sourceRangeToEditor,
+  type EditorPoint,
+  type PmBlockLike,
+  type PmNodeLike,
+  type SourceIndex,
+} from "../collab/sourcePositions";
+import { diffBlocks, markdownBlockNodes, type BlockEditsMessage } from "../collab/blockEdits";
+import { decodeNamedReference, installSourcePositions } from "./sourcePositionPlugin";
 import { slugifyHeading } from "../inlineComments/linkParse";
 import { resolveImageSrc, type ImageBaseUris } from "../webviewShared/imageSrc";
 import { parseHtmlImage } from "../webviewShared/htmlImage";
 import { displayLine, topLevelBlockLines } from "../webviewShared/lineNumbers";
-// Navigation reuses scrollEditorToFragment, which slugifies headings itself
-// with the same function the outline uses.
+import { smoothScrollIntoView } from "../webviewShared/scrollIntoView";
 import { buildOutline } from "../webviewShared/outline";
 import { buildOutlinePanel, type OutlinePanelHandle } from "../webviewShared/outlinePanel";
+import { inlineBreakPlugin } from "./plugins/inlineBreakPlugin";
+import { makePlantumlPlugin, setPlantumlConfig, type PlantumlConfig } from "./plugins/plantumlWidgetPlugin";
+import { makeTaskListPlugin } from "./plugins/taskListPlugin";
+import { makeSuggestionHighlightPlugin, SUGGESTION_HIGHLIGHT_KEY } from "./plugins/suggestionHighlightPlugin";
+import { makeDiffStripesPlugin, DIFF_STRIPES_KEY, type DiffState } from "./plugins/diffStripesPlugin";
+import { buildChangeNav, type ChangeNavHandle } from "./plugins/changeNav";
 
 declare function acquireVsCodeApi(): {
   postMessage: (msg: unknown) => void;
@@ -67,7 +69,10 @@ interface CommentSummary {
   anchor: { text: string; contextBefore: string; contextAfter: string };
   /** Which occurrence of `anchor.text` the marker wraps (0-based; -1 if unanchored). */
   anchorOrdinal: number;
-  /** The anchored text changed after this thread's last comment (P1.3). */
+  /** The anchored span in the prose this editor parsed; -1 when unanchored. Read-only mode places by these. */
+  proseStart?: number;
+  proseEnd?: number;
+  /** The anchored text changed after this thread's last comment. */
   stale?: boolean;
   replies: Array<{ id: string; author: string; body: string; createdAt: string }>;
 }
@@ -83,9 +88,20 @@ interface SuggestionSummary {
   anchor: { text: string; contextBefore: string; contextAfter: string };
   /** Which occurrence of `anchor.text` the marker wraps (0-based; -1 if unanchored). */
   anchorOrdinal: number;
+  /** The anchored span in prose offsets; -1 when unanchored. Read-only mode places by these. */
+  proseStart?: number;
+  proseEnd?: number;
 }
 
-interface InitMessage {
+/** The sidebar's fields on `init` and `sidecar-changed`; see collab/sidebarHost.ts. */
+interface SidebarPush {
+  /** Every thread with its full comment list; absent, the cards are built from `comments`. */
+  threads?: SidebarThread[];
+  suggestMode?: boolean;
+  agentName?: string;
+}
+
+interface InitMessage extends SidebarPush {
   type: "init";
   text: string;
   user: { name: string; color: string };
@@ -95,11 +111,21 @@ interface InitMessage {
   pendingLabel?: string;
   frontmatter?: string;
   imageBaseUris?: ImageBaseUris;
+  plantuml?: PlantumlConfig;
   /** Source line per prose line; present only when line numbers are on. */
   lineMap?: number[];
+  /** Read-only mode: no editing; comments anchor by source position. */
+  readOnly?: boolean;
+  /**
+   * The host's `DiffState` (src/inlineComments/inlineCommentsPanel.ts), copied
+   * because the webview bundle can't import a vscode-touching module.
+   * Absent/null = plain live editor.
+   */
+  diff?: DiffState | null;
+  /** The host's document epoch; edit mode's reports carry it. */
+  epoch?: number;
 }
 
-/** Pushed when the line-number setting or the document's line map changes. */
 interface LineMapMessage {
   type: "line-map";
   lineMap?: number[];
@@ -117,6 +143,17 @@ interface ExternalChangeMessage {
   text: string;
   /** Where the disk-side (Claude) edit landed, for the presence affordances. */
   changed?: ChangeSummary | null;
+  /** The host's document epoch after this re-render; edit mode's next report carries it. */
+  epoch?: number;
+  /** Set when the host re-rendered because it couldn't take an edit: says why, instead of the external-edit notice. */
+  toast?: string;
+  /** The person's own edit, written after the editor was rebuilt without it: nothing to announce. */
+  quiet?: boolean;
+  /**
+   * The person's own undo or redo: put the caret at the change and scroll it
+   * into view, instead of restoring the previous scroll position.
+   */
+  reveal?: boolean;
 }
 
 interface FrontmatterMessage {
@@ -124,13 +161,15 @@ interface FrontmatterMessage {
   frontmatter: string;
 }
 
-interface SidecarChangedMessage {
+interface SidecarChangedMessage extends SidebarPush {
   type: "sidecar-changed";
   comments: CommentSummary[];
   suggestions?: SuggestionSummary[];
   pendingThreadIds?: string[];
-  /** Host-decided wording for the waiting row (10x-plan-2 P0.2). */
+  /** Host-decided wording for the waiting row. */
   pendingLabel?: string;
+  /** Same contract as `InitMessage.diff`. */
+  diff?: DiffState | null;
 }
 
 interface AddCommentResultMessage {
@@ -177,6 +216,35 @@ interface DrawioReadResultMessage {
   error?: string;
 }
 
+interface SkillStatusMessage {
+  type: "skill-status";
+  status: SkillStatus;
+}
+
+/** An agent was just asked to review: the thread ids that existed then. */
+interface ReviewPendingMessage {
+  type: "review-pending";
+  existingIds: string[];
+}
+
+/** Land on a thread: a hover link, a tree row or the unread walk opened this view on it. */
+interface RevealThreadMessage {
+  type: "reveal-thread";
+  threadId: string;
+}
+
+/**
+ * How a send from the sidebar went: `outcome` says whether it was handed to
+ * the agent, only copied, or went nowhere; `saved` when the file on disk had
+ * the editor's text first. The host doesn't send when the save fails — the
+ * agent would read the old version.
+ */
+interface SendResultMessage {
+  type: "send-result";
+  outcome: DispatchOutcome;
+  saved: boolean;
+}
+
 type IncomingMessage =
   | InitMessage
   | ExternalChangeMessage
@@ -188,74 +256,129 @@ type IncomingMessage =
   | DeleteCommentResultMessage
   | OpenLinkResultMessage
   | LineMapMessage
-  | DrawioReadResultMessage;
+  | DrawioReadResultMessage
+  | SkillStatusMessage
+  | ReviewPendingMessage
+  | SendResultMessage
+  | RevealThreadMessage;
 
 const vscode = acquireVsCodeApi();
 
 let editor: Editor | null = null;
-let suppressNextPost = false;
+// `init` messages run one at a time: a second one (a mode switch) waits for
+// the first editor to finish building before replacing it.
+let initQueue: Promise<void> = Promise.resolve();
 let userName: string = "user";
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 // Debounces the human's edits before posting them to the host. Module-scoped so
 // an incoming external (Claude) change can cancel a still-pending stale post —
 // otherwise that post would fire after the external change and overwrite it.
 let editDebounce: ReturnType<typeof setTimeout> | null = null;
-// In-progress reply text per thread, so an always-on reply box keeps what the
-// user typed across sidebar re-renders.
-const pendingReplies = new Map<string, string>();
-/** Live reply composers by thread id, so a failed reply POST can re-enable them. */
-const replyComposers = new Map<string, ComposerHandle>();
+// Edit mode: the document as last parsed from the host or last posted to it,
+// and the host epoch it belongs to. An edit is reported as the top-level blocks
+// the current document doesn't share with this one; the host drops a report
+// from an epoch it has left.
+let editBaseDoc: PmDocNode | null = null;
+let editEpoch = 0;
 /** The open add-comment composer, so a failed add can re-enable it. */
 let addComposer: ComposerHandle | null = null;
 
 const sidebarState: {
   comments: CommentSummary[];
   suggestions: SuggestionSummary[];
-  hideResolved: boolean;
   collapsed: boolean;
-  // Transient one-line status (e.g. "Updated from disk" when Claude edits the
-  // file). null when nothing to show.
   notice: string | null;
-  /** Threads dispatched to Claude and not yet answered — owned by the host. */
-  pending: ReadonlySet<string>;
-  /** What the waiting row says. The host owns the wording because only it
-   *  knows whether the wait is inferred or protocol-backed. */
-  pendingLabel: string;
 } = {
   comments: [],
   suggestions: [],
-  pending: new Set<string>(),
-  pendingLabel: "Claude is working\u2026",
-  hideResolved: false,
   collapsed: false,
   notice: null,
 };
+
+// The thread sidebar renders the latest push (`sidebarPush`) with this editor's
+// own mode; it is shared with the review view's threads pane
+// (webviewShared/threadSidebar.ts), and everything it asks of the document
+// comes back through these callbacks.
+const sidebarPush: Omit<SidebarState, "readOnly"> = {
+  threads: [],
+  suggestions: [],
+  suggestMode: false,
+  pendingThreadIds: [],
+};
+
+/**
+ * The one path every sidebar-protocol message goes out through, whether it
+ * comes from the sidebar itself or from the document toolbar's mode switch.
+ */
+function postSidebarMessage(msg: SidebarMessage): void {
+  // Edits still in the debounce go first, whatever the message: the host
+  // writes a reply or an accepted suggestion over the file as it has it,
+  // the mode switch re-reads the file, and the agent reads it from disk.
+  flushBlockEdits();
+  vscode.postMessage(msg);
+}
+
+const threadSidebar = createThreadSidebar({
+  post: postSidebarMessage,
+  getState: () => vscode.getState(),
+  setState: (state) => {
+    const before = threadFilter();
+    vscode.setState(state);
+    // Highlights follow the list's filter, as in the review view.
+    if (threadFilter() !== before) forceHighlightRefresh();
+  },
+  revealInDocument: (threadId) => {
+    const comment = sidebarState.comments.find((c) => c.id === threadId);
+    if (comment) jumpToAnchor(comment);
+  },
+  revealSuggestionInDocument: (anchorId) => {
+    const mark = editorContainer?.querySelector<HTMLElement>(
+      `.mdc-anchor-highlight--suggestion[data-suggestion-id="${cssEscape(anchorId)}"]`,
+    );
+    if (mark) smoothScrollIntoView(mark, "center");
+  },
+});
 
 let sidebarEl: HTMLElement | null = null;
 let composerEl: HTMLElement | null = null;
 let editorContainer: HTMLElement | null = null;
 let frontmatterEl: HTMLElement | null = null;
 let layoutEl: HTMLElement | null = null;
-let collapseToggleEl: HTMLButtonElement | null = null;
+// The padded, `overflow: auto` wrapper inside `.mdc-editor-pane`; the pane is a
+// plain flex column so the document toolbar above can span its full width and
+// never scroll.
+let editorScrollEl: HTMLElement | null = null;
+let commentsToggleBtn: HTMLButtonElement | null = null;
+let modeToggleGroupEl: HTMLElement | null = null;
+let modeToggleRadios: NodeListOf<HTMLInputElement> | null = null;
 
 let cachedMarkdown = "";
 
-// Selection-tracking for the Add-Comment buttons. The composer reads
-// from `live → pendingSelection → lastNonEmptySelection` in that order.
-//
-// Why three layers:
-//   - `live`: the editor's current selection at composer-open time. The
-//     happy path.
-//   - `pendingSelection`: snapshot taken on the button's `mousedown`
-//     so `preventDefault` failure (some Milkdown plugin paths) doesn't
-//     lose the user's intent.
-//   - `lastNonEmptySelection`: continuously kept in sync with the PM
-//     state via `updateLastNonEmptySelection` below. Required because
-//     the FLOATING button (position: fixed, outside the editor's DOM
-//     subtree) can blur the editor *before* its own mousedown fires —
-//     so even `pendingSelection` ends up empty. The lastNonEmpty
-//     cache holds whatever the user last meaningfully selected and is
-//     the final fallback that fixes the "double-click required" bug.
+// Read-only mode: set once from `init`. The editor
+// never changes its document except by re-parsing a string from the host, so
+// `sourceMarkdown` is always exactly the string the document was parsed from
+// — the string every source position in it indexes. (`cachedMarkdown` is the
+// editor's own serialization in edit mode, which is not that string.)
+let readOnly = false;
+let sourceMarkdown = "";
+let sourceIndexCache: { doc: unknown; index: SourceIndex } | null = null;
+
+function sourceIndexFor(doc: unknown): SourceIndex {
+  if (!sourceIndexCache || sourceIndexCache.doc !== doc || sourceIndexCache.index.markdown !== sourceMarkdown) {
+    sourceIndexCache = {
+      doc,
+      index: buildSourceIndex(doc as PmNodeLike, sourceMarkdown, decodeNamedReference),
+    };
+  }
+  return sourceIndexCache.index;
+}
+
+// The composer reads `live → pendingSelection → lastNonEmptySelection`, in that
+// order. `pendingSelection` is snapshotted on the button's `mousedown` in case
+// `preventDefault` fails (some Milkdown plugin paths). `lastNonEmptySelection`
+// is kept in sync with the PM state because the floating button (position:
+// fixed, outside the editor's DOM subtree) can blur the editor *before* its own
+// mousedown fires, leaving `pendingSelection` empty; it is the final fallback.
 let pendingSelection: { from: number; to: number } | null = null;
 let lastNonEmptySelection: { from: number; to: number } | null = null;
 
@@ -280,8 +403,9 @@ function updateLastNonEmptySelection(): void {
 const HIGHLIGHT_PLUGIN_KEY = new PluginKey("mdc-anchor-highlight");
 const CLAUDE_EDIT_KEY = new PluginKey("mdc-claude-edit");
 
-// Decorates the span Claude just edited (from an externalChange) so the change
-// is visible, not silent. The decoration fades itself via `flashClaudeEdit`.
+// Decorates the span an outside writer just edited (from an externalChange) so
+// the change is visible, not silent. The decoration fades itself via
+// `flashOutsideEdit`.
 function makeClaudeEditPlugin(): Plugin {
   return new Plugin({
     key: CLAUDE_EDIT_KEY,
@@ -308,13 +432,12 @@ function makeClaudeEditPlugin(): Plugin {
 let claudeEditTimer: ReturnType<typeof setTimeout> | undefined;
 
 /**
- * Highlight the just-edited text `changedText` (located in the editor's
- * rendered content) and fade it after a few seconds. Returns true when the
- * text was found and decorated. Best-effort: a change whose text carries
- * markdown syntax (so it isn't a substring of the rendered content) simply
- * isn't flashed — the notice still fires.
+ * Highlight the just-edited text `changedText` and fade it after a few
+ * seconds. Returns true when the text was found and decorated. Best-effort: a
+ * change whose text carries markdown syntax isn't a substring of the rendered
+ * content, so it isn't flashed — the notice still fires.
  */
-function flashClaudeEdit(changedText: string): boolean {
+function flashOutsideEdit(changedText: string): boolean {
   const needle = changedText.trim();
   if (!editor || needle.length === 0) return false;
   let placed = false;
@@ -339,14 +462,13 @@ function flashClaudeEdit(changedText: string): boolean {
   return true;
 }
 
-// Webview URIs for resolving relative image src; set from the init payload.
 let imageBaseUris: ImageBaseUris = { docDir: "", workspaceFolder: null };
 
-// Source line per prose line, when the user has line numbers on. Null switches
-// the gutter off entirely.
 let lineMap: number[] | null = null;
 
-// --- Document outline -----------------------------------------------------
+let currentDiff: DiffState | null = null;
+let changeNav: ChangeNavHandle | null = null;
+
 let outlinePaneEl: HTMLElement | null = null;
 let outlineVisible = false;
 const collapsedOutline = new Set<string>();
@@ -357,9 +479,7 @@ const outlinePanel: OutlinePanelHandle = buildOutlinePanel({
 });
 
 /**
- * Scroll the editor to the Nth heading, counting in document order.
- *
- * Positional, not by name. `scrollEditorToFragment` matches a slug against the
+ * Positional, not by name: `scrollEditorToFragment` matches a slug against the
  * rendered heading text, which cannot distinguish two sections with the same
  * name — the outline disambiguates the second to `what-changed-1`, no rendered
  * heading spells that, and the entry did nothing when clicked.
@@ -368,11 +488,10 @@ function scrollEditorToHeadingIndex(index: number): void {
   editor?.action((ctx) => {
     const root = ctx.get(editorViewCtx).dom as HTMLElement;
     const target = root.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6")[index];
-    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (target) smoothScrollIntoView(target, "start");
   });
 }
 
-/** Rebuild the outline from the markdown the editor currently holds. */
 function refreshOutline(): void {
   outlinePanel.update(buildOutline(cachedMarkdown));
 }
@@ -388,6 +507,7 @@ function setOutlineVisible(visible: boolean): void {
 async function init(msg: InitMessage): Promise<void> {
   userName = msg.user.name || "user";
   if (msg.imageBaseUris) imageBaseUris = msg.imageBaseUris;
+  setPlantumlConfig(msg.plantuml);
   lineMap = Array.isArray(msg.lineMap) ? msg.lineMap : null;
 
   buildLayout();
@@ -396,51 +516,74 @@ async function init(msg: InitMessage): Promise<void> {
   applyLineNumberLayout();
   sidebarState.comments = msg.comments ?? [];
   sidebarState.suggestions = msg.suggestions ?? [];
-  sidebarState.pending = new Set(msg.pendingThreadIds ?? []);
-  if (msg.pendingLabel) sidebarState.pendingLabel = msg.pendingLabel;
+  takeSidebarPush(msg);
   cachedMarkdown = msg.text;
+  readOnly = msg.readOnly === true;
+  sourceMarkdown = msg.text;
+  currentDiff = msg.diff ?? null;
   renderFrontmatter(msg.frontmatter ?? "");
   renderSidebar();
 
-  editor = await Editor.make()
+  editor = await createEditor(msg.text);
+  resetEditBase(msg.epoch);
+
+  forceHighlightRefresh();
+  forceSuggestionHighlightRefresh();
+  forceDiffRefresh();
+  reportReady(true);
+
+  installAddCommentAffordance();
+}
+
+/**
+ * Read-only installs the source-position schema and never edits; edit mode
+ * reports each edit as the blocks it changed (`flushBlockEdits`).
+ */
+async function createEditor(text: string): Promise<Editor> {
+  // Test seam: a spec stretches the build across a turn of the event loop.
+  await (testHooks?.beforeEditorBuild as (() => Promise<void>) | undefined)?.();
+  return Editor.make()
     .config((ctx) => {
       ctx.set(rootCtx, editorContainer!);
-      ctx.set(defaultValueCtx, msg.text);
+      ctx.set(defaultValueCtx, text);
+      if (readOnly) {
+        ctx.update(editorViewOptionsCtx, (prev) => ({ ...prev, editable: () => false }));
+        installSourcePositions(ctx);
+      }
+      installTightLists(ctx);
       ctx.update(prosePluginsCtx, (prev) =>
         prev.concat([
           makeFlattenCellSelectionPlugin(),
           makeMermaidPlugin(),
+          makePlantumlPlugin(),
           makeDrawioPlugin(),
           makeImageResolvePlugin(),
           makeAnchorHighlightPlugin(),
+          makeSuggestionHighlightPlugin(
+            () => sidebarState.suggestions,
+            // Read-only: by source position, like threads; edit mode keeps the text search.
+            readOnly ? (doc, s) => sourceRangesFor(doc, s.proseStart, s.proseEnd, s.anchor.text) : undefined,
+          ),
+          makeTaskListPlugin(),
           makeLineNumberPlugin(),
           makeClaudeEditPlugin(),
+          makeDiffStripesPlugin(() => currentDiff, () => sourceMarkdown),
+          // Editing only: Reading's view is never editable, so there's no
+          // local undo and no caret for the workbench to hand back.
+          ...(readOnly ? [] : [makeUndoRedoKeyPlugin(), makeEditorFocusPlugin()]),
         ]),
       );
       ctx.get(listenerCtx).markdownUpdated((_ctx, markdown, prevMarkdown) => {
         // The outline is derived from the markdown, so it follows every edit —
         // including Claude's, which arrive as external changes.
         if (markdown !== prevMarkdown) queueMicrotask(refreshOutline);
-        if (suppressNextPost) {
-          suppressNextPost = false;
-          return;
-        }
-        if (markdown === prevMarkdown) return;
+        // Read-only: the document only ever changes by re-parsing the host's
+        // text, so there is never an edit to report.
+        if (readOnly) return;
         cachedMarkdown = markdown;
-        if (editDebounce) clearTimeout(editDebounce);
-        editDebounce = setTimeout(() => {
-          editDebounce = null;
-          // Report each anchor's live position (read off the mapped decoration
-          // set) so the host places markers exactly where comments now sit,
-          // instead of re-deriving positions from the old quote text.
-          let anchors: AnchorReport[] = [];
-          editor?.action((ictx) => {
-            const view = ictx.get(editorViewCtx);
-            const set = HIGHLIGHT_PLUGIN_KEY.getState(view.state) as DecorationSet | undefined;
-            anchors = collectAnchors(view.state.doc, set);
-          });
-          vscode.postMessage({ type: "edit", text: markdown, anchors });
-        }, 250);
+        // Which blocks changed is read off the base when the debounce fires; an
+        // external change resets the base, so it never reports itself.
+        scheduleBlockEdits();
         // Don't rebuild highlights here: the plugin's apply() already maps the
         // existing decorations through this edit (so a highlight tracks text
         // changed inside it). Rebuilding from the not-yet-re-anchored
@@ -450,20 +593,252 @@ async function init(msg: InitMessage): Promise<void> {
       });
     })
     .config(nord)
+    .use(inlineBreakPlugin)
     .use(commonmark)
     .use(gfm)
-    .use(history)
     .use(listener)
     .create();
+}
 
-  // The editor seeds its document from `defaultValueCtx` (set to msg.text
-  // above) — there is no Yjs doc and no collab plugin. The human edits here;
-  // Claude edits the .md on disk; the two converge through the file, applied
-  // via `applyExternalChange`. Undo is prosemirror-history (`.use(history)`).
+const UNDO_REDO_KEY = new PluginKey("mdc-undo-redo");
+
+/**
+ * The file's undo history is the only one: there is no local ProseMirror
+ * history. Mod-z / Mod-Shift-z / Mod-y flush any edit still in the debounce —
+ * so a keystroke reaches the file before the undo does, over the same message
+ * channel — then ask the host to undo or redo the document. They never touch
+ * the document themselves; the file's answer comes back as an `externalChange`
+ * with `reveal`.
+ *
+ * The same plugin cancels the browser's own historyUndo/historyRedo
+ * `beforeinput`, so contenteditable's built-in undo can never rewrite
+ * ProseMirror's DOM out from under its model. It posts nothing for those.
+ */
+function makeUndoRedoKeyPlugin(): Plugin {
+  const ask = (type: "undo" | "redo"): boolean => {
+    flushBlockEdits();
+    vscode.postMessage({ type });
+    return true;
+  };
+  return new Plugin({
+    key: UNDO_REDO_KEY,
+    props: {
+      handleKeyDown(_view, event) {
+        // Not with Alt: on some layouts AltGr (Ctrl+Alt) + a letter types a character.
+        if (!(event.metaKey || event.ctrlKey) || event.altKey) return false;
+        const key = event.key.toLowerCase();
+        if (key === "z") return ask(event.shiftKey ? "redo" : "undo");
+        if (key === "y") return ask("redo");
+        return false;
+      },
+      handleDOMEvents: {
+        beforeinput(_view, event) {
+          const inputType = (event as InputEvent).inputType;
+          if (inputType !== "historyUndo" && inputType !== "historyRedo") return false;
+          event.preventDefault();
+          return true;
+        },
+      },
+    },
+  });
+}
+
+const EDITOR_FOCUS_KEY = new PluginKey("mdc-editor-focus");
+
+// Coalesced across both the DOM focus/blur plugin below and the explicit
+// `reportEditorFocus(false)` a switch to Reading sends (reinitEditor) — only
+// a real change in state is worth a message.
+let lastReportedFocus: boolean | null = null;
+
+function reportEditorFocus(focused: boolean): void {
+  if (lastReportedFocus === focused) return;
+  lastReportedFocus = focused;
+  vscode.postMessage({ type: "editor-focus", focused });
+}
+
+/**
+ * Tells the host where the caret is: `{ type: "editor-focus", focused }` on
+ * every gain/loss of DOM focus. Drives `markdownCollab.liveEditorTyping`
+ * (package.json's keybinding table), which keeps the workbench's own binding
+ * for a key the editor handles from also firing.
+ */
+function makeEditorFocusPlugin(): Plugin {
+  return new Plugin({
+    key: EDITOR_FOCUS_KEY,
+    props: {
+      handleDOMEvents: {
+        focus: () => {
+          reportEditorFocus(true);
+          return false;
+        },
+        blur: () => {
+          reportEditorFocus(false);
+          return false;
+        },
+      },
+    },
+  });
+}
+
+/**
+ * Serialize a list as tight or loose as it was parsed. Milkdown keeps a
+ * list's and an item's `spread` as the string "true" / "false", and the
+ * bullet list and list item hand that string on to remark, which only reads a
+ * boolean — so every edit to a tight bullet list wrote it back loose, a blank
+ * line between every item (the ordered list converts; these two don't). The
+ * list item is GFM's, which converts for task items only.
+ */
+function installTightLists(ctx: Ctx): void {
+  const booleanSpread = (node: PmDocNode): PmDocNode =>
+    typeof node.attrs.spread === "boolean"
+      ? node
+      : node.type.create({ ...node.attrs, spread: node.attrs.spread === "true" }, node.content, node.marks);
+  const wrap = (schema: NodeSchema, applies: (node: PmDocNode) => boolean): NodeSchema => {
+    const runner = schema.toMarkdown.runner;
+    return {
+      ...schema,
+      toMarkdown: {
+        ...schema.toMarkdown,
+        runner: (state, node) => runner(state, applies(node) ? booleanSpread(node) : node),
+      },
+    };
+  };
+  ctx.update(bulletListSchema.key, (prev) => (c) => wrap(prev(c), () => true));
+  ctx.update(extendListItemSchemaForTask.key, (prev) => (c) => wrap(prev(c), (node) => node.attrs.checked == null));
+}
+
+/**
+ * A second `init`: the host switched this panel's mode (`set-read-only`) and
+ * re-sent the file. Only the editor is rebuilt — read-only with the
+ * source-position schema, edit mode without it — on the file's current text;
+ * the layout and the sidebar stay.
+ */
+async function reinitEditor(msg: InitMessage): Promise<void> {
+  // Keystrokes still in the debounce go to the host before the editor that
+  // holds them is destroyed; it writes them and sends them back.
+  flushBlockEdits();
+  const previous = editor;
+  editor = null;
+  editBaseDoc = null;
+  // Milkdown's listener debounces `markdownUpdated` by 200 ms and does not
+  // cancel it on destroy. Fired on a destroyed editor, its serializer reads a
+  // context that is gone and throws from a timer nothing can catch — which
+  // the window error handler then reports to the user as a failure. The edit
+  // it would report was flushed just above, so unsubscribe before teardown:
+  // the pending handler finds no listener and serializes nothing.
+  previous?.action((ctx) => {
+    ctx.get(listenerCtx).listeners.markdownUpdated.length = 0;
+  });
+  await previous?.destroy();
+  if (editorContainer) editorContainer.innerHTML = "";
+  readOnly = msg.readOnly === true;
+  // The view that held the caret is gone, and destroying its container may
+  // not fire a DOM blur. Say so in either mode: a rebuilt Editing view reports
+  // focus again when the caret actually returns to it, and until then the
+  // workbench keeps its own bindings.
+  reportEditorFocus(false);
+  cachedMarkdown = msg.text;
+  sourceMarkdown = msg.text;
+  sourceIndexCache = null;
+  pendingSelection = null;
+  lastNonEmptySelection = null;
+  lastHighlightSig = " ";
+  lineMap = Array.isArray(msg.lineMap) ? msg.lineMap : null;
+  currentDiff = msg.diff ?? null;
+  sidebarState.comments = msg.comments ?? [];
+  sidebarState.suggestions = msg.suggestions ?? [];
+  takeSidebarPush(msg);
+  renderFrontmatter(msg.frontmatter ?? "");
+  renderSidebar();
+  editor = await createEditor(msg.text);
+  applyLineNumberLayout();
+  resetEditBase(msg.epoch);
   forceHighlightRefresh();
+  forceSuggestionHighlightRefresh();
+  forceDiffRefresh();
+  refreshOutline();
   reportReady(true);
+}
 
-  installAddCommentAffordance();
+function topLevelBlocks(doc: PmDocNode): Array<{ node: PmDocNode; pos: number }> {
+  const out: Array<{ node: PmDocNode; pos: number }> = [];
+  let pos = 0;
+  for (const node of markdownBlockNodes(doc)) {
+    out.push({ node, pos });
+    pos += node.nodeSize;
+  }
+  return out;
+}
+
+/** The document the host just sent is the base the next edit is diffed against. */
+function resetEditBase(epoch: number | undefined): void {
+  if (typeof epoch === "number") editEpoch = epoch;
+  editor?.action((ctx) => {
+    editBaseDoc = ctx.get(editorViewCtx).state.doc;
+  });
+}
+
+function scheduleBlockEdits(): void {
+  if (editDebounce) clearTimeout(editDebounce);
+  editDebounce = setTimeout(flushBlockEdits, 250);
+}
+
+/**
+ * Post the top-level blocks the document changed since `editBaseDoc` and make
+ * the current document the base. Posts nothing when no block's Markdown
+ * changed — a heading id or list label a plugin rewrote, a character typed and
+ * deleted again.
+ */
+function flushBlockEdits(): void {
+  if (editDebounce) {
+    clearTimeout(editDebounce);
+    editDebounce = null;
+  }
+  const base = editBaseDoc;
+  if (!editor || readOnly || !base) return;
+  let message: BlockEditsMessage | null = null;
+  try {
+    editor.action((ctx) => {
+      const doc = ctx.get(editorViewCtx).state.doc;
+      message = blockEditsBetween(base, doc, ctx.get(serializerCtx));
+      editBaseDoc = doc;
+    });
+  } catch (err) {
+    // The edit can't be reported, so the document no longer matches the
+    // file: stop diffing against it and let the host re-render from the file
+    // (a new base arrives with it) and say so.
+    editBaseDoc = null;
+    postError("edit-blocks", err);
+    return;
+  }
+  if (message) vscode.postMessage(message);
+}
+
+function blockEditsBetween(
+  base: PmDocNode,
+  doc: PmDocNode,
+  serializer: (content: PmDocNode) => string,
+): BlockEditsMessage | null {
+  // Blocks are serialized together so the serializer sees their neighbours
+  // (two adjacent lists get different markers), and without the final newline:
+  // a block's source range ends at its last character.
+  const serialize = (nodes: readonly PmDocNode[]): string =>
+    serializer(doc.type.create(null, nodes as PmDocNode[])).replace(/\n+$/, "");
+  const same = (a: PmDocNode, b: PmDocNode): boolean => a.eq(b) || serialize([a]) === serialize([b]);
+  const baseBlocks = markdownBlockNodes(base);
+  const changes = diffBlocks(baseBlocks, markdownBlockNodes(doc), same);
+  if (changes.length === 0) return null;
+  return {
+    type: "edit-blocks",
+    epoch: editEpoch,
+    baseTypes: baseBlocks.map((n) => n.type.name),
+    edits: changes.map((c) => ({
+      from: c.from,
+      to: c.to,
+      markdown: c.nodes.length > 0 ? serialize(c.nodes) : "",
+      types: c.nodes.map((n) => n.type.name),
+    })),
+  };
 }
 
 function buildLayout(): void {
@@ -472,8 +847,6 @@ function buildLayout(): void {
   layoutEl.className = "mdc-layout";
   document.body.appendChild(layoutEl);
 
-  // Outline first in the DOM so it sits to the left of the editor, matching
-  // where every editor puts a file outline.
   outlinePaneEl = document.createElement("div");
   outlinePaneEl.className = "mdc-outline-pane";
   outlinePaneEl.hidden = !outlineVisible;
@@ -485,158 +858,230 @@ function buildLayout(): void {
   editorPane.className = "mdc-editor-pane";
   layoutEl.appendChild(editorPane);
 
+  // Document toolbar: outline, the Reading/Editing switch, the comments
+  // toggle. A fixed-height sibling of the scrolling content below (not a
+  // child of it), so it spans the pane's full width and never scrolls with
+  // the document.
+  editorPane.appendChild(buildDocToolbar());
+
+  const editorScroll = document.createElement("div");
+  editorScroll.className = "mdc-editor-scroll";
+  editorPane.appendChild(editorScroll);
+  editorScrollEl = editorScroll;
+
+  // Uncommitted-diff toolbar: badge + prev/next arrows, sticky above everything
+  // else in the scrolling content. Hidden by `buildChangeNav` until a diff
+  // actually shows something.
+  changeNav = buildChangeNav();
+  editorScroll.appendChild(changeNav.el);
+
   // Frontmatter panel sits above the Milkdown body. The body editor mounts
   // into its own element so ProseMirror never touches the frontmatter DOM.
   frontmatterEl = document.createElement("div");
   frontmatterEl.className = "mdc-frontmatter";
   frontmatterEl.hidden = true;
-  editorPane.appendChild(frontmatterEl);
+  editorScroll.appendChild(frontmatterEl);
 
   editorContainer = document.createElement("div");
   editorContainer.className = "mdc-editor-root";
-  editorPane.appendChild(editorContainer);
-
-  collapseToggleEl = document.createElement("button");
-  collapseToggleEl.type = "button";
-  collapseToggleEl.className = "mdc-sidebar-toggle";
-  collapseToggleEl.addEventListener("click", () => {
-    sidebarState.collapsed = !sidebarState.collapsed;
-    syncCollapsedClass();
-  });
-  layoutEl.appendChild(collapseToggleEl);
+  editorScroll.appendChild(editorContainer);
 
   sidebarEl = document.createElement("aside");
   sidebarEl.className = "mdc-sidebar";
+  sidebarEl.id = "mdc-sidebar";
   sidebarEl.setAttribute("aria-label", "Review comments");
   layoutEl.appendChild(sidebarEl);
 
   syncCollapsedClass();
 }
 
+function buildDocToolbar(): HTMLElement {
+  const bar = document.createElement("div");
+  bar.className = "mdc-doc-toolbar";
+  bar.appendChild(buildOutlineToggle());
+
+  const right = document.createElement("div");
+  right.className = "mdc-doc-toolbar__right";
+  right.appendChild(buildModeToggle());
+  right.appendChild(buildCommentsToggle());
+  bar.appendChild(right);
+  return bar;
+}
+
+function buildModeToggle(): HTMLElement {
+  const group = document.createElement("div");
+  group.id = "edit-mode-toggle";
+  group.className = "mc-segmented";
+  group.setAttribute("role", "radiogroup");
+  group.setAttribute("aria-label", "Editing mode");
+  group.dataset.mode = "read";
+  group.title = "Reading is read-only — only comments change the file. Editing lets you edit the text in place.";
+  group.innerHTML =
+    '<label class="segment"><input type="radio" name="edit-mode" value="read" checked><span>Reading</span></label>' +
+    '<label class="segment"><input type="radio" name="edit-mode" value="edit"><span>Editing</span></label>';
+  modeToggleGroupEl = group;
+  modeToggleRadios = group.querySelectorAll<HTMLInputElement>('input[name="edit-mode"]');
+  // The mode is the host's to change (it rebuilds the editor); `updateDocToolbarMode`
+  // repaints this from `readOnly` on every render.
+  modeToggleRadios.forEach((r) =>
+    r.addEventListener("change", () => {
+      if (r.checked) postSidebarMessage({ type: "set-read-only", readOnly: r.value === "read" });
+    }),
+  );
+  return group;
+}
+
+function updateDocToolbarMode(readOnlyNow: boolean): void {
+  if (!modeToggleGroupEl || !modeToggleRadios) return;
+  modeToggleGroupEl.dataset.mode = readOnlyNow ? "read" : "edit";
+  for (const r of modeToggleRadios) {
+    r.checked = r.value === (readOnlyNow ? "read" : "edit");
+    r.closest("label")?.classList.toggle("active", r.checked);
+  }
+}
+
+/** Reachable with the sidebar collapsed. */
+function buildCommentsToggle(): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "mc-icon-btn";
+  btn.id = "mdc-comments-toggle";
+  btn.setAttribute("aria-controls", "mdc-sidebar");
+  // `.mc-badge` is comments.css's card-tag pill; the `--count` modifier
+  // (controls.css) shrinks it to a number beside the glyph without restyling
+  // those tags, since this page loads both files.
+  btn.innerHTML =
+    '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M2 2.5A1.5 1.5 0 0 1 3.5 1h9A1.5 1.5 0 0 1 14 2.5v6A1.5 1.5 0 0 1 12.5 10H8l-3.2 2.8a.5.5 0 0 1-.8-.38V10h-.5A1.5 1.5 0 0 1 2 8.5v-6z"/></svg>' +
+    '<span class="mc-badge mc-badge--count" hidden></span>';
+  btn.addEventListener("click", () => {
+    sidebarState.collapsed = !sidebarState.collapsed;
+    syncCollapsedClass();
+  });
+  commentsToggleBtn = btn;
+  return btn;
+}
+
 function syncCollapsedClass(): void {
   if (!layoutEl) return;
-  layoutEl.classList.toggle("mdc-layout--collapsed", sidebarState.collapsed);
-  if (collapseToggleEl) {
-    const collapsed = sidebarState.collapsed;
+  const collapsed = sidebarState.collapsed;
+  layoutEl.classList.toggle("mdc-layout--collapsed", collapsed);
+  if (commentsToggleBtn) {
     const label = collapsed ? "Show comments" : "Hide comments";
-    collapseToggleEl.title = label;
-    collapseToggleEl.setAttribute("aria-label", label);
-    collapseToggleEl.setAttribute("aria-expanded", collapsed ? "false" : "true");
-    const arrow = collapsed
-      ? '<path d="M10.5 3L5 8l5.5 5 .9-.95L6.85 8l4.55-4.05z"/>'
-      : '<path d="M5.5 3L11 8l-5.5 5-.9-.95L9.15 8 4.6 3.95z"/>';
-    collapseToggleEl.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">${arrow}</svg>`;
+    commentsToggleBtn.title = label;
+    commentsToggleBtn.setAttribute("aria-label", label);
+    commentsToggleBtn.setAttribute("aria-pressed", String(!collapsed));
+    // The open count is never lost when the sidebar (and its own counts) are hidden.
+    const openCount = sidebarPush.threads.filter((t) => t.status === "open").length;
+    const badge = commentsToggleBtn.querySelector<HTMLElement>(".mc-badge");
+    if (badge) {
+      const show = collapsed && openCount > 0;
+      badge.hidden = !show;
+      badge.textContent = show ? String(openCount) : "";
+    }
   }
 }
 
 function renderSidebar(): void {
   if (!sidebarEl) return;
   syncCollapsedClass();
-
-  const total = sidebarState.comments.length;
-  const open = sidebarState.comments.filter((c) => !c.resolved).length;
-  const resolvedCount = total - open;
-  const visibleComments = sidebarState.comments.filter((c) =>
-    sidebarState.hideResolved ? !c.resolved : true,
-  );
-
-  // Transient notice — e.g. "Updated from disk" when Claude (or another tool)
-  // edits the .md while the editor is open and the change lands here.
-  const banner = sidebarState.notice
-    ? `<div class="mdc-banner mdc-banner--info" role="status">${escapeHtml(sidebarState.notice)}</div>`
-    : "";
-
-  const filterClass = sidebarState.hideResolved ? "mdc-filter-chip mdc-filter-chip--active" : "mdc-filter-chip";
-  const filterLabel = sidebarState.hideResolved
-    ? `Showing open · ${open}`
-    : `${open} open · ${total} total`;
-
-  const header = `
-    <div class="mdc-banner-slot">${banner}</div>
-    <div class="mdc-sidebar-header">
-      <div class="mdc-sidebar-header-row">
-        <div class="mdc-sidebar-titles">
-          <div class="mdc-sidebar-title">Comments</div>
-          <button type="button" class="${filterClass}" data-action="toggle-filter" title="${
-            sidebarState.hideResolved ? "Show all" : "Hide resolved"
-          }">
-            ${escapeHtml(filterLabel)}
-          </button>
-        </div>
-        <div class="mdc-sidebar-toolbar">
-          <button type="button" class="mdc-icon-btn${outlineVisible ? " active" : ""}" data-action="toggle-outline" title="Show or hide the document outline" aria-pressed="${outlineVisible}">
-            <span>☰</span>
-            <span>Outline</span>
-          </button>
-          <button type="button" class="mdc-icon-btn mdc-icon-btn--danger" data-action="remove-resolved" ${
-            resolvedCount === 0 ? "hidden" : ""
-          } title="Delete every resolved comment from this file. Open comments and pending suggestions are kept.">
-            <span data-role="remove-resolved-label">Remove ${resolvedCount} resolved</span>
-          </button>
-          <button type="button" class="mdc-icon-btn mdc-icon-btn--danger" data-action="finalize" ${
-            total === 0 ? "hidden" : ""
-          } title="Remove ALL review data — every comment, marker, and pending suggestion — leaving clean markdown ready to commit.">
-            <span>Remove all</span>
-          </button>
-          <button type="button" class="mdc-icon-btn mdc-icon-btn--primary" data-action="add-comment" title="Add a comment on the current selection (Cmd/Ctrl+Shift+M)">
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 1.5v5h5v1H8v5H7v-5H2v-1h5v-5h1z"/></svg>
-            <span>Add comment</span>
-          </button>
-        </div>
-      </div>
-      <div class="mdc-sidebar-actions">
-        <button type="button" class="mdc-icon-btn mdc-sidebar-action mdc-sidebar-action--primary" data-action="send-to-claude" ${open === 0 ? "disabled" : ""} title="${
-          open === 0 ? "No unresolved comments to send" : "Send unresolved comments to Claude Code"
-        }">
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M1.7 14.3 14.4 8 1.7 1.7v4.7L10 8l-8.3 1.6v4.7z"/></svg>
-          <span>Send to Claude</span>
-        </button>
-        <button type="button" class="mdc-icon-btn mdc-sidebar-action" data-action="copy-prompt" title="Copy the prompt to your clipboard.">
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M4 1.5h7a1 1 0 0 1 1 1V12h-1V2.5H4v-1zM2 4.5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4.5zm1 0V14h7V4.5H3z"/></svg>
-          <span>Copy</span>
-        </button>
-      </div>
-    </div>
-  `;
-
-  const composerSlot = '<div class="mdc-composer-slot"></div>';
-
-  sidebarEl.innerHTML =
-    header + composerSlot + `<div class="mdc-suggestions"></div>` + `<div class="mdc-comment-list"></div>`;
-  composerEl = sidebarEl.querySelector(".mdc-composer-slot");
-  renderSuggestions();
-  const list = sidebarEl.querySelector<HTMLElement>(".mdc-comment-list")!;
-  if (total === 0) {
-    list.innerHTML = emptyNoCommentsHtml();
-  } else if (visibleComments.length === 0) {
-    list.innerHTML = emptyAllResolvedHtml(resolvedCount);
-  } else {
-    for (const c of visibleComments.slice().sort((a, b) => Number(a.resolved) - Number(b.resolved))) {
-      list.appendChild(renderCommentCard(c));
-    }
-  }
-  attachToolbarHandlers();
+  if (threadSidebar.el.parentElement !== sidebarEl) mountSidebar(sidebarEl);
+  updateDocToolbarMode(readOnly);
+  threadSidebar.render({ ...sidebarPush, readOnly });
 }
 
-function emptyNoCommentsHtml(): string {
-  return `
-    <div class="mdc-sidebar-empty">
-      <div class="mdc-sidebar-empty-title">No comments yet</div>
-      <div class="mdc-sidebar-empty-body">
-        Select text in the editor, then:
-        <ul>
-          <li>Press <span class="mdc-kbd">${isMac() ? "⌘" : "Ctrl"}+Shift+M</span></li>
-          <li>Or click <strong>+ Add comment</strong> at the top of this panel</li>
-          <li>Or use the floating button that appears next to your selection</li>
-        </ul>
-        Comments are saved inside the Markdown file itself, so they travel with it and show up in the Inline Comments view.
-      </div>
-    </div>
-  `;
+function mountSidebar(host: HTMLElement): void {
+  const banner = document.createElement("div");
+  banner.className = "mdc-banner-slot";
+  const composerSlot = document.createElement("div");
+  composerSlot.className = "mdc-composer-slot";
+  threadSidebar.headerEl.after(composerSlot);
+  // The sidebar's own "…" menu already lives in `.mc-title-actions` (its
+  // SHELL); prepend so the order reads "+ Add comment" then "…".
+  threadSidebar.titleActionsEl.prepend(buildAddCommentButton());
+  host.replaceChildren(banner, threadSidebar.el);
+  composerEl = composerSlot;
 }
 
-function emptyAllResolvedHtml(resolvedCount: number): string {
-  return `<div class="mdc-sidebar-empty"><div class="mdc-sidebar-empty-title">All comments resolved</div><div class="mdc-sidebar-empty-body">${resolvedCount} resolved · 0 open. Click "Showing open" above to see resolved threads.</div></div>`;
+function buildOutlineToggle(): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "mc-icon-btn";
+  btn.dataset.action = "toggle-outline";
+  btn.title = "Show or hide the document outline";
+  btn.setAttribute("aria-label", "Outline");
+  btn.textContent = "☰";
+  const sync = (): void => {
+    btn.classList.toggle("active", outlineVisible);
+    btn.setAttribute("aria-pressed", String(outlineVisible));
+  };
+  sync();
+  btn.addEventListener("click", () => {
+    setOutlineVisible(!outlineVisible);
+    sync();
+  });
+  return btn;
+}
+
+function buildAddCommentButton(): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "mc-icon-btn";
+  btn.dataset.action = "add-comment";
+  btn.title = "Add a comment on the current selection (Cmd/Ctrl+Shift+M)";
+  btn.setAttribute("aria-label", "Add comment");
+  btn.innerHTML =
+    '<svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M8 1.5v5h5v1H8v5H7v-5H2v-1h5v-5h1z"/></svg>';
+  // preventDefault on mousedown keeps the click from blurring the editor, which
+  // would clear the ProseMirror selection before the click handler runs; the
+  // snapshot covers the plugin paths that slip past it.
+  btn.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    captureCurrentSelection();
+  });
+  btn.addEventListener("click", () => openComposerForCurrentSelection());
+  return btn;
+}
+
+function takeSidebarPush(
+  msg: SidebarPush & {
+    comments?: CommentSummary[];
+    suggestions?: SuggestionSummary[];
+    pendingThreadIds?: string[];
+    pendingLabel?: string;
+  },
+): void {
+  sidebarPush.threads = msg.threads ?? threadsFromSummaries(msg.comments ?? []);
+  sidebarPush.suggestions = (msg.suggestions ?? []).map((s) => ({
+    anchorId: s.anchorId,
+    author: s.author,
+    ts: s.ts,
+    original: s.original,
+    proposed: s.proposed,
+    note: s.note,
+    anchored: s.anchorOrdinal >= 0,
+  }));
+  sidebarPush.suggestMode = msg.suggestMode ?? false;
+  sidebarPush.agentName = msg.agentName;
+  sidebarPush.pendingThreadIds = msg.pendingThreadIds ?? [];
+  sidebarPush.pendingLabel = msg.pendingLabel;
+}
+
+/**
+ * Cards for a push that carries only the flat comment list: every comment, in
+ * order, without the agent/via/edited details only `threads` has.
+ */
+function threadsFromSummaries(comments: CommentSummary[]): SidebarThread[] {
+  return comments.map((c) => ({
+    id: c.id,
+    quote: c.anchor.text,
+    status: c.resolved ? "resolved" : "open",
+    comments: [
+      { id: c.rootCommentId, author: c.author, ts: c.createdAt, body: c.body },
+      ...c.replies.map((r) => ({ id: r.id, author: r.author, ts: r.createdAt, body: r.body })),
+    ],
+    anchor: c.anchorOrdinal >= 0 ? { proseStart: c.proseStart ?? 0, proseEnd: c.proseEnd ?? 0 } : null,
+    stale: c.stale,
+  }));
 }
 
 // Update only the transient notice banner — used by showNotice so a "Updated
@@ -654,387 +1099,16 @@ function renderNotice(): void {
     return;
   }
   if (noticeJump) {
-    slot.innerHTML = `<button type="button" class="mdc-banner mdc-banner--info mdc-banner--jump" title="Scroll to Claude's edit">${escapeHtml(sidebarState.notice)} ↗</button>`;
+    slot.innerHTML = `<button type="button" class="mdc-banner mdc-banner--info mdc-banner--jump" title="Scroll to the edit">${escapeHtml(sidebarState.notice)} ↗</button>`;
     slot.querySelector<HTMLButtonElement>(".mdc-banner--jump")?.addEventListener("click", () => {
       const mark = editorContainer?.querySelector<HTMLElement>(".mdc-claude-edit");
-      mark?.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (mark) smoothScrollIntoView(mark, "center");
     });
   } else {
     slot.innerHTML = `<div class="mdc-banner mdc-banner--info" role="status">${escapeHtml(sidebarState.notice)}</div>`;
   }
 }
 
-// Refresh the header's count + Send-to-Claude enabled state in place.
-function updateSidebarCounts(): void {
-  if (!sidebarEl) return;
-  const total = sidebarState.comments.length;
-  const open = sidebarState.comments.filter((c) => !c.resolved).length;
-  const filterBtn = sidebarEl.querySelector<HTMLButtonElement>("[data-action='toggle-filter']");
-  if (filterBtn) {
-    filterBtn.textContent = sidebarCountLabel({
-      open,
-      total,
-      hideResolved: sidebarState.hideResolved,
-    });
-  }
-  const sendBtn = sidebarEl.querySelector<HTMLButtonElement>("[data-action='send-to-claude']");
-  if (sendBtn) sendBtn.disabled = open === 0;
-
-  // Updates take this path rather than re-rendering the toolbar, so the
-  // remove button has to be refreshed here too — omitting it left a stale
-  // "Remove N resolved" on screen after the removal had already happened.
-  const removeBtn = sidebarEl.querySelector<HTMLButtonElement>("[data-action='remove-resolved']");
-  if (removeBtn) {
-    const resolved = total - open;
-    removeBtn.hidden = resolved === 0;
-    const label = removeBtn.querySelector<HTMLElement>("[data-role='remove-resolved-label']");
-    if (label) label.textContent = `Remove ${resolved} resolved`;
-  }
-  const finalizeBtn = sidebarEl.querySelector<HTMLButtonElement>("[data-action='finalize']");
-  if (finalizeBtn) finalizeBtn.hidden = total === 0;
-}
-
-
-
-/**
- * The waiting state as the card renders it: false when not waiting, otherwise
- * the row's text — so a phase change repaints the card even though nothing
- * about the thread's content moved.
- */
-function pendingSignature(threadId: string): boolean | string {
-  return sidebarState.pending.has(threadId) ? sidebarState.pendingLabel : false;
-}
-
-// Patch the comment list in place: keep unchanged thread cards (so a reply
-// you're typing isn't interrupted), rebuild only the threads whose content
-// changed, insert new ones, and drop removed ones.
-function reconcileComments(): void {
-  if (!sidebarEl) return;
-  const list = sidebarEl.querySelector<HTMLElement>(".mdc-comment-list");
-  if (!list) {
-    renderSidebar();
-    return;
-  }
-  updateSidebarCounts();
-  const total = sidebarState.comments.length;
-  const visible = sidebarState.comments
-    .filter((c) => (sidebarState.hideResolved ? !c.resolved : true))
-    .slice()
-    .sort((a, b) => Number(a.resolved) - Number(b.resolved));
-  if (visible.length === 0) {
-    list.innerHTML = total === 0 ? emptyNoCommentsHtml() : emptyAllResolvedHtml(total);
-    return;
-  }
-  if (list.querySelector(".mdc-sidebar-empty")) list.innerHTML = "";
-
-  const seen = new Set<string>();
-  let prev: HTMLElement | null = null;
-  for (const c of visible) {
-    seen.add(c.id);
-    const existing = list.querySelector<HTMLElement>(
-      `.mdc-comment[data-id="${cssEscape(c.id)}"]`,
-    );
-    let card: HTMLElement;
-    if (existing && existing.dataset.sig === threadSignature(c, pendingSignature(c.id))) {
-      card = existing; // unchanged — leave the DOM (and any focused reply) alone
-    } else {
-      card = renderCommentCard(c);
-      if (existing) existing.replaceWith(card);
-    }
-    const desired: Element | null = prev ? prev.nextElementSibling : list.firstElementChild;
-    if (desired !== card) {
-      if (prev) prev.after(card);
-      else list.prepend(card);
-    }
-    prev = card;
-  }
-  for (const card of Array.from(list.querySelectorAll<HTMLElement>(".mdc-comment"))) {
-    if (!seen.has(card.dataset.id ?? "")) card.remove();
-  }
-}
-
-// Render pending suggestions into their container above the comment list.
-// Full rebuild (suggestion cards hold no in-progress input to preserve, unlike
-// reply boxes), so this can run on every sidecar update.
-function renderSuggestions(): void {
-  if (!sidebarEl) return;
-  const container = sidebarEl.querySelector<HTMLElement>(".mdc-suggestions");
-  if (!container) return;
-  container.innerHTML = "";
-  for (const s of sidebarState.suggestions) {
-    container.appendChild(
-      buildSuggestionCard({
-        author: s.author,
-        timestamp: s.ts,
-        note: s.note,
-        original: s.original,
-        proposed: s.proposed,
-        anchored: s.anchorOrdinal >= 0,
-        onAccept: () => vscode.postMessage({ type: "accept-suggestion", anchorId: s.anchorId }),
-        onReject: () => vscode.postMessage({ type: "reject-suggestion", anchorId: s.anchorId }),
-      }),
-    );
-  }
-}
-
-// Build a thread card as a detached DOM node. The `.mdc-comment` frame,
-// quote header, and thread-action row are view-specific; the inner comment
-// cards and the reply box are the shared `commentUi` builders, so all three
-// surfaces render identical comment chrome from one implementation.
-function renderCommentCard(c: CommentSummary): HTMLElement {
-  const article = document.createElement("article");
-  article.className = c.resolved ? "mdc-comment mdc-comment--resolved" : "mdc-comment";
-  article.dataset.id = c.id;
-  article.dataset.sig = threadSignature(c, pendingSignature(c.id));
-
-  const head = document.createElement("div");
-  head.className = "mdc-thread-head";
-  const quote = document.createElement("button");
-  quote.type = "button";
-  quote.className = "mdc-thread-quote";
-  quote.title = "Click to scroll to the highlighted passage";
-  quote.textContent = c.anchor.text.length > 80 ? c.anchor.text.slice(0, 77) + "…" : c.anchor.text;
-  quote.addEventListener("click", (e) => {
-    e.stopPropagation();
-    jumpToAnchor(c);
-  });
-  head.appendChild(quote);
-
-  if (c.stale && c.anchorOrdinal >= 0) {
-    // Same rule as the inline view: only when the anchor still exists (P1.3).
-    const badge = document.createElement("span");
-    badge.className = "mc-badge mc-badge--stale";
-    badge.textContent = "text changed";
-    badge.title =
-      "The anchored passage was edited after the last comment on this thread — the comment may be answering text that is no longer there.";
-    head.appendChild(badge);
-  }
-
-  const actions = document.createElement("div");
-  actions.className = "mdc-thread-actions";
-  actions.appendChild(
-    threadActionButton("→ Claude", "Send this thread to Claude", () => {
-      vscode.postMessage({ type: "invoke-command", command: "send-thread-claude", commentId: c.id });
-      showNotice("Sent this thread to Claude — your edits are saved");
-    }),
-  );
-  actions.appendChild(
-    threadActionButton("Copy", "Copy this thread's prompt to the clipboard", () => {
-      vscode.postMessage({ type: "invoke-command", command: "copy-thread-claude", commentId: c.id });
-    }),
-  );
-  actions.appendChild(
-    threadActionButton(c.resolved ? "Unresolve" : "Resolve", "", () => {
-      vscode.postMessage({ type: "toggle-resolve-comment", commentId: c.id });
-    }),
-  );
-  const delThread = threadActionButton("Delete thread", "Delete the whole thread", null, "danger");
-  delThread.addEventListener("click", (e) => {
-    e.stopPropagation();
-    armDelete(delThread, () => vscode.postMessage({ type: "delete-comment", commentId: c.id }));
-  });
-  actions.appendChild(delThread);
-  head.appendChild(actions);
-  article.appendChild(head);
-
-  // Root comment, then replies — each a shared card carrying its own Delete
-  // (a single comment), separate from the thread-level "Delete thread".
-  // "Claude is working…" hangs off the last one, where the reply will land.
-  const awaiting = sidebarState.pending.has(c.id);
-  if (awaiting) article.classList.add("mdc-comment--awaiting");
-  article.appendChild(
-    renderInnerCard(c.id, c.rootCommentId, c.author, c.createdAt, c.body, false, awaiting && c.replies.length === 0),
-  );
-  c.replies.forEach((r, i) => {
-    article.appendChild(
-      renderInnerCard(c.id, r.id, r.author, r.createdAt, r.body, true, awaiting && i === c.replies.length - 1),
-    );
-  });
-
-  article.appendChild(renderReplyBox(c.id));
-  return article;
-}
-
-// A single comment/reply, built from the shared card. `threadId` is the root
-// comment id (the key the host uses for per-comment deletes and replies).
-function renderInnerCard(
-  threadId: string,
-  commentId: string,
-  author: string,
-  ts: string,
-  body: string,
-  reply: boolean,
-  pending = false,
-): HTMLElement {
-  return buildCommentCard({
-    author,
-    timestamp: ts,
-    bodyEl: buildLinkifiedBody(body),
-    reply,
-    pending,
-    pendingLabel: sidebarState.pendingLabel,
-    actions: [
-      {
-        label: "Delete",
-        variant: "danger",
-        title: "Delete this comment",
-        confirm: { confirmLabel: "Confirm?", busyLabel: "Deleting…" },
-        onClick: () =>
-          vscode.postMessage({ type: "delete-single-comment", threadId, commentId }),
-      },
-    ],
-  });
-}
-
-function threadActionButton(
-  label: string,
-  title: string,
-  onClick: (() => void) | null,
-  variant?: "danger",
-): HTMLButtonElement {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = variant === "danger" ? "mc-btn mc-btn--link mc-btn--danger" : "mc-btn mc-btn--link";
-  btn.textContent = label;
-  if (title) btn.title = title;
-  if (onClick) {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      onClick();
-    });
-  }
-  return btn;
-}
-
-// Always-on reply box at the bottom of a thread, built from the shared
-// composer. In-progress text is kept in `pendingReplies` so the reconciler
-// (which preserves unchanged cards) and a failed POST don't lose it.
-function renderReplyBox(threadId: string): HTMLElement {
-  const wrap = document.createElement("div");
-  wrap.className = "mdc-reply-box";
-  const composer = buildComposer({
-    placeholder: "Reply…",
-    submitLabel: "Reply",
-    rows: 2,
-    autofocus: false,
-    initialValue: pendingReplies.get(threadId) ?? "",
-    onSubmit: (body) => {
-      composer.setBusy("Sending…");
-      replyComposers.set(threadId, composer);
-      vscode.postMessage({ type: "reply-comment", commentId: threadId, body, author: userName });
-    },
-  });
-  composer.textarea.addEventListener("input", () => {
-    pendingReplies.set(threadId, composer.textarea.value);
-  });
-  // Keep clicks inside the composer from bubbling to card-level handlers.
-  composer.textarea.addEventListener("click", (e) => e.stopPropagation());
-  composer.textarea.addEventListener("mousedown", (e) => e.stopPropagation());
-  wrap.appendChild(composer.el);
-  return wrap;
-}
-
-// Escape + linkify http(s)/mailto into anchors the link interceptor handles.
-/**
- * A comment body, rendered as markdown by the shared builder.
- *
- * This used to escape the text and autolink bare URLs by regex, which meant a
- * reply from Claude containing a list or a code fence appeared verbatim,
- * hyphens and backticks included. `linkify` in the shared renderer covers the
- * bare-URL case the regex existed for, and the document-level click handler
- * below routes every resulting link through the host.
- */
-function buildLinkifiedBody(body: string): HTMLElement {
-  return buildCommentBody(body);
-}
-
-function attachToolbarHandlers(): void {
-  if (!sidebarEl) return;
-  // Filter chip
-  const removeResolvedBtn = sidebarEl.querySelector<HTMLButtonElement>(
-    "[data-action='remove-resolved']",
-  );
-  removeResolvedBtn?.addEventListener("click", () => {
-    // The host shows the modal and does the write — a webview can't show a
-    // modal, and this deletes review history in bulk.
-    vscode.postMessage({ type: "invoke-command", command: "remove-resolved" });
-  });
-  const finalizeBtn = sidebarEl.querySelector<HTMLButtonElement>("[data-action='finalize']");
-  finalizeBtn?.addEventListener("click", () => {
-    vscode.postMessage({ type: "invoke-command", command: "finalize" });
-  });
-  const outlineChip = sidebarEl.querySelector<HTMLButtonElement>("[data-action='toggle-outline']");
-  outlineChip?.addEventListener("click", () => {
-    setOutlineVisible(!outlineVisible);
-    renderSidebar();
-  });
-  const filterChip = sidebarEl.querySelector<HTMLButtonElement>("[data-action='toggle-filter']");
-  filterChip?.addEventListener("click", () => {
-    sidebarState.hideResolved = !sidebarState.hideResolved;
-    renderSidebar();
-  });
-  // Toolbar + action-row buttons (Add comment, Send to Claude, Copy).
-  for (const btn of Array.from(
-    sidebarEl.querySelectorAll<HTMLButtonElement>(
-      ".mdc-sidebar-toolbar [data-action], .mdc-sidebar-actions [data-action]",
-    ),
-  )) {
-    const action = btn.dataset.action;
-    btn.addEventListener("mousedown", (e) => {
-      // preventDefault on mousedown stops the click from blurring the
-      // editor (which would clear the PM selection before our click
-      // handler runs). We ALSO snapshot the selection here as a
-      // belt-and-suspenders measure — some Milkdown plugin paths slip
-      // past the preventDefault and cause the SECOND click symptom
-      // (first click sees an empty selection and toasts; user clicks
-      // again with the still-collapsed selection and… still nothing).
-      e.preventDefault();
-      if (action === "add-comment") captureCurrentSelection();
-    });
-    btn.addEventListener("click", () => {
-      if (btn.disabled) return;
-      if (action === "send-to-claude") {
-        vscode.postMessage({ type: "invoke-command", command: "send-to-claude" });
-        showNotice("Sent to Claude — your edits are saved to disk");
-      } else if (action === "copy-prompt") {
-        vscode.postMessage({ type: "invoke-command", command: "copy-prompt" });
-      } else if (action === "add-comment") {
-        openComposerForCurrentSelection();
-      }
-    });
-  }
-}
-
-// Inline two-step delete for the view-specific thread-head "Delete thread"
-// button. The per-comment deletes inside shared cards use commentUi's own
-// `confirm` action option, which mirrors this. The first click arms the
-// button ("Confirm?"), a second click within 3s confirms.
-function armDelete(btn: HTMLButtonElement, confirm: () => void): void {
-  if (btn.dataset.armed === "1") {
-    confirm();
-    btn.textContent = "Deleting…";
-    btn.disabled = true;
-    return;
-  }
-  const original = btn.textContent;
-  btn.dataset.armed = "1";
-  btn.textContent = "Confirm?";
-  setTimeout(() => {
-    if (btn.isConnected && btn.dataset.armed === "1") {
-      btn.dataset.armed = "";
-      btn.textContent = original;
-    }
-  }, 3000);
-}
-
-// ---------------------------------------------------------------------------
-// Bidirectional navigation: anchor highlights in editor + jump from sidebar
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Source line numbers in the live editor
-// ---------------------------------------------------------------------------
-//
 // ProseMirror documents carry no source positions, so the line a block came
 // from has to be recovered. CommonMark's top-level block sequence and the
 // editor's top-level node sequence are the same list, so the Nth block line
@@ -1098,7 +1172,6 @@ function applyLineNumberLayout(): void {
     ?.classList.toggle("with-line-numbers", lineMap !== null);
 }
 
-/** Repaint the gutter after the setting or the map changes. */
 function refreshLineNumbers(): void {
   editor?.action((ctx) => {
     const view = ctx.get(editorViewCtx);
@@ -1117,11 +1190,10 @@ function makeAnchorHighlightPlugin(): Plugin {
           return buildAnchorDecorations(tr.doc, sidebarState.comments, cachedMarkdown);
         }
         // Map existing highlights through the edit instead of rebuilding from the
-        // stored anchor text. Rebuilding here lost a highlight the moment you
-        // edited *inside* it (the old quote no longer matched), so it only came
-        // back on reopen. Mapping makes the highlight grow/shift with the edit; a
-        // fresh rebuild with re-anchored comments follows via forceHighlightRefresh
-        // once the host writes the moved markers and re-sends the comments.
+        // stored anchor text: a rebuild loses a highlight the moment you edit
+        // *inside* it (the old quote no longer matches). A fresh rebuild with
+        // re-anchored comments follows via forceHighlightRefresh once the host
+        // writes the moved markers and re-sends the comments.
         return oldDecos.map(tr.mapping, tr.doc);
       },
     },
@@ -1137,7 +1209,6 @@ function makeAnchorHighlightPlugin(): Plugin {
         const commentId = target.getAttribute("data-comment-id");
         if (!commentId) return false;
         revealCommentInSidebar(commentId);
-        // Also flash the highlight to confirm the click landed.
         target.classList.remove("mdc-anchor-highlight--pulse");
         // eslint-disable-next-line @typescript-eslint/no-unused-expressions
         void target.offsetWidth; // restart CSS animation
@@ -1163,17 +1234,16 @@ function buildAnchorDecorations(
   _markdownSource: string,
 ): DecorationSet {
   if (comments.length === 0) return DecorationSet.empty;
+  if (readOnly) return buildSourceAnchorDecorations(doc, comments);
   const decos: Decoration[] = [];
-  // Resolve every anchor against the LIVE PM doc's textContent (the
-  // text the user actually sees). No more mapping through a
-  // hand-rolled markdown stripper — that whole layer is the source of
-  // the persistent alignment-bug class. anchor.text may contain
-  // markup chars (it was authored against the markdown source); we
-  // strip those off the small anchor strings, not off the full
-  // document, before searching. The haystack is the mapper's own
+  // Resolve every anchor against the LIVE PM doc's rendered text (what the user
+  // sees), not a markdown stripper. anchor.text was authored against the
+  // markdown source, so strip markup chars off the small anchor strings, not
+  // off the full document, before searching. The haystack is the mapper's own
   // text-node walk, not `doc.textContent` — see `renderedTextOf`.
   const haystack = renderedTextOf(doc);
   const decoratedIds: string[] = [];
+  const shows = filterShows();
   for (const c of comments) {
     // Anchored threads: the marker already tells us which occurrence of the
     // text is anchored (anchorOrdinal), so find that occurrence directly — no
@@ -1186,19 +1256,10 @@ function buildAnchorDecorations(
     if (!rendered) continue;
     const pmRange = renderedRangeToPmRange(doc, rendered.start, rendered.end);
     if (!pmRange) continue;
-    // Resolved threads aren't highlighted (too noisy) but we still decorate them
-    // invisibly so their position is tracked through edits and reported to the
-    // host — otherwise editing near a resolved comment would orphan its marker.
-    const attrs: Record<string, string> = c.resolved
-      ? { class: "mdc-anchor-tracked", "data-comment-id": c.id }
-      : {
-          class: "mdc-anchor-highlight",
-          "data-comment-id": c.id,
-          title: `Comment by ${c.author}: ${truncate(c.body, 100)}`,
-        };
-    if (!c.resolved) decoratedIds.push(c.id);
-    // The 4th arg (spec) carries the id so collectAnchors can read it back off
-    // the mapped decoration without parsing DOM attributes.
+    const attrs = anchorAttrs(c, shows(c));
+    if (shows(c)) decoratedIds.push(c.id);
+    // The 4th arg (spec) carries the id so a lookup can read it back off the
+    // mapped decoration without parsing DOM attributes.
     decos.push(Decoration.inline(pmRange.from, pmRange.to, attrs, { id: c.id }));
   }
   // Report which anchors actually got highlighted (only when it changes) so an
@@ -1206,6 +1267,71 @@ function buildAnchorDecorations(
   // test host can't read the webview DOM directly.
   reportHighlights(decoratedIds);
   return DecorationSet.create(doc as never, decos);
+}
+
+/**
+ * Read-only placement: the editor ranges holding exactly the characters whose
+ * source bytes lie inside an anchored span. No text search, so no wrong
+ * occurrence. An anchor without markers has no span and gets no range —
+ * guessing it from its quote is what misplaced them.
+ */
+function sourceRangesFor(
+  doc: unknown,
+  start: number | undefined,
+  end: number | undefined,
+  text: string,
+): Array<{ from: number; to: number }> {
+  // The host derived the span and the text from one version of the file. If
+  // the text isn't at the span in the string this document was parsed from,
+  // the list describes another version — place nothing until the next push.
+  if (start === undefined || end === undefined || start < 0 || end <= start) return [];
+  if (sourceMarkdown.slice(start, end) !== text) return [];
+  return sourceRangeToEditor(sourceIndexFor(doc), start, end);
+}
+
+function buildSourceAnchorDecorations(doc: DocLike, comments: CommentSummary[]): DecorationSet {
+  const decos: Decoration[] = [];
+  const decoratedIds: string[] = [];
+  const shows = filterShows();
+  for (const c of comments) {
+    const ranges = sourceRangesFor(doc, c.proseStart, c.proseEnd, c.anchor.text);
+    if (ranges.length === 0) continue;
+    const attrs = anchorAttrs(c, shows(c));
+    if (shows(c)) decoratedIds.push(c.id);
+    for (const r of ranges) decos.push(Decoration.inline(r.from, r.to, attrs, { id: c.id }));
+  }
+  reportHighlights(decoratedIds);
+  return DecorationSet.create(doc as never, decos);
+}
+
+/** The sidebar's thread filter, which it keeps in the webview state; Open when unset. */
+function threadFilter(): ThreadFilter {
+  const f = (vscode.getState() as { threadFilter?: unknown } | undefined)?.threadFilter;
+  return f === "all" || f === "resolved" || f === "claude-unread" ? f : "open";
+}
+
+/** Whether the sidebar's current filter lists a thread — only those are highlighted, as in the review view. */
+function filterShows(): (c: CommentSummary) => boolean {
+  const filter = threadFilter();
+  const threads = new Map(sidebarPush.threads.map((t) => [t.id, t]));
+  return (c) =>
+    matchesFilter(
+      threads.get(c.id) ?? { id: c.id, status: c.resolved ? "resolved" : "open", comments: [{ author: c.author }] },
+      filter,
+    );
+}
+
+/**
+ * A thread's decoration. One the filter hides is still decorated, invisibly,
+ * so the jump to it keeps working; a resolved one it shows is greyed.
+ */
+function anchorAttrs(c: CommentSummary, shown: boolean): Record<string, string> {
+  if (!shown) return { class: "mdc-anchor-tracked", "data-comment-id": c.id };
+  return {
+    class: c.resolved ? "mdc-anchor-highlight mdc-anchor-highlight--resolved" : "mdc-anchor-highlight",
+    "data-comment-id": c.id,
+    title: `Comment by ${c.author}: ${truncate(c.body, 100)}`,
+  };
 }
 
 let lastHighlightSig = " ";
@@ -1216,54 +1342,6 @@ function reportHighlights(ids: string[]): void {
   vscode.postMessage({ type: "highlight-report", ids });
 }
 
-interface AnchorReport {
-  id: string;
-  text: string;
-  ordinal: number;
-}
-
-// Read each tracked anchor's CURRENT position straight off the mapped decoration
-// set and describe it as (live text, occurrence ordinal). Because the decoration
-// moved with every edit, these describe exactly where the comment now sits — so
-// the host can place the marker there without re-deriving it from the old quote.
-function collectAnchors(
-  doc: {
-    textBetween: (from: number, to: number, blockSeparator?: string, leafText?: string) => string;
-    descendants: (cb: (n: { isText: boolean; nodeSize: number; text?: string }, p: number) => boolean | void) => void;
-  },
-  set: DecorationSet | undefined,
-): AnchorReport[] {
-  if (!set) return [];
-  const haystack = renderedTextOf(doc);
-  const out: AnchorReport[] = [];
-  const seen = new Set<string>();
-  for (const deco of set.find()) {
-    const id = (deco.spec as { id?: string } | undefined)?.id;
-    if (!id || seen.has(id)) continue;
-    const from = (deco as unknown as { from: number }).from;
-    const to = (deco as unknown as { to: number }).to;
-    // Empty `leafText` for the same reason the haystack skips leaves: a
-    // hardbreak's "\n" is not part of the text anchors are matched against.
-    const text = doc.textBetween(from, to, "", "");
-    if (text.trim().length === 0) continue; // span collapsed (text deleted) → leave unanchored
-    const renderedStart = renderedOffsetForPm(doc, from);
-    let ordinal = 0;
-    let idx = 0;
-    while (true) {
-      const hit = haystack.indexOf(text, idx);
-      if (hit < 0 || hit >= renderedStart) break;
-      ordinal++;
-      idx = hit + 1;
-    }
-    seen.add(id);
-    out.push({ id, text, ordinal });
-  }
-  return out;
-}
-
-// locateAnchorInLiveText now lives in ../collab/liveAnchorLocator for
-// testability — re-exported via the top-of-file import.
-
 function forceHighlightRefresh(): void {
   if (!editor) return;
   editor.action((ctx) => {
@@ -1272,77 +1350,107 @@ function forceHighlightRefresh(): void {
   });
 }
 
+function forceSuggestionHighlightRefresh(): void {
+  if (!editor) return;
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.setMeta(SUGGESTION_HIGHLIGHT_KEY, { refresh: true }));
+  });
+}
+
+/**
+ * Rebuild the diff-stripes decorations from `currentDiff`, then refresh what
+ * hangs off them: the toolbar's badge, its navigable stops (read back off the
+ * editor's own DOM, which ProseMirror updates synchronously inside `dispatch`),
+ * and the sidebar's n/p dispatch (steps changes while a diff is showing,
+ * threads otherwise — `ThreadSidebarHandle.setChangeNavigation`).
+ */
+function forceDiffRefresh(): void {
+  if (!editor || !changeNav) return;
+  const nav = changeNav;
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.setMeta(DIFF_STRIPES_KEY, { refresh: true }));
+  });
+  const diff = currentDiff;
+  nav.setBadge(
+    !diff
+      ? null
+      : diff.isNew
+        ? "new file — uncommitted"
+        : diff.addedRanges.length === 0 && (diff.removed ?? []).length === 0
+          ? "no uncommitted prose changes"
+          : "uncommitted changes",
+  );
+  const stops = editorContainer
+    ? Array.from(editorContainer.querySelectorAll<HTMLElement>(".mdc-diff-changed, .mdc-diff-removed"))
+    : [];
+  nav.setStops(stops);
+  threadSidebar.setChangeNavigation(diff && stops.length > 0 ? (delta) => nav.step(delta) : null);
+}
+
+/**
+ * The host opened this view on a thread: make its card the current one and
+ * scroll the document to its highlight. An unanchored thread has only its card.
+ */
+function revealThreadFromHost(threadId: string): void {
+  revealCommentInSidebar(threadId);
+  const anchored = sidebarPush.threads.find((t) => t.id === threadId)?.anchor;
+  const comment = sidebarState.comments.find((c) => c.id === threadId);
+  if (anchored && comment) jumpToAnchor(comment);
+}
+
 function revealCommentInSidebar(commentId: string): void {
   if (!sidebarEl) return;
   if (sidebarState.collapsed) {
     sidebarState.collapsed = false;
     syncCollapsedClass();
   }
-  // If filtered out (e.g. resolved + hideResolved), temporarily show all.
-  const target = sidebarState.comments.find((c) => c.id === commentId);
-  if (target?.resolved && sidebarState.hideResolved) {
-    sidebarState.hideResolved = false;
-    renderSidebar();
-  }
-  const card = sidebarEl.querySelector<HTMLElement>(`.mdc-comment[data-id="${cssEscape(commentId)}"]`);
-  if (!card) return;
-  card.scrollIntoView({ behavior: "smooth", block: "center" });
-  card.classList.remove("mdc-comment--flash");
-  void card.offsetWidth;
-  card.classList.add("mdc-comment--flash");
-}
-
-// Compute the rendered-text offset (offset into doc.textContent) that
-// corresponds to a ProseMirror position. Used to display the
-// "Commenting on:" preview in the composer. Returns -1 if the position
-// can't be located (e.g. it falls inside a non-text node).
-function renderedOffsetForPm(doc: { descendants: (cb: (n: { isText: boolean; nodeSize: number }, p: number) => boolean | void) => void }, pmPos: number): number {
-  let textCounted = 0;
-  let result = -1;
-  doc.descendants((node, pos) => {
-    if (result >= 0) return false;
-    if (node.isText) {
-      const nodeStart = pos;
-      const nodeEnd = pos + node.nodeSize;
-      if (pmPos >= nodeStart && pmPos <= nodeEnd) {
-        result = textCounted + (pmPos - nodeStart);
-        return false;
-      }
-      textCounted += node.nodeSize;
-    }
-    return true;
-  });
-  return result;
+  // The sidebar makes it the current card, widening its filter if that one
+  // hides the thread.
+  threadSidebar.revealThread(commentId);
 }
 
 function jumpToAnchor(comment: CommentSummary): void {
   if (!editor) return;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
-    const haystack = renderedTextOf(view.state.doc);
-    const rendered =
-      comment.anchorOrdinal >= 0
-        ? locateNthOccurrence(haystack, comment.anchor.text, comment.anchorOrdinal)
-        : locateAnchorInLiveText(haystack, comment.anchor);
-    if (!rendered) {
-      showToast("Couldn't locate this comment's anchor in the document. The text may have changed.");
-      return;
+    let pmRange: { from: number; to: number } | null = null;
+    if (readOnly) {
+      // Read-only: the highlight already sits at the thread's source position;
+      // jump to it rather than re-finding the text.
+      const set = HIGHLIGHT_PLUGIN_KEY.getState(view.state) as DecorationSet | undefined;
+      const deco = set?.find(undefined, undefined, (spec) => (spec as { id?: string }).id === comment.id)[0];
+      if (!deco) {
+        showToast("Couldn't locate this comment's anchor in the document. The text may have changed.");
+        return;
+      }
+      pmRange = { from: deco.from, to: deco.to };
+    } else {
+      const haystack = renderedTextOf(view.state.doc);
+      const rendered =
+        comment.anchorOrdinal >= 0
+          ? locateNthOccurrence(haystack, comment.anchor.text, comment.anchorOrdinal)
+          : locateAnchorInLiveText(haystack, comment.anchor);
+      if (!rendered) {
+        showToast("Couldn't locate this comment's anchor in the document. The text may have changed.");
+        return;
+      }
+      pmRange = renderedRangeToPmRange(
+        view.state.doc as unknown as Parameters<typeof renderedRangeToPmRange>[0],
+        rendered.start,
+        rendered.end,
+      );
     }
-    const pmRange = renderedRangeToPmRange(
-      view.state.doc as unknown as Parameters<typeof renderedRangeToPmRange>[0],
-      rendered.start,
-      rendered.end,
-    );
     if (!pmRange) return;
     try {
       const dom = view.domAtPos(pmRange.from).node as Element | null;
       if (dom && (dom as HTMLElement).scrollIntoView) {
-        (dom as HTMLElement).scrollIntoView({ behavior: "smooth", block: "center" });
+        smoothScrollIntoView(dom as HTMLElement, "center");
       }
     } catch {
       /* ignore */
     }
-    // Briefly flash the highlight at this comment.
     setTimeout(() => {
       const highlight = document.querySelector<HTMLElement>(
         `.mdc-anchor-highlight[data-comment-id="${cssEscape(comment.id)}"]`,
@@ -1356,10 +1464,6 @@ function jumpToAnchor(comment: CommentSummary): void {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Mermaid (unchanged from prior version, slightly tightened)
-// ---------------------------------------------------------------------------
-
 interface MermaidApi {
   initialize: (cfg: Record<string, unknown>) => void;
   render: (id: string, src: string) => Promise<{ svg: string }>;
@@ -1371,8 +1475,14 @@ function loadMermaid(): Promise<MermaidApi> {
     mermaidPromise = import("mermaid").then((mod) => {
       const candidate = (mod as { default?: unknown }).default ?? mod;
       const api = candidate as MermaidApi;
+      // Follow the editor theme, as the classic panel did: a light diagram on a
+      // dark background reads as a rendering bug.
+      const isDark =
+        document.body.classList.contains("vscode-dark") ||
+        document.body.classList.contains("vscode-high-contrast") ||
+        window.matchMedia("(prefers-color-scheme: dark)").matches;
       try {
-        api.initialize({ startOnLoad: false, securityLevel: "strict", theme: "default" });
+        api.initialize({ startOnLoad: false, securityLevel: "strict", theme: isDark ? "dark" : "default" });
       } catch {
         /* idempotent */
       }
@@ -1392,7 +1502,14 @@ function makeMermaidPlugin(): Plugin {
     key: mermaidPluginKey,
     state: {
       init: (_cfg, state) => buildMermaidDecorations(state.doc),
-      apply: (tr, oldDecos) => (tr.docChanged ? buildMermaidDecorations(tr.doc) : oldDecos.map(tr.mapping, tr.doc)),
+      apply: (tr, oldDecos) => {
+        if (tr.docChanged) return buildMermaidDecorations(tr.doc);
+        // The async render in makeMermaidWidget dispatches this meta once it
+        // settles, so a diagram that just finished rendering (or just failed)
+        // gets its source hidden/revealed without waiting for the next edit.
+        if (tr.getMeta(mermaidPluginKey) === "refresh") return buildMermaidDecorations(tr.doc);
+        return oldDecos.map(tr.mapping, tr.doc);
+      },
     },
     props: {
       decorations(state) {
@@ -1402,22 +1519,21 @@ function makeMermaidPlugin(): Plugin {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Drawio inline viewer
-// ---------------------------------------------------------------------------
+function refreshMermaidDecorations(): void {
+  editor?.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.setMeta(mermaidPluginKey, "refresh"));
+  });
+}
+
+// A paragraph whose only inline content is a single link whose href ends in
+// `.drawio` / `.drawio.xml` / `.xml` becomes an inline diagram; links mixed
+// with other text keep their regular click behavior.
 //
-// Detection: a paragraph whose only inline content is a single link
-// whose href ends in `.drawio` / `.drawio.xml` / `.xml`. That mirrors
-// the "image-only paragraph promotes to block" convention markdown
-// renderers already follow. Links mixed with other text keep their
-// regular click behavior; only the dedicated diagram link gets the
-// inline-render treatment.
-//
-// Loading: file content is owned by the extension. The widget posts
-// `drawio-read` with a request id, then completes when the matching
-// `drawio-read-result` arrives. A per-href cache avoids re-requesting
-// on every PM transaction (every keystroke triggers a re-render of
-// decorations).
+// File content is owned by the extension: the widget posts `drawio-read` with a
+// request id and completes on the matching `drawio-read-result`. A per-href
+// cache avoids re-requesting on every PM transaction (every keystroke
+// re-renders decorations).
 
 const drawioPluginKey = new PluginKey("mdc-drawio");
 
@@ -1455,39 +1571,65 @@ interface PmNode {
   marks?: Array<{ type: { name: string }; attrs: Record<string, unknown> }>;
   text?: string;
   textContent?: string;
+  attrs?: Record<string, unknown>;
 }
 
-// Returns the drawio href if the paragraph node is "diagram-only" — a
-// single link mark on a single text node, whitespace-padding allowed.
-function paragraphDrawioHref(paragraph: PmNode): string | null {
+interface DrawioParagraphMatch {
+  href: string;
+  /**
+   * Set only for the `![alt](x.drawio)` form: the image node's size, so
+   * `buildDrawioDecorations` can hide the (otherwise broken) `<img>` the image
+   * nodeView would render for a non-image src.
+   */
+  hideChildSize?: number;
+}
+
+// Matches a paragraph that is a diagram reference and nothing else — either
+// `[text](x.drawio)` (a single text node under a link mark) or
+// `![alt](x.drawio)` (a single image node), whitespace-padding allowed. Both
+// forms promote the paragraph to the same inline diagram widget; only the
+// image form also needs its own (would-be-broken) rendering hidden.
+function paragraphDrawioMatch(paragraph: PmNode): DrawioParagraphMatch | null {
   if (paragraph.type.name !== "paragraph") return null;
   const childCount = paragraph.childCount ?? 0;
-  // A diagram-only paragraph is a single text node carrying a link
-  // mark. PM may split text into multiple nodes if marks change, but a
-  // single-link paragraph has exactly one child.
+  // PM may split text into multiple nodes if marks change, but a
+  // single-link (or single-image) paragraph has exactly one child.
   if (childCount !== 1) return null;
   const child = paragraph.child?.(0);
-  if (!child || !child.isText) return null;
-  const linkMark = (child.marks ?? []).find((m) => m.type.name === "link");
-  if (!linkMark) return null;
-  const href = String(linkMark.attrs.href ?? "");
-  if (!isDrawioHrefForWidget(href)) return null;
-  // The visible text can be any caption — we don't constrain it. But
-  // if the user wrote `[label] (file.drawio)` (extra space after `]`),
-  // PM still parses it as a link; we accept that too.
-  return href;
+  if (!child) return null;
+  if (child.isText) {
+    const linkMark = (child.marks ?? []).find((m) => m.type.name === "link");
+    if (!linkMark) return null;
+    const href = String(linkMark.attrs.href ?? "");
+    // The visible text can be any caption — we don't constrain it. But if the
+    // user wrote `[label] (file.drawio)` (extra space after `]`), PM still
+    // parses it as a link; we accept that too.
+    return isDrawioHrefForWidget(href) ? { href } : null;
+  }
+  if (child.type.name === "image") {
+    const src = String(child.attrs?.src ?? "");
+    if (!isDrawioHrefForWidget(src)) return null;
+    return { href: src, hideChildSize: 1 };
+  }
+  return null;
 }
 
 function buildDrawioDecorations(doc: DocLike): DecorationSet {
   const decos: Decoration[] = [];
   doc.descendants((node, pos) => {
-    const href = paragraphDrawioHref(node as unknown as PmNode);
-    if (!href) return true;
+    const match = paragraphDrawioMatch(node as unknown as PmNode);
+    if (!match) return true;
+    if (match.hideChildSize) {
+      const from = pos + 1; // past the paragraph's own opening token
+      decos.push(
+        Decoration.node(from, from + match.hideChildSize, { class: "mdc-drawio-image-hidden" }),
+      );
+    }
     decos.push(
-      Decoration.widget(pos, () => makeDrawioWidget(href), {
+      Decoration.widget(pos, () => makeDrawioWidget(match.href), {
         side: 1,
         ignoreSelection: true,
-        key: `drawio-${pos}-${href}`,
+        key: `drawio-${pos}-${match.href}`,
       }),
     );
     return false;
@@ -1635,8 +1777,7 @@ function makeImageResolvePlugin(): Plugin {
   };
   // Markdown can't centre an image or set its width, so documents write those
   // as raw HTML. Milkdown keeps raw HTML as an opaque `html` node and renders
-  // its source as escaped text — so `<img src="x.png" width="400">` showed up
-  // as literal angle brackets. `parseHtmlImage` recognizes the image case only
+  // its source as escaped text. `parseHtmlImage` recognizes the image case only
   // (strict attribute whitelist, safe schemes, refuses anything with another
   // element or an `on*` handler); everything else keeps the escaped rendering.
   const applyHtml = (dom: HTMLElement, node: PmHtmlNode): boolean => {
@@ -1726,6 +1867,12 @@ function buildMermaidDecorations(doc: DocLike): DecorationSet {
     const lang = ((node as unknown as { attrs?: { language?: string } }).attrs ?? {}).language;
     if (lang !== "mermaid") return true;
     const src = (node as unknown as { textContent: string }).textContent;
+    // Hide the fence source once its diagram has rendered. Left visible while
+    // pending (so there isn't a blank gap before the first render) and on error
+    // (so the source is there to fix).
+    if (mermaidCache.get(src)?.status === "ready") {
+      decos.push(Decoration.node(pos, pos + node.nodeSize, { class: "mdc-mermaid-source-hidden" }));
+    }
     decos.push(
       Decoration.widget(pos, () => makeMermaidWidget(src), {
         side: -1,
@@ -1768,19 +1915,19 @@ function makeMermaidWidget(src: string): HTMLElement {
           mermaidCache.set(src, { src, status: "error", error: message });
           target.innerHTML = `<div class="mdc-mermaid__error">Mermaid render failed: ${escapeHtml(message)}</div>`;
         }
+        // Either branch changed this src's cache status, which decides
+        // whether the fence source is hidden — repaint the decoration set.
+        refreshMermaidDecorations();
       })
       .catch((e) => {
         const message = (e as Error).message;
         mermaidCache.set(src, { src, status: "error", error: message });
         target.innerHTML = `<div class="mdc-mermaid__error">Failed to load mermaid: ${escapeHtml(message)}</div>`;
+        refreshMermaidDecorations();
       });
   }
   return wrap;
 }
-
-// ---------------------------------------------------------------------------
-// Composer + selection-driven add comment
-// ---------------------------------------------------------------------------
 
 function installAddCommentAffordance(): void {
   const button = document.createElement("button");
@@ -1790,8 +1937,35 @@ function installAddCommentAffordance(): void {
   button.style.display = "none";
   document.body.appendChild(button);
 
+  // A mouse drag-selection in the editor is in progress. The button sits just
+  // right of the selection's end — mid-drag, under the pointer. In a read-only
+  // view nothing clamps the native selection to the editor (there is no
+  // contenteditable host), so dragging over the button extended the selection
+  // to the button's place in the DOM, after the sidebar; ProseMirror ignores a
+  // selection that leaves the editor and keeps the prefix it last saw. So the
+  // button waits for the release.
+  let dragging = false;
+  document.addEventListener(
+    "mousedown",
+    (e) => {
+      if (e.button !== 0 || !editorContainer?.contains(e.target as Node)) return;
+      dragging = true;
+      button.style.display = "none";
+    },
+    true,
+  );
+  const endDrag = (): void => {
+    dragging = false;
+  };
+  document.addEventListener("mouseup", endDrag, true);
+  window.addEventListener("blur", endDrag);
+
   const updateButton = (): void => {
     if (!editor || !editorContainer) return;
+    if (dragging) {
+      button.style.display = "none";
+      return;
+    }
     interface ButtonCoords { top: number; left: number }
     let coords: ButtonCoords | null = null;
     editor.action((ctx) => {
@@ -1815,11 +1989,8 @@ function installAddCommentAffordance(): void {
     }
   };
 
-  // Refresh the floating button's position AND keep
-  // lastNonEmptySelection in lock-step with PM's state. Both run on
-  // every selection-affecting event so the composer can always reach
-  // for "the last non-empty selection the user made", regardless of
-  // any focus/blur weirdness between PM and the floating button.
+  // Refresh the floating button's position and keep lastNonEmptySelection in
+  // lock-step with PM's state, on every selection-affecting event.
   const refresh = (): void => {
     updateLastNonEmptySelection();
     updateButton();
@@ -1831,10 +2002,10 @@ function installAddCommentAffordance(): void {
       setTimeout(refresh, 0);
     }
   });
-  // Belt-and-suspenders for the floating button: capture-phase pointerdown
-  // anywhere snapshots PM's selection BEFORE any focus shift or
-  // setTimeout-0 refresh can run. Closes the race where a fast click on
-  // the button beats the prior selectionchange's deferred refresh.
+  // Belt-and-suspenders for the floating button: a capture-phase pointerdown
+  // anywhere snapshots PM's selection before any focus shift or setTimeout-0
+  // refresh can run, closing the race where a fast click on the button beats
+  // the prior selectionchange's deferred refresh.
   window.addEventListener("pointerdown", () => {
     updateLastNonEmptySelection();
   }, true);
@@ -1850,36 +2021,32 @@ function installAddCommentAffordance(): void {
   });
 }
 
+// Why a read-only selection can't take a comment, keyed by the mapper's reason.
+const READ_ONLY_REFUSALS = {
+  empty: "Select some non-whitespace text to comment on.",
+  code: "Comments can't be anchored inside code. Select text outside the code block or code span.",
+  unmapped:
+    "This selection doesn't map exactly to the Markdown source, so the comment could land in the wrong place. Select different text.",
+} as const;
+
 function openComposerForCurrentSelection(): void {
   if (!editor || !composerEl) return;
   let anchor: import("../types").Anchor | null = null;
-  // Exact selection offsets into `anchorFullMd` (the editor's current body
-  // markdown). The host places the invisible marker at these offsets instead
-  // of fuzzy-searching, so commenting never fails to "locate the text".
-  // -1 means "unknown" (the rare slice-not-in-fullMd case) → host falls back.
-  let anchorSelStart = -1;
-  let anchorSelEnd = -1;
-  let anchorFullMd = "";
-  // Which occurrence of the selected text this is (0-based, in the rendered
-  // editor text). Sent so the host can place the marker on the right occurrence
-  // when offsets are unavailable and the anchor text repeats (table cells).
-  let anchorOrdinal = -1;
+  // Read-only mode: the prose span under the selection and the bytes there,
+  // taken now — if the file changes before Save, the host sees they differ.
+  let proseRange: { start: number; end: number; text: string } | null = null;
+  // Edit mode: the selection's first and last characters, named by structure,
+  // with the text of the containers they're in — checked the same way.
+  let editRange: { first: EditorPoint; last: EditorPoint } | null = null;
   let displayText = "";
   let failureReason = "";
-  // Three-layer selection lookup — see the comment block on
-  // pendingSelection / lastNonEmptySelection for why. Order:
-  //   1. live (PM's current selection at composer-open time)
-  //   2. pendingSelection (mousedown snapshot — close to live)
-  //   3. lastNonEmptySelection (the most recent non-empty user
-  //      selection, kept in sync via updateLastNonEmptySelection)
-  // The third layer is what fixes the "had to double-click the
-  // floating button" bug.
+  // Order: live selection, then pendingSelection, then lastNonEmptySelection —
+  // see the comment on those.
   const captured = pendingSelection;
   pendingSelection = null;
   const recent = lastNonEmptySelection;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
-    const serializer = ctx.get(serializerCtx);
     const live = view.state.selection;
     let selFrom: number;
     let selTo: number;
@@ -1900,100 +2067,39 @@ function openComposerForCurrentSelection(): void {
       failureReason = "No text is selected. Highlight some text in the editor first.";
       return;
     }
-    // Phase-3 write side: use Milkdown's own serializer to compute
-    // the markdown for the user's selection, instead of mapping
-    // through a hand-rolled stripper. `doc.cut(from, to)` slices the
-    // PM tree; serializing the slice gives us markdown identical to
-    // what Milkdown would write for that span on save.
-    const fullMd = serializer(view.state.doc);
-    cachedMarkdown = fullMd;
-    anchorFullMd = fullMd;
-    // The selection's *visible text* (textContent) is reliable for ANY
-    // content — table cells, bold, links — and is the anchor backbone: the
-    // live highlight matches it against the editor text and the host stores
-    // it as the quote. The markdown slice + offsets are computed too, but
-    // only as a precise-placement bonus when the slice maps cleanly into
-    // fullMd (plain paragraph spans). A table cell serializes to a mini-table
-    // that isn't in fullMd verbatim — we just skip the offsets there and let
-    // the host place by text or save loosely-anchored, instead of refusing.
-    // Same text-node-only string the offsets below are measured in — see
-    // `renderedTextOf`. With `doc.textContent`, a hard break above the
-    // selection shifted the quote we store by one character per break.
-    const renderedText = renderedTextOf(view.state.doc);
-    const renderedSelStart = renderedOffsetForPm(view.state.doc, selFrom);
-    const renderedSelEnd = renderedOffsetForPm(view.state.doc, selTo);
-    let sliceMd = "";
-    try {
-      sliceMd = serializer(view.state.doc.cut(selFrom, selTo)).trim();
-    } catch {
-      sliceMd = "";
-    }
-    displayText =
-      renderedSelStart >= 0 && renderedSelEnd >= 0
-        ? renderedText.slice(renderedSelStart, renderedSelEnd).trim()
-        : sliceMd;
-
-    const anchorText = displayText || sliceMd;
-    if (anchorText.replace(/\s/g, "").length === 0) {
-      failureReason = "Select some non-whitespace text to comment on.";
+    if (readOnly) {
+      // Each selected character knows its source bytes, so the comment goes
+      // exactly there — or, when a boundary has no trusted bytes, nowhere.
+      const mapped = editorSelectionToSource(sourceIndexFor(view.state.doc), selFrom, selTo);
+      if (!mapped.ok) {
+        failureReason = READ_ONLY_REFUSALS[mapped.reason];
+        return;
+      }
+      displayText = mapped.text;
+      proseRange = { start: mapped.start, end: mapped.end, text: sourceMarkdown.slice(mapped.start, mapped.end) };
+      anchor = {
+        text: mapped.text,
+        contextBefore: sourceMarkdown.slice(Math.max(0, mapped.start - 24), mapped.start),
+        contextAfter: sourceMarkdown.slice(mapped.end, mapped.end + 24),
+      };
       return;
     }
-    anchor = {
-      text: anchorText,
-      contextBefore:
-        renderedSelStart >= 0 ? renderedText.slice(Math.max(0, renderedSelStart - 24), renderedSelStart) : "",
-      contextAfter: renderedSelEnd >= 0 ? renderedText.slice(renderedSelEnd, renderedSelEnd + 24) : "",
-    };
-
-    // Record which occurrence of the anchor text this selection is, counting
-    // matches in the rendered text before it. The host uses this to place the
-    // marker on the right occurrence when context can't (duplicate table cells).
-    if (renderedSelStart >= 0 && anchorText.length > 0) {
-      let ord = 0;
-      let from = 0;
-      while (true) {
-        const idx = renderedText.indexOf(anchorText, from);
-        if (idx < 0 || idx >= renderedSelStart) break;
-        ord++;
-        from = idx + 1;
-      }
-      anchorOrdinal = ord;
+    // Edit mode: this document carries no source positions (a split or join
+    // copies them onto both halves), so the selection is named by structure —
+    // block, text container, character — for the host to find in the file's
+    // own bytes. Nothing the editor serializes goes with it.
+    const named = editorSelectionPoints(
+      topLevelBlocks(view.state.doc) as unknown as Array<{ node: PmBlockLike; pos: number }>,
+      selFrom,
+      selTo,
+    );
+    if (!named.ok) {
+      failureReason = READ_ONLY_REFUSALS[named.reason];
+      return;
     }
-
-    // Precise-placement bonus: if the markdown slice appears in fullMd, record
-    // exact offsets so the host wraps that exact span. Otherwise leave the
-    // offsets at -1 and let the host fall back to text / loose anchoring.
-    if (sliceMd.length > 0) {
-      const occurrences: number[] = [];
-      let from = 0;
-      while (true) {
-        const idx = fullMd.indexOf(sliceMd, from);
-        if (idx < 0) break;
-        occurrences.push(idx);
-        from = idx + 1;
-      }
-      if (occurrences.length > 0) {
-        let approxMdStart = -1;
-        try {
-          approxMdStart = serializer(view.state.doc.cut(0, selFrom)).length;
-        } catch {
-          approxMdStart = -1;
-        }
-        let chosen = occurrences[0]!;
-        if (approxMdStart >= 0 && occurrences.length > 1) {
-          let bestDiff = Infinity;
-          for (const o of occurrences) {
-            const diff = Math.abs(o - approxMdStart);
-            if (diff < bestDiff) {
-              bestDiff = diff;
-              chosen = o;
-            }
-          }
-        }
-        anchorSelStart = chosen;
-        anchorSelEnd = chosen + sliceMd.length;
-      }
-    }
+    displayText = named.text;
+    editRange = { first: named.first, last: named.last };
+    anchor = { text: named.text, contextBefore: "", contextAfter: "" };
   });
 
   if (!anchor) {
@@ -2001,6 +2107,8 @@ function openComposerForCurrentSelection(): void {
     return;
   }
   const finalAnchor: import("../types").Anchor = anchor;
+  const finalRange = proseRange as { start: number; end: number; text: string } | null;
+  const finalEditRange = editRange as { first: EditorPoint; last: EditorPoint } | null;
 
   const preview = displayText.slice(0, 120) + (displayText.length > 120 ? "…" : "");
   composerEl.innerHTML = "";
@@ -2013,17 +2121,30 @@ function openComposerForCurrentSelection(): void {
     onSubmit: (body) => {
       composer.setBusy("Saving…");
       addComposer = composer;
+      if (finalRange) {
+        // Read-only: the host maps this prose span to the file's own bytes and
+        // inserts the two markers there — nothing else is rewritten.
+        vscode.postMessage({
+          type: "add-comment",
+          anchor: finalAnchor,
+          body,
+          author: userName,
+          proseStart: finalRange.start,
+          proseEnd: finalRange.end,
+          proseText: finalRange.text,
+        });
+        return;
+      }
+      // Edits still in the debounce reach the file before the comment does,
+      // so the host finds the text the selection was named against.
+      flushBlockEdits();
       vscode.postMessage({
         type: "add-comment",
         anchor: finalAnchor,
         body,
         author: userName,
-        // Exact placement: the host wraps [selStart, selEnd) in fullMd with the
-        // marker, no fuzzy locate. Falls back to anchor text when offsets are -1.
-        fullMd: anchorFullMd,
-        selStart: anchorSelStart,
-        selEnd: anchorSelEnd,
-        anchorOrdinal,
+        editRange: finalEditRange,
+        epoch: editEpoch,
       });
     },
     onCancel: () => {
@@ -2033,10 +2154,6 @@ function openComposerForCurrentSelection(): void {
   });
   composerEl.appendChild(composer.el);
 }
-
-// ---------------------------------------------------------------------------
-// Misc helpers
-// ---------------------------------------------------------------------------
 
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
 function showToast(text: string, durationMs = 4500): void {
@@ -2068,7 +2185,46 @@ function reportReady(synced: boolean): void {
   vscode.postMessage({ type: "ready-with-content", length, synced, error });
 }
 
-function applyExternalChange(text: string, changed?: ChangeSummary | null): void {
+/**
+ * The fallback behind the character-precise replace in `applyExternalChange`:
+ * replace the run of top-level blocks that differ between `prev` and `next`.
+ * Used when a single content-level `replace` step doesn't land on `next`
+ * exactly (an edit shape it can't express, or one `tr.replace` itself
+ * throws on). Returns the position just past the replaced range in the
+ * resulting document, or null when no top-level block differs.
+ */
+function applyBlockLevelReplacement(tr: Transaction, prev: PmDocNode, next: PmDocNode): number | null {
+  // Common prefix and suffix of top-level blocks; the middle is what changed.
+  let start = 0;
+  while (start < prev.childCount && start < next.childCount && prev.child(start).eq(next.child(start))) start++;
+  let prevEnd = prev.childCount;
+  let nextEnd = next.childCount;
+  while (prevEnd > start && nextEnd > start && prev.child(prevEnd - 1).eq(next.child(nextEnd - 1))) {
+    prevEnd--;
+    nextEnd--;
+  }
+  if (start === prevEnd && start === nextEnd) return null; // the same document
+  const offsetOf = (doc: PmDocNode, index: number): number => {
+    let pos = 0;
+    for (let i = 0; i < index; i++) pos += doc.child(i).nodeSize;
+    return pos;
+  };
+  tr.replaceWith(
+    offsetOf(prev, start),
+    offsetOf(prev, prevEnd),
+    next.content.cut(offsetOf(next, start), offsetOf(next, nextEnd)),
+  );
+  return offsetOf(next, nextEnd);
+}
+
+function applyExternalChange(
+  text: string,
+  changed?: ChangeSummary | null,
+  epoch?: number,
+  toast?: string,
+  quiet?: boolean,
+  reveal?: boolean,
+): void {
   if (!editor) return;
   // Cancel a still-pending local edit post. The keystroke that scheduled it
   // predates this external (Claude) change, so letting it fire would overwrite
@@ -2077,71 +2233,124 @@ function applyExternalChange(text: string, changed?: ChangeSummary | null): void
     clearTimeout(editDebounce);
     editDebounce = null;
   }
-  // `applyTemplate` replaces the whole document, which otherwise snaps the
-  // view back to the top and drops the cursor. Capture the scroll position
-  // and selection first, then restore them — so an external edit, or a
-  // format-on-save echo right after you typed, doesn't jump to the file head.
-  const scroller = editorContainer?.parentElement ?? null; // .mdc-editor-pane (overflow:auto)
+  const scroller = editorScrollEl; // .mdc-editor-scroll (overflow:auto) — see buildLayout
   const prevScrollTop = scroller?.scrollTop ?? 0;
-  let prevFrom = -1;
-  editor.action((ctx) => {
-    prevFrom = ctx.get(editorViewCtx).state.selection.from;
-  });
 
-  suppressNextPost = true;
   cachedMarkdown = text;
+  // The source positions in the re-parsed document index this string.
+  sourceMarkdown = text;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     const parser = ctx.get(parserCtx);
-    const doc = parser(text);
-    if (!doc) return;
-    // Replace the whole document with the freshly parsed one. Marked
-    // external so prosemirror-history keeps Claude's disk-side edit out of
-    // the local undo stack — matching the old collab behaviour, where synced
-    // changes weren't locally undoable.
-    const tr = view.state.tr;
-    tr.replaceWith(0, view.state.doc.content.size, doc.content);
+    const next = parser(text);
+    if (!next) return;
+    const prev = view.state.doc;
+
+    const start = prev.content.findDiffStart(next.content);
+    if (start == null) return; // same document: dispatch nothing
+
+    // Replace only what differs, at character precision — not the whole
+    // document, so the cursor stays on its text and the undo history keeps
+    // every keystroke outside the changed span. A whole-document replacement
+    // mapped everything onto the end of the new document — so Cmd+Z after an
+    // agent's edit undid nothing and jumped to the end of the file.
+    let tr = view.state.tr;
+    let revealTo = next.content.size;
+    let landed = false;
+    try {
+      const diffEnd = prev.content.findDiffEnd(next.content);
+      if (diffEnd) {
+        let { a: endA, b: endB } = diffEnd;
+        const overlap = start - Math.min(endA, endB);
+        if (overlap > 0) {
+          endA += overlap;
+          endB += overlap;
+        }
+        tr.replace(start, endA, next.slice(start, endB));
+        if (tr.doc.eq(next)) {
+          revealTo = endB;
+          landed = true;
+        }
+      }
+    } catch {
+      /* falls through to the block-level replacement */
+    }
+
+    if (!landed) {
+      tr = view.state.tr;
+      const blockEnd = applyBlockLevelReplacement(tr, prev, next);
+      if (blockEnd != null && tr.doc.eq(next)) {
+        revealTo = blockEnd;
+        landed = true;
+      }
+    }
+
+    if (!landed) {
+      tr = view.state.tr;
+      tr.replaceWith(0, prev.content.size, next.content);
+      revealTo = next.content.size;
+    }
+
+    // Marked external so no plugin treats the agent's disk-side edit as ours.
     tr.setMeta("addToHistory", false);
     tr.setMeta("external", true);
+    if (reveal) {
+      // The person's own undo/redo: land the caret at the end of the
+      // replaced range (the deletion point, for a pure deletion) and scroll
+      // to it, instead of restoring the old scroll position below.
+      const pos = Math.max(0, Math.min(revealTo, tr.doc.content.size));
+      tr.setSelection(TextSelection.near(tr.doc.resolve(pos)));
+      tr.scrollIntoView();
+    }
     view.dispatch(tr);
+    if (reveal && !view.hasFocus()) {
+      // A transaction's scrollIntoView only acts on a view that holds the DOM
+      // selection. An undo made from the sidebar, or in Reading mode, still
+      // has to show what changed.
+      const at = view.domAtPos(view.state.selection.from);
+      const el = at.node.nodeType === Node.ELEMENT_NODE ? (at.node as Element) : at.node.parentElement;
+      el?.scrollIntoView({ block: "nearest" });
+    }
   });
+  // Edit mode diffs the next edit against the file's text, not what was typed before it.
+  resetEditBase(epoch);
 
-  // Restore the cursor near its old position (clamped to the new doc),
-  // without auto-scrolling — we restore the scroll offset ourselves.
-  if (prevFrom >= 0) {
-    editor.action((ctx) => {
-      const view = ctx.get(editorViewCtx);
-      try {
-        const pos = Math.max(0, Math.min(prevFrom, view.state.doc.content.size));
-        view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(pos))));
-      } catch {
-        /* positions shifted past EOF after the change — leave the default */
-      }
-    });
-  }
-  if (scroller) {
+  // Without `reveal`, keep the viewport where it was — the replacement
+  // doesn't scroll on its own, and the changed blocks may have been above it.
+  // `reveal` already scrolled to the change above, via `tr.scrollIntoView()`.
+  if (!reveal && scroller) {
     requestAnimationFrame(() => {
       scroller.scrollTop = prevScrollTop;
     });
   }
   forceHighlightRefresh();
+  forceSuggestionHighlightRefresh();
+  forceDiffRefresh();
 
-  // Presence: flash the span Claude edited and name the nearest heading in a
+  // The host re-read the file because it couldn't take an edit: say that, not "edited on disk".
+  if (toast) {
+    showToast(toast, 8000);
+    return;
+  }
+  // Nothing happened the person needs to hear about (an edit of theirs, written late).
+  if (quiet) return;
+
+  // Presence: flash the span that changed and name the nearest heading in a
   // clickable notice. Falls back to a plain notice when there's no locatable
-  // span (e.g. a pure deletion, or the range didn't map).
-  const flashed = changed ? flashClaudeEdit(changed.text) : false;
-  const where = changed?.heading ? `Claude edited §${changed.heading}` : "Claude updated this document";
+  // span (e.g. a pure deletion, or the range didn't map). Who wrote it is
+  // unknown here — an agent, a save from another window, git all arrive the
+  // same way — so the notice names no one.
+  const flashed = changed ? flashOutsideEdit(changed.text) : false;
+  const where = changed?.heading ? `Edited outside this view: §${changed.heading}` : "This document was updated outside this view";
   showNotice(where, flashed);
 }
 
-// Whether the current notice should offer a "jump to the change" click.
 let noticeJump = false;
 
-// Flash a transient one-line notice in the sidebar header, then clear it. Used
-// when an edit arrives from outside the editor (Claude editing the .md, a save
-// from another window, git) so the change isn't silent. When `jumpToChange` is
-// set, the notice is clickable and scrolls the editor to Claude's just-edited
-// span, and lingers long enough to click.
+// Flash a transient one-line notice in the sidebar header, then clear it, so an
+// edit arriving from outside the editor (Claude, another window, git) isn't
+// silent. With `jumpToChange` the notice is clickable (scrolls to the
+// just-edited span) and lingers long enough to click.
 function showNotice(text: string, jumpToChange = false): void {
   sidebarState.notice = text;
   noticeJump = jumpToChange;
@@ -2192,10 +2401,6 @@ function truncate(text: string, max: number): string {
   return text.slice(0, max - 1) + "…";
 }
 
-function isMac(): boolean {
-  return typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
-}
-
 function cssEscape(value: string): string {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
     return CSS.escape(value);
@@ -2211,7 +2416,6 @@ function postError(stage: string, err: unknown): void {
 window.addEventListener("error", (e) => postError("uncaught", e.error ?? e.message));
 window.addEventListener("unhandledrejection", (e) => postError("unhandled-rejection", e.reason));
 
-// Cmd/Ctrl+Shift+M = open the composer for the current selection.
 document.addEventListener("keydown", (e) => {
   const isCmdOrCtrl = e.metaKey || e.ctrlKey;
   if (isCmdOrCtrl && e.shiftKey && (e.key === "m" || e.key === "M")) {
@@ -2221,7 +2425,14 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// Link click interceptor — route to extension's openExternal/vscode.open.
+// A suggestion's highlight scrolls the sidebar to its card, as a thread's does
+// (that one goes through the highlight plugin's click handler).
+document.addEventListener("click", (e) => {
+  const mark = (e.target as HTMLElement | null)?.closest<HTMLElement>(".mdc-anchor-highlight--suggestion");
+  const anchorId = mark?.getAttribute("data-suggestion-id");
+  if (anchorId) threadSidebar.revealSuggestion(anchorId);
+});
+
 document.addEventListener("click", (e) => {
   const target = (e.target as HTMLElement | null)?.closest("a[href]");
   if (!target) return;
@@ -2232,8 +2443,6 @@ document.addEventListener("click", (e) => {
   if (!href) return;
   e.preventDefault();
   e.stopPropagation();
-  // In-doc fragment links scroll the editor to the heading; everything else
-  // is routed to the host for opening.
   if (href.startsWith("#")) {
     scrollEditorToFragment(href.slice(1));
     return;
@@ -2241,7 +2450,6 @@ document.addEventListener("click", (e) => {
   vscode.postMessage({ type: "open-link", href });
 });
 
-/** Scroll the editor to a heading matching `fragment` (by id, else by slug). */
 function scrollEditorToFragment(fragment: string): void {
   if (!fragment || !editor) return;
   let decoded = fragment;
@@ -2254,12 +2462,12 @@ function scrollEditorToFragment(fragment: string): void {
     const root = ctx.get(editorViewCtx).dom as HTMLElement;
     const byId = root.querySelector<HTMLElement>(`[id="${cssEscape(decoded)}"]`);
     if (byId) {
-      byId.scrollIntoView({ behavior: "smooth", block: "start" });
+      smoothScrollIntoView(byId, "start");
       return;
     }
     for (const h of Array.from(root.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6"))) {
       if (slugifyHeading(h.textContent || "") === decoded) {
-        h.scrollIntoView({ behavior: "smooth", block: "start" });
+        smoothScrollIntoView(h, "start");
         return;
       }
     }
@@ -2270,14 +2478,21 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
   const msg = e.data;
   if (!msg || typeof msg !== "object") return;
   if (msg.type === "init") {
-    if (editor) return;
-    init(msg).catch((err) => postError("init", err));
+    // A second `init` is a mode switch: rebuild the editor, after the first if it's still building.
+    initQueue = initQueue.then(async () => {
+      const stage = editor ? "reinit" : "init";
+      try {
+        await (editor ? reinitEditor(msg) : init(msg));
+      } catch (err) {
+        postError(stage, err);
+      }
+    });
   } else if (msg.type === "externalChange") {
-    try {
-      applyExternalChange(msg.text, msg.changed);
-    } catch (err) {
-      postError("externalChange", err);
-    }
+    // After any `init` still building: applied to no editor, the change and
+    // its epoch would be lost, and every later edit would carry the old one.
+    initQueue = initQueue
+      .then(() => applyExternalChange(msg.text, msg.changed, msg.epoch, msg.toast, msg.quiet, msg.reveal))
+      .catch((err) => postError("externalChange", err));
   } else if (msg.type === "frontmatter") {
     renderFrontmatter(msg.frontmatter);
   } else if (msg.type === "line-map") {
@@ -2287,11 +2502,15 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
   } else if (msg.type === "sidecar-changed") {
     sidebarState.comments = msg.comments ?? [];
     sidebarState.suggestions = msg.suggestions ?? [];
-    sidebarState.pending = new Set(msg.pendingThreadIds ?? []);
-    if (msg.pendingLabel) sidebarState.pendingLabel = msg.pendingLabel;
-    reconcileComments();
-    renderSuggestions();
+    takeSidebarPush(msg);
+    // Highlights before the sidebar: rendering it can reveal a thread in the
+    // document (an agent's first new thread after a review request), and in
+    // Reading mode that jump finds its anchor through these decorations.
     forceHighlightRefresh();
+    forceSuggestionHighlightRefresh();
+    renderSidebar();
+    currentDiff = msg.diff ?? null;
+    forceDiffRefresh();
   } else if (msg.type === "add-comment-result") {
     if (msg.ok) {
       addComposer = null;
@@ -2306,16 +2525,10 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
       showToast(`Could not save comment: ${msg.error ?? "unknown error"}`);
     }
   } else if (msg.type === "reply-comment-result") {
-    if (msg.ok) {
-      // The reply landed; drop the in-progress text so the upcoming re-render
-      // shows an empty reply box for this thread.
-      pendingReplies.delete(msg.commentId);
-      replyComposers.delete(msg.commentId);
-      showToast("Reply sent.");
-    } else {
-      replyComposers.get(msg.commentId)?.setError(`Reply failed: ${msg.error ?? "unknown error"}`);
-      showToast(`Reply failed: ${msg.error ?? "unknown error"}`);
-    }
+    // Only the older reply message gets a result; the sidebar's `reply` shows
+    // up in the next push instead.
+    if (msg.ok) showToast("Reply sent.");
+    else showToast(`Reply failed: ${msg.error ?? "unknown error"}`);
   } else if (msg.type === "toggle-resolve-result") {
     if (!msg.ok) showToast(`Resolve failed: ${msg.error ?? "unknown error"}`);
   } else if (msg.type === "delete-comment-result") {
@@ -2324,6 +2537,22 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     if (!msg.ok) showToast(`Could not open link: ${msg.reason ?? msg.href}`);
   } else if (msg.type === "drawio-read-result") {
     handleDrawioReadResult(msg);
+  } else if (msg.type === "skill-status") {
+    threadSidebar.setSkillStatus(msg.status);
+  } else if (msg.type === "review-pending") {
+    threadSidebar.notifyReviewPending(msg.existingIds);
+  } else if (msg.type === "send-result") {
+    // Only what the host confirmed: nothing is claimed about the file before it answers.
+    // Names the agent only when the file shows one has written here.
+    const agent = sidebarPush.agentName || "your agent";
+    const saved = msg.saved && !readOnly ? " — your edits are saved to disk" : "";
+    if (msg.outcome === "delivered") showNotice(`Sent to ${agent}${saved}`);
+    else if (msg.outcome === "copied") showNotice(`Copied — paste it into your agent${saved}`);
+  } else if (msg.type === "reveal-thread") {
+    // After any `init` still building: the thread has to be in the list, and
+    // its highlight in the document.
+    const threadId = msg.threadId;
+    initQueue = initQueue.then(() => revealThreadFromHost(threadId)).catch((err) => postError("reveal-thread", err));
   }
 });
 
@@ -2348,5 +2577,43 @@ window.addEventListener(
   },
   true,
 );
+
+// Test seam for the edit-mode gate (webview-e2e/blockSplice.spec.ts). The
+// harness defines `__mcTestHooks` before this bundle loads; VS Code never
+// does, so in the product none of this exists.
+const testHooks = (window as unknown as { __mcTestHooks?: Record<string, unknown> }).__mcTestHooks;
+if (testHooks) {
+  /**
+   * For every top-level block, the `edit-blocks` message typing `ch` at the end
+   * of its last text would post: the transaction a keystroke dispatches,
+   * applied to a copy of the state (plugins' appended transactions included)
+   * and diffed and serialized by the live path. A block with no text (a rule)
+   * is selected and typed over, as a keystroke would.
+   */
+  testHooks.typeAtEveryBlockEnd = (ch: string) => {
+    const out: Array<{ index: number; type: string; how: "end" | "selected"; message: BlockEditsMessage | null }> = [];
+    editor?.action((ctx) => {
+      const state = ctx.get(editorViewCtx).state;
+      const serializer = ctx.get(serializerCtx);
+      const base = editBaseDoc ?? state.doc;
+      let offset = 0;
+      markdownBlockNodes(state.doc).forEach((node, index) => {
+        let end = node.isTextblock ? offset + 1 + node.content.size : -1;
+        node.descendants((child, rel) => {
+          if (child.isTextblock) end = offset + 1 + rel + 1 + child.content.size;
+          return true;
+        });
+        const tr =
+          end >= 0
+            ? state.tr.insertText(ch, end)
+            : state.tr.setSelection(NodeSelection.create(state.doc, offset)).insertText(ch);
+        const message = blockEditsBetween(base, state.apply(tr).doc, serializer);
+        out.push({ index, type: node.type.name, how: end >= 0 ? "end" : "selected", message });
+        offset += node.nodeSize;
+      });
+    });
+    return out;
+  };
+}
 
 vscode.postMessage({ type: "ready" });

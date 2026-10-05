@@ -1,13 +1,6 @@
-// Standing review conventions (10x-plan-2 P1.2).
+// Standing review conventions.
 //
-// Every review starts from zero. Terminology, tone, the house style, and the
-// "we know, don't flag it" exceptions have to be retyped into the focus prompt
-// each time, or Claude re-litigates them forever. The per-run focus is the right
-// place for "check the API examples today"; it is the wrong place for "the
-// product is called Markdown Collab, never 'the plugin'", which is true every
-// time and belongs to the project.
-//
-// So: a plain Markdown file at `.markdown-collab/conventions.md` that the human
+// A plain Markdown file at `.markdown-collab/conventions.md` that the human
 // owns and edits, appended to every review payload under a `Conventions:`
 // header. Deliberately prose, not schema — it is written for Claude to read, and
 // the moment it grows keys and validation it becomes config sprawl that has to
@@ -16,7 +9,6 @@
 // Pure and vscode-free so the payload assembly is testable; the file reading
 // lives in the caller.
 
-/** Where the file lives, relative to the workspace root. */
 export const CONVENTIONS_REL = ".markdown-collab/conventions.md";
 
 /**
@@ -29,13 +21,10 @@ export const MAX_CONVENTIONS_BYTES = 4 * 1024;
 export interface ConventionsBlock {
   /** The text to append, header included. Empty when there is nothing to send. */
   text: string;
-  /** True when the file was longer than the cap and was cut. */
   truncated: boolean;
 }
 
 /**
- * The file without its HTML comments, blank runs collapsed.
- *
  * Comments are how the scaffold explains itself and how the human leaves notes
  * to themselves; neither is an instruction to Claude, and shipping "delete these
  * instructions" inside a review prompt is worse than shipping nothing.
@@ -88,7 +77,6 @@ export function conventionsBlock(raw: string | null): ConventionsBlock {
   return { text: lines.join("\n"), truncated };
 }
 
-/** Cut to a byte budget without splitting a character or a line mid-way. */
 function truncateToBytes(text: string, max: number): string {
   const lines = text.split("\n");
   const kept: string[] = [];
@@ -104,17 +92,15 @@ function truncateToBytes(text: string, max: number): string {
   return kept.join("\n");
 }
 
-/** Append the conventions block to a prompt, when there is one. */
 export function withConventions(prompt: string, raw: string | null): string {
   const block = conventionsBlock(raw);
   return block.text === "" ? prompt : `${prompt}\n\n${block.text}`;
 }
 
-/** The commented template a fresh conventions file starts from. */
 export const CONVENTIONS_TEMPLATE = `# Review conventions
 
 <!--
-Standing rules for Claude's review passes on this project. Plain prose — write
+Standing rules for the agent's review passes on this project. Plain prose — write
 what you'd tell a new reviewer on their first day. Everything outside HTML
 comments is sent with every review request, so keep it under 4 KB and delete
 what stops being true.

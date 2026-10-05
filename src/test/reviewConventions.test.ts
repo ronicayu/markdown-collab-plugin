@@ -114,7 +114,9 @@ describe("the template", () => {
 // through, not in each payload builder. Five builders each remembering would be
 // four chances to forget — the exact bug class 0.34.59 fixed for suggest mode.
 describe("every send path carries the conventions", () => {
-  const extension = readFileSync(resolve(__dirname, "../extension.ts"), "utf8");
+  // dispatchReviewPayload lives in src/commands/send.ts since it was
+  // split out of extension.ts.
+  const extension = readFileSync(resolve(__dirname, "../commands/send.ts"), "utf8");
 
   it("appends them inside dispatchReviewPayload, before the mode branches", () => {
     const dispatch = extension.slice(extension.indexOf("async function dispatchReviewPayload"));

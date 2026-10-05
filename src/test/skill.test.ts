@@ -3,19 +3,24 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import {
-  CHANNEL_SCRIPT_CONTENT,
-  CHANNEL_SCRIPT_REL,
   CLI_SCRIPT_CONTENT,
   CLI_SCRIPT_REL,
+  PLUGIN_REGISTRY_REL,
   SKILL_CONTENT,
   SKILL_REL_PATH,
-  TAIL_SCRIPT_CONTENT,
-  TAIL_SCRIPT_REL,
   checkClaudeSkill,
   installClaudeSkill,
+  installedClaudePlugin,
+  removeLegacySkill,
   skillFingerprint,
 } from "../skill";
 import { createHash } from "crypto";
+
+// Stale helpers from the deleted channel transports.
+// installClaudeSkill must clean these up if they're left over from an older
+// install of this extension — see the "deletes stale channel helpers" tests.
+const STALE_TAIL_REL = ".claude/skills/vs-markdown-collab/mdc-tail.mjs";
+const STALE_CHANNEL_REL = ".claude/skills/vs-markdown-collab/mdc-channel.mjs";
 
 let tmpHome: string;
 
@@ -41,11 +46,42 @@ describe("SKILL_CONTENT instructions", () => {
 
   it("preserves the orphan-on-deletion rule", () => {
     // A deleted passage's thread orphans; never re-anchor to nearby text.
-    expect(SKILL_CONTENT).toContain("Deletions become orphans by design.");
+    expect(SKILL_CONTENT).toContain("Deletions become orphans by design");
+  });
+
+  // The channel transports (event log + MCP channel) were
+  // deleted outright, not just hidden. Nothing in the shipped skill should
+  // still send Claude looking for them.
+  it("carries no channel-transport references", () => {
+    for (const phrase of [
+      "mdc-tail",
+      "mdc-channel",
+      "events.jsonl",
+      "events.acked",
+      ".channel.json",
+      "Monitor",
+      "BashOutput",
+      "TaskOutput",
+      "MCP channel",
+      "Channel watch loop",
+      "dangerously-load-development-channels",
+    ]) {
+      expect(SKILL_CONTENT, `SKILL_CONTENT should not mention "${phrase}"`).not.toContain(phrase);
+    }
+  });
+
+  // Target (6,477 words before the shrink, 4,570
+  // after). Every sentence is one an agent can misread, so the ceiling is a
+  // real constraint, not a vanity number — keep cutting rather than raising
+  // it. Counted in words, not lines: un-wrapping a paragraph shrinks the line
+  // count without removing a single thing Claude has to read.
+  it("fits within the word-count ceiling", () => {
+    const words = SKILL_CONTENT.split(/\s+/).filter(Boolean).length;
+    expect(words).toBeLessThanOrEqual(5000);
   });
 });
 
-// 10x-plan-2 P0.3. The tools enforce what the prose used to warn about, so the
+// The tools enforce what the prose used to warn about, so the
 // happy path should read as orchestration — and the marker-surgery lore has to
 // stay quarantined in the appendix, or Claude will reach for it while holding a
 // tool that does the same thing safely.
@@ -89,14 +125,16 @@ describe("SKILL_CONTENT — tools-first structure", () => {
   });
 
   it("tells Claude that the closing check is what ends the human's wait", () => {
-    expect(body).toMatch(/mc_check[\s\S]{0,400}Claude is\s+working/);
+    expect(body).toMatch(/mc_check[\s\S]{0,400}Waiting\s+for\s+the\s+agent/);
   });
 
-  it("keeps the never-cap rule verbatim", () => {
-    // Ronica's standing constraint on Review Mode: never ration findings.
-    expect(SKILL_CONTENT).toContain("There is **no maximum number of threads**");
-    expect(SKILL_CONTENT).toContain("If you find 30 issues, leave 30 threads.");
-    expect(SKILL_CONTENT).toContain('Do not "leave the top N"');
+  it("caps Review Mode at five threads, with a summary thread for the rest (10x-plan-6 P3)", () => {
+    // The grill overturned the old never-ration rule: too
+    // many comments landed even though most were sound findings.
+    expect(SKILL_CONTENT).toContain("Rank concerns by severity and open threads for the **five** that matter most.");
+    expect(SKILL_CONTENT).toContain("Also noticed (N): …");
+    expect(SKILL_CONTENT).not.toContain("There is **no maximum number of threads**");
+    expect(SKILL_CONTENT).not.toContain('Do not "leave the top N"');
   });
 
   it("keeps the focus directive as the primary filter", () => {
@@ -141,6 +179,55 @@ describe("installClaudeSkill", () => {
     expect(contents).toBe(SKILL_CONTENT);
   });
 
+  async function writeExisting(content: string): Promise<string> {
+    const target = path.join(tmpHome, SKILL_REL_PATH);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, content, "utf8");
+    return target;
+  }
+
+  const OLDER_SKILL = "---\nname: vs-markdown-collab\ndescription: an earlier wording\n---\n\n# Older skill\n";
+
+  it("updates an earlier shipped skill without asking and leaves the bundled content", async () => {
+    const target = await writeExisting(OLDER_SKILL);
+    const result = await installClaudeSkill(tmpHome);
+    expect(result).toEqual({ action: "updated", path: target });
+    expect(await fs.readFile(target, "utf8")).toBe(SKILL_CONTENT);
+  });
+
+  it("syncs the helper script when it updates an earlier shipped skill", async () => {
+    await writeExisting(OLDER_SKILL);
+    await fs.writeFile(path.join(tmpHome, CLI_SCRIPT_REL), "#!/usr/bin/env node\n// stale\n", "utf8");
+    await installClaudeSkill(tmpHome);
+    expect(await fs.readFile(path.join(tmpHome, CLI_SCRIPT_REL), "utf8")).toBe(CLI_SCRIPT_CONTENT);
+  });
+
+  it("recognises our frontmatter name with CRLF line endings, quotes and stray whitespace", async () => {
+    for (const older of [
+      "---\r\nname: vs-markdown-collab\r\ndescription: x\r\n---\r\nbody\r\n",
+      '---\nname: "vs-markdown-collab"\n---\nbody\n',
+      "---\nname: 'vs-markdown-collab'  \n---\nbody\n",
+      "\n  ---  \ndescription: x\nname:   vs-markdown-collab\n---\nbody\n",
+    ]) {
+      const target = await writeExisting(older);
+      expect(await installClaudeSkill(tmpHome)).toEqual({ action: "updated", path: target });
+      expect(await fs.readFile(target, "utf8")).toBe(SKILL_CONTENT);
+    }
+  });
+
+  it("leaves a file alone when its frontmatter names a different skill", async () => {
+    for (const other of [
+      "---\nname: my-own-skill\n---\nbody\n",
+      "---\nname: vs-markdown-collab-fork\n---\nbody\n",
+      "---\ndescription: mentions name: vs-markdown-collab later\n---\nbody\n",
+      "# no frontmatter\n\n---\nname: vs-markdown-collab\n---\n",
+    ]) {
+      const target = await writeExisting(other);
+      expect(await installClaudeSkill(tmpHome)).toEqual({ action: "exists-differs", path: target });
+      expect(await fs.readFile(target, "utf8")).toBe(other);
+    }
+  });
+
   it("returns 'exists-differs' without overwriting when content differs and force is not set", async () => {
     const target = path.join(tmpHome, SKILL_REL_PATH);
     await fs.mkdir(path.dirname(target), { recursive: true });
@@ -163,13 +250,14 @@ describe("installClaudeSkill", () => {
     expect(contents).toBe(SKILL_CONTENT);
   });
 
-  it("writes the tail + channel + mdc helper scripts on a fresh install", async () => {
+  it("overwrites a file without our frontmatter name when force: true is passed", async () => {
+    const target = await writeExisting("---\nname: my-own-skill\n---\nbody\n");
+    expect(await installClaudeSkill(tmpHome, { force: true })).toEqual({ action: "installed", path: target });
+    expect(await fs.readFile(target, "utf8")).toBe(SKILL_CONTENT);
+  });
+
+  it("writes the mdc helper script on a fresh install", async () => {
     await installClaudeSkill(tmpHome);
-    const tail = await fs.readFile(path.join(tmpHome, TAIL_SCRIPT_REL), "utf8");
-    expect(tail).toBe(TAIL_SCRIPT_CONTENT);
-    expect(tail.startsWith("#!/usr/bin/env node")).toBe(true);
-    const channel = await fs.readFile(path.join(tmpHome, CHANNEL_SCRIPT_REL), "utf8");
-    expect(channel).toBe(CHANNEL_SCRIPT_CONTENT);
     const cli = await fs.readFile(path.join(tmpHome, CLI_SCRIPT_REL), "utf8");
     expect(cli).toBe(CLI_SCRIPT_CONTENT);
     expect(cli.startsWith("#!/usr/bin/env node")).toBe(true);
@@ -186,21 +274,71 @@ describe("installClaudeSkill", () => {
     expect(await fs.readFile(cliTarget, "utf8")).toBe(CLI_SCRIPT_CONTENT);
   });
 
-  it("syncs helper scripts even when SKILL.md is left untouched (already-present)", async () => {
-    const skillTarget = path.join(tmpHome, SKILL_REL_PATH);
-    await fs.mkdir(path.dirname(skillTarget), { recursive: true });
-    await fs.writeFile(skillTarget, SKILL_CONTENT, "utf8");
-    const tailTarget = path.join(tmpHome, TAIL_SCRIPT_REL);
-    await fs.writeFile(tailTarget, "#!/usr/bin/env node\n// stale\n", "utf8");
-    const result = await installClaudeSkill(tmpHome);
-    expect(result.action).toBe("already-present");
-    const tail = await fs.readFile(tailTarget, "utf8");
-    expect(tail).toBe(TAIL_SCRIPT_CONTENT);
+  // The tail/channel scripts are gone, but a machine that ran
+  // an older version of this extension may still have them on disk. They're
+  // ours, so we clean up rather than leaving dead scripts behind.
+  describe("deletes stale channel helpers", () => {
+    it("removes mdc-tail.mjs and mdc-channel.mjs left over from an older install", async () => {
+      const tailTarget = path.join(tmpHome, STALE_TAIL_REL);
+      const channelTarget = path.join(tmpHome, STALE_CHANNEL_REL);
+      await fs.mkdir(path.dirname(tailTarget), { recursive: true });
+      await fs.writeFile(tailTarget, "#!/usr/bin/env node\n// old tailer\n", "utf8");
+      await fs.writeFile(channelTarget, "#!/usr/bin/env node\n// old channel server\n", "utf8");
+
+      await installClaudeSkill(tmpHome);
+
+      await expect(fs.readFile(tailTarget, "utf8")).rejects.toThrow();
+      await expect(fs.readFile(channelTarget, "utf8")).rejects.toThrow();
+    });
+
+    it("is a no-op when the stale helpers were never installed", async () => {
+      // Must not throw just because there's nothing to delete.
+      await expect(installClaudeSkill(tmpHome)).resolves.toMatchObject({ action: "installed" });
+    });
   });
 });
 
+/** Write Claude Code's plugin registry, in the shape 2.1.283 writes it. */
+async function writeRegistry(plugins: Record<string, Array<Record<string, unknown>>>): Promise<void> {
+  const target = path.join(tmpHome, PLUGIN_REGISTRY_REL);
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  await fs.writeFile(target, JSON.stringify({ version: 2, plugins }), "utf8");
+}
+
 describe("checkClaudeSkill", () => {
   it("reports 'missing' when nothing is installed", async () => {
+    expect(await checkClaudeSkill(tmpHome)).toBe("missing");
+  });
+
+  // The plugin carries its own skill and the standalone files
+  // are removed when it's installed — so a plugin user must never be told the
+  // skill is missing (the inline view's banner reads this).
+  it("reports 'current' when the plugin is installed, with no standalone skill at all", async () => {
+    await writeRegistry({
+      "markdown-collab@markdown-collab-local": [{ scope: "user", version: "0.36.0", installPath: "/x" }],
+    });
+    expect(await checkClaudeSkill(tmpHome)).toBe("current");
+  });
+
+  it("counts the plugin from the GitHub marketplace too", async () => {
+    await writeRegistry({ "markdown-collab@markdown-collab": [{ scope: "user", version: "0.36.0" }] });
+    expect(await checkClaudeSkill(tmpHome)).toBe("current");
+  });
+
+  it("prefers the plugin over a stale standalone skill", async () => {
+    await installClaudeSkill(tmpHome);
+    await fs.writeFile(path.join(tmpHome, SKILL_REL_PATH), "stale", "utf8");
+    await writeRegistry({ "markdown-collab@markdown-collab-local": [{ scope: "user", version: "0.36.0" }] });
+    expect(await checkClaudeSkill(tmpHome)).toBe("current");
+  });
+
+  it("ignores project- and local-scope installs, other plugins, and a registry it can't read", async () => {
+    await writeRegistry({
+      "markdown-collab@markdown-collab-local": [{ scope: "project", projectPath: "/other", version: "0.36.0" }],
+      "markdown-collab-extras@somewhere": [{ scope: "user", version: "1.0.0" }],
+    });
+    expect(await checkClaudeSkill(tmpHome)).toBe("missing");
+    await fs.writeFile(path.join(tmpHome, PLUGIN_REGISTRY_REL), "{not json", "utf8");
     expect(await checkClaudeSkill(tmpHome)).toBe("missing");
   });
 
@@ -215,18 +353,79 @@ describe("checkClaudeSkill", () => {
     expect(await checkClaudeSkill(tmpHome)).toBe("outdated");
   });
 
-  it("reports 'outdated' when a bundled helper script differs", async () => {
+  it("reports 'outdated' for an earlier shipped skill, then 'current' once installing has updated it", async () => {
+    const target = path.join(tmpHome, SKILL_REL_PATH);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, "---\nname: vs-markdown-collab\n---\n\n# Older skill\n", "utf8");
+    expect(await checkClaudeSkill(tmpHome)).toBe("outdated");
+    expect((await installClaudeSkill(tmpHome)).action).toBe("updated");
+    expect(await checkClaudeSkill(tmpHome)).toBe("current");
+  });
+
+  it("reports 'outdated' when the bundled helper script differs", async () => {
     await installClaudeSkill(tmpHome);
-    await fs.writeFile(path.join(tmpHome, CHANNEL_SCRIPT_REL), "#!/usr/bin/env node\n// stale\n", "utf8");
+    await fs.writeFile(path.join(tmpHome, CLI_SCRIPT_REL), "#!/usr/bin/env node\n// stale\n", "utf8");
     expect(await checkClaudeSkill(tmpHome)).toBe("outdated");
   });
 
-  it("reports 'outdated' when a helper script is missing entirely", async () => {
+  it("reports 'outdated' when the helper script is missing entirely", async () => {
     const skillTarget = path.join(tmpHome, SKILL_REL_PATH);
     await fs.mkdir(path.dirname(skillTarget), { recursive: true });
     await fs.writeFile(skillTarget, SKILL_CONTENT, "utf8");
-    // SKILL.md matches but the tail/channel scripts were never written.
+    // SKILL.md matches but mdc.mjs was never written.
     expect(await checkClaudeSkill(tmpHome)).toBe("outdated");
+  });
+});
+
+describe("installedClaudePlugin", () => {
+  it("returns the id and version Claude Code recorded, or null", async () => {
+    expect(await installedClaudePlugin(tmpHome, {})).toBeNull();
+    await writeRegistry({
+      "superpowers@claude-plugins-official": [{ scope: "user", version: "6.4.1" }],
+      "markdown-collab@markdown-collab-local": [{ scope: "user", version: "0.36.0" }],
+    });
+    expect(await installedClaudePlugin(tmpHome, {})).toEqual({
+      id: "markdown-collab@markdown-collab-local",
+      version: "0.36.0",
+    });
+  });
+
+  it("reads the registry from CLAUDE_CONFIG_DIR when Claude Code's config was moved", async () => {
+    const moved = path.join(tmpHome, "elsewhere");
+    await fs.mkdir(path.join(moved, "plugins"), { recursive: true });
+    await fs.writeFile(
+      path.join(moved, "plugins", "installed_plugins.json"),
+      JSON.stringify({ plugins: { "markdown-collab@markdown-collab": [{ scope: "user", version: "1.0.0" }] } }),
+      "utf8",
+    );
+    expect(await installedClaudePlugin(tmpHome, { CLAUDE_CONFIG_DIR: moved })).toEqual({
+      id: "markdown-collab@markdown-collab",
+      version: "1.0.0",
+    });
+    expect(await installedClaudePlugin(tmpHome, {})).toBeNull();
+  });
+});
+
+describe("removeLegacySkill", () => {
+  it("removes every file the standalone install wrote, then the empty directory", async () => {
+    await installClaudeSkill(tmpHome);
+    await fs.writeFile(path.join(tmpHome, STALE_TAIL_REL), "old", "utf8");
+    const removed = await removeLegacySkill(tmpHome);
+    expect(removed.map((p) => path.basename(p)).sort()).toEqual(["SKILL.md", "mdc-tail.mjs", "mdc.mjs"]);
+    await expect(fs.stat(path.dirname(path.join(tmpHome, SKILL_REL_PATH)))).rejects.toThrow();
+  });
+
+  it("keeps the directory when the user has something else in it", async () => {
+    await installClaudeSkill(tmpHome);
+    const mine = path.join(path.dirname(path.join(tmpHome, SKILL_REL_PATH)), "notes.md");
+    await fs.writeFile(mine, "mine", "utf8");
+    await removeLegacySkill(tmpHome);
+    expect(await fs.readFile(mine, "utf8")).toBe("mine");
+    await expect(fs.stat(path.join(tmpHome, SKILL_REL_PATH))).rejects.toThrow();
+  });
+
+  it("is a no-op when nothing was installed", async () => {
+    expect(await removeLegacySkill(tmpHome)).toEqual([]);
   });
 });
 
@@ -242,11 +441,9 @@ describe("skillFingerprint", () => {
     expect(skillFingerprint()).toBe(fp);
   });
 
-  it("hashes the skill and all three helper scripts", () => {
+  it("hashes the skill and the mdc helper script", () => {
     const expected = createHash("sha1")
       .update(SKILL_CONTENT)
-      .update(TAIL_SCRIPT_CONTENT)
-      .update(CHANNEL_SCRIPT_CONTENT)
       .update(CLI_SCRIPT_CONTENT)
       .digest("hex")
       .slice(0, 12);
@@ -258,13 +455,9 @@ describe("skillFingerprint", () => {
     const skillDir = path.dirname(path.join(tmpHome, SKILL_REL_PATH));
     const installed = await fs.readdir(skillDir, { recursive: true, withFileTypes: true });
     const files = installed.filter((e) => e.isFile()).map((e) => e.name).sort();
-    // SKILL.md + mdc.mjs + mdc-tail.mjs + mdc-channel.mjs. A new entry here
-    // means skillFingerprint (and checkClaudeSkill) need it too.
-    expect(files).toEqual([
-      path.basename(CHANNEL_SCRIPT_REL),
-      path.basename(CLI_SCRIPT_REL),
-      path.basename(SKILL_REL_PATH),
-      path.basename(TAIL_SCRIPT_REL),
-    ].sort());
+    // SKILL.md + mdc.mjs only — the tail/channel helpers were deleted in
+    // A new entry here means skillFingerprint (and
+    // checkClaudeSkill) need it too.
+    expect(files).toEqual([path.basename(CLI_SCRIPT_REL), path.basename(SKILL_REL_PATH)].sort());
   });
 });

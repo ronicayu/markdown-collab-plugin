@@ -1,5 +1,5 @@
 // One document, every embed type, checked against the layer all three review
-// surfaces share (10x-plan P2.3).
+// surfaces share.
 //
 // The two markdown-it surfaces (inline comments, PR review) can be rendered
 // outright, and must produce byte-identical HTML — they build their renderer

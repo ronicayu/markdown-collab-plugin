@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { existsSync, readFileSync } from "fs";
+import { resolve } from "path";
 import { buildTutorialDocument, TUTORIAL_REL } from "../tutorial";
 import { parse, stripAllInlineMarkup } from "../inlineComments/format";
 import { checkIntegrity } from "../inlineComments/integrity";
@@ -67,5 +69,88 @@ describe("the tutorial playground", () => {
   it("writes to a name that reads as disposable", () => {
     expect(TUTORIAL_REL.endsWith(".md")).toBe(true);
     expect(TUTORIAL_REL).toContain("playground");
+  });
+});
+
+interface WalkthroughStep {
+  id: string;
+  title: string;
+  description: string;
+  media?: { markdown?: string };
+  completionEvents?: string[];
+}
+
+interface Walkthrough {
+  id: string;
+  steps: WalkthroughStep[];
+}
+
+interface CommandContribution {
+  command: string;
+}
+
+/**
+ * Wiring coverage for the `markdownCollab.gettingStarted` walkthrough
+ * (round-4 coverage review): every step's `[label](command:...)` link must
+ * name a command the extension actually contributes, or clicking it in the
+ * Get Started page is a silent no-op. Manifest-level — the same
+ * `package.json`-reading approach `titleBarAndKeybindings.test.ts` uses —
+ * since a vitest unit test has no extension host to check live registration
+ * against; "contributed" is the checkable proxy for "registered".
+ */
+describe("the getting-started walkthrough", () => {
+  const pkg = JSON.parse(readFileSync(resolve(__dirname, "../../package.json"), "utf8")) as {
+    contributes: { walkthroughs: Walkthrough[]; commands: CommandContribution[] };
+  };
+  const walkthrough = pkg.contributes.walkthroughs.find((w) => w.id === "markdownCollab.gettingStarted");
+  const contributedCommands = new Set(pkg.contributes.commands.map((c) => c.command));
+
+  /** Every `command:foo.bar` target in a step's markdown description. */
+  function commandLinks(step: WalkthroughStep): string[] {
+    return [...step.description.matchAll(/\(command:([A-Za-z0-9_.]+)\)/g)].map((m) => m[1]!);
+  }
+
+  it("is contributed, with at least one step", () => {
+    expect(walkthrough, "markdownCollab.gettingStarted is not contributed").toBeTruthy();
+    expect(walkthrough!.steps.length).toBeGreaterThan(0);
+  });
+
+  it("every step links at least one command, and every linked command is contributed", () => {
+    for (const step of walkthrough!.steps) {
+      const links = commandLinks(step);
+      expect(links.length, `step "${step.id}" has no command: link`).toBeGreaterThan(0);
+      for (const command of links) {
+        expect(
+          contributedCommands.has(command),
+          `step "${step.id}" links "${command}", which isn't in contributes.commands`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("the comment step links markdownCollab.openInlineCommentsView", () => {
+    const step = walkthrough!.steps.find((s) => s.id === "comment");
+    expect(step, "walkthrough has no \"comment\" step").toBeTruthy();
+    expect(commandLinks(step!)).toContain("markdownCollab.openInlineCommentsView");
+  });
+
+  it("has no Claude Code-only setup step", () => {
+    expect(walkthrough!.steps.map((s) => s.id)).not.toContain("install-skill");
+  });
+
+  it("puts the connect step second, completed by running Connect an Agent", () => {
+    const step = walkthrough!.steps[1]!;
+    expect(step.id).toBe("connect-agent");
+    expect(step.title).toBe("Connect your agent");
+    expect(commandLinks(step)).toEqual(["markdownCollab.connectAgent"]);
+    expect(step.completionEvents).toEqual(["onCommand:markdownCollab.connectAgent"]);
+  });
+
+  it("every step's media file exists on disk", () => {
+    for (const step of walkthrough!.steps) {
+      const rel = step.media?.markdown;
+      expect(rel, `step "${step.id}" has no markdown media`).toBeTruthy();
+      expect(existsSync(resolve(__dirname, "../..", rel!)), `${rel} is missing`).toBe(true);
+    }
   });
 });

@@ -7,7 +7,7 @@
 import { expect, test } from "@playwright/test";
 import { addSuggestion, addThread, parse, replaceThread, type InlineThread } from "../../inlineComments/format";
 import { serialize } from "../../inlineComments/serializeState";
-import { awaitPosted, bootInlineView, bootLiveEditor, posted } from "./harness";
+import { awaitPosted, bootInlineView, bootLiveEditor } from "./harness";
 import { liveSidecar } from "./fixtures";
 
 const TS = "2026-01-01T00:00:00.000Z";
@@ -52,6 +52,8 @@ test.describe("inline comments view", () => {
       user: { name: "r" },
       imageBaseUris: { docDir: "", workspaceFolder: null },
     });
+    // round-4 P3.1: lives in the toolbar's "…" overflow menu now.
+    await page.locator("#overflow-menu-btn").click();
     const btn = page.locator("#finalize-doc");
     await expect(btn).toBeVisible();
 
@@ -68,6 +70,7 @@ test.describe("inline comments view", () => {
       user: { name: "r" },
       imageBaseUris: { docDir: "", workspaceFolder: null },
     });
+    await page.locator("#overflow-menu-btn").click();
     await expect(page.locator("#finalize-doc")).toBeVisible();
   });
 
@@ -78,6 +81,7 @@ test.describe("inline comments view", () => {
       user: { name: "r" },
       imageBaseUris: { docDir: "", workspaceFolder: null },
     });
+    await page.locator("#overflow-menu-btn").click();
     await expect(page.locator("#finalize-doc")).toBeVisible();
 
     // The host pushes the post-finalize state: no threads, no suggestions.
@@ -88,6 +92,7 @@ test.describe("inline comments view", () => {
 });
 
 test.describe("live editor", () => {
+  // The review view's "…" menu item, in the shared sidebar.
   test("asks the host to run the command", async ({ page }) => {
     const src = fixture(1, 1);
     await bootLiveEditor(page, {
@@ -97,12 +102,11 @@ test.describe("live editor", () => {
       frontmatter: "",
       imageBaseUris: { docDir: "", workspaceFolder: null },
     });
-    const btn = page.locator("[data-action='finalize']");
+    await page.locator("#overflow-menu-btn").click();
+    const btn = page.locator("#finalize-doc");
     await expect(btn).toBeVisible();
     await btn.click();
-
-    const invoked = (await posted(page)).filter((m) => m.type === "invoke-command");
-    expect(invoked.pop()).toEqual({ type: "invoke-command", command: "finalize" });
+    expect(await awaitPosted(page, "finalize")).toEqual({ type: "finalize" });
   });
 
   test("the button follows an incremental update", async ({ page }) => {
@@ -114,12 +118,13 @@ test.describe("live editor", () => {
       frontmatter: "",
       imageBaseUris: { docDir: "", workspaceFolder: null },
     });
-    await expect(page.locator("[data-action='finalize']")).toBeVisible();
+    await page.locator("#overflow-menu-btn").click();
+    await expect(page.locator("#finalize-doc")).toBeVisible();
 
     await page.evaluate(
       (payload) => window.postMessage({ type: "sidecar-changed", ...payload }, "*"),
       liveSidecar(DOC) as unknown as Record<string, unknown>,
     );
-    await expect(page.locator("[data-action='finalize']")).toBeHidden();
+    await expect(page.locator("#finalize-doc")).toBeHidden();
   });
 });

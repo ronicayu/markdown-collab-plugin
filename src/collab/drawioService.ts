@@ -1,16 +1,8 @@
-// Reading a `.drawio` file for a webview, once (10x-plan P2.3).
-//
-// Both review surfaces render embedded draw.io diagrams: the live editor as a
-// ProseMirror widget, the inline comments view as a preview placeholder. Both
-// need the same thing from the host — resolve an href against the document and
-// the workspace root, refuse anything outside it, read the XML — and both used
-// to get it from `CollabEditorProvider.runDrawioRead`, a static on the live
-// editor's provider that the inline panel imported. That import is the reason
-// the inline comments view depends on the live editor at all.
-//
-// The logic lives here now: no vscode import, no provider, just the path
-// checks (`resolveDrawioHref`) plus an injected reader. The webview-facing
-// message shape stays exactly as it was, so neither client changes.
+// Reading a `.drawio` file for a webview, once. Both review surfaces render
+// embedded draw.io diagrams and need the same thing from the host: resolve an
+// href against the document and the workspace root, refuse anything outside it,
+// read the XML. No vscode import — just the path checks (`resolveDrawioHref`)
+// plus an injected reader.
 
 import { drawioRejectReasonMessage, resolveDrawioHref } from "./drawioFileResolver";
 

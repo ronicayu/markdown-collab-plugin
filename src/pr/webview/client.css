@@ -1,3 +1,18 @@
+/*
+ * PR review webview — preview-pane rules, plus the PR-only additions the
+ * shared sidebar sheets (threadSidebar.css, controls.css, comments.css,
+ * loaded by client.ts alongside this file) don't already cover:
+ * `.mc-badge--draft`, `.thread-card.pr-draft`'s dashed border, `.pr-line`,
+ * the `.pr-submit` footer layout, the quote's line-clamp, and
+ * `#app.sidebar-collapsed` (docs/pr-review-redesign.md).
+ *
+ * Every sidebar rule the shared sheets replace lives there now, not here —
+ * `#drafts-pane` carries `.mc-thread-sidebar` and reuses its ids/classes
+ * verbatim (thread-card, thread-head, thread-quote, thread-actions, the
+ * filter tabs, the "…" menu, the empty state, …), so this file only adds
+ * what's genuinely specific to the PR view.
+ */
+
 :root {
   --bg: var(--vscode-editor-background);
   --fg: var(--vscode-editor-foreground);
@@ -14,16 +29,16 @@
 
 body { margin: 0; font-family: var(--vscode-font-family); color: var(--fg); background: var(--bg); font-size: var(--vscode-font-size); }
 button { font: inherit; cursor: pointer; }
-button.btn-link { background: none; border: none; color: var(--accent); padding: 2px 6px; }
-button.btn-link:hover { text-decoration: underline; }
-button.btn-link.danger { color: var(--vscode-errorForeground, #f48771); }
-button.btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--fg); padding: 3px 10px; border-radius: 3px; }
 
 #app {
   display: grid;
   grid-template-columns: 1fr 360px;
   height: 100vh;
 }
+/* The comments toggle collapses `#drafts-pane` entirely — same mechanics as
+   the live editor's `.mdc-layout--collapsed` (sidebar-chrome-redesign). */
+#app.sidebar-collapsed { grid-template-columns: 1fr 0; }
+#app.sidebar-collapsed #drafts-pane { display: none; }
 
 #preview-pane {
   position: relative;
@@ -33,22 +48,27 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
   border-right: 1px solid var(--border);
 }
 
-/* Sticky full-bleed bar pinned to the pane's top edge. Negative margins
-   cancel the pane's own padding (including its asymmetric 60px left gutter
-   for source line numbers) so the bar spans edge to edge. */
+/* Sticky full-bleed bar pinned to the pane's top edge, looking like the live
+   editor's `.mdc-doc-toolbar` (34px, bottom border, editor background).
+   Negative margins cancel the pane's own padding (including its asymmetric
+   60px left gutter for source line numbers) so the bar spans edge to edge —
+   sticky mechanics unchanged, restyled only. */
 #preview-toolbar {
   position: sticky;
   top: -24px;
   z-index: 11;
+  height: 34px;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
-  min-height: 24px;
+  padding: 0 12px;
   margin: -24px -32px 12px -60px;
-  background: var(--card-bg, var(--vscode-editorWidget-background, #1e1e1e));
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
+/* Diff nav sits left; the comments toggle claims the right edge on its own
+   margin so it stays there whether diff-nav is showing or hidden. */
+#preview-toolbar #comments-toggle { margin-left: auto; }
 
 #preview { font-size: 14px; }
 #preview h1, #preview h2, #preview h3 { line-height: 1.25; }
@@ -166,278 +186,174 @@ button.btn-ghost { background: transparent; border: 1px solid var(--border); col
   0% { background: var(--diff-add-bg-strong); box-shadow: 0 0 0 2px var(--accent); }
   100% { background: transparent; box-shadow: 0 0 0 2px transparent; }
 }
+/* 10x-plan-4 P2.4: these are jump-here emphasis, not information — the click
+   that triggered them already did the informing — so reduced motion just
+   turns the animation off rather than trying to preserve an end state. */
+@media (prefers-reduced-motion: reduce) {
+  #preview .pr-jump-flash,
+  .card-jump-flash {
+    animation: none;
+  }
+}
 
-#floating-add {
+/* Same look as the live editor's floating selection button
+   (`.mdc-add-comment-btn`, src/webview/host.css). */
+.pr-floating-add {
   position: fixed;
   z-index: 20;
   background: var(--vscode-button-background, var(--accent));
   color: var(--vscode-button-foreground, white);
   border: none;
   padding: 4px 10px;
-  border-radius: 3px;
+  border-radius: var(--mc-radius, 4px);
   font-size: 12px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.35);
 }
-#floating-add:hover { filter: brightness(1.1); }
+.pr-floating-add:hover { background: var(--vscode-button-hoverBackground, var(--accent)); }
 
-/* --- drafts pane --- */
-#drafts-pane {
-  position: relative;
-  overflow-y: auto;
-  padding: 24px 20px 0; /* bottom spacing comes from the submit bar's own padding */
+/* Minimal toast — this view's own equivalent of the live editor's
+   `showToast` (src/webview/client.ts / host.css `.mdc-toast`), used when
+   the sidebar's "+" has no usable selection to comment on. */
+.pr-toast {
+  position: fixed;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--vscode-notifications-background, #2d2d30);
+  color: var(--vscode-notifications-foreground, #fff);
+  border: 1px solid var(--vscode-notifications-border, rgba(127, 127, 127, 0.25));
+  padding: 8px 14px;
+  border-radius: var(--mc-radius, 4px);
+  font-size: 12px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 150ms ease;
+  z-index: 50;
+}
+.pr-toast--visible { opacity: 1; }
+
+/* The composer slot under the header, above the list — same treatment as
+   the live sidebar's `.mdc-composer-slot` (threadSidebar.css), which this
+   id-based slot can't pick up automatically since it isn't that class. */
+#drafts-pane #composer {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
   background: var(--bg);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
 }
 
-#existing-section {
-  border-top: 1px solid var(--border);
-  padding-top: 16px;
-  margin-top: 8px;
-}
-#existing-section .section-title {
-  margin: 0 0 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-#existing-section #existing-status { margin: 0 0 8px; color: var(--muted); font-size: 12px; }
-#existing-filter {
-  display: flex;
-  gap: 4px;
-  margin: 0 0 8px;
-}
-.filter-chip {
-  font-size: 11px;
-  padding: 1px 8px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-}
-.filter-chip:hover { color: var(--fg); }
-.filter-chip.active {
-  background: var(--diff-add-bg);
-  border-color: var(--diff-add-stripe);
+/* --- draft card ------------------------------------------------------------ */
+#drafts-pane .mc-badge--draft {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
   color: var(--fg);
 }
-#existing-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+/* Dashed border distinguishes an unposted draft from a platform thread at a
+   glance — everything else about the card (padding, radius, hover) is the
+   shared `.thread-card` look. */
+/* The shared sheet gives a card a pointer because the live sidebar's cards
+   focus their anchor on click. Here only the controls inside a card do
+   anything, so the card itself must not promise a click. */
+#drafts-pane .thread-card { cursor: default; }
+#drafts-pane .thread-card:hover { border-color: var(--border); }
+#drafts-pane .thread-card button { cursor: pointer; }
+#drafts-pane .thread-card.pr-draft {
+  border-style: dashed;
 }
 
-.existing-card {
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 8px 10px;
-  background: var(--card-bg);
-}
-.existing-card.resolved { opacity: 0.65; }
-.existing-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
-}
-.existing-head .badge.resolved {
-  font-size: 11px;
-  background: var(--diff-add-bg);
-  color: var(--diff-add-stripe);
-  padding: 1px 6px;
-  border-radius: 8px;
-}
-
-.existing-comment {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px dashed var(--border);
-}
-.existing-comment:first-of-type {
-  margin-top: 0;
-  padding-top: 0;
-  border-top: none;
-}
-.existing-comment.reply { margin-left: 12px; }
-
-/* Reply affordance under each existing thread. */
-.existing-reply {
-  margin-top: 8px;
-  padding-top: 6px;
-  border-top: 1px dashed var(--border);
-}
-.existing-reply textarea {
-  width: 100%;
-  box-sizing: border-box;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border, var(--border));
-  border-radius: 3px;
-  padding: 6px 8px;
-  font: inherit;
-  resize: vertical;
-  margin-bottom: 6px;
-}
-.existing-reply .reply-status {
+/* --- card head: the L3 / L3–5 line label ----------------------------------- */
+#drafts-pane .pr-line {
+  flex: 0 0 auto;
   align-self: center;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
-}
-.existing-reply .reply-status.error { color: var(--vscode-errorForeground, #f48771); }
-.existing-meta {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  font-size: 12px;
-  color: var(--muted);
-}
-.existing-meta strong { color: var(--fg); font-weight: 600; }
-.existing-link { font-size: 13px; padding: 0 4px; text-decoration: none; }
-.existing-body {
-  margin-top: 4px;
-  font-size: 13px;
-  white-space: pre-wrap;
-  word-break: break-word;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-#submit-bar {
-  position: sticky;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  /* margin-top: auto pushes the bar to the pane's bottom edge when the
-     content is short (sticky alone leaves it at its flow position,
-     mid-window); sticky still pins it while long content scrolls. */
-  margin: auto -20px 0;
-  padding: 12px 20px 24px;
-  background: var(--bg);
-  border-top: 1px solid var(--border);
-  display: flex;
+/* The quote is a `<button>` now (it doubles as the "jump to this line"
+   control), so it needs its own reset on top of the shared `.thread-quote`
+   look (border-left, padding, colour — threadSidebar.css) — plus the clamp:
+   two lines expanded, one with an ellipsis collapsed. */
+#drafts-pane button.thread-quote {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  width: 100%;
+  appearance: none;
+  background: none;
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+  border-radius: 0;
+  text-align: left;
+  font: inherit;
+}
+#drafts-pane .thread-card.collapsed button.thread-quote {
+  -webkit-line-clamp: 1;
+}
+#drafts-pane button.thread-quote:hover { color: var(--fg); }
+#drafts-pane button.thread-quote:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, var(--accent));
+  outline-offset: 1px;
+}
+
+/* The "open in browser" action sits at the action row's end, same as the
+   live sidebar's "…" menu wrap (threadSidebar.css) — this button isn't a
+   menu, so it needs its own auto margin to get there. */
+#drafts-pane .thread-actions .pr-open {
+  margin-left: auto;
+}
+
+/* --- submit footer --------------------------------------------------------- */
+/* `.mc-sidebar-footer` (threadSidebar.css) lays its own content out as a
+   row (the live sidebar's Send + chevron split button); the PR footer
+   stacks the verdict, the summary/submit row, and the hint instead. */
+#drafts-pane .pr-submit {
   flex-direction: column;
+  align-items: stretch;
   gap: 8px;
-  z-index: 5;
 }
-#submit-bar .verdict-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  font-size: 12px;
-  color: var(--fg);
+#drafts-pane .pr-submit .verdict-row.mc-segmented {
+  width: 100%;
 }
-#submit-bar .verdict-row label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
+#drafts-pane .pr-submit .verdict-row .segment {
+  flex: 1 1 0;
+  justify-content: center;
 }
-#submit-bar #review-body {
+#drafts-pane .pr-submit #review-body {
   width: 100%;
   box-sizing: border-box;
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border, var(--border));
-  border-radius: 3px;
+  border-radius: var(--mc-radius, 4px);
   padding: 6px 8px;
   font: inherit;
   resize: vertical;
 }
-#submit-bar #submit-review {
-  background: var(--vscode-button-background, var(--accent));
-  color: var(--vscode-button-foreground, white);
-  border: none;
-  padding: 8px 12px;
-  border-radius: 3px;
-  font-weight: 600;
-  font-size: 13px;
-  cursor: pointer;
+#drafts-pane .pr-submit .pr-submit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-#submit-bar #submit-review:hover:not(:disabled) { filter: brightness(1.1); }
-#submit-bar #submit-review:disabled { opacity: 0.5; cursor: not-allowed; }
-#submit-bar #submit-hint { margin: 0; color: var(--muted); font-size: 11px; }
-#drafts-header h2 { margin: 0; font-size: 13px; }
-#drafts-header .title-row { display: flex; align-items: baseline; gap: 6px; }
-#drafts-header #draft-count { color: var(--muted); font-size: 12px; }
-#drafts-header .hint { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
-
+/* Submit fills the row beside the toggle — with the toggle hidden (summary
+   open) it simply fills the row alone. */
+#drafts-pane .pr-submit .pr-submit-row #submit-review {
+  flex: 1 1 auto;
+}
+.hint { margin: 0; color: var(--muted); font-size: 11px; }
 .empty { color: var(--muted); font-size: 13px; }
 
-.draft-card {
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 10px 12px;
-  background: var(--card-bg);
-}
-.draft-head { display: flex; align-items: center; justify-content: space-between; }
-.draft-line {
-  font-size: 12px;
-  color: var(--muted);
-  padding: 0;
-}
-.draft-line:hover { color: var(--accent); text-decoration: underline; }
-.draft-body {
-  margin: 6px 0 8px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 13px;
-}
-.draft-tools { display: flex; gap: 8px; }
-.draft-card textarea {
-  width: 100%;
-  box-sizing: border-box;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border, var(--border));
-  border-radius: 3px;
-  padding: 6px 8px;
-  font: inherit;
-  resize: vertical;
-}
-
-#composer {
-  border-top: 1px solid var(--border);
-  padding: 12px 0 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.composer-meta { font-size: 12px; color: var(--muted); }
-#composer textarea {
-  width: 100%;
-  box-sizing: border-box;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border, var(--border));
-  border-radius: 3px;
-  padding: 6px 8px;
-  font: inherit;
-  resize: vertical;
-}
-.composer-actions { display: flex; gap: 8px; }
-.composer-actions button:first-child {
-  background: var(--vscode-button-background, var(--accent));
-  color: var(--vscode-button-foreground, white);
-  border: none;
-  padding: 4px 12px;
-  border-radius: 3px;
-}
-.composer-actions button:first-child:disabled { opacity: 0.5; cursor: not-allowed; }
-
-/* Prev/next-change navigation (shared look with the inline diff view). Lives
-   inside #preview-toolbar now, so it rides along with the toolbar's own
-   sticky positioning instead of needing one of its own. */
+/* Prev/next-change navigation. Lives inside #preview-toolbar now, so it
+   rides along with the toolbar's own sticky positioning instead of needing
+   one of its own. */
 #diff-nav {
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 2px;
   white-space: nowrap;
 }
 #diff-nav[hidden] { display: none; }
-#diff-nav .btn-link { padding: 0 4px; }
 #diff-nav-count {
   font-size: 0.78em;
   opacity: 0.8;

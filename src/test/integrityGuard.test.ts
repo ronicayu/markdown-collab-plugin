@@ -1,4 +1,4 @@
-// Tests for the watch-time integrity guard (10x-plan P0.2).
+// Tests for the watch-time integrity guard.
 
 import { describe, expect, it, vi } from "vitest";
 import { addThread, parse } from "../inlineComments/format";
@@ -198,11 +198,11 @@ describe("ReviewView integration", () => {
     });
 
     // readEntry is private; drive it the way the watcher does.
-    await (view as unknown as { readEntry(p: string): Promise<unknown> }).readEntry("/w/a.md");
+    await (view as unknown as { readEntry(p: string, notify: boolean): Promise<unknown> }).readEntry("/w/a.md", true);
     expect(onIntegrityIssues).toHaveBeenCalledTimes(1);
     expect(onIntegrityIssues.mock.calls[0][0].fsPath).toBe("/w/a.md");
 
-    await (view as unknown as { readEntry(p: string): Promise<unknown> }).readEntry("/w/a.md");
+    await (view as unknown as { readEntry(p: string, notify: boolean): Promise<unknown> }).readEntry("/w/a.md", true);
     expect(onIntegrityIssues).toHaveBeenCalledTimes(1);
     view.dispose();
   });
@@ -217,7 +217,7 @@ describe("ReviewView integration", () => {
       watch: () => ({ dispose: () => {} }),
       onIntegrityIssues,
     });
-    await (view as unknown as { readEntry(p: string): Promise<unknown> }).readEntry("/w/a.md");
+    await (view as unknown as { readEntry(p: string, notify: boolean): Promise<unknown> }).readEntry("/w/a.md", true);
     expect(onIntegrityIssues).not.toHaveBeenCalled();
     view.dispose();
   });

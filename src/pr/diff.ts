@@ -1,17 +1,3 @@
-/**
- * `git diff` parsing — the only piece of code in the PR feature that the
- * unit tests really need to cover, because the file-by-file flow stops
- * working hard if these parsers miss an edge case.
- *
- * Two queries:
- *   - `listChangedMarkdownFiles` — added / modified / renamed `.md` files
- *     between the merge-base of `baseRef..HEAD` and HEAD. Three-dot range
- *     so we get exactly what GitHub / GitLab show in the PR diff.
- *   - `addedLineRanges` — head-side line numbers that contain `+` lines
- *     for a given file. Drives gutter decoration AND pre-submit
- *     validation that a comment's line is actually part of the diff.
- */
-
 import { getCliRunner, type CliRunner } from "./cli";
 
 export type ChangeStatus = "A" | "M" | "R";
@@ -37,8 +23,9 @@ export function looksLikeMarkdown(p: string): boolean {
 }
 
 /**
- * `git diff --name-status -M` against the merge-base of `<baseRef>...HEAD`.
- * Filters to added / modified / renamed markdown files.
+ * `git diff --name-status -M` against the merge-base of `<baseRef>...HEAD` (three-dot,
+ * so we get exactly what GitHub / GitLab show in the PR diff). Filters to added /
+ * modified / renamed markdown files.
  */
 export async function listChangedMarkdownFiles(
   repoRoot: string,
@@ -120,7 +107,6 @@ export function parseUnifiedHunkRanges(stdout: string): LineRange[] {
   return out;
 }
 
-/** True when `line` is inside any of `ranges`. */
 export function lineInRanges(line: number, ranges: readonly LineRange[]): boolean {
   for (const r of ranges) {
     if (line >= r.start && line <= r.end) return true;
@@ -144,7 +130,6 @@ export async function mergeBaseSha(
   return res.stdout.trim();
 }
 
-/** Resolve the current HEAD SHA. */
 export async function headSha(
   repoRoot: string,
   runner: CliRunner = getCliRunner(),
@@ -185,7 +170,6 @@ export async function defaultBranch(
   return m ? m[1] : null;
 }
 
-/** Read the `origin` remote URL. */
 export async function originRemoteUrl(
   repoRoot: string,
   runner: CliRunner = getCliRunner(),

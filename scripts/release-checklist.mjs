@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-// Release readiness, checked where a machine can and printed where it can't
-// (10x-plan-2 P2.2).
+// Release readiness, checked where a machine can and printed where it can't.
 //
 // The gate that actually held releases up was never a failing test — it was the
 // list of things someone had to remember: is the CHANGELOG written, does the tag

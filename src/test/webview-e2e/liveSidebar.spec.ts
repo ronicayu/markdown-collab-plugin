@@ -1,0 +1,821 @@
+// The live editor's thread sidebar, card by card (sidebar
+// parity): the review view's inlineView.spec.ts, run against the live editor,
+// which now renders the same sidebar (webviewShared/threadSidebar.ts). Same
+// selectors, same messages — where the review view posts something, the live
+// editor must post exactly that, since the review view is about to go.
+//
+// Booted read-only, the mode the live editor opens in once it's the only view;
+// the few specs that depend on the mode say which one they use.
+
+import { expect, test, type Page } from "@playwright/test";
+import { addThread, appendReply, parse, replaceThread } from "../../inlineComments/format";
+import {
+  awaitPosted,
+  bootLiveEditor,
+  bootLiveEditorShell,
+  clearPosted,
+  getState,
+  posted,
+  pushToWebview,
+} from "./harness";
+import { editAnchoredText, liveInit, liveSidecar, replyTo, reviewFixture, twoSuggestions } from "./fixtures";
+
+const fixture = reviewFixture();
+
+/** A document no agent has written in. */
+const BASE_DOC = "# Notes\n\nSome text worth commenting on.\n";
+
+/** Push a `sidecar-changed` for `source`, as the provider does after any change. */
+async function pushSidecar(page: Page, source: string, opts: Parameters<typeof liveSidecar>[1] = {}): Promise<void> {
+  await pushToWebview(page, { type: "sidecar-changed", ...liveSidecar(source, opts) });
+}
+
+test.describe("with the review fixture", () => {
+  test.beforeEach(async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
+  });
+
+  test("renders both threads and the pending suggestion with its word diff", async ({ page }) => {
+    await expect(page.locator(".thread-card")).toHaveCount(2);
+    await expect(page.locator("#threads-list .mc-suggestion")).toHaveCount(1);
+    const sentence = page.locator(".mc-suggestion .mc-suggestion__sentence");
+    await expect(sentence).toBeVisible();
+    await expect(sentence.locator("del")).toHaveText("notes");
+    await expect(sentence.locator("ins")).toHaveText("highlights");
+    // #thread-count is gone; each tab reads its own count now.
+    await expect(page.locator('.filter-row .segment:has(input[value="open"]) .count')).toHaveText("2");
+    await expect(page.locator('.filter-row .segment:has(input[value="all"]) .count')).toHaveText("2");
+    await expect(page.locator('.filter-row .segment:has(input[value="resolved"]) .count')).toHaveText("0");
+  });
+
+  test("Send posts send-to-claude", async ({ page }) => {
+    await page.locator("#send-to-claude").click();
+    expect(await awaitPosted(page, "send-to-claude")).toEqual({ type: "send-to-claude" });
+  });
+
+  test("suggest mode posts toggle-suggest-mode, follows the host's answer, and shows in the Send label", async ({ page }) => {
+    const sendOptionsBtn = page.locator("#send-options-btn");
+    const toggle = page.locator("#suggest-mode-toggle");
+    await sendOptionsBtn.click();
+    await expect(toggle).toHaveAttribute("role", "menuitemcheckbox");
+    await expect(toggle).toHaveText("Ask for suggestions instead of edits");
+    await expect(toggle).toHaveAttribute("aria-checked", "false");
+    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments");
+
+    await toggle.click();
+    expect(await awaitPosted(page, "toggle-suggest-mode")).toEqual({ type: "toggle-suggest-mode" });
+    // The setting is the host's: the item only shows what comes back. Every
+    // menu item closes the menu after its click, so this also checks that.
+    await expect(page.locator("#send-options-menu")).toBeHidden();
+
+    await pushSidecar(page, fixture.source, { suggestMode: true });
+    await sendOptionsBtn.click();
+    await expect(toggle).toHaveAttribute("aria-checked", "true");
+    // The Send label keeps the setting visible with the menu closed.
+    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments as suggestions");
+    await expect(sendOptionsBtn).toHaveAttribute("title", "Suggest mode is on");
+  });
+
+  test("replying in a thread posts the reply with its thread id and body", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    const replyBox = card.locator(".reply-box");
+    await expect(replyBox).toBeHidden();
+    await card.locator(".thread-reply-toggle").click();
+    await expect(replyBox).toBeVisible();
+
+    const submit = replyBox.getByRole("button", { name: "Reply", exact: true });
+    await expect(submit).toBeDisabled();
+    await replyBox.locator("textarea").fill("The setting is markdownCollab.proposeEditsAsSuggestions.");
+    await submit.click();
+
+    expect(await awaitPosted(page, "reply")).toEqual({
+      type: "reply",
+      threadId: fixture.openThreadId,
+      body: "The setting is markdownCollab.proposeEditsAsSuggestions.",
+    });
+    await expect(replyBox).toBeHidden();
+  });
+
+  test("clicking Reply toggles the composer open and closed, focusing it", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    const toggle = card.locator(".thread-reply-toggle");
+    const replyBox = card.locator(".reply-box");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    await toggle.click();
+    await expect(replyBox).toBeVisible();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(await replyBox.locator("textarea").evaluate((el) => el === document.activeElement)).toBe(true);
+
+    await toggle.click();
+    await expect(replyBox).toBeHidden();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  });
+
+  test("a card with an unsent draft keeps its reply box open across an update", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await card.locator(".thread-reply-toggle").click();
+    await card.locator(".reply-box textarea").fill("half a thought");
+
+    await pushSidecar(page, fixture.source);
+    await expect(card.locator(".reply-box")).toBeVisible();
+    await expect(card.locator(".reply-box textarea")).toHaveValue("half a thought");
+  });
+
+  test("Resolve posts toggle-resolve for the clicked thread only", async ({ page }) => {
+    const actions = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"] .thread-actions`);
+    await actions.getByRole("button", { name: "Resolve", exact: true }).click();
+    expect(await awaitPosted(page, "toggle-resolve")).toEqual({
+      type: "toggle-resolve",
+      threadId: fixture.answeredThreadId,
+    });
+  });
+
+  test("a resolved thread's card offers Reopen", async ({ page }) => {
+    const answered = parse(fixture.source).threads.find((t) => t.id === fixture.answeredThreadId)!;
+    const resolvedSrc = replaceThread(fixture.source, answered.id, {
+      ...answered,
+      status: "resolved",
+      resolvedBy: "ronica",
+      resolvedTs: "2026-07-02T09:00:00.000Z",
+    });
+    await pushSidecar(page, resolvedSrc);
+    await page.locator('input[name="filter"][value="all"]').click();
+    const resolvedCard = page.locator(".thread-card.resolved");
+    await expect(resolvedCard).toHaveCount(1);
+    await expect(resolvedCard.locator(".thread-actions")).toContainText("Reopen");
+  });
+
+  test("the per-card \"…\" menu holds Open in editor, Copy prompt, and Delete", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    const menuBtn = card.locator(".thread-menu-btn");
+    await expect(menuBtn).toHaveAttribute("aria-haspopup", "menu");
+    await expect(menuBtn).toHaveAttribute("aria-expanded", "false");
+    const menu = card.locator(".mc-menu");
+    await expect(menu).toBeHidden();
+
+    await menuBtn.click();
+    await expect(menu).toBeVisible();
+    await expect(menuBtn).toHaveAttribute("aria-expanded", "true");
+    await expect(menu.getByRole("menuitem")).toHaveText(["Open in editor", "Copy prompt", "Delete"]);
+  });
+
+  test("Escape closes a card's menu and returns focus to its \"…\" button", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    const menuBtn = card.locator(".thread-menu-btn");
+    await menuBtn.click();
+    await expect(card.locator(".mc-menu")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(card.locator(".mc-menu")).toBeHidden();
+    expect(await menuBtn.evaluate((el) => el === document.activeElement)).toBe(true);
+  });
+
+  test("a click outside a card's open menu closes it", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await card.locator(".thread-menu-btn").click();
+    await expect(card.locator(".mc-menu")).toBeVisible();
+    await page.locator(".milkdown p").first().click();
+    await expect(card.locator(".mc-menu")).toBeHidden();
+  });
+
+  test("a card's Send button posts send-to-claude-comment for that thread alone, no menu involved", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    const send = card.locator(".thread-actions .thread-send");
+    await expect(send).toHaveText("Send");
+    await expect(send).toHaveAttribute("title", "Send this thread to Claude");
+    await send.click();
+    // Exactly one message: no reveal/highlight post from the card click, nothing for other threads.
+    expect(await posted(page)).toEqual([{ type: "send-to-claude-comment", threadId: fixture.openThreadId }]);
+    await expect(card.locator(".mc-menu")).toBeHidden();
+  });
+
+  test("\"Copy prompt\" in the card menu posts the thread-scoped message", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await card.locator(".thread-menu-btn").click();
+    await card.getByRole("menuitem", { name: "Copy prompt" }).click();
+    expect(await awaitPosted(page, "copy-claude-comment")).toEqual({
+      type: "copy-claude-comment",
+      threadId: fixture.openThreadId,
+    });
+    await expect(card.locator(".mc-menu")).toBeHidden();
+  });
+
+  test("\"Open in editor\" in the card menu posts open-in-editor for that thread", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await card.locator(".thread-menu-btn").click();
+    await card.getByRole("menuitem", { name: "Open in editor" }).click();
+    expect(await awaitPosted(page, "open-in-editor")).toEqual({
+      type: "open-in-editor",
+      threadId: fixture.openThreadId,
+    });
+  });
+
+  test("deleting a thread needs a second click to confirm, inside the card menu", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await card.locator(".thread-menu-btn").click();
+    await card.getByRole("menuitem", { name: "Delete", exact: true }).click();
+    // Armed, not fired: one stray click must never destroy a thread.
+    expect(await posted(page)).toEqual([]);
+    const confirm = card.getByRole("menuitem", { name: "Confirm delete" });
+    await expect(confirm).toBeVisible();
+
+    await confirm.click();
+    expect(await awaitPosted(page, "delete-thread")).toEqual({
+      type: "delete-thread",
+      threadId: fixture.openThreadId,
+    });
+  });
+
+  test("Edit on a comment opens it in place and posts edit-comment", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await card.locator(".mc-card").first().getByRole("button", { name: "Edit" }).click();
+    const textarea = card.locator(".mc-card").first().locator("textarea");
+    await expect(textarea).toHaveValue("Which setting, exactly?");
+    await textarea.fill("Which setting, and where is it documented?");
+    await card.getByRole("button", { name: "Save" }).click();
+
+    const msg = await awaitPosted(page, "edit-comment");
+    expect(msg).toMatchObject({
+      type: "edit-comment",
+      threadId: fixture.openThreadId,
+      body: "Which setting, and where is it documented?",
+    });
+    expect(typeof msg.commentId).toBe("string");
+  });
+
+  test("deleting one comment takes a second click and posts delete-comment with its thread", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    const reply = card.locator(".mc-card").nth(1);
+    await reply.getByRole("button", { name: "Delete" }).click();
+    expect(await posted(page)).toEqual([]);
+    await reply.getByRole("button", { name: "Confirm" }).click();
+
+    const msg = await awaitPosted(page, "delete-comment");
+    expect(msg).toMatchObject({ type: "delete-comment", threadId: fixture.answeredThreadId });
+    expect(typeof msg.commentId).toBe("string");
+  });
+
+  test("the waiting row shows the phase the host reports", async ({ page }) => {
+    await pushSidecar(page, fixture.source, {
+      pendingThreadIds: [fixture.openThreadId],
+      pendingLabel: "Claude: reading 2 of 3 files",
+    });
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await expect(card.locator(".mc-card__pending")).toContainText("Claude: reading 2 of 3 files");
+    await expect(card.locator(".mc-card__pending")).not.toContainText("Claude is working");
+  });
+
+  test("a pending thread shows '<agent> is working…' and drops it when the reply lands", async ({ page }) => {
+    await pushSidecar(page, fixture.source, { pendingThreadIds: [fixture.openThreadId] });
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await expect(card).toHaveClass(/awaiting-claude/);
+    await expect(card.locator(".mc-card__pending")).toContainText("Claude is working");
+    await expect(card.locator(".mc-card__pending")).toHaveAttribute("aria-live", "polite");
+
+    await clearPosted(page);
+    await pushSidecar(page, fixture.source);
+    await expect(card.locator(".mc-card__pending")).toHaveCount(0);
+  });
+
+  test("a thread whose passage was rewritten shows 'text changed', and a reply clears it", async ({ page }) => {
+    const stale = editAnchoredText(fixture.source, fixture.openThreadId, "behind a different setting");
+    await pushSidecar(page, stale);
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await expect(card.locator(".badge.stale")).toHaveText("text changed");
+    await expect(page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"] .badge.stale`)).toHaveCount(0);
+
+    await pushSidecar(page, replyTo(stale, fixture.openThreadId, "Noted — the new wording is fine."));
+    await expect(card.locator(".badge.stale")).toHaveCount(0);
+  });
+
+  test("Accept all needs a second click, and only appears for more than one suggestion", async ({ page }) => {
+    await expect(page.locator(".accept-all-row")).toHaveCount(0);
+    await pushSidecar(page, twoSuggestions(fixture.source));
+    const button = page.locator(".accept-all-row button");
+    await expect(button).toHaveText("Accept all 2");
+
+    await button.click();
+    expect(await posted(page)).toEqual([]);
+    await expect(button).toHaveText(/Click again/);
+    await button.click();
+    expect(await awaitPosted(page, "accept-all-suggestions")).toEqual({ type: "accept-all-suggestions" });
+  });
+
+  test("collapsing a card folds it to its quote, and the chevron unfolds it", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    await card.locator(".thread-collapse").click();
+    await expect(card).toHaveClass(/collapsed/);
+    await expect(card.locator(".thread-actions")).toBeHidden();
+    await card.locator(".thread-collapse").click();
+    await expect(card).not.toHaveClass(/collapsed/);
+  });
+
+  // --- Collapse (round-8 P1: every card kind collapses) ------------------------
+
+  test("the chevron carries aria-expanded, and Enter / Space toggle it like a click", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    const chevron = card.locator(".thread-collapse");
+    await expect(chevron).toHaveAttribute("aria-expanded", "true");
+
+    await chevron.focus();
+    await page.keyboard.press("Enter");
+    await expect(card).toHaveClass(/collapsed/);
+    await expect(chevron).toHaveAttribute("aria-expanded", "false");
+
+    await page.keyboard.press("Space");
+    await expect(card).not.toHaveClass(/collapsed/);
+    await expect(chevron).toHaveAttribute("aria-expanded", "true");
+  });
+
+  test("clicking anywhere in a collapsed card's header expands it, not just the chevron", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    await card.locator(".thread-collapse").click();
+    await expect(card).toHaveClass(/collapsed/);
+    // The quote, not the chevron — while expanded this same click reveals the
+    // thread in the document instead (see "clicking a card makes it current…"
+    // above); collapsed, the header IS the card, so it expands instead.
+    await card.locator(".thread-quote").click();
+    await expect(card).not.toHaveClass(/collapsed/);
+  });
+
+  test("a resolved thread starts collapsed under the All filter, with a resolved badge and a comment count", async ({
+    page,
+  }) => {
+    const answered = parse(fixture.source).threads.find((t) => t.id === fixture.answeredThreadId)!;
+    const resolvedSrc = replaceThread(fixture.source, answered.id, {
+      ...answered,
+      status: "resolved",
+      resolvedBy: "ronica",
+      resolvedTs: "2026-07-02T09:00:00.000Z",
+    });
+    await pushSidecar(page, resolvedSrc);
+    await page.locator('input[name="filter"][value="all"]').click();
+    const card = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    await expect(card).toHaveClass(/collapsed/);
+    await expect(card.locator(".thread-collapse")).toHaveAttribute("aria-expanded", "false");
+    await expect(card.locator(".badge.resolved")).toHaveText("resolved");
+    // Root comment + Claude's reply.
+    await expect(card.locator(".thread-comment-count")).toHaveText("2 comments");
+  });
+
+  test("resolving a thread collapses it by default; reopening expands it back", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    await expect(card).not.toHaveClass(/collapsed/);
+
+    const answered = parse(fixture.source).threads.find((t) => t.id === fixture.answeredThreadId)!;
+    const resolvedSrc = replaceThread(fixture.source, answered.id, {
+      ...answered,
+      status: "resolved",
+      resolvedBy: "ronica",
+      resolvedTs: "2026-07-02T09:00:00.000Z",
+    });
+    await pushSidecar(page, resolvedSrc);
+    await page.locator('input[name="filter"][value="all"]').click();
+    await expect(card).toHaveClass(/collapsed/);
+
+    // The host round trip a toggle-resolve on it would produce.
+    await pushSidecar(page, fixture.source);
+    await expect(card).not.toHaveClass(/collapsed/);
+  });
+
+  test("a manual toggle overrides the default and survives a host update", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await expect(card).not.toHaveClass(/collapsed/);
+    await card.locator(".thread-collapse").click();
+    await expect(card).toHaveClass(/collapsed/);
+
+    await pushSidecar(page, fixture.source);
+    await expect(card).toHaveClass(/collapsed/);
+
+    const state = (await getState(page)) as { collapseOverrides?: [string, boolean][] } | undefined;
+    expect(state?.collapseOverrides).toContainEqual([`thread:${fixture.openThreadId}`, true]);
+  });
+
+  test("a manual toggle survives a Reading/Editing re-init", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await card.locator(".thread-collapse").click();
+    await expect(card).toHaveClass(/collapsed/);
+
+    await pushToWebview(page, { type: "init", ...liveInit(fixture.source), readOnly: true });
+    await expect(page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`)).toHaveClass(/collapsed/);
+  });
+
+  test("the pending suggestion starts expanded; collapsing it swaps the meta row for a one-line gist", async ({
+    page,
+  }) => {
+    const card = page.locator("#threads-list .mc-suggestion");
+    const chevron = card.locator(".mc-suggestion__collapse");
+    const chevronRotation = () => chevron.locator("svg").evaluate((el) => getComputedStyle(el).transform);
+    await expect(card).not.toHaveClass(/collapsed/);
+    await expect(chevron).toHaveAttribute("aria-expanded", "true");
+    expect(await chevronRotation()).toBe("none");
+
+    await chevron.click();
+    await expect(card).toHaveClass(/collapsed/);
+    await expect(chevron).toHaveAttribute("aria-expanded", "false");
+    // The chevron is one SVG that CSS rotates off `aria-expanded` now, rather
+    // than swapping ▾/▸ glyphs — the rotation itself is the thing to prove.
+    expect(await chevronRotation()).not.toBe("none");
+    await expect(card.locator(".mc-suggestion__summary")).toHaveText('Suggestion · Claude · "notes" → "highlights"');
+    await expect(card.locator(".mc-suggestion__diffwrap")).toBeHidden();
+
+    await chevron.click();
+    await expect(card).not.toHaveClass(/collapsed/);
+    await expect(card.locator(".mc-suggestion__diffwrap")).toBeVisible();
+  });
+
+  test("Accept and Reject stay visible and clickable on a collapsed suggestion", async ({ page }) => {
+    const card = page.locator("#threads-list .mc-suggestion");
+    await card.locator(".mc-suggestion__collapse").click();
+    await expect(card).toHaveClass(/collapsed/);
+    const accept = card.getByRole("button", { name: "Accept", exact: true });
+    const reject = card.getByRole("button", { name: "Reject", exact: true });
+    await expect(accept).toBeVisible();
+    await expect(reject).toBeVisible();
+
+    await accept.click();
+    expect(await awaitPosted(page, "accept-suggestion")).toEqual({
+      type: "accept-suggestion",
+      anchorId: fixture.suggestionId,
+    });
+  });
+
+  test("clicking a card makes it current and pulses its highlight in the document", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await card.locator(".thread-quote").click();
+    await expect(card).toHaveClass(/highlighted/);
+    await expect(
+      page.locator(`.mdc-anchor-highlight[data-comment-id="${fixture.openThreadId}"]`).first(),
+    ).toHaveClass(/mdc-anchor-highlight--pulse/);
+  });
+
+  test("clicking a highlight in the document makes its card the current one", async ({ page }) => {
+    await page.locator(`.mdc-anchor-highlight[data-comment-id="${fixture.openThreadId}"]`).first().click();
+    await expect(page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`)).toHaveClass(/highlighted/);
+    await expect(page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`)).not.toHaveClass(/highlighted/);
+  });
+
+  // The host opens the review view on a thread (a hover link, a tree row, the
+  // unread walk) and posts `reveal-thread`.
+  test("reveal-thread from the host makes the card current and pulses its highlight", async ({ page }) => {
+    await pushToWebview(page, { type: "reveal-thread", threadId: fixture.openThreadId });
+    await expect(page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`)).toHaveClass(/highlighted/);
+    await expect(
+      page.locator(`.mdc-anchor-highlight[data-comment-id="${fixture.openThreadId}"]`).first(),
+    ).toHaveClass(/mdc-anchor-highlight--pulse/);
+  });
+
+  test("reveal-thread widens the filter when it hides the thread", async ({ page }) => {
+    const answered = parse(fixture.source).threads.find((t) => t.id === fixture.answeredThreadId)!;
+    const resolvedSrc = replaceThread(fixture.source, answered.id, {
+      ...answered,
+      status: "resolved",
+      resolvedBy: "ronica",
+      resolvedTs: "2026-07-02T09:00:00.000Z",
+    });
+    await pushSidecar(page, resolvedSrc);
+    await expect(page.locator(`.thread-card[data-thread="${answered.id}"]`)).toHaveCount(0);
+    await pushToWebview(page, { type: "reveal-thread", threadId: answered.id });
+    await expect(page.locator('input[name="filter"][value="all"]')).toBeChecked();
+    await expect(page.locator(`.thread-card[data-thread="${answered.id}"]`)).toHaveClass(/highlighted/);
+  });
+
+  test("reveal-thread opens a card that starts collapsed, and it stays open for the session", async ({ page }) => {
+    const answered = parse(fixture.source).threads.find((t) => t.id === fixture.answeredThreadId)!;
+    const resolvedSrc = replaceThread(fixture.source, answered.id, {
+      ...answered,
+      status: "resolved",
+      resolvedBy: "ronica",
+      resolvedTs: "2026-07-02T09:00:00.000Z",
+    });
+    await pushSidecar(page, resolvedSrc);
+    await pushToWebview(page, { type: "reveal-thread", threadId: answered.id });
+    const card = page.locator(`.thread-card[data-thread="${answered.id}"]`);
+    await expect(card).toHaveClass(/highlighted/);
+    await expect(card).not.toHaveClass(/collapsed/);
+    await expect(card.locator(".thread-collapse")).toHaveAttribute("aria-expanded", "true");
+    // As if the chevron had been clicked: a host update doesn't fold it again.
+    await pushSidecar(page, resolvedSrc);
+    await expect(card).not.toHaveClass(/collapsed/);
+    const state = (await getState(page)) as { collapseOverrides?: [string, boolean][] };
+    expect(state.collapseOverrides).toContainEqual([`thread:${answered.id}`, false]);
+  });
+
+  // --- n/p/r/e/o ---------------------------------------------------------------
+
+  test("n moves the highlight to the next thread card, p to the previous, wrapping at both ends", async ({ page }) => {
+    const answered = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    const open = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await expect(page.locator(".thread-card.highlighted")).toHaveCount(0);
+
+    await page.keyboard.press("n");
+    await expect(answered).toHaveClass(/highlighted/);
+    await page.keyboard.press("n");
+    await expect(open).toHaveClass(/highlighted/);
+    await expect(answered).not.toHaveClass(/highlighted/);
+    await page.keyboard.press("n");
+    await expect(answered).toHaveClass(/highlighted/);
+    await page.keyboard.press("p");
+    await expect(open).toHaveClass(/highlighted/);
+  });
+
+  test("r focuses the highlighted thread's reply textarea, expanding a collapsed card first", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    await card.locator(".thread-collapse").click();
+    await expect(card).toHaveClass(/collapsed/);
+    await page.keyboard.press("n");
+    await expect(card).toHaveClass(/highlighted/);
+
+    await page.keyboard.press("r");
+    await expect(card).not.toHaveClass(/collapsed/);
+    expect(await card.locator(".reply-box textarea").evaluate((el) => el === document.activeElement)).toBe(true);
+  });
+
+  test("r and o are no-ops when nothing is highlighted", async ({ page }) => {
+    await page.keyboard.press("r");
+    expect(await page.evaluate(() => document.activeElement instanceof HTMLTextAreaElement)).toBe(false);
+    await page.keyboard.press("o");
+    expect(await posted(page)).toEqual([]);
+  });
+
+  test("e posts toggle-resolve for the highlighted thread — the same message Resolve posts", async ({ page }) => {
+    await page.keyboard.press("n");
+    await page.keyboard.press("e");
+    expect(await awaitPosted(page, "toggle-resolve")).toEqual({
+      type: "toggle-resolve",
+      threadId: fixture.answeredThreadId,
+    });
+  });
+
+  test("o opens the highlighted thread in the editor", async ({ page }) => {
+    await page.keyboard.press("n");
+    await page.keyboard.press("o");
+    expect(await awaitPosted(page, "open-in-editor")).toEqual({
+      type: "open-in-editor",
+      threadId: fixture.answeredThreadId,
+    });
+  });
+
+  test("n/p/r/e/o are inert while a reply textarea has focus", async ({ page }) => {
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await card.locator(".thread-reply-toggle").click();
+    await card.locator(".reply-box textarea").click();
+    for (const key of ["n", "p", "e", "o", "r"]) await page.keyboard.press(key);
+    await expect(page.locator(".thread-card.highlighted")).toHaveCount(0);
+    expect(await posted(page)).toEqual([]);
+  });
+
+  test("the keys hint lists every key", async ({ page }) => {
+    // #keys-hint also holds the inline "×" dismiss button now; its own text
+    // sits in the #keys-hint-text child.
+    await expect(page.locator("#keys-hint-text")).toHaveText(
+      "n / p to move between threads · r reply · e resolve · o open in editor",
+    );
+  });
+
+  // --- a11y ------------------------------------------------------------------------
+
+  test("thread list and cards carry feed / article / posinset semantics", async ({ page }) => {
+    await expect(page.locator("#threads-list")).toHaveAttribute("role", "feed");
+    const cards = page.locator(".thread-card");
+    await expect(cards).toHaveCount(2);
+    for (const card of await cards.all()) {
+      await expect(card).toHaveAttribute("role", "article");
+      expect(await card.getAttribute("aria-label")).toBeTruthy();
+    }
+    await expect(cards.nth(0)).toHaveAttribute("aria-posinset", "1");
+    await expect(cards.nth(1)).toHaveAttribute("aria-setsize", "2");
+  });
+
+  test("roving tabindex: only the highlighted card is in the tab order, and it follows n/p", async ({ page }) => {
+    const answered = page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`);
+    const open = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await expect(answered).toHaveAttribute("tabindex", "0");
+    await expect(open).toHaveAttribute("tabindex", "-1");
+    await page.keyboard.press("n");
+    await page.keyboard.press("n");
+    await expect(answered).toHaveAttribute("tabindex", "-1");
+    await expect(open).toHaveAttribute("tabindex", "0");
+  });
+
+  test("the unread banner stays hidden when no thread came from an agent", async ({ page }) => {
+    await expect(page.locator("#claude-summary")).toBeHidden();
+    await expect(page.locator("#filter-claude-label")).toBeHidden();
+  });
+});
+
+// --- Specs that need their own document ------------------------------------------
+
+test("a thread an agent opened shows the unread banner, the 'New from' filter, and Next lands on it", async ({ page }) => {
+  const at = fixture.source.indexOf("Suggest mode");
+  const opened = addThread(fixture.source, at, at + "Suggest mode".length, {
+    author: "claude",
+    body: "Say what the setting is called.",
+    ts: "2026-07-02T10:00:00.000Z",
+  });
+  await bootLiveEditor(page, { ...liveInit(opened.source), readOnly: true });
+
+  await expect(page.locator("#claude-summary")).toBeVisible();
+  await expect(page.locator("#claude-summary-text")).toHaveText("1 new from Claude · 0 reviewed");
+  await expect(page.locator("#claude-summary-text")).toHaveAttribute("aria-live", "polite");
+  await expect(page.locator("#filter-claude-label-text")).toHaveText("New from Claude");
+  const card = page.locator(`.thread-card[data-thread="${opened.thread.id}"]`);
+  await expect(card).toHaveClass(/claude-unread/);
+
+  await page.locator("#claude-next").click();
+  await expect(card).toHaveClass(/highlighted/);
+
+  await page.locator('input[name="filter"][value="claude-unread"]').click();
+  await expect(page.locator(".thread-card")).toHaveCount(1);
+});
+
+test("an agent's comments carry the via marker; a human's don't", async ({ page }) => {
+  const at = fixture.source.indexOf("Suggest mode");
+  const first = addThread(fixture.source, at, at + "Suggest mode".length, {
+    author: "ronica",
+    body: "Name it.",
+    ts: "2026-07-02T10:00:00.000Z",
+  });
+  const withReply = replaceThread(
+    first.source,
+    first.thread.id,
+    appendReply(first.thread, { author: "claude", body: "Done.", ts: "2026-07-02T10:05:00.000Z", agent: true, via: "tools" }),
+  );
+  await bootLiveEditor(page, { ...liveInit(withReply), readOnly: true });
+  const cards = page.locator(`.thread-card[data-thread="${first.thread.id}"] .mc-card`);
+  await expect(cards.nth(0).locator(".mc-card__via")).toHaveCount(0);
+  await expect(cards.nth(1).locator(".mc-card__via")).toHaveText("via tools");
+});
+
+test("a thread without markers is marked 'broken anchor' and has no highlight in the document", async ({ page }) => {
+  // Deleting the anchored passage with its markers orphans the thread — the
+  // outcome the skill asks agents to leave alone. Read-only placement never
+  // guesses from the quote, so the card has to say there's nothing to show.
+  const at = fixture.source.indexOf("<!--mc:a:" + fixture.openThreadId);
+  const close = `<!--mc:/a:${fixture.openThreadId}-->`;
+  const end = fixture.source.indexOf(close) + close.length;
+  const orphaned = fixture.source.slice(0, at) + fixture.source.slice(end);
+  await bootLiveEditor(page, { ...liveInit(orphaned), readOnly: true });
+
+  const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+  await expect(card).toHaveClass(/unanchored/);
+  await expect(card.locator(".badge.broken")).toHaveText("broken anchor");
+  await expect(card.locator(".badge.broken")).toHaveAttribute("title", /no highlight in the document/);
+  await expect(page.locator(`.mdc-anchor-highlight[data-comment-id="${fixture.openThreadId}"]`)).toHaveCount(0);
+  // The anchored thread is unaffected.
+  await expect(page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"] .badge.broken`)).toHaveCount(0);
+});
+
+test("in edit mode, n typed into the document is text, not navigation", async ({ page }) => {
+  await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: false });
+  await page.locator(".milkdown p").first().click();
+  await expect
+    .poll(() => page.evaluate(() => !!document.activeElement?.closest(".milkdown")))
+    .toBe(true);
+  await page.keyboard.press("n");
+  await expect(page.locator(".thread-card.highlighted")).toHaveCount(0);
+});
+
+test("a reveal-thread right behind init waits for the editor, then lands on the thread", async ({ page }) => {
+  // The host posts both back to back when it opens a panel on a thread; the
+  // editor is still building when the reveal arrives.
+  await bootLiveEditorShell(page);
+  await pushToWebview(page, { type: "init", ...liveInit(fixture.source), readOnly: true });
+  await pushToWebview(page, { type: "reveal-thread", threadId: fixture.openThreadId });
+  await expect(page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`)).toHaveClass(/highlighted/);
+  await expect(
+    page.locator(`.mdc-anchor-highlight[data-comment-id="${fixture.openThreadId}"]`).first(),
+  ).toHaveClass(/mdc-anchor-highlight--pulse/);
+});
+
+// The sidebar's preferences live in the webview's state, which outlives the
+// build that wrote it and isn't validated by anyone else: whatever shape it
+// comes back in, the sidebar boots, reads what's well-formed, and drops the rest.
+test.describe("persisted state in the wrong shape", () => {
+  test("every key of the wrong type falls back to its default, and other keys are kept", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true }, {
+      state: { collapseOverrides: "thread:x", pendingReviewIds: 7, threadFilter: 3, hintDismissed: "yes", outlineVisible: true },
+    });
+    await expect(page.locator(".thread-card")).toHaveCount(2);
+    await expect(page.locator('input[name="filter"][value="open"]')).toBeChecked();
+    await expect(page.locator("#keys-hint")).toBeVisible();
+    await expect(page.locator(".thread-card.collapsed")).toHaveCount(0);
+
+    // The next write keeps only what's well-formed, and what it wrote.
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await card.locator(".thread-collapse").click();
+    const state = (await getState(page)) as Record<string, unknown>;
+    expect(state.collapseOverrides).toEqual([[`thread:${fixture.openThreadId}`, true]]);
+    expect(state.outlineVisible).toBe(true);
+  });
+
+  test("the well-formed entries of a list survive its malformed ones", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true }, {
+      state: {
+        collapseOverrides: [[`thread:${fixture.openThreadId}`, true], ["thread:x"], [1, true], "junk", null, ["thread:y", "no"]],
+        pendingReviewIds: ["a", 2, null],
+      },
+    });
+    await expect(page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`)).toHaveClass(/collapsed/);
+    await expect(page.locator(`.thread-card[data-thread="${fixture.answeredThreadId}"]`)).not.toHaveClass(/collapsed/);
+  });
+
+  for (const state of ["garbage", [1, 2], 42, null]) {
+    test(`a state that isn't an object (${JSON.stringify(state)}) is treated as empty`, async ({ page }) => {
+      await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true }, { state });
+      await expect(page.locator(".thread-card")).toHaveCount(2);
+      await page.locator('input[name="filter"][value="all"]').click();
+      expect(await getState(page)).toEqual({ threadFilter: "all" });
+    });
+  }
+});
+
+test.describe("sending from the sidebar", () => {
+  test("the notice waits for the host, and claims the file is saved only when the host says so", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(fixture.source), epoch: 1 });
+    await page.locator("#send-to-claude").click();
+    await awaitPosted(page, "send-to-claude");
+    await page.waitForTimeout(100);
+    // Counted now, not polled: a notice shown on the click would still be up.
+    expect(await page.locator(".mdc-banner").count()).toBe(0);
+
+    await pushToWebview(page, { type: "send-result", outcome: "cancelled", saved: false });
+    await page.waitForTimeout(100);
+    expect(await page.locator(".mdc-banner").count()).toBe(0);
+
+    await pushToWebview(page, { type: "send-result", outcome: "delivered", saved: true });
+    await expect(page.locator(".mdc-banner")).toHaveText("Sent to Claude — your edits are saved to disk");
+  });
+
+  test("with no agent known in the file, the notice says 'your agent', never Claude", async ({ page }) => {
+    const at = BASE_DOC.indexOf("Some text");
+    const human = addThread(BASE_DOC, at, at + 9, { author: "ronica", body: "Why?", ts: "2026-01-01T00:00:00.000Z" });
+    await bootLiveEditor(page, { ...liveInit(human.source), readOnly: true });
+    await page.locator("#send-to-claude").click();
+    await pushToWebview(page, { type: "send-result", outcome: "delivered", saved: true });
+    await expect(page.locator(".mdc-banner")).toHaveText("Sent to your agent");
+  });
+
+  test("with an agent known in the file, the notice names it", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(fixture.source, { agentName: "Codex" }), readOnly: true });
+    await page.locator("#send-to-claude").click();
+    await pushToWebview(page, { type: "send-result", outcome: "delivered", saved: true });
+    await expect(page.locator(".mdc-banner")).toHaveText("Sent to Codex");
+  });
+
+  test("read-only, a confirmed send says only that it was sent", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
+    await page.locator("#send-to-claude").click();
+    await pushToWebview(page, { type: "send-result", outcome: "delivered", saved: true });
+    await expect(page.locator(".mdc-banner")).toHaveText("Sent to Claude");
+  });
+
+  test("a copy says it was copied, not sent, and names no agent", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(fixture.source, { agentName: "Codex" }), epoch: 1 });
+    await page.locator("#send-to-claude").click();
+    await pushToWebview(page, { type: "send-result", outcome: "copied", saved: true });
+    await expect(page.locator(".mdc-banner")).toHaveText("Copied — paste it into your agent — your edits are saved to disk");
+  });
+
+  test("read-only, a copy says only that it was copied", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
+    await page.locator("#send-to-claude").click();
+    await pushToWebview(page, { type: "send-result", outcome: "copied", saved: true });
+    await expect(page.locator(".mdc-banner")).toHaveText("Copied — paste it into your agent");
+  });
+
+  test("a cancelled send shows no notice, saved or not", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(fixture.source), epoch: 1 });
+    await page.locator("#send-to-claude").click();
+    await awaitPosted(page, "send-to-claude");
+    await pushToWebview(page, { type: "send-result", outcome: "cancelled", saved: true });
+    await pushToWebview(page, { type: "send-result", outcome: "cancelled", saved: false });
+    await page.waitForTimeout(100);
+    expect(await page.locator(".mdc-banner").count()).toBe(0);
+  });
+});
+
+test("in edit mode, an edit still in the debounce is posted before any sidebar message", async ({ page }) => {
+  await bootLiveEditor(page, { ...liveInit(fixture.source), epoch: 1 });
+  await page.locator(".milkdown .ProseMirror").focus();
+  await page.evaluate(() => {
+    const root = document.querySelector(".milkdown .ProseMirror")!;
+    const p = Array.from(root.querySelectorAll("p")).find((el) => el.textContent!.includes("correctly"))!;
+    const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+    let last: Text | null = null;
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) last = n as Text;
+    const r = document.createRange();
+    r.setStart(last!, last!.data.length);
+    r.collapse(true);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(r);
+  });
+  await page.keyboard.type("!");
+  const actions = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"] .thread-actions`);
+  await actions.getByRole("button", { name: "Resolve", exact: true }).click();
+  // Focusing the editor above posts its own editor-focus, filtered out here —
+  // this asserts the edit-blocks/toggle-resolve ordering, not every message.
+  await expect
+    .poll(async () => (await posted(page)).filter((m) => m.type !== "editor-focus").map((m) => m.type))
+    .toEqual(["edit-blocks", "toggle-resolve"]);
+});

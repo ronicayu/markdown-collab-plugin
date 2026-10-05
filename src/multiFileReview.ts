@@ -1,7 +1,6 @@
-// Multi-file Review Mode payloads (10x-plan P1.3).
+// Multi-file Review Mode payloads.
 //
-// "Ask Claude to Review" started per-file, but real doc work is a `docs/`
-// folder or a PR's worth of files. This module builds ONE Review Mode payload
+// This module builds ONE Review Mode payload
 // for a set of files: the same review contract as the single-file prompt, plus
 // the one dimension that only exists across files — consistency between them
 // (drifting terminology, contradictory claims, guidance duplicated then
@@ -11,11 +10,12 @@
 // selection to workspace-relative paths and byte sizes.
 
 import { reviewModeClosing, type ReviewPayload } from "./sendToClaude";
+import { workflowOpener, type SkillDelivery } from "./skillDelivery";
 
 export interface ReviewFile {
-  /** Workspace-relative path, POSIX separators (it goes into a prompt). */
   rel: string;
-  /** File size in bytes, used for the summed soft-confirm. */
+  /** What the prompt names the file by when `rel` would be ambiguous (see `promptPathFor`). */
+  promptPath?: string;
   bytes: number;
 }
 
@@ -42,24 +42,30 @@ export const CROSS_DOCUMENT_DIMENSION = [
  * in the order given (the caller sorts); the order is also the order Claude is
  * told to work in, so threads land in a predictable sequence.
  *
- * Mirrors `buildReviewRequestPayload` for the single-file case: no upper bound
- * on threads, no prose edits, optional free-form focus directive.
+ * Mirrors `buildReviewRequestPayload` for the single-file case: rank and cap
+ * at five threads *per file* with a per-file summary thread for the rest,
+ * no prose edits, optional free-form focus directive.
  */
 export function buildMultiFileReviewPayload(
   files: ReviewFile[],
   focus?: string,
+  opts: { skillDelivery?: SkillDelivery } = {},
 ): ReviewPayload {
   const rels = files.map((f) => f.rel);
   const trimmedFocus = focus?.trim();
-  const lines: string[] = [
-    `Use the vs-markdown-collab skill in Review Mode on these ${rels.length} files:`,
-    "",
-    ...rels.map((rel) => `- \`${rel}\``),
-  ];
-  if (trimmedFocus) lines.push("", `Focus: ${trimmedFocus}`);
-  lines.push("", CROSS_DOCUMENT_DIMENSION, "", reviewModeClosing(rels.length));
+  const promptFor = (delivery: SkillDelivery): string => {
+    const lines: string[] = [
+      `${workflowOpener(delivery)} in Review Mode on these ${rels.length} files:`,
+      "",
+      ...files.map((f) => `- \`${f.promptPath ?? f.rel}\``),
+    ];
+    if (trimmedFocus) lines.push("", `Focus: ${trimmedFocus}`);
+    lines.push("", CROSS_DOCUMENT_DIMENSION, "", reviewModeClosing(rels.length));
+    return lines.join("\n");
+  };
   return {
-    prompt: lines.join("\n"),
+    prompt: promptFor(opts.skillDelivery ?? "installed"),
+    inlineSkillPrompt: promptFor("inline"),
     file: selectionLabel(rels),
     files: rels,
     unresolvedCount: 0,
@@ -67,7 +73,6 @@ export function buildMultiFileReviewPayload(
   };
 }
 
-/** Total bytes across the selection — the input to the summed soft confirm. */
 export function totalBytes(files: ReviewFile[]): number {
   return files.reduce((sum, f) => sum + f.bytes, 0);
 }

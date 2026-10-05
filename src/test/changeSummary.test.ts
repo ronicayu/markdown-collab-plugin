@@ -108,6 +108,8 @@ describe("proseRefreshMessage", () => {
     const after = branch.slice(write);
     expect(after).toContain("proseRefreshMessage(shownProse");
     expect(after).toContain("lastWebviewProse = refresh.text");
-    expect(after).toContain("postMessage(refresh)");
+    // Posted through `pushDocument`, which starts a new document epoch so an
+    // edit-mode report made against the old text is dropped.
+    expect(after).toContain("pushDocument(refresh)");
   });
 });

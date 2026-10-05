@@ -14,7 +14,7 @@
 // the refusals above.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { handleRpc, type ProtocolHandlers } from "./protocol";
 
 /** 1 MB: a tool call carrying a rewritten section, with room to spare. */
@@ -36,7 +36,11 @@ export interface ServeOptions {
   /** Path the MCP endpoint answers on. */
   path?: string;
   onError?(message: string): void;
+  /** A notable refusal worth a log line; a repeated one is reported at most once a minute. */
+  onWarn?(message: string): void;
 }
+
+const UNAUTHORIZED_REPORT_INTERVAL_MS = 60_000;
 
 /** Constant-time bearer comparison — a length-sensitive `===` leaks the token. */
 export function tokenMatches(header: string | undefined, expected: string): boolean {
@@ -56,9 +60,9 @@ export function isBrowserOrigin(origin: string | undefined): boolean {
   return typeof origin === "string" && origin !== "" && origin !== "null";
 }
 
-function send(res: ServerResponse, status: number, body?: unknown): void {
+function send(res: ServerResponse, status: number, body?: unknown, extraHeaders?: Record<string, string>): void {
   if (body === undefined) {
-    res.writeHead(status);
+    res.writeHead(status, extraHeaders);
     res.end();
     return;
   }
@@ -68,8 +72,26 @@ function send(res: ServerResponse, status: number, body?: unknown): void {
     "content-length": Buffer.byteLength(text),
     // Nothing here is cacheable and some of it is a token-authenticated reply.
     "cache-control": "no-store",
+    ...extraHeaders,
   });
   res.end(text);
+}
+
+function sessionIdFromRequest(req: IncomingMessage): string | undefined {
+  const header = req.headers["mcp-session-id"];
+  return typeof header === "string" ? header : undefined;
+}
+
+/** True for a bare (non-batched) `initialize` request — the one message
+ * shape allowed to mint a fresh session id. */
+function isInitializeMessage(msg: unknown): boolean {
+  return typeof msg === "object" && msg !== null && !Array.isArray(msg) && (msg as { method?: unknown }).method === "initialize";
+}
+
+/** 16 random bytes, hex-encoded — plenty of entropy for a session id nothing
+ * cryptographic hangs off; it's a map key, not a credential. */
+function mintSessionId(): string {
+  return randomBytes(16).toString("hex");
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -90,9 +112,9 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-/** Start the listener. Resolves once it is accepting connections. */
 export async function serveMcp(opts: ServeOptions): Promise<McpHttpServer> {
   const path = opts.path ?? "/mcp";
+  let lastUnauthorizedReport = -Infinity;
 
   const server = createServer((req, res) => {
     void handleRequest(req, res).catch((e) => {
@@ -113,6 +135,13 @@ export async function serveMcp(opts: ServeOptions): Promise<McpHttpServer> {
       return;
     }
     if (!tokenMatches(req.headers.authorization, opts.token)) {
+      const now = Date.now();
+      if (now - lastUnauthorizedReport >= UNAUTHORIZED_REPORT_INTERVAL_MS) {
+        lastUnauthorizedReport = now;
+        opts.onWarn?.(
+          "rejected a request with a wrong or missing token — likely an agent config pasted before the last window reload",
+        );
+      }
       res.setHeader("www-authenticate", "Bearer");
       send(res, 401, { error: "unauthorized" });
       return;
@@ -151,22 +180,32 @@ export async function serveMcp(opts: ServeOptions): Promise<McpHttpServer> {
       return;
     }
 
+    // The session id to attribute this request's calls to: whatever the client echoed
+    // back, or — only for a fresh `initialize` — one minted here and handed back in the
+    // response so the client can echo it from then on, per the streamable-HTTP
+    // transport's session contract.
+    const incomingSessionId = sessionIdFromRequest(req);
+    const isInitBatch = Array.isArray(parsed) ? parsed.some(isInitializeMessage) : isInitializeMessage(parsed);
+    const sessionId = incomingSessionId ?? (isInitBatch ? mintSessionId() : undefined);
+    const sessionHeaders =
+      sessionId !== undefined && incomingSessionId === undefined ? { "mcp-session-id": sessionId } : undefined;
+
     // A batch is a JSON array; answer with an array of the responses that
     // aren't notifications, or 202 when every message was one.
     if (Array.isArray(parsed)) {
       const responses = [];
       for (const one of parsed) {
-        const r = await handleRpc(one, opts.handlers);
+        const r = await handleRpc(one, opts.handlers, sessionId);
         if (r) responses.push(r);
       }
-      if (responses.length === 0) send(res, 202);
-      else send(res, 200, responses);
+      if (responses.length === 0) send(res, 202, undefined, sessionHeaders);
+      else send(res, 200, responses, sessionHeaders);
       return;
     }
 
-    const response = await handleRpc(parsed, opts.handlers);
-    if (!response) send(res, 202);
-    else send(res, 200, response);
+    const response = await handleRpc(parsed, opts.handlers, sessionId);
+    if (!response) send(res, 202, undefined, sessionHeaders);
+    else send(res, 200, response, sessionHeaders);
   }
 
   const port = await listen(server, opts.port ?? 0, opts.onError);

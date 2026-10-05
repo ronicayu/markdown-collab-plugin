@@ -2,17 +2,14 @@
 //
 // Inline comments live inside the .md file itself, so we build the payload
 // directly from the parser output and shim it into the `ReviewPayload` shape
-// the transports (terminal / channel / mcp-channel / clipboard) expect.
-//
-// The prompt explicitly documents the on-disk inline format so Claude can
-// parse and update threads in place — replying on the relevant
-// `<!--mc:t {...}-->` line after addressing each thread.
+// the transports (terminal / clipboard) expect.
 
 import * as path from "path";
 import * as vscode from "vscode";
-import { folderForDocument } from "../workspaceFolder";
+import { folderForDocument, promptPathFor } from "../workspaceFolder";
 import type { ReviewPayload } from "../sendToClaude";
 import type { Comment } from "../types";
+import { workflowOpener, type SkillDelivery } from "../skillDelivery";
 import { parse, type InlineComment, type InlineThread } from "./format";
 
 export interface InlineReviewPayload extends ReviewPayload {
@@ -20,14 +17,11 @@ export interface InlineReviewPayload extends ReviewPayload {
   inlineThreads: InlineThread[];
 }
 
-/**
- * Convert a single open thread to a `ReviewPayload`-compatible shape.
- * Returns null when the thread is not found or is already resolved.
- */
+/** Returns null when the thread is not found or is already resolved. */
 export function buildSingleThreadPayload(
   doc: vscode.TextDocument,
   threadId: string,
-  opts?: { suggestMode?: boolean },
+  opts?: { suggestMode?: boolean; skillDelivery?: SkillDelivery },
 ): InlineReviewPayload | null {
   const folder = folderForDocument(doc.uri);
   if (!folder) return null;
@@ -35,33 +29,36 @@ export function buildSingleThreadPayload(
   const thread = parsed.threads.find((t) => t.id === threadId && t.status === "open");
   if (!thread) return null;
   const rel = path.relative(folder.uri.fsPath, doc.uri.fsPath);
-  const lines = [
-    `Use the vs-markdown-collab skill on \`${rel}\`.`,
-    `Address only the open thread with id ${thread.id} (anchored on: ${JSON.stringify(thread.quote)}).`,
-  ];
-  // Suggest mode is a property of the request, not of how many threads it
-  // covers — sending one thread must respect the toggle exactly like sending
-  // all of them.
-  if (opts?.suggestMode) lines.push("", SUGGEST_MODE_DIRECTIVE);
-  const prompt = lines.join("\n");
+  const shown = promptPathFor(doc.uri);
+  const promptFor = (delivery: SkillDelivery): string => {
+    const lines = [
+      `${workflowOpener(delivery)} on \`${shown}\`.`,
+      `Address only the open thread with id ${thread.id} (anchored on: ${JSON.stringify(thread.quote)}).`,
+    ];
+    // Suggest mode is a property of the request, not of how many threads it
+    // covers — sending one thread must respect the toggle exactly like sending
+    // all of them.
+    if (opts?.suggestMode) lines.push("", suggestModeDirective(delivery));
+    return lines.join("\n");
+  };
   return {
     file: rel,
     unresolvedCount: 1,
-    prompt,
+    prompt: promptFor(opts?.skillDelivery ?? "installed"),
+    inlineSkillPrompt: promptFor("inline"),
     comments: [threadToComment(thread)],
     inlineThreads: [thread],
   };
 }
 
 /**
- * Convert open inline threads to a `ReviewPayload`-compatible shape.
  * Returns null when there's nothing to send. When `suggestMode` is set, the
  * prompt asks Claude to propose its edits as suggestions rather than applying
  * them directly.
  */
 export function buildInlinePayload(
   doc: vscode.TextDocument,
-  opts?: { suggestMode?: boolean },
+  opts?: { suggestMode?: boolean; skillDelivery?: SkillDelivery },
 ): InlineReviewPayload | null {
   const folder = folderForDocument(doc.uri);
   if (!folder) return null;
@@ -70,23 +67,39 @@ export function buildInlinePayload(
   if (open.length === 0) return null;
 
   const rel = path.relative(folder.uri.fsPath, doc.uri.fsPath);
+  const shown = promptPathFor(doc.uri);
   const comments: Comment[] = open.map((t) => threadToComment(t));
   return {
     file: rel,
     unresolvedCount: open.length,
-    prompt: buildPrompt(rel, open, opts?.suggestMode ?? false),
+    prompt: buildPrompt(shown, open, opts?.suggestMode ?? false, opts?.skillDelivery ?? "installed"),
+    inlineSkillPrompt: buildPrompt(shown, open, opts?.suggestMode ?? false, "inline"),
     comments,
     inlineThreads: open,
   };
 }
 
 /**
- * The suggest-mode directive appended to a send prompt. Kept terse — the skill
- * already documents `mdc suggest`; this just flips the mode for the request.
+ * The suggest-mode directive for a terminal or clipboard send. The reader may
+ * have the MCP tools, the skill's `mdc` CLI, or neither, so it names all three.
  */
 export const SUGGEST_MODE_DIRECTIVE =
-  "Work in SUGGEST MODE: propose every edit as a suggestion via `mdc suggest` " +
-  "instead of editing the prose directly. The reviewer will accept or reject each one.";
+  "Work in SUGGEST MODE: propose every edit as a suggestion instead of editing the prose directly — " +
+  "with `mc_suggest` if you have the `markdown-collab` MCP tools, with `mdc suggest` if you have the `mdc` CLI, " +
+  'otherwise by hand as the "Suggesting an edit" bullet of the "Markdown review comments" section of AGENTS.md describes. ' +
+  "The reviewer will accept or reject each one.";
+
+/**
+ * The suggest-mode directive for a delivery. A headless run has no `mdc` CLI
+ * and no AGENTS.md route — only the tools — so it names only `mc_suggest`.
+ */
+export function suggestModeDirective(delivery: SkillDelivery): string {
+  if (delivery === "installed") return SUGGEST_MODE_DIRECTIVE;
+  return (
+    "Work in SUGGEST MODE: propose every edit as a suggestion via `mc_suggest` " +
+    "instead of editing the prose directly. The reviewer will accept or reject each one."
+  );
+}
 
 function threadToComment(t: InlineThread): Comment {
   const live = t.comments.filter((c) => !c.deleted);
@@ -110,15 +123,20 @@ function threadToComment(t: InlineThread): Comment {
   };
 }
 
-function buildPrompt(rel: string, threads: InlineThread[], suggestMode = false): string {
-  // Invoke the vs-markdown-collab skill — it is the source of truth for the
-  // inline format and the reply/resolve rules, so we don't re-document them
-  // here. A concise thread listing follows for context.
+function buildPrompt(
+  shown: string,
+  threads: InlineThread[],
+  suggestMode = false,
+  delivery: SkillDelivery = "installed",
+): string {
+  // Point at the review workflow — it is the source of truth for the inline
+  // format and the reply/resolve rules, so we don't re-document them here. A
+  // concise thread listing follows for context.
   const n = threads.length;
   const lines: string[] = [
-    `Use the vs-markdown-collab skill to address the ${n} unresolved review comment${n === 1 ? "" : "s"} on \`${rel}\`.`,
+    `${workflowOpener(delivery)} to address the ${n} unresolved review comment${n === 1 ? "" : "s"} on \`${shown}\`.`,
   ];
-  if (suggestMode) lines.push("", SUGGEST_MODE_DIRECTIVE);
+  if (suggestMode) lines.push("", suggestModeDirective(delivery));
   lines.push("", "Open threads:");
   for (const t of threads) {
     const live = t.comments.filter((c) => !c.deleted);
@@ -132,6 +150,5 @@ function oneLine(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
-/** Exported for tests — exposes the comment shimming so tests don't need to import internal helpers. */
 export const _internal = { threadToComment, buildPrompt };
 export type _InternalInlineComment = InlineComment;

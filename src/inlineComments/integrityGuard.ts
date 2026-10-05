@@ -1,9 +1,9 @@
-// Watch-time integrity guard (10x-plan P0.2).
+// Watch-time integrity guard.
 //
 // The `mdc` CLI stops Claude from breaking markers. It cannot stop the human,
-// a formatter, a merge, or another tool — and today that damage is discovered
-// lazily, as a "broken anchor" badge, often long after the context needed to
-// fix it is gone.
+// a formatter, a merge, or another tool, and that damage would otherwise be
+// discovered lazily, as a "broken anchor" badge, often long after the context
+// needed to fix it is gone.
 //
 // This module is the defense-in-depth layer: every watched `.md` change is
 // checked, and the user is told immediately, once per distinct problem.
@@ -89,12 +89,10 @@ export class IntegrityGuard {
     return decision;
   }
 
-  /** Drop memory for a file (deleted, or renamed away). */
   forget(fsPath: string): void {
     this.lastSignature.delete(fsPath);
   }
 
-  /** Forget everything — used on dispose. */
   clear(): void {
     this.lastSignature.clear();
   }

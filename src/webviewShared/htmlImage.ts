@@ -5,7 +5,7 @@
 // `<img src="x.png" width="400">` and `<p align="center"><img …></p>`
 // constantly. Every review surface here escapes raw HTML on purpose — the
 // document under review may be untrusted, and `html: false` is the markdown-it
-// contract the other two surfaces state explicitly — so those images showed up
+// contract the other two surfaces state explicitly — so those images show up
 // as literal angle-bracket text.
 //
 // The narrow answer: recognize the *image* case only, extract a fixed set of
@@ -32,7 +32,6 @@ const IMG_TAG_RE = /<img\b[^>]*>/gi;
 const TAG_RE = /<\/?([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*>/g;
 const ATTR_RE = /([a-zA-Z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s">]+))/g;
 
-/** Attribute values we will pass on, and nothing else. */
 function attributesOf(tag: string): Map<string, string> {
   const out = new Map<string, string>();
   ATTR_RE.lastIndex = 0;
@@ -75,7 +74,7 @@ function safeDimension(raw: string | undefined): string | undefined {
  * Returns null unless the blob contains exactly one `<img>` and everything
  * else in it is whitespace or a permitted wrapper tag — so a paragraph of
  * prose with an image in the middle, or anything carrying a second element
- * with content, keeps today's escaped rendering.
+ * with content, keeps the escaped rendering.
  */
 export function parseHtmlImage(raw: string): HtmlImage | null {
   if (!raw || !/<img\b/i.test(raw)) return null;
@@ -84,7 +83,6 @@ export function parseHtmlImage(raw: string): HtmlImage | null {
   const imgTags = raw.match(IMG_TAG_RE) ?? [];
   if (imgTags.length !== 1) return null;
 
-  // Everything that is not the image must be a bare wrapper.
   let centered = false;
   TAG_RE.lastIndex = 0;
   let m: RegExpExecArray | null;

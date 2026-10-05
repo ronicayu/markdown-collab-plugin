@@ -51,6 +51,16 @@ describe("formatDiagnostics", () => {
     expect(out).not.toContain("http://");
   });
 
+  // "is the skill installed?" now has two answers.
+  it("names the Claude Code plugin and its version when installed, and says so when not", () => {
+    const withPlugin = formatDiagnostics(
+      snapshot({ claudePlugin: { id: "markdown-collab@markdown-collab-local", version: "0.35.4" } }),
+    );
+    expect(withPlugin).toContain("Claude Code plugin: markdown-collab@markdown-collab-local 0.35.4");
+    expect(formatDiagnostics(snapshot({ claudePlugin: null }))).toContain("Claude Code plugin: not installed");
+    expect(formatDiagnostics(snapshot())).not.toContain("Claude Code plugin:");
+  });
+
   it("says plainly when the tool server is down", () => {
     expect(formatDiagnostics(snapshot({ mcpServer: null }))).toContain("Tool server: not running");
   });
@@ -99,5 +109,86 @@ describe("formatDiagnostics", () => {
 
   it("tells the reader to bring the log too", () => {
     expect(formatDiagnostics(snapshot())).toContain("output channel");
+  });
+
+  // The new paths — claude binary, headless, agent
+  // connections — each render as an explicit "unknown" section rather than
+  // silently vanishing when a snapshot doesn't carry them.
+  it("reports every new P3.4 field as unknown when the snapshot doesn't carry it", () => {
+    const out = formatDiagnostics(snapshot());
+    expect(out).toContain("## Headless runs\n- Unknown (not checked)");
+    expect(out).toContain("## Agent connections\n- Unknown (not checked)");
+  });
+
+  it("names the resolved claude binary and its version", () => {
+    const out = formatDiagnostics(snapshot({ claudeBinary: { path: "/opt/homebrew/bin/claude", version: "2.1.283 (Claude Code)" } }));
+    expect(out).toContain("Claude binary: /opt/homebrew/bin/claude (2.1.283 (Claude Code))");
+  });
+
+  it("says why the claude binary wasn't found, without pretending it's fine", () => {
+    const out = formatDiagnostics(
+      snapshot({ claudeBinary: { error: "no `claude` executable on PATH or in the usual install locations" } }),
+    );
+    expect(out).toContain("Claude binary: not found — no `claude` executable on PATH");
+  });
+
+  it("reports headless availability and why not, when unavailable", () => {
+    const out = formatDiagnostics(
+      snapshot({
+        headless: {
+          available: false,
+          unavailableReason: "Claude Code isn't installed, or isn't on your PATH (set markdownCollab.claudePath)",
+          lastRun: null,
+        },
+      }),
+    );
+    expect(out).toContain("Available: no — Claude Code isn't installed");
+    expect(out).toContain("Last run: none this session");
+  });
+
+  it("summarizes the last headless run's state, turns, and cost — never the prompt or report text", () => {
+    const out = formatDiagnostics(
+      snapshot({
+        headless: {
+          available: true,
+          unavailableReason: null,
+          lastRun: { state: "done", fileLabel: "docs/guide.md", turns: 4, costUsd: 0.0231, failureReason: null },
+        },
+      }),
+    );
+    expect(out).toContain("Last run: done on docs/guide.md — 4 turn(s), est. $0.0231");
+    expect(out).not.toContain("prompt");
+  });
+
+  it("names a failed or cancelled headless run's reason", () => {
+    const out = formatDiagnostics(
+      snapshot({
+        headless: {
+          available: true,
+          unavailableReason: null,
+          lastRun: { state: "failed", fileLabel: "a.md", turns: null, costUsd: null, failureReason: "not signed in" },
+        },
+      }),
+    );
+    expect(out).toContain("Last run: failed — not signed in on a.md");
+  });
+
+  it("reports each agent client's config file as yes/no, and in-process connections separately", () => {
+    const out = formatDiagnostics(
+      snapshot({
+        agentConnections: {
+          copilotConnected: true,
+          cursorInAppConnected: false,
+          mcpJson: true,
+          cursorMcpJson: false,
+          codexConfig: true,
+        },
+      }),
+    );
+    expect(out).toContain("Claude Code / generic MCP (.mcp.json): yes");
+    expect(out).toContain("Cursor CLI (.cursor/mcp.json): no");
+    expect(out).toContain("Codex (.codex/config.toml): yes");
+    expect(out).toContain("Cursor in-app: no");
+    expect(out).toContain("Copilot agent mode: yes");
   });
 });
