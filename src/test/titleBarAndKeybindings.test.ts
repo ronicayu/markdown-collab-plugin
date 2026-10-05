@@ -136,3 +136,12 @@ describe("the live-editor key-passthrough keybindings", () => {
     expect(hidden[0]!.when).toBe("false");
   });
 });
+
+describe("Reset Send Mode", () => {
+  it("test_resetSendMode_isContributedAndNotHiddenFromThePalette", () => {
+    const declared = pkg.contributes.commands.find((c: { command: string }) => c.command === "markdownCollab.resetSendMode");
+    expect(declared?.title).toBe("Markdown Collab: Reset Send Mode");
+    const paletteEntries = (pkg.contributes.menus.commandPalette ?? []) as Array<{ command: string }>;
+    expect(paletteEntries.filter((e) => e.command === "markdownCollab.resetSendMode")).toEqual([]);
+  });
+});

@@ -37,6 +37,7 @@ import {
   runHeadless,
 } from "../transports/headlessHost";
 import { unavailableReasonText } from "../transports/headless";
+import type { DispatchOutcome } from "../webviewShared/sidebarProtocol";
 import type { CommandDeps } from "./deps";
 
 /** The workspace's standing review conventions, or null when there are none. */
@@ -120,7 +121,7 @@ async function invokeSendAllToClaude(
   log: Logger,
   tracker: TerminalTracker,
   workspaceState: vscode.Memento,
-): Promise<void> {
+): Promise<DispatchOutcome> {
   const folder = folderForDocument(doc.uri);
   // Comments live inline in the `.md` itself (in the `<!--mc:threads:begin-->`
   // block). Build the payload from the open inline threads.
@@ -129,9 +130,9 @@ async function invokeSendAllToClaude(
     void vscode.window.showInformationMessage(
       "No unresolved comments on this file.",
     );
-    return;
+    return "cancelled";
   }
-  await dispatchReviewPayload(inlinePayload, log, tracker, workspaceState, folder);
+  return dispatchReviewPayload(inlinePayload, log, tracker, workspaceState, folder);
 }
 
 /**
@@ -197,7 +198,7 @@ export async function dispatchReviewPayload(
    * ordinary send still resolves the mode the normal way.
    */
   opts?: { forceMode?: SendMode },
-): Promise<void> {
+): Promise<DispatchOutcome> {
   const headlessLog = log.scope("headless");
   // Every send starts here, so this is the line that tells a stuck dispatch
   // apart from one that never began.
@@ -231,7 +232,7 @@ export async function dispatchReviewPayload(
   });
 
   let mode: SendMode;
-  let justRemembered = false;
+  let remembering = false;
   /** Set when this send's mode was auto-detected rather than chosen. */
   let detected: SendModeDetection | null = null;
   if (opts?.forceMode) {
@@ -285,20 +286,19 @@ export async function dispatchReviewPayload(
           });
           if (!picked) {
             log.info("send cancelled at the mode picker");
-            return;
+            return "cancelled";
           }
           mode = picked;
           log.info("send mode picked by the user", { mode });
         }
-        await workspaceState.update(REMEMBERED_SEND_MODE_KEY, mode);
-        justRemembered = true;
+        remembering = true;
       }
     }
   }
 
   const rememberedSuffix = detected
     ? ` Send mode auto-detected.${CHANGE_HINT}`
-    : justRemembered
+    : remembering
       ? ' Run "Markdown Collab: Reset Send Mode" to change later.'
       : "";
 
@@ -319,11 +319,14 @@ export async function dispatchReviewPayload(
    * headless run can hand the same payload back here after it has started —
    * MCP turned out to be unavailable, or the human signed in and asked for it.
    */
-  const deliverToTerminal = async (suffix: string): Promise<void> => {
+  const deliverToTerminal = async (suffix: string): Promise<DispatchOutcome> => {
     const sendResult = await sendViaTerminal(delivered, tracker, { log });
     if (!sendResult.ok) {
-      log.info("send cancelled", { reason: sendResult.reason });
-      return;
+      log.info("not delivered to a terminal", { reason: sendResult.reason });
+      if (sendResult.reason !== "copied") return "cancelled";
+      await markPayloadPending(payload, folder);
+      if (intent.kind === "review-request") void startReviewPassWatch(folder, originalPayload, intent, log);
+      return "copied";
     }
     log.info("delivered to terminal", {
       terminal: sendResult.terminalName,
@@ -341,6 +344,14 @@ export async function dispatchReviewPayload(
         ? `Sent to "${sendResult.terminalName}" for review — the status bar shows when comments arrive.`
         : `Sent to "${sendResult.terminalName}".`;
     void vscode.window.showInformationMessage(`${msg}${suffix}`);
+    return "delivered";
+  };
+
+  const settle = async (outcome: DispatchOutcome): Promise<DispatchOutcome> => {
+    if (remembering && (outcome === "delivered" || (outcome === "copied" && mode === "clipboard"))) {
+      await workspaceState.update(REMEMBERED_SEND_MODE_KEY, mode);
+    }
+    return outcome;
   };
 
   if (mode === "headless") {
@@ -364,12 +375,12 @@ export async function dispatchReviewPayload(
       // Progress is the status bar's job; a toast here would be a progress
       // toast. The one exception is the first send after picking the mode,
       // which is also the moment to say where the choice can be undone.
-      if (outcome === "started" && (justRemembered || detected)) {
+      if (outcome === "started" && remembering) {
         void vscode.window.showInformationMessage(
           `Claude is working in the background — watch the status bar.${rememberedSuffix}`,
         );
       }
-      return;
+      return settle(outcome === "started" ? "delivered" : "cancelled");
     }
     log.info("headless unavailable; sending to the terminal instead", {
       reason: headless.reason,
@@ -397,11 +408,12 @@ export async function dispatchReviewPayload(
             payload.unresolvedCount === 1 ? "" : "s"
           } copied — paste into your agent.`;
     void vscode.window.showInformationMessage(`${msg}${rememberedSuffix}`);
-    return;
+    await markPayloadPending(payload, folder);
+    return settle("copied");
   }
 
   // mode === "terminal": the only delivery left.
-  await deliverToTerminal(rememberedSuffix);
+  return settle(await deliverToTerminal(rememberedSuffix));
 }
 
 async function pickSendMode(
@@ -450,7 +462,7 @@ export function registerSendCommands(deps: CommandDeps): void {
     ),
     vscode.commands.registerCommand(
       "markdownCollab.sendAllToClaude",
-      async (arg?: vscode.Uri) => {
+      async (arg?: vscode.Uri): Promise<DispatchOutcome> => {
         const uri =
           arg instanceof vscode.Uri
             ? arg
@@ -459,7 +471,7 @@ export function registerSendCommands(deps: CommandDeps): void {
           void vscode.window.showWarningMessage(
             "Open a Markdown file first, then run this command.",
           );
-          return;
+          return "cancelled";
         }
         let doc: vscode.TextDocument;
         try {
@@ -468,9 +480,9 @@ export function registerSendCommands(deps: CommandDeps): void {
           void vscode.window.showErrorMessage(
             `Failed to open ${uri.fsPath}: ${(e as Error).message}`,
           );
-          return;
+          return "cancelled";
         }
-        await invokeSendAllToClaude(
+        return invokeSendAllToClaude(
           doc,
           sendLog,
           terminalTracker,
@@ -483,8 +495,8 @@ export function registerSendCommands(deps: CommandDeps): void {
     // command palette.
     vscode.commands.registerCommand(
       "markdownCollab.sendThreadToClaude",
-      async (uri?: vscode.Uri, threadId?: string) => {
-        if (!(uri instanceof vscode.Uri) || !threadId) return;
+      async (uri?: vscode.Uri, threadId?: string): Promise<DispatchOutcome> => {
+        if (!(uri instanceof vscode.Uri) || !threadId) return "cancelled";
         let doc: vscode.TextDocument;
         try {
           doc = await vscode.workspace.openTextDocument(uri);
@@ -492,7 +504,7 @@ export function registerSendCommands(deps: CommandDeps): void {
           void vscode.window.showErrorMessage(
             `Failed to open ${uri.fsPath}: ${(e as Error).message}`,
           );
-          return;
+          return "cancelled";
         }
         const folder = folderForDocument(doc.uri);
         const payload = buildSingleThreadPayload(doc, threadId, {
@@ -502,9 +514,9 @@ export function registerSendCommands(deps: CommandDeps): void {
           void vscode.window.showInformationMessage(
             "Thread not found or already resolved.",
           );
-          return;
+          return "cancelled";
         }
-        await dispatchReviewPayload(
+        return dispatchReviewPayload(
           payload,
           sendLog,
           terminalTracker,

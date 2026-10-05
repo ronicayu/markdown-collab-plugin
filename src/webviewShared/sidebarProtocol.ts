@@ -54,6 +54,8 @@ export interface SidebarSuggestion {
   anchored: boolean;
 }
 
+export type DispatchOutcome = "delivered" | "copied" | "cancelled";
+
 export type SkillStatus = "missing" | "outdated" | "current";
 
 /** Everything the sidebar renders from; rebuilt from each host push. */

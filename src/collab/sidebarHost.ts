@@ -24,7 +24,7 @@ import { mcpToolsDirective } from "../sendToClaude";
 import { checkClaudeSkill } from "../skill";
 import { claudeBinaryFound } from "../transports/headlessHost";
 import { skillBannerStatus } from "./sidebarState";
-import type { SidebarMessage, SidebarMutation } from "../webviewShared/sidebarProtocol";
+import type { DispatchOutcome, SidebarMessage, SidebarMutation } from "../webviewShared/sidebarProtocol";
 
 export interface SidebarHostContext {
   document: vscode.TextDocument;
@@ -154,15 +154,15 @@ export async function handleSidebarMessage(msg: SidebarMessage, ctx: SidebarHost
 /**
  * Hand the document to the agent: only once the file on disk has the editor's
  * text, since the agent reads the file — a send after a failed save would
- * give it the old version. The webview's "Sent" notice waits for the answer.
+ * give it the old version. The webview's notice waits for the outcome.
  */
 async function send(ctx: SidebarHostContext, command: string, ...args: unknown[]): Promise<void> {
   if (!(await savedForAgent(ctx))) {
-    ctx.post({ type: "send-result", ok: false, saved: false });
+    ctx.post({ type: "send-result", outcome: "cancelled", saved: false });
     return;
   }
-  await vscode.commands.executeCommand(command, ...args);
-  ctx.post({ type: "send-result", ok: true, saved: true });
+  const outcome = await vscode.commands.executeCommand<DispatchOutcome>(command, ...args);
+  ctx.post({ type: "send-result", outcome, saved: true });
 }
 
 /** Flush the editor to disk for an agent; false, having said so, when the save failed. */

@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.35.28 — 2026-10-05 (GitHub only)
+
+### Fixed: the sidebar said "Sent" when nothing was sent
+
+Send now knows how it ended — delivered, copied, or cancelled — and the
+sidebar says so. A send that was only copied (clipboard mode, or **Copy
+instead** from a terminal dialog) shows "Copied — paste it into your agent";
+a cancelled one shows nothing. Before, anything short of an error read
+"Sent to your agent". (#5)
+
+### Fixed: a copied prompt didn't start the waiting row
+
+Clipboard mode and **Copy instead** now mark the sent threads as waiting, like
+a terminal or headless send, so the row is there for an agent that lives in a
+side panel. A review request copied from a terminal dialog starts its
+status-bar watch too. (#9)
+
+### Fixed: a send mode was remembered before it had worked
+
+The mode you pick is remembered once a send in it is delivered (or, for
+clipboard, copied). Picking the terminal and then cancelling, or taking
+**Copy instead**, remembers nothing: the next Send asks again. (#6)
+
+### Changed: Reset Send Mode is in the command palette
+
+Toasts, the README and the walkthrough all say to run it, and it was hidden.
+(#6)
+
+### Tests
+
+- `dispatchOutcome`: every outcome, the waiting row, and when the mode is
+  remembered. `sidebarHost`, `collabEditorProvider`, `suggestModeDispatch`,
+  `titleBarAndKeybindings` and the `liveSidebar` Playwright spec migrated,
+  with the copied and cancelled notices added. Vitest 134 files / 2,511;
+  Playwright `liveSidebar` 121. The rest of the Playwright suite was not run
+  locally.
+
 ## 0.35.27 — 2026-10-04 (GitHub only)
 
 ### Changed: Send types into the terminal you're using

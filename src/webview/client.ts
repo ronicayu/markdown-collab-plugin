@@ -43,7 +43,7 @@ import { Decoration, DecorationSet } from "prosemirror-view";
 import type { Node as PmDocNode } from "prosemirror-model";
 import { buildComposer, type ComposerHandle } from "../webviewShared/commentUi";
 import { createThreadSidebar } from "../webviewShared/threadSidebar";
-import type { SidebarMessage, SidebarState, SidebarThread, SkillStatus } from "../webviewShared/sidebarProtocol";
+import type { DispatchOutcome, SidebarMessage, SidebarState, SidebarThread, SkillStatus } from "../webviewShared/sidebarProtocol";
 import { matchesFilter, type ThreadFilter } from "../webviewShared/threadListState";
 import { locateAnchorInLiveText, locateNthOccurrence } from "../collab/liveAnchorLocator";
 import { renderedRangeToPmRange, renderedTextOf } from "../collab/pmPositionMapper";
@@ -263,13 +263,14 @@ interface RevealThreadMessage {
 }
 
 /**
- * How a send from the sidebar went: `ok` when it was handed to the agent,
- * `saved` when the file on disk had the editor's text first. The host doesn't
- * send when the save fails — the agent would read the old version.
+ * How a send from the sidebar went: `outcome` says whether it was handed to
+ * the agent, only copied, or went nowhere; `saved` when the file on disk had
+ * the editor's text first. The host doesn't send when the save fails — the
+ * agent would read the old version.
  */
 interface SendResultMessage {
   type: "send-result";
-  ok: boolean;
+  outcome: DispatchOutcome;
   saved: boolean;
 }
 
@@ -2691,7 +2692,9 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     // Only what the host confirmed: nothing is claimed about the file before it answers.
     // Names the agent only when the file shows one has written here.
     const agent = sidebarPush.agentName || "your agent";
-    if (msg.ok) showNotice(msg.saved && !readOnly ? `Sent to ${agent} — your edits are saved to disk` : `Sent to ${agent}`);
+    const saved = msg.saved && !readOnly ? " — your edits are saved to disk" : "";
+    if (msg.outcome === "delivered") showNotice(`Sent to ${agent}${saved}`);
+    else if (msg.outcome === "copied") showNotice(`Copied — paste it into your agent${saved}`);
   } else if (msg.type === "reveal-thread") {
     // After any `init` still building: the thread has to be in the list, and
     // its highlight in the document.

@@ -197,9 +197,26 @@ describe("handleSidebarMessage: sends and settings", () => {
     await handleSidebarMessage(msg, host.ctx);
     expect(exec).not.toHaveBeenCalledWith(command, expect.anything(), ...(msg.type === "send-to-claude-comment" ? ["t1"] : []));
     expect(warn).toHaveBeenCalledWith("Not sent: doc.md couldn't be saved, so your agent would read the old version.");
-    expect(sent).toEqual(msg.type === "empty-state-review" ? [] : [{ type: "send-result", ok: false, saved: false }]);
+    expect(sent).toEqual(msg.type === "empty-state-review" ? [] : [{ type: "send-result", outcome: "cancelled", saved: false }]);
     exec.mockRestore();
     warn.mockRestore();
+  });
+
+  it.each([
+    [{ type: "send-to-claude" }, "delivered"],
+    [{ type: "send-to-claude" }, "copied"],
+    [{ type: "send-to-claude" }, "cancelled"],
+    [{ type: "send-to-claude-comment", threadId: "t1" }, "delivered"],
+    [{ type: "send-to-claude-comment", threadId: "t1" }, "copied"],
+    [{ type: "send-to-claude-comment", threadId: "t1" }, "cancelled"],
+  ] as Array<[SidebarMessage, string]>)("%o tells the webview what the command reported: %s", async (msg, outcome) => {
+    const host = fakeHost(DOC);
+    const sent: unknown[] = [];
+    host.ctx.post = (m) => sent.push(m);
+    const exec = vi.spyOn(vscode.commands, "executeCommand").mockResolvedValue(outcome);
+    await handleSidebarMessage(msg, host.ctx);
+    expect(sent).toEqual([{ type: "send-result", outcome, saved: true }]);
+    exec.mockRestore();
   });
 
   it("toggle-suggest-mode flips the setting through the command, then re-pushes", async () => {

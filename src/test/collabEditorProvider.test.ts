@@ -504,12 +504,13 @@ describe("saving", () => {
   it("a send waits for the editor's edits and the save, then dispatches and tells the webview", async () => {
     const h = await openEditor(DOC);
     h.send(editBlocks(DOC, 0, BETA_BANG));
+    h.exec.mockImplementation(async (command) => (command === "markdownCollab.sendAllToClaude" ? "delivered" : undefined));
     h.send({ type: "send-to-claude" });
     await vi.waitFor(() => expect(ofType(h, "send-result")).toHaveLength(1));
     expect(h.doc.text).toBe(spliced(DOC, BETA_BANG));
     expect(h.doc.saves).toBe(1);
     expect(h.exec).toHaveBeenCalledWith("markdownCollab.sendAllToClaude", h.doc.uri);
-    expect(ofType(h, "send-result")[0]).toEqual({ type: "send-result", ok: true, saved: true });
+    expect(ofType(h, "send-result")[0]).toEqual({ type: "send-result", outcome: "delivered", saved: true });
   });
 
   it.each([
@@ -525,7 +526,7 @@ describe("saving", () => {
     expect(h.shown.warning).toHaveBeenCalledWith(
       "Not sent: notes.md couldn't be saved, so your agent would read the old version.",
     );
-    expect(ofType(h, "send-result")[0]).toEqual({ type: "send-result", ok: false, saved: false });
+    expect(ofType(h, "send-result")[0]).toEqual({ type: "send-result", outcome: "cancelled", saved: false });
     expect(h.log.warn).toHaveBeenCalled();
   });
 

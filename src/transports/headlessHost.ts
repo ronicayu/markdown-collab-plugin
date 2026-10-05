@@ -144,7 +144,7 @@ export interface HeadlessDelivery {
   workspaceState: vscode.Memento;
   ready: Extract<HeadlessAvailability, { ok: true }>;
   /** Send this same payload through the terminal path instead. */
-  fallbackToTerminal(): Promise<void>;
+  fallbackToTerminal(): Promise<unknown>;
   /** Open a terminal running `claude`, for signing in. */
   startTerminal(): void;
 }

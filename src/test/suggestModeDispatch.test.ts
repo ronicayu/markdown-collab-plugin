@@ -160,13 +160,13 @@ describe("dispatch marks its threads pending", () => {
     expect(dispatcherBody()).toMatch(/markPayloadPending\(payload, folder\)/);
   });
 
-  it("marks on every delivery branch that actually reaches Claude", () => {
-    // terminal is the only delivery left since 10x-plan-4 P0.3 deleted the
-    // channel transports. Clipboard is deliberately excluded: nothing has
-    // been delivered until the human pastes it, so claiming Claude is
-    // working would be a guess.
-    const marks = dispatcherBody().match(/markPayloadPending\(/g) ?? [];
-    expect(marks.length).toBeGreaterThanOrEqual(1);
+  it("marks on every branch that delivers or copies, and not on a cancelled send", () => {
+    const body = dispatcherBody();
+    const clipboard = body.slice(body.indexOf('if (mode === "clipboard")'));
+    expect(clipboard).toMatch(/markPayloadPending\(payload, folder\)/);
+    const copiedInTerminal = body.slice(body.indexOf("const deliverToTerminal"), body.indexOf("const settle"));
+    expect(copiedInTerminal).toMatch(/reason !== "copied"\) return "cancelled";\s+await markPayloadPending\(payload, folder\)/);
+    expect((body.match(/markPayloadPending\(/g) ?? []).length).toBe(4);
   });
 
   it("derives the threads from the payload rather than a caller argument", () => {

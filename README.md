@@ -155,6 +155,7 @@ The single keys do nothing while you're typing. There's no key for accepting a s
 | Ask Agent to Review What Changed | Review only what moved since the last pass. |
 | Next Unread from Agent | Jump to the next thread an agent opened that you haven't answered, across every file. |
 | Toggle Suggest Mode | Ask the agent to propose edits instead of applying them. |
+| Reset Send Mode | Forget the remembered send mode; the next Send asks again. |
 | Edit Review Conventions | Create or open `.markdown-collab/conventions.md`. |
 | Review Session Summary | A digest of the thread state, ready to paste. |
 | Open Uncommitted Changes | Refresh and focus the uncommitted-changes tree. |
@@ -168,7 +169,7 @@ The single keys do nothing while you're typing. There's no key for accepting a s
 | Show Logs | The Markdown Collab output channel. Set it to Trace for per-send and per-tool-call detail. |
 | Report a Problem | An environment report for an issue: versions, send mode, Claude Code, plugin, tool server, connected agents, per-document review state. Tokens are redacted. |
 
-A few commands still exist but are hidden from the palette, now that Connect an Agent… covers the everyday path: Set Up Claude Code and Register Review Tools with Claude Code (both folded into it), Start Claude Review Terminal, Copy Prompt (the clipboard send mode replaces it), Reset Send Mode (linked from the setting instead), and Initialize AGENTS.md.
+A few commands still exist but are hidden from the palette, now that Connect an Agent… covers the everyday path: Set Up Claude Code and Register Review Tools with Claude Code (both folded into it), Start Claude Review Terminal, Copy Prompt (the clipboard send mode replaces it), and Initialize AGENTS.md.
 
 ## Settings
 

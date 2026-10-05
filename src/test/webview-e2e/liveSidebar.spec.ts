@@ -739,11 +739,11 @@ test.describe("sending from the sidebar", () => {
     // Counted now, not polled: a notice shown on the click would still be up.
     expect(await page.locator(".mdc-banner").count()).toBe(0);
 
-    await pushToWebview(page, { type: "send-result", ok: false, saved: false });
+    await pushToWebview(page, { type: "send-result", outcome: "cancelled", saved: false });
     await page.waitForTimeout(100);
     expect(await page.locator(".mdc-banner").count()).toBe(0);
 
-    await pushToWebview(page, { type: "send-result", ok: true, saved: true });
+    await pushToWebview(page, { type: "send-result", outcome: "delivered", saved: true });
     await expect(page.locator(".mdc-banner")).toHaveText("Sent to Claude — your edits are saved to disk");
   });
 
@@ -752,22 +752,46 @@ test.describe("sending from the sidebar", () => {
     const human = addThread(BASE_DOC, at, at + 9, { author: "ronica", body: "Why?", ts: "2026-01-01T00:00:00.000Z" });
     await bootLiveEditor(page, { ...liveInit(human.source), readOnly: true });
     await page.locator("#send-to-claude").click();
-    await pushToWebview(page, { type: "send-result", ok: true, saved: true });
+    await pushToWebview(page, { type: "send-result", outcome: "delivered", saved: true });
     await expect(page.locator(".mdc-banner")).toHaveText("Sent to your agent");
   });
 
   test("with an agent known in the file, the notice names it", async ({ page }) => {
     await bootLiveEditor(page, { ...liveInit(fixture.source, { agentName: "Codex" }), readOnly: true });
     await page.locator("#send-to-claude").click();
-    await pushToWebview(page, { type: "send-result", ok: true, saved: true });
+    await pushToWebview(page, { type: "send-result", outcome: "delivered", saved: true });
     await expect(page.locator(".mdc-banner")).toHaveText("Sent to Codex");
   });
 
   test("read-only, a confirmed send says only that it was sent", async ({ page }) => {
     await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
     await page.locator("#send-to-claude").click();
-    await pushToWebview(page, { type: "send-result", ok: true, saved: true });
+    await pushToWebview(page, { type: "send-result", outcome: "delivered", saved: true });
     await expect(page.locator(".mdc-banner")).toHaveText("Sent to Claude");
+  });
+
+  test("a copy says it was copied, not sent, and names no agent", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(fixture.source, { agentName: "Codex" }), epoch: 1 });
+    await page.locator("#send-to-claude").click();
+    await pushToWebview(page, { type: "send-result", outcome: "copied", saved: true });
+    await expect(page.locator(".mdc-banner")).toHaveText("Copied — paste it into your agent — your edits are saved to disk");
+  });
+
+  test("read-only, a copy says only that it was copied", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
+    await page.locator("#send-to-claude").click();
+    await pushToWebview(page, { type: "send-result", outcome: "copied", saved: true });
+    await expect(page.locator(".mdc-banner")).toHaveText("Copied — paste it into your agent");
+  });
+
+  test("a cancelled send shows no notice, saved or not", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(fixture.source), epoch: 1 });
+    await page.locator("#send-to-claude").click();
+    await awaitPosted(page, "send-to-claude");
+    await pushToWebview(page, { type: "send-result", outcome: "cancelled", saved: true });
+    await pushToWebview(page, { type: "send-result", outcome: "cancelled", saved: false });
+    await page.waitForTimeout(100);
+    expect(await page.locator(".mdc-banner").count()).toBe(0);
   });
 });
 
