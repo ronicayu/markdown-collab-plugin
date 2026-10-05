@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.35.44 — 2026-10-05 (GitHub only)
+
+### Fixed: in a multi-root window, an agent started in another folder found no config
+
+Connect an Agent always wrote `.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`
+and AGENTS.md into the first folder, whichever folder you were working in. With
+more than one folder open it now asks which one, unless the active file already
+says, and Disconnect, the `.mcp.json` answer, the Codex port refresh at startup
+and the connected check all follow that choice. A single-folder window behaves
+exactly as before. (#24)
+
+### Tests
+
+- A single-folder window writes in its folder with no question and keeps the same
+  stored keys as before.
+- With two folders, Connect writes AGENTS.md and the Codex config only in the
+  folder of the active file, or the one you pick; cancelling the pick writes nothing.
+- Disconnect, the startup refreshes, the `.mcp.json` consent and the connected
+  check all use the chosen folder; a folder that has since been closed falls back
+  to the first one.
+
 ## 0.35.43 — 2026-10-05 (GitHub only)
 
 ### Fixed: a file with broken comment anchors was not flagged when you opened it

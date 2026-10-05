@@ -115,7 +115,7 @@ The file format is the contract, and any agent that reads project instructions c
 
 ### Optional: undoable edits through MCP
 
-For an agent that can call MCP tools, **Connect an Agent…** hooks the review tools up directly: its edits arrive as editor edits you can undo, and a change that would break an anchor is refused before it lands, not repaired after. The list shows only the entries your editor can support.
+For an agent that can call MCP tools, **Connect an Agent…** hooks the review tools up directly: its edits arrive as editor edits you can undo, and a change that would break an anchor is refused before it lands, not repaired after. The list shows only the entries your editor can support. With several folders open, it first asks which folder to write into (the active file's folder, if there is one), and Disconnect an Agent and the startup refresh use that same folder.
 
 | Client | What it writes |
 |---|---|

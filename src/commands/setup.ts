@@ -45,6 +45,7 @@ import {
 } from "../mcpServer/agentConnections";
 import { hasCopilotProviderApi } from "../mcpServer/clients/copilot";
 import { activeMarkdownUri } from "../activeMarkdown";
+import { agentFolder, setAgentFolder } from "../workspaceFolder";
 import type { CommandDeps } from "./deps";
 
 /**
@@ -221,7 +222,7 @@ export async function maybePromptSkillUpdate(
 async function anyAgentConnected(context: vscode.ExtensionContext): Promise<boolean> {
   if (isAgentConnected(context, "copilot") || isAgentConnected(context, "cursor-inapp")) return true;
   if (mcpJsonConsentGranted(context)) return true;
-  const folder = vscode.workspace.workspaceFolders?.[0];
+  const folder = agentFolder(context);
   return folder !== undefined && agentsSectionPresent(folder.uri.fsPath);
 }
 
@@ -687,8 +688,13 @@ export function toolServerDownMessage(): string {
 async function invokeConnectAgent(deps: CommandDeps): Promise<void> {
   if (!requireTrust("Connecting an agent")) return;
   const { context, rootLog, log } = deps;
+  if ((vscode.workspace.workspaceFolders?.length ?? 0) > 1) {
+    const chosen = await pickWorkspaceFolder();
+    if (!chosen) return;
+    await setAgentFolder(context, chosen);
+  }
   const handle = currentMcpServer();
-  const folder = vscode.workspace.workspaceFolders?.[0];
+  const folder = agentFolder(context);
   const items = buildConnectAgentItems({ cursorInApp: hasCursorInAppApi(), copilot: hasCopilotProviderApi() });
   const pick = await vscode.window.showQuickPick(items, {
     placeHolder: "Markdown Collab: connect an agent to your review comments",
@@ -830,7 +836,7 @@ export function buildDisconnectAgentItems(caps: { cursorInApp: boolean; copilot:
 async function invokeDisconnectAgent(deps: CommandDeps): Promise<void> {
   if (!requireTrust("Connecting an agent")) return;
   const { context } = deps;
-  const folder = vscode.workspace.workspaceFolders?.[0];
+  const folder = agentFolder(context);
   const items = buildDisconnectAgentItems({ cursorInApp: hasCursorInAppApi(), copilot: hasCopilotProviderApi() });
   const pick = await vscode.window.showQuickPick(items, {
     placeHolder: "Markdown Collab: disconnect an agent",

@@ -32,6 +32,7 @@ import { serveMcp, type McpHttpServer } from "./httpServer";
 import { SessionRegistry } from "./sessions";
 import { callTool, TOOLS, ToolRefusal, type ToolDeps } from "./tools";
 import { renderMcpInstructions } from "../skillText";
+import { agentFolder } from "../workspaceFolder";
 import {
   DESCRIPTOR_REL,
   ENV_TOKEN,
@@ -508,7 +509,7 @@ function consentKey(folder: vscode.WorkspaceFolder): string {
 
 /** Whether the human said yes to the `.mcp.json` registration in this workspace. */
 export function mcpJsonConsentGranted(context: vscode.ExtensionContext): boolean {
-  const folder = vscode.workspace.workspaceFolders?.[0];
+  const folder = agentFolder(context);
   return folder !== undefined && context.workspaceState.get<"yes" | "no">(consentKey(folder)) === "yes";
 }
 
@@ -530,7 +531,7 @@ export async function ensureMcpJsonRegistration(
   log: Logger,
   askOnlyIf?: () => Promise<boolean>,
 ): Promise<McpJsonRegistrationOutcome> {
-  const folder = vscode.workspace.workspaceFolders?.[0];
+  const folder = agentFolder(context);
   if (!folder) return "declined";
   const key = consentKey(folder);
   const answer = context.workspaceState.get<"yes" | "no">(key);
@@ -581,7 +582,7 @@ export async function ensureMcpJsonRegistration(
 
 /** Forget the remembered `.mcp.json` answer so the offer comes back. */
 export async function resetMcpJsonConsent(context: vscode.ExtensionContext): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0];
+  const folder = agentFolder(context);
   if (!folder) return;
   await context.workspaceState.update(consentKey(folder), undefined);
 }

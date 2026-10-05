@@ -31,6 +31,23 @@ export function folderForDocument(uri: vscode.Uri): vscode.WorkspaceFolder {
   return { uri: dir, name: path.basename(dir.fsPath) || dir.fsPath, index: 0 };
 }
 
+const AGENT_FOLDER_KEY = "markdownCollab.agentFolder";
+
+/**
+ * The folder agent config lives in: the one Connect an Agent last chose in a
+ * multi-root window, while it is still open, else the first folder. A
+ * single-root window never stores one, so it always answers its only folder.
+ */
+export function agentFolder(context: vscode.ExtensionContext): vscode.WorkspaceFolder | undefined {
+  const folders = vscode.workspace.workspaceFolders;
+  const stored = context.workspaceState.get<string>(AGENT_FOLDER_KEY);
+  return folders?.find((f) => f.uri.toString() === stored) ?? folders?.[0];
+}
+
+export function setAgentFolder(context: vscode.ExtensionContext, folder: vscode.WorkspaceFolder): Thenable<void> {
+  return context.workspaceState.update(AGENT_FOLDER_KEY, folder.uri.toString());
+}
+
 /** True when the document sits outside every open workspace folder. */
 export function isLooseDocument(uri: vscode.Uri): boolean {
   return vscode.workspace.getWorkspaceFolder(uri) === undefined;

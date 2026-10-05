@@ -16,6 +16,7 @@ import type { DiagnosticsSnapshot } from "./diagnostics";
 import { lookupClaude, headlessAvailability } from "./transports/headlessHost";
 import { isFinished, lastHeadlessRun, unavailableReasonText } from "./transports/headless";
 import { currentCopilotProvider, hasCursorInAppApi, isAgentConnected } from "./mcpServer/agentConnections";
+import { agentFolder } from "./workspaceFolder";
 import { codexTablePresent } from "./mcpServer/clients/codex";
 
 const REMEMBERED_SEND_MODE_KEY = "markdownCollab.rememberedSendMode";
@@ -37,8 +38,9 @@ export async function collectDiagnostics(
   const server = currentMcpServer();
 
   const registered = await safe(async () => {
-    if (folders.length === 0) return false;
-    const uri = vscode.Uri.joinPath(folders[0].uri, ".mcp.json");
+    const folder = agentFolder(context);
+    if (!folder) return false;
+    const uri = vscode.Uri.joinPath(folder.uri, ".mcp.json");
     const text = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString("utf8");
     return text.includes("markdown-collab");
   }, false);
@@ -100,7 +102,7 @@ export async function collectDiagnostics(
   // never its contents (a header the file happens to hold, port included, is
   // not secret; the token it never carries is what matters).
   const agentConnections = await safe<DiagnosticsSnapshot["agentConnections"]>(async () => {
-    const folder = folders[0];
+    const folder = agentFolder(context);
     const readFile = async (...rel: string[]): Promise<string | null> => {
       if (!folder) return null;
       try {

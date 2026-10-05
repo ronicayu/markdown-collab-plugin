@@ -36,6 +36,7 @@ import type { McpServerHandle } from "./index";
 import { MCP_SERVER_NAME, removeMcpJsonEntry } from "./registration";
 import { mergeCursorMcpJson, removeCursorMcpEntry } from "./clients/cursor";
 import { codexTablePresent, mergeCodexToml, removeCodexTable } from "./clients/codex";
+import { agentFolder } from "../workspaceFolder";
 import { genericSnippet, type SnippetClient } from "./clients/generic";
 import { CopilotMcpProvider, COPILOT_PROVIDER_ID, hasCopilotProviderApi } from "./clients/copilot";
 
@@ -43,13 +44,13 @@ export type SessionAgentId = "cursor-inapp" | "copilot";
 
 const CONNECTED_KEY_PREFIX = "markdownCollab.connectedAgents";
 
-function workspaceKey(): string | null {
-  const folder = vscode.workspace.workspaceFolders?.[0];
+function workspaceKey(context: vscode.ExtensionContext): string | null {
+  const folder = agentFolder(context);
   return folder ? `${CONNECTED_KEY_PREFIX}:${folder.uri.toString()}` : null;
 }
 
 function connectedSet(context: vscode.ExtensionContext): Set<SessionAgentId> {
-  const key = workspaceKey();
+  const key = workspaceKey(context);
   if (!key) return new Set();
   return new Set(context.workspaceState.get<SessionAgentId[]>(key, []));
 }
@@ -62,7 +63,7 @@ export function isAgentConnected(context: vscode.ExtensionContext, id: SessionAg
 
 /** Remember that `id` was connected, so activation re-registers it next time. */
 export async function markAgentConnected(context: vscode.ExtensionContext, id: SessionAgentId): Promise<void> {
-  const key = workspaceKey();
+  const key = workspaceKey(context);
   if (!key) return;
   const set = connectedSet(context);
   set.add(id);
@@ -71,7 +72,7 @@ export async function markAgentConnected(context: vscode.ExtensionContext, id: S
 
 /** Forget that `id` was connected (4.4: Disconnect Agent) — the inverse of `markAgentConnected`, so `reconnectAgents` doesn't resurrect it on the next restart. */
 export async function markAgentDisconnected(context: vscode.ExtensionContext, id: SessionAgentId): Promise<void> {
-  const key = workspaceKey();
+  const key = workspaceKey(context);
   if (!key) return;
   const set = connectedSet(context);
   set.delete(id);
@@ -325,7 +326,7 @@ export async function reconnectAgents(
     log.info("re-provided the Copilot MCP server definition");
   }
 
-  const folder = vscode.workspace.workspaceFolders?.[0];
+  const folder = agentFolder(context);
   if (folder) {
     try {
       await reconcileCodexConfig(folder.uri, handle.port);
