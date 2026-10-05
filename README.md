@@ -299,7 +299,7 @@ Copies the prompt to the clipboard. Paste into Claude however you like.
 | Setting | Default | Purpose |
 |---|---|---|
 | `markdownCollab.showLineNumbers` | `false` | Show the source line number beside each block in the inline comments view and the live editor. Numbers are lines in the `.md` file itself — frontmatter and the stored threads block are accounted for, so they match what you'd type into "Go to Line". |
-| `markdownCollab.agentName` | `Claude` | What the UI calls your AI agent — "Send to *name*", "*name* is working…", status text and notices. A label only: delivery is still chosen by `sendMode`. Command-palette titles are fixed and say "AI". |
+| `markdownCollab.agentName` | `Claude` | What the UI calls your AI agent — "Send to *name*", "*name* is working…", status text and notices. Delivery is still chosen by `sendMode`. New agent comments are signed with the lowercased name (`Codex CLI` → `codex-cli`); that author and the legacy `claude` both count as the agent. Command-palette titles are fixed and say "AI". |
 | `markdownCollab.sendMode` | `ask` | One of `ask`, `terminal`, `mcp`, `channel`, `mcp-channel`, `clipboard`. See [Choosing a send mode](#choosing-a-send-mode). |
 
 ## Storage layout

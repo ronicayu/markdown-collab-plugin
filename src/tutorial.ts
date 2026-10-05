@@ -14,6 +14,7 @@
 
 import { addSuggestion, addThread, appendReply, parse, replaceThread } from "./inlineComments/format";
 import { withRefreshedAnchorHash } from "./inlineComments/staleness";
+import { agentAuthorId } from "./agentName";
 
 /** Fixed timestamps: a tutorial that says "3 minutes ago" every time is a lie. */
 const T1 = "2026-01-15T10:00:00.000Z";
@@ -77,7 +78,7 @@ export function buildTutorialDocument(): string {
     withRefreshedAnchorHash(
       parse(answered.source),
       appendReply(answered.thread, {
-        author: "claude",
+        author: agentAuthorId(),
         body:
           "Yes — the threads are text, so git merges them like any other change. " +
           "A conflict looks like a normal conflict in the threads block at the end of the file.",
@@ -98,7 +99,7 @@ export function buildTutorialDocument(): string {
   // Two suggestions, so the "Accept all" affordance is visible too.
   const [cStart, cEnd] = anchor(source, "a sandbox");
   source = addSuggestion(source, cStart, cEnd, {
-    author: "claude",
+    author: agentAuthorId(),
     proposed: "a scratch document",
     note: "\"Sandbox\" is jargon; \"scratch document\" says what it is.",
     ts: T2,
@@ -106,7 +107,7 @@ export function buildTutorialDocument(): string {
 
   const [dStart, dEnd] = anchor(source, "no database to keep in sync");
   source = addSuggestion(source, dStart, dEnd, {
-    author: "claude",
+    author: agentAuthorId(),
     proposed: "no separate database to keep in sync",
     note: "Slightly clearer about what is being ruled out.",
     ts: T3,

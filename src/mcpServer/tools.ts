@@ -80,7 +80,7 @@ export const TOOLS: readonly McpTool[] = [
         ...FILE_PROP,
         actionable: {
           type: "boolean",
-          description: "Only threads that are open and not already answered by claude.",
+          description: "Only threads that are open and not already answered by the agent.",
         },
       },
       required: ["file"],
@@ -90,7 +90,7 @@ export const TOOLS: readonly McpTool[] = [
     name: "mc_reply",
     title: "Reply to a thread",
     description:
-      "Append a reply authored by claude to an existing thread. Use this to answer the human's question — " +
+      "Append a reply authored by the agent to an existing thread. Use this to answer the human's question — " +
       "it is not a way to edit the document.",
     inputSchema: {
       type: "object",

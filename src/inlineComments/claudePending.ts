@@ -29,7 +29,7 @@
 // Pure and vscode-free: the tracker takes an injected clock and scheduler so
 // the expiry path is testable without waiting ten minutes.
 
-import { agentName } from "../agentName";
+import { agentName, isAgentAuthor } from "../agentName";
 
 /** How long a thread may wait, with no signal at all, before we stop claiming Claude is working on it. */
 export const PENDING_TIMEOUT_MS = 10 * 60 * 1000;
@@ -106,7 +106,7 @@ export function isAnswered(snapshot: PendingThread, thread: PendingInputThread |
   if (thread.status === "resolved") return true;
   const live = liveComments(thread);
   if (live.length <= snapshot.commentCount) return false;
-  return live[live.length - 1]!.author === "claude";
+  return isAgentAuthor(live[live.length - 1]!.author);
 }
 
 /**

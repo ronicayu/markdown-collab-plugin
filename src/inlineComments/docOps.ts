@@ -28,6 +28,7 @@ import {
   type InlineThread,
   type ReviewCheckpoint,
 } from "./format";
+import { agentAuthorId, isAgentAuthor } from "../agentName";
 import { checkpointFor } from "./deltaReview";
 import { checkIntegrity, type IntegrityIssue } from "./integrity";
 import { hashAnchorText, staleThreadIds, withRefreshedAnchorHash } from "./staleness";
@@ -192,7 +193,7 @@ export function opList(source: string, actionable = false): ListResult {
       if (!actionable) return true;
       if (t.status !== "open") return false;
       const last = lastLiveComment(t);
-      return last !== undefined && last.author !== "claude";
+      return last !== undefined && !isAgentAuthor(last.author);
     })
     .map((t) => {
       const a = parsed.anchors.get(t.id);
@@ -241,7 +242,7 @@ export function opReply(
   // baseline for "text changed since this comment" (P1.3).
   const replied = withRefreshedAnchorHash(
     parse(source),
-    appendReply(thread, { author: "claude", body, ts: now() }),
+    appendReply(thread, { author: agentAuthorId(), body, ts: now() }),
   );
   const next = replaceThread(source, threadId, replied);
   assertNoNewIssues(source, next);
@@ -299,7 +300,7 @@ export function opOpen(
   const at = locatePassage(source, quote, occurrence);
   let result;
   try {
-    result = addThread(source, at, at + quote.length, { author: "claude", body, ts: now() });
+    result = addThread(source, at, at + quote.length, { author: agentAuthorId(), body, ts: now() });
   } catch (e) {
     // addThread refuses frontmatter, the threads region, and code.
     throw new DocOpError("not_anchorable", (e as Error).message, { quote });
@@ -351,7 +352,7 @@ export function opResolve(
   const next = replaceThread(source, threadId, {
     ...thread,
     status: "resolved",
-    resolvedBy: "claude",
+    resolvedBy: agentAuthorId(),
     resolvedTs: now(),
   });
   assertNoNewIssues(source, next);
@@ -442,7 +443,7 @@ export function opSuggest(
   let result;
   try {
     result = addSuggestion(source, at, at + quote.length, {
-      author: "claude",
+      author: agentAuthorId(),
       proposed,
       note: opts.note,
       threadId: opts.threadId,

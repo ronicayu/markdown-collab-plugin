@@ -15,8 +15,14 @@ Command-palette titles can't be templated by VS Code, so they are now neutral
 instead: *Ask AI to Review This Doc / These Docs*, *Next Unread from AI*,
 *Send Unresolved Comments to AI*, *Copy Review Prompt*. Command IDs, keybindings
 and settings keys are unchanged. Features that exist only for Claude Code (its
-terminal, skill install, MCP channel) keep their Claude names, and the on-disk
-comment author id (`"claude"`) is untouched since it is part of the file format.
+terminal, skill install, MCP channel) keep their Claude names.
+
+The agent's comment author follows the name too. Replies, threads, suggestions
+and resolutions the extension writes on the agent's behalf (the MCP review
+tools) are signed with the lowercased name (`Codex CLI` → `codex-cli`), and the
+AGENTS.md snippet tells other agents to sign the same way. "New from …", the
+"working…" row and the review digest recognise that author *and* `claude`, so
+every existing thread — and anything the Claude skill writes — still counts.
 
 ## 0.34.96 — 2026-09-06 (GitHub only)
 

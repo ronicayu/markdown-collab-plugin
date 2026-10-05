@@ -2,6 +2,8 @@
 // Shared by the inline-comments webview and unit tests. Pure functions —
 // no DOM, no vscode API dependency — so they work in both contexts.
 
+import { isAgentAuthor } from "../agentName";
+
 export interface ClaudeUnreadComment {
   author: string;
   deleted?: boolean;
@@ -15,8 +17,8 @@ export interface ClaudeUnreadThread {
 /**
  * A thread is "unread from Claude" when:
  *   - it's open,
- *   - the earliest non-deleted comment is authored by `claude`, and
- *   - no non-claude comment exists in the thread yet.
+ *   - the earliest non-deleted comment is the agent's (`isAgentAuthor`), and
+ *   - no human comment exists in the thread yet.
  * Once a human replies (or the thread resolves) it no longer counts as
  * unread — see `isClaudeReviewed`.
  */
@@ -24,8 +26,8 @@ export function isClaudeUnread(t: ClaudeUnreadThread): boolean {
   if (t.status !== "open") return false;
   const live = t.comments.filter((c) => !c.deleted);
   if (live.length === 0) return false;
-  if (live[0].author !== "claude") return false;
-  return !live.some((c) => c.author !== "claude");
+  if (!isAgentAuthor(live[0].author)) return false;
+  return live.every((c) => isAgentAuthor(c.author));
 }
 
 /**
@@ -36,7 +38,7 @@ export function isClaudeUnread(t: ClaudeUnreadThread): boolean {
  */
 export function isClaudeReviewed(t: ClaudeUnreadThread): boolean {
   const live = t.comments.filter((c) => !c.deleted);
-  if (live.length === 0 || live[0].author !== "claude") return false;
+  if (live.length === 0 || !isAgentAuthor(live[0].author)) return false;
   if (t.status === "resolved") return true;
-  return live.some((c) => c.author !== "claude");
+  return live.some((c) => !isAgentAuthor(c.author));
 }
