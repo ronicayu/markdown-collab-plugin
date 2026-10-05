@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as path from "path";
 import { ReviewView } from "../reviewView";
+import { addThread } from "../inlineComments/format";
 import { Uri, commands, workspace } from "./vscode-stub";
 
 /**
@@ -93,7 +94,7 @@ afterEach(() => {
 });
 
 describe("ReviewView", () => {
-  it("constructor does not scan (lazy)", async () => {
+  it("constructor does not scan; activation starts it with ensureScanned", async () => {
     const findFiles = vi.fn(async () => [] as any[]);
     const readFile = vi.fn(async () => null);
     const view = new ReviewView(makeOutputChannel(), {
@@ -107,7 +108,7 @@ describe("ReviewView", () => {
     view.dispose();
   });
 
-  it("first getChildren(undefined) triggers the scan and returns [] synchronously", async () => {
+  it("getChildren(undefined) before any scan starts one and returns [] synchronously", async () => {
     const mdPath = path.join(WS_ROOT, "docs/a.md");
     const findFiles = vi.fn(async () => [Uri.file(mdPath)] as any[]);
     const readFile = vi.fn(async () => docWithThreads([{ id: "abc12" }]));
@@ -422,10 +423,66 @@ describe("ReviewView cross-file unread walk", () => {
       readFile: async () => docWithThreads([{ id: "aaa11", author: "claude" }]),
       watch: makeWatch().watch,
     });
-    view.getChildren(undefined); // user expands the tree — starts the lazy scan
+    view.getChildren(undefined); // the tree asks first and starts the scan
     await view.ensureScanned();
     expect(findFiles).toHaveBeenCalledTimes(1);
     view.dispose();
+  });
+
+  it("getChildren during an activation scan does not scan again, and lists the files once it finishes", async () => {
+    const findFiles = vi.fn(async () => [Uri.file(A)] as any[]);
+    const view = new ReviewView(makeOutputChannel(), {
+      findFiles,
+      readFile: async () => docWithThreads([{ id: "aaa11", author: "claude" }]),
+      watch: makeWatch().watch,
+    });
+    const refreshed = new Promise<void>((resolve) => {
+      const disp = view.onDidChangeTreeData(() => {
+        disp.dispose();
+        resolve();
+      });
+    });
+    void view.ensureScanned();
+    expect(view.getChildren(undefined)).toEqual([]);
+    await refreshed;
+    expect((view.getChildren(undefined) as any[]).map((n) => n.docPath)).toEqual([A]);
+    expect(findFiles).toHaveBeenCalledTimes(1);
+    view.dispose();
+  });
+
+  it("ensureScanned waits for a scan already in flight", async () => {
+    const view = new ReviewView(makeOutputChannel(), {
+      findFiles: async () => [Uri.file(A)] as any[],
+      readFile: async () => docWithThreads([{ id: "aaa11", author: "claude" }]),
+      watch: makeWatch().watch,
+    });
+    void view.ensureScanned();
+    await view.ensureScanned();
+    expect(view.listClaudeUnread().map((u) => u.docPath)).toEqual([A]);
+    view.dispose();
+  });
+
+  it("a workspace folder change rescans without the tree being expanded", async () => {
+    let onFolders = () => {};
+    (workspace as any).onDidChangeWorkspaceFolders = (cb: () => void) => {
+      onFolders = cb;
+      return { dispose: () => undefined };
+    };
+    try {
+      const findFiles = vi.fn(async () => [Uri.file(A)] as any[]);
+      const view = new ReviewView(makeOutputChannel(), {
+        findFiles,
+        readFile: async () => docWithThreads([{ id: "aaa11", author: "claude" }]),
+        watch: makeWatch().watch,
+      });
+      await view.ensureScanned();
+      onFolders();
+      await view.ensureScanned();
+      expect(findFiles).toHaveBeenCalledTimes(2);
+      view.dispose();
+    } finally {
+      (workspace as any).onDidChangeWorkspaceFolders = () => ({ dispose: () => undefined });
+    }
   });
 
   it("walks claude-unread threads across files in path order", async () => {
@@ -490,6 +547,73 @@ describe("ReviewView cross-file unread walk", () => {
       watch: makeWatch().watch,
     });
     expect(view.listClaudeUnread()).toEqual([]);
+    view.dispose();
+  });
+});
+
+describe("ReviewView integrity notifications", () => {
+  const MD = path.join(WS_ROOT, "docs/a.md");
+  const PROSE = "# Guide\n\nThe retry policy uses exponential backoff.\n";
+  const at = PROSE.indexOf("exponential backoff");
+  const { source: healthy, thread } = addThread(PROSE, at, at + "exponential backoff".length, {
+    author: "ronica",
+    body: "configurable?",
+    ts: "2026-07-25T12:00:00.000Z",
+  });
+  const brokenClose = healthy.replace(`<!--mc:/a:${thread.id}-->`, "");
+  const brokenCloseNoThreads = brokenClose.slice(0, brokenClose.indexOf("<!--mc:threads:begin-->"));
+
+  const noop = () => undefined;
+  const silentLogger: any = { trace: noop, info: noop, warn: noop, error: noop, scope: () => silentLogger };
+
+  function viewOver(getText: () => string) {
+    const onIntegrityIssues = vi.fn();
+    const w = makeWatch();
+    const view = new ReviewView(silentLogger, {
+      findFiles: async () => [Uri.file(MD)] as any[],
+      readFile: async () => getText(),
+      watch: w.watch,
+      onIntegrityIssues,
+    });
+    return { view, w, onIntegrityIssues };
+  }
+
+  it("the startup scan does not warn about a file that was already damaged", async () => {
+    const { view, onIntegrityIssues } = viewOver(() => brokenClose);
+    await view.ensureScanned();
+    expect(onIntegrityIssues).not.toHaveBeenCalled();
+    view.dispose();
+  });
+
+  it("damage that appears after the scan is reported", async () => {
+    let text = healthy;
+    const { view, w, onIntegrityIssues } = viewOver(() => text);
+    await view.ensureScanned();
+    text = brokenClose;
+    w.change(MD);
+    await vi.waitFor(() => expect(onIntegrityIssues).toHaveBeenCalledTimes(1));
+    view.dispose();
+  });
+
+  it("a file already damaged at startup is not reported again when it changes without a new problem", async () => {
+    let text = brokenClose;
+    const { view, w, onIntegrityIssues } = viewOver(() => text);
+    await view.ensureScanned();
+    text = brokenClose + "\nAn unrelated edit.\n";
+    w.change(MD);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(onIntegrityIssues).not.toHaveBeenCalled();
+    view.dispose();
+  });
+
+  it("a file already damaged at startup is reported when it gets a new, different problem", async () => {
+    let text = brokenClose;
+    const { view, w, onIntegrityIssues } = viewOver(() => text);
+    await view.ensureScanned();
+    expect(onIntegrityIssues).not.toHaveBeenCalled();
+    text = brokenCloseNoThreads;
+    w.change(MD);
+    await vi.waitFor(() => expect(onIntegrityIssues).toHaveBeenCalledTimes(1));
     view.dispose();
   });
 });

@@ -58,11 +58,12 @@ export function activate(context: vscode.ExtensionContext): void {
     );
   }
 
-  // Cross-file Markdown Review tree. Constructor does NOT walk the FS — the
-  // scan fires on first root-level getChildren when the user expands the view,
-  // keeping activation cheap. It reads inline-comment threads straight from
-  // each `.md` and refreshes single files via a `**/*.md` watcher.
+  // Cross-file Markdown Review tree. It reads inline-comment threads straight
+  // from each `.md` and refreshes single files via a `**/*.md` watcher. The
+  // scan starts here, not awaited: the tree stays hidden until a scan finds
+  // threads, and the broken-marker warning only runs on scanned files.
   const reviewView = new ReviewView(rootLog.scope("review"));
+  void reviewView.ensureScanned();
   const reviewTree = vscode.window.createTreeView("markdownCollab.review", {
     treeDataProvider: reviewView,
   });

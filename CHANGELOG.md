@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.35.34 — 2026-10-05 (GitHub only)
+
+### Fixed: no warning when an agent broke a comment marker, and the Comment Threads view never appeared
+
+The workspace was only scanned for comment threads after you opened the Comment
+Threads view or ran Next Unread. But that view stays hidden until a scan finds
+threads, so neither happened by itself: the view never showed up, and a marker
+broken by hand got no warning or Repair offer. The scan now starts when the
+extension activates, and again when you add or remove a workspace folder. The
+warning is for damage that appears while the window is open; files already
+damaged when it opens are not announced. (#18)
+
+### Tests
+
+- Activation alone shows the Comment Threads view for a workspace with an open
+  thread, and a marker broken afterwards raises the warning.
+- The startup scan stays quiet about a file that was already damaged, and a new,
+  different problem in it is still reported.
+- The tree asking mid-scan doesn't scan twice, Next Unread waits for a scan
+  already running, and a workspace folder change rescans.
+
 ## 0.35.33 — 2026-10-05 (GitHub only)
 
 ### Fixed: updating an older Markdown Collab skill was presented as a conflict

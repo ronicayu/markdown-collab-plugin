@@ -279,12 +279,9 @@ suite("All extension commands", () => {
       "claude",
     );
     try {
-      // `ReviewView`'s scan is lazy and this may be the first thing in the
-      // whole suite to touch it, so the very first invocation can land on
-      // nothing until the workspace scan (or the fs watcher, on a warm
-      // cache) catches up — retry the command itself rather than poll a
-      // separate readiness signal the view doesn't expose. Once the cache
-      // is warm this resolves on the first call.
+      // The fixture was written just now; if the fs watcher hasn't reported
+      // it yet the first invocation can land on nothing, so retry the command
+      // itself rather than poll a readiness signal the view doesn't expose.
       await waitFor(async () => {
         await vscode.commands.executeCommand("markdownCollab.nextUnreadFromClaude");
         return activeTabIsLiveEditorOn(uriA);
