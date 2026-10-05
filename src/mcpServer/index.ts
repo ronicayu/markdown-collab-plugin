@@ -489,24 +489,37 @@ async function refuseSymlink(targetFsPath: string): Promise<string | null> {
 
 const CONSENT_KEY = "markdownCollab.mcpJsonConsent";
 
+function consentKey(folder: vscode.WorkspaceFolder): string {
+  return `${CONSENT_KEY}:${folder.uri.toString()}`;
+}
+
+/** Whether the human said yes to the `.mcp.json` registration in this workspace. */
+export function mcpJsonConsentGranted(context: vscode.ExtensionContext): boolean {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  return folder !== undefined && context.workspaceState.get<"yes" | "no">(consentKey(folder)) === "yes";
+}
+
 /** What `ensureMcpJsonRegistration` actually did, for a caller (the Connect
  *  an Agent command) that wants to show its own toast only when something
  *  really happened rather than after a declined consent prompt. */
 export type McpJsonRegistrationOutcome = "declined" | "written" | "unchanged";
 
 /**
- * Offer to register the server in the workspace's `.mcp.json`, once per
- * workspace. `.mcp.json` is a file people commit and review, so it is never
- * written without a yes — and the answer (either way) is remembered.
+ * Offer to register the server in the workspace's `.mcp.json`. `.mcp.json` is
+ * a file people commit and review, so it is never written without a yes. A
+ * yes and an explicit "Not now" are remembered; a dismissed prompt is not, so
+ * it comes back on a later activation. `askOnlyIf` gates the prompt itself
+ * (not a remembered yes): activation passes "Claude Code is on this machine".
  */
 export async function ensureMcpJsonRegistration(
   context: vscode.ExtensionContext,
   handle: McpServerHandle,
   log: Logger,
+  askOnlyIf?: () => Promise<boolean>,
 ): Promise<McpJsonRegistrationOutcome> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) return "declined";
-  const key = `${CONSENT_KEY}:${folder.uri.toString()}`;
+  const key = consentKey(folder);
   const answer = context.workspaceState.get<"yes" | "no">(key);
   if (answer === "no") return "declined";
 
@@ -519,17 +532,18 @@ export async function ensureMcpJsonRegistration(
   }
 
   if (answer !== "yes") {
+    if (askOnlyIf && !(await askOnlyIf())) return "declined";
     const choice = await vscode.window.showInformationMessage(
       "Let Claude Code call Markdown Collab's review tools directly? This adds a `markdown-collab` entry to " +
         "`.mcp.json` in this workspace. No token is written to the file — it travels through the terminal " +
-        "environment. Sending stays on your current mode unless you pick MCP.",
+        "environment.",
       "Add to .mcp.json",
       "Not now",
     );
     if (choice !== "Add to .mcp.json") {
-      // "Not now" is remembered so this isn't asked on every activation; the
-      // command re-offers it when the human wants it.
-      await context.workspaceState.update(key, "no");
+      // Only an explicit "Not now" is remembered; a dismissed toast is asked
+      // again later. The command re-offers it when the human wants it.
+      if (choice === "Not now") await context.workspaceState.update(key, "no");
       return "declined";
     }
     await context.workspaceState.update(key, "yes");
@@ -556,5 +570,5 @@ export async function ensureMcpJsonRegistration(
 export async function resetMcpJsonConsent(context: vscode.ExtensionContext): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) return;
-  await context.workspaceState.update(`${CONSENT_KEY}:${folder.uri.toString()}`, undefined);
+  await context.workspaceState.update(consentKey(folder), undefined);
 }

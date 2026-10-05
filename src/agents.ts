@@ -62,6 +62,15 @@ function findSection(text: string): { start: number; end: number } | null {
   return { start: heading.index, end: next ? bodyStart + next.index : text.length };
 }
 
+/** Whether the workspace's AGENTS.md already carries our section. Read-only. */
+export async function agentsSectionPresent(workspaceRoot: string): Promise<boolean> {
+  try {
+    return findSection(await fs.readFile(path.join(workspaceRoot, "AGENTS.md"), "utf8")) !== null;
+  } catch {
+    return false;
+  }
+}
+
 export type AgentsSnippetOutcome =
   /** No AGENTS.md; one was written with the snippet. */
   | "created"

@@ -8,7 +8,7 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import type { Logger } from "../logging";
-import { ensureAgentsSnippet, type AgentsSnippetOutcome } from "../agents";
+import { agentsSectionPresent, ensureAgentsSnippet, type AgentsSnippetOutcome } from "../agents";
 import { checkClaudeSkill, installClaudeSkill, removeLegacySkill, skillFingerprint } from "../skill";
 import {
   LOCAL_MARKETPLACE_DIRNAME,
@@ -23,6 +23,7 @@ import { buildTutorialDocument, TUTORIAL_REL } from "../tutorial";
 import {
   currentMcpServer,
   ensureMcpJsonRegistration,
+  mcpJsonConsentGranted,
   resetMcpJsonConsent,
   type McpServerHandle,
 } from "../mcpServer";
@@ -91,6 +92,7 @@ async function invokeOpenTutorial(log: Logger): Promise<void> {
 }
 
 const SKILL_PROMPT_KEY = "markdownCollab.skillPromptedFingerprint";
+const NO_AGENT_PROMPT_KEY = "markdownCollab.noAgentPrompted";
 /** The extension version the plugin-drift check last ran for. */
 const PLUGIN_PROMPT_KEY = "markdownCollab.pluginPromptedVersion";
 
@@ -146,7 +148,8 @@ function pluginPaths(context: vscode.ExtensionContext): { sourcePluginDir: strin
  * plugin comes from this extension's own local marketplace, so a version that
  * differs from the extension's means the Claude side is stale. Standalone
  * skill installs keep the fingerprint check they always had, gated per skill
- * version so it prompts once, not every time.
+ * version so it prompts once, not every time. "No agent connected yet" is said
+ * once per machine, and not at all to a workspace that already has an agent.
  */
 export async function maybePromptSkillUpdate(
   context: vscode.ExtensionContext,
@@ -186,18 +189,24 @@ export async function maybePromptSkillUpdate(
   }
   if (status === "current") return;
 
-  // Prompt at most once per bundled-skill version, so we don't nag on every
-  // window the user opens.
-  const fingerprint = skillFingerprint();
-  if (context.globalState.get<string>(SKILL_PROMPT_KEY) === fingerprint) return;
-  await context.globalState.update(SKILL_PROMPT_KEY, fingerprint);
-
   // 1.1: the first-activation nudge — nothing set up yet — points at Connect
   // an Agent, the one setup front door, rather than assuming Claude Code.
   // "out of date" is a different situation (something *is* set up, and it's
   // specifically the Claude skill that's stale), so that branch still goes
   // straight to the Claude-specific update.
   const missing = status === "missing";
+  if (missing) {
+    if (context.globalState.get<boolean>(NO_AGENT_PROMPT_KEY)) return;
+    if (await anyAgentConnected(context)) return;
+    await context.globalState.update(NO_AGENT_PROMPT_KEY, true);
+  } else {
+    // Prompt at most once per bundled-skill version, so we don't nag on every
+    // window the user opens.
+    const fingerprint = skillFingerprint();
+    if (context.globalState.get<string>(SKILL_PROMPT_KEY) === fingerprint) return;
+    await context.globalState.update(SKILL_PROMPT_KEY, fingerprint);
+  }
+
   const action = missing ? "Connect an Agent" : "Update";
   const message = missing
     ? "Markdown Collab: no agent is connected yet to read and act on your comments."
@@ -207,6 +216,13 @@ export async function maybePromptSkillUpdate(
   await vscode.commands.executeCommand(
     missing ? "markdownCollab.connectAgent" : "markdownCollab.installClaudeSkill",
   );
+}
+
+async function anyAgentConnected(context: vscode.ExtensionContext): Promise<boolean> {
+  if (isAgentConnected(context, "copilot") || isAgentConnected(context, "cursor-inapp")) return true;
+  if (mcpJsonConsentGranted(context)) return true;
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  return folder !== undefined && agentsSectionPresent(folder.uri.fsPath);
 }
 
 async function updatePluginFromNudge(

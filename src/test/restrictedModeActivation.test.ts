@@ -2,7 +2,9 @@ import { readFileSync } from "fs";
 import { resolve } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { commands, window, workspace } from "./vscode-stub";
-import { startMcpServer } from "../mcpServer";
+import { ensureMcpJsonRegistration, startMcpServer } from "../mcpServer";
+import { reconnectAgents } from "../mcpServer/agentConnections";
+import { claudeBinaryFound } from "../transports/headlessHost";
 import { maybePromptSkillUpdate } from "../commands/setup";
 import { getCliRunner, setCliGate, setCliRunner } from "../pr/cli";
 
@@ -123,5 +125,45 @@ describe("activation in Restricted Mode", () => {
     for (const controller of ["new PrReviewController(", "new UncommittedChangesController("]) {
       expect(source.indexOf(controller)).toBeGreaterThan(gate);
     }
+  });
+});
+
+describe("activation with the tool server running", () => {
+  const handle = { url: "http://127.0.0.1:1/mcp", token: "t", port: 1, dispose: vi.fn() };
+
+  beforeEach(() => {
+    vi.mocked(startMcpServer).mockResolvedValue(handle as never);
+    vi.mocked(reconnectAgents).mockReset().mockResolvedValue(undefined);
+    vi.mocked(ensureMcpJsonRegistration).mockReset();
+    vi.mocked(claudeBinaryFound).mockReset().mockResolvedValue(false);
+  });
+
+  afterEach(() => {
+    vi.mocked(startMcpServer).mockImplementation(async () => null);
+  });
+
+  it("reconnects agents before the .mcp.json prompt, which can sit unanswered", async () => {
+    vi.mocked(ensureMcpJsonRegistration).mockReturnValue(new Promise(() => undefined));
+
+    await activateExtension();
+
+    await vi.waitFor(() => expect(ensureMcpJsonRegistration).toHaveBeenCalledTimes(1));
+    expect(reconnectAgents).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(reconnectAgents).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(ensureMcpJsonRegistration).mock.invocationCallOrder[0],
+    );
+  });
+
+  it("gates the .mcp.json prompt on Claude Code being on this machine", async () => {
+    vi.mocked(ensureMcpJsonRegistration).mockResolvedValue("declined");
+
+    await activateExtension();
+
+    await vi.waitFor(() => expect(ensureMcpJsonRegistration).toHaveBeenCalledTimes(1));
+    const gate = vi.mocked(ensureMcpJsonRegistration).mock.calls[0][3]!;
+    vi.mocked(claudeBinaryFound).mockResolvedValue(true);
+    expect(await gate()).toBe(true);
+    vi.mocked(claudeBinaryFound).mockResolvedValue(false);
+    expect(await gate()).toBe(false);
   });
 });

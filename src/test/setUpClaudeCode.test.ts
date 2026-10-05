@@ -127,6 +127,15 @@ describe("Set Up Claude Code and Connect an Agent when `claude` isn't found", ()
     await handlers.get("markdownCollab.connectAgent")!();
 
     expect(ensureMcpJsonRegistration).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ensureMcpJsonRegistration).mock.calls[0]).toHaveLength(3);
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("registers .mcp.json from Register Review Tools without asking whether `claude` is on this machine", async () => {
+    await handlers.get("markdownCollab.registerMcpServer")!();
+
+    expect(lookupClaude).not.toHaveBeenCalled();
+    expect(ensureMcpJsonRegistration).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ensureMcpJsonRegistration).mock.calls[0]).toHaveLength(3);
   });
 });

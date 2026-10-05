@@ -14,7 +14,7 @@ import {
   startMcpServer,
 } from "./mcpServer";
 import { reconnectAgents } from "./mcpServer/agentConnections";
-import { lookupClaude, sweepHeadlessTempDirs } from "./transports/headlessHost";
+import { claudeBinaryFound, lookupClaude, sweepHeadlessTempDirs } from "./transports/headlessHost";
 import { activateClaudeStatusBar } from "./claudeStatusBar";
 import { TerminalTracker } from "./transports/terminalTracker";
 import { dispatchReviewPayload, registerSendCommands } from "./commands/send";
@@ -185,12 +185,15 @@ export function activate(context: vscode.ExtensionContext): void {
     }).then(async (handle) => {
       if (!handle) return;
       context.subscriptions.push({ dispose: () => handle.dispose() });
-      await ensureMcpJsonRegistration(context, handle, rootLog.scope("mcp"));
       // Re-establish every client whose connection can go stale across a
       // restart — Cursor's in-app agent and Copilot's provider are told the
       // token fresh every session, and Codex's config carries a literal port —
-      // now that there's a handle to hand them (10x-plan-4 P1.1).
+      // now that there's a handle to hand them (10x-plan-4 P1.1). Ahead of the
+      // `.mcp.json` prompt, which can sit unanswered.
       await reconnectAgents(context, handle, rootLog.scope("mcp"));
+      await ensureMcpJsonRegistration(context, handle, rootLog.scope("mcp"), () =>
+        claudeBinaryFound(rootLog.scope("headless")),
+      );
       // Warm the `claude` lookup in the background, so the first send-mode
       // picker and the review view's empty state don't wait on a
       // `claude --version` probe.

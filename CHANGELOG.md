@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.35.39 — 2026-10-05 (GitHub only)
+
+### Fixed: the startup prompts assumed you use Claude Code
+
+The ".mcp.json" prompt now appears only when Claude Code is on your machine, no
+longer mentions a send mode that doesn't exist, and a dismissed prompt is asked
+again later instead of counting as "Not now". "No agent is connected yet" is no
+longer shown when you've already connected Copilot, Cursor or another agent
+(or AGENTS.md has the Markdown Collab section), and is shown once instead of
+again after each update. Copilot and Cursor are now reconnected before the
+".mcp.json" prompt, so leaving it unanswered no longer holds them up. (#7)
+
+### Tests
+
+- The ".mcp.json" prompt: not asked without Claude Code, never stored when
+  dismissed, stored as no only for "Not now", the remembered yes still refreshes
+  the port, and Register Review Tools asks without checking for Claude Code.
+- The "no agent is connected" nudge: skipped for Copilot, Cursor, an AGENTS.md
+  section or an accepted `.mcp.json`; shown once per machine; the out-of-date
+  nudge still shows once per skill version.
+- Activation reconnects agents before the ".mcp.json" prompt even when it is
+  never answered.
+
 ## 0.35.38 — 2026-10-05 (GitHub only)
 
 ### Fixed: setting up Claude Code on a machine without it said "installed"
