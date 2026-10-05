@@ -91,7 +91,7 @@ In this mode Claude can read files and use this extension's review tools, and no
 
 If a run can't start, the send goes to your terminal and the toast says why. If Claude Code can't load the review tools (MCP disabled by policy), headless stops being offered in that workspace until you reset the send mode.
 
-**Restricted Mode.** In a workspace your editor doesn't trust, you can open the review view, read threads, add, reply to and resolve comments, and copy prompts to the clipboard. Sending to a terminal, running Claude, the review tool server, agent setup (AGENTS.md, `.mcp.json`, the Claude Code plugin), the playground, the conventions editor and the Git and PR views stay off until you trust the workspace; each says so when you use it. Your workspace's conventions file isn't added to copied prompts either.
+**Restricted Mode.** In a workspace your editor doesn't trust, you can open the review view, read threads, add, reply to and resolve comments, and copy prompts to the clipboard. Sending to a terminal, running Claude, the review tool server, agent setup (AGENTS.md, the review skill, `.mcp.json`, the Claude Code plugin), the playground, the conventions editor and the Git and PR views stay off until you trust the workspace; each says so when you use it. Your workspace's conventions file isn't added to copied prompts either.
 
 ### What the status bar shows
 
@@ -110,7 +110,7 @@ Every review request has a pulse, whichever way it was sent. Each state is somet
 The file format is the contract, and any agent that reads project instructions can act on it — Cursor, Windsurf, Codex, Copilot, or anything else:
 
 1. **Copy the prompt.** Set the send mode to `clipboard`, or pick it from the picker on your first send — the prompt goes to your clipboard instead of a terminal.
-2. **The agent edits the file, following `AGENTS.md`.** [`docs/format.md`](docs/format.md) is the full contract — every marker, the threads block, the suggestion shape. The `AGENTS.md` snippet (written or refreshed by **Connect an Agent…**, or the hidden **Initialize AGENTS.md** command) points any agent that reads it at the same rules, so it can reply and open threads without a tool of its own.
+2. **The agent edits the file, following `AGENTS.md`.** [`docs/format.md`](docs/format.md) is the full contract — every marker, the threads block, the suggestion shape. The `AGENTS.md` snippet (written or refreshed by **Connect an Agent…**, or the hidden **Initialize AGENTS.md** command) points any agent that reads it at the same rules, so it can reply and open threads without a tool of its own. **Connect an Agent…** also installs the review skill — the same workflow Claude Code gets — in `~/.agents/skills/markdown-collab/`. The folder is machine-wide, and Codex, Cursor, Copilot and Windsurf all read it; Disconnect leaves it in place, and the extension refreshes it when it updates.
 3. **Repair Comment Anchors is the safety net.** If the agent breaks a marker anyway, it fixes what can be fixed without guessing. `mdc check` does the same check — but only from inside a Claude Code session; `mdc` isn't on any other agent's PATH.
 
 ### Optional: undoable edits through MCP
@@ -120,11 +120,11 @@ For an agent that can call MCP tools, **Connect an Agent…** hooks the review t
 | Client | What it writes |
 |---|---|
 | Claude Code | Installs the Claude Code plugin and adds a `markdown-collab` entry to the workspace's `.mcp.json`, in one step. If Claude is already running, `/mcp` reconnects it. |
-| Cursor, in-app agent | Nothing on disk. Registered live for the session, and again after each reload. |
+| Cursor, in-app agent | No config file. Registered live for the session, and again after each reload. |
 | Cursor CLI | `.cursor/mcp.json` with environment references. Open a new terminal in this window and start `cursor-agent` there. |
-| Windsurf (Cascade) | AGENTS.md only; nothing else on disk. A scratch document shows the address and a per-session token for you to paste into Windsurf's MCP config (`~/.codeium/windsurf/mcp_config.json`). The token changes on every reload, so paste it again after one. |
+| Windsurf (Cascade) | Nothing beyond AGENTS.md and the review skill. A scratch document shows the address and a per-session token for you to paste into Windsurf's MCP config (`~/.codeium/windsurf/mcp_config.json`). The token changes on every reload, so paste it again after one. |
 | Codex | A `[mcp_servers.markdown-collab]` table in `.codex/config.toml`, with the loopback address and the name of the token's environment variable. Codex loads it once you trust the project, so run `codex` in this folder from a new terminal in this window. |
-| GitHub Copilot, agent mode | Nothing on disk. Enable the Markdown Collab tools in Copilot's tool picker. |
+| GitHub Copilot, agent mode | No config file. Enable the Markdown Collab tools in Copilot's tool picker. |
 | Anything else | A scratch document with the address, the token, and a snippet to copy. |
 
 The token is never written to `.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, or any file you'd commit — those carry only environment references, or (Codex) the name of the environment variable that holds it. It is written to one file, `.markdown-collab/.mcp-server.json`, at permissions only your OS user can read, git-ignored, and deleted when the window closes. Comments written by another agent are credited to it: the sidebar says *"3 new from Codex"*, and the card says who replied.

@@ -10,6 +10,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import { describe, expect, it } from "vitest";
+import { HAND_EDIT_RULES } from "../handEditRules";
+import { FORMAT_SPEC_URL } from "../agents";
 import { SKILL_CONTENT } from "../skill";
 import {
   HEADLESS_PREAMBLE,
@@ -130,11 +132,18 @@ const INTENTIONAL_CHANGES: Array<[string, string]> = [
     'the signal that ends the human\'s "Claude is working…" wait.',
     'the signal that clears the "Waiting for the agent…" row the human is watching.',
   ],
+  // Cursor and Copilot also read ~/.claude/skills, so a machine with both this
+  // skill and the `markdown-collab` one can load them together.
+  [
+    "The user runs the IDE; you do the writing.",
+    "The user runs the IDE; you do the writing. If you are not Claude Code and have a `markdown-collab` skill, use that one instead of this.",
+  ],
 ];
 
 const legacy = renderSkill("legacy");
 const plugin = renderSkill("plugin");
 const headless = renderSkill("headless");
+const agents = renderSkill("agents");
 
 function frontmatter(text: string): Record<string, string> | null {
   const m = /^---\n([\s\S]*?)\n---\n/.exec(text);
@@ -163,6 +172,19 @@ describe("legacy rendering", () => {
   it("invokes the CLI by its file path under ~/.claude/skills", () => {
     expect(frontmatter(legacy)?.name).toBe("vs-markdown-collab");
     expect(legacy).toContain("`node ~/.claude/skills/vs-markdown-collab/mdc.mjs <command> <file> [args]`");
+  });
+});
+
+describe("the redirect for a reader that is not Claude Code", () => {
+  const redirect = "If you are not Claude Code and have a `markdown-collab` skill, use that one instead of this.";
+
+  it("is in the standalone skill, in its opening paragraph", () => {
+    expect(legacy).toContain(redirect);
+    expect(legacy.indexOf(redirect)).toBeLessThan(legacy.indexOf("## Storage format"));
+  });
+
+  it("is not in the plugin's skill, nor in any other rendering", () => {
+    for (const text of [plugin, headless, agents]) expect(text).not.toContain("use that one instead of this");
   });
 });
 
@@ -229,6 +251,58 @@ describe("headless rendering (tools only)", () => {
 
   it("is the headless system prompt, after the preamble", () => {
     expect(headlessSystemPrompt()).toBe(`${HEADLESS_PREAMBLE}\n\n${headless}`);
+  });
+});
+
+describe("agents rendering (the skill every agent but Claude Code reads)", () => {
+  it("is named markdown-collab and carries the workflow's description, within the 1024-character limit", () => {
+    const fm = frontmatter(agents)!;
+    expect(fm.name).toBe("markdown-collab");
+    expect(fm.description).toBe(frontmatter(legacy)!.description);
+    expect(fm.description.length).toBeLessThanOrEqual(1024);
+  });
+
+  it("never mentions mdc, the plugin, Claude Code, hooks or the hand-editing appendix", () => {
+    const text = agents.replace(FORMAT_SPEC_URL, "").toLowerCase();
+    for (const word of ["mdc", "mdc.mjs", "plugin", "Claude Code", "hook", "(CLI:", "node ~/.claude", "Edit tool", "appendix"]) {
+      expect(text, word).not.toContain(word.toLowerCase());
+    }
+  });
+
+  it("names every MCP tool", () => {
+    for (const tool of ["mc_list", "mc_reply", "mc_rewrite", "mc_edit", "mc_open", "mc_resolve", "mc_suggest", "mc_accept", "mc_reject", "mc_check", "mc_status"]) {
+      expect(agents, tool).toContain(tool);
+    }
+  });
+
+  it("carries every by-hand rule, then asks the human to run Repair Comment Anchors as the check", () => {
+    for (const rule of HAND_EDIT_RULES) expect(agents).toContain(`- ${rule}`);
+    const rulesAt = agents.indexOf(`- ${HAND_EDIT_RULES[0]}`);
+    expect(agents.indexOf("ask the human to run **Markdown Collab: Repair Comment Anchors**", rulesAt)).toBeGreaterThan(rulesAt);
+  });
+
+  it("explains how to detect a reviewed file and points at the format spec", () => {
+    expect(agents).toContain("the literal string `<!--mc:threads:begin-->`");
+    expect(agents).toContain(FORMAT_SPEC_URL);
+  });
+
+  it("puts the tool path before the by-hand path, and the tool check last", () => {
+    expect(agents.indexOf("### Path 1 — the MCP tools")).toBeLessThan(agents.indexOf("### Path 2 — by hand"));
+    expect(agents).toContain("**`mc_check` ends the pass**");
+  });
+
+  it("does not tell a reader that is not Claude to author comments as claude, or to say VS Code", () => {
+    expect(agents).not.toContain("authored by `claude`");
+    expect(agents).not.toContain('`"claude"`');
+    expect(agents).not.toContain("VS Code");
+  });
+
+  it("keeps the workflow sections every rendering shares", () => {
+    expect(agents).toContain("Rank concerns by severity and open threads for the **five** that matter most.");
+    expect(agents).toContain("It is the **primary filter**");
+    expect(agents).toContain("## Suggest Mode");
+    expect(agents).toContain("## Reporting");
+    expect(agents).toContain("do NOT re-anchor to nearby unrelated text");
   });
 });
 

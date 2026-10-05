@@ -5,6 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vite
 import * as vscode from "vscode";
 import { registerSetupCommands } from "../commands/setup";
 
+const home = vi.hoisted(() => ({ dir: "" }));
+
+vi.mock("os", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("os")>()),
+  homedir: () => home.dir,
+}));
+
 const URL = "http://127.0.0.1:51234/mcp";
 const TOKEN = "cafe".repeat(16);
 
@@ -21,7 +28,6 @@ describe("Connect an Agent → Windsurf (Cascade)", () => {
   const handlers = new Map<string, () => Promise<void>>();
   let workspaceDir: string;
   let homeDir: string;
-  let previousHome: string | undefined;
   let ask: Mock<any[], any>;
   let openTextDocument: Mock<any[], any>;
   let toasts: string[];
@@ -30,8 +36,7 @@ describe("Connect an Agent → Windsurf (Cascade)", () => {
     handlers.clear();
     workspaceDir = mkdtempSync(path.join(tmpdir(), "mc-windsurf-ws-"));
     homeDir = mkdtempSync(path.join(tmpdir(), "mc-windsurf-home-"));
-    previousHome = process.env.HOME;
-    process.env.HOME = homeDir;
+    home.dir = homeDir;
     toasts = [];
     ask = vi.fn(async (_message: string, ...actions: string[]) => actions[0]);
     openTextDocument = vi.fn(async () => ({}));
@@ -64,8 +69,6 @@ describe("Connect an Agent → Windsurf (Cascade)", () => {
   });
 
   afterEach(() => {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
     rmSync(workspaceDir, { recursive: true, force: true });
     rmSync(homeDir, { recursive: true, force: true });
   });
@@ -87,9 +90,16 @@ describe("Connect an Agent → Windsurf (Cascade)", () => {
     expect(content).toContain("have not been verified against a real Windsurf install");
   });
 
-  it("writes nothing under the home directory", async () => {
+  it("writes only the review skill under the home directory", async () => {
     await handlers.get("markdownCollab.connectAgent")!();
-    expect(readdirSync(homeDir)).toEqual([]);
+    expect(readdirSync(homeDir)).toEqual([".agents"]);
+    expect(readdirSync(path.join(homeDir, ".agents", "skills"))).toEqual(["markdown-collab"]);
+  });
+
+  it("asks once, and the question says AGENTS.md and the skill were written", async () => {
+    await handlers.get("markdownCollab.connectAgent")!();
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(ask.mock.calls[0]![0]).toMatch(/AGENTS\.md in ws with the review-comment format\. Added the review skill to ~\/\.agents\/skills\./);
   });
 
   it("does not open the scratch document when the question is declined", async () => {

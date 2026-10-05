@@ -8,7 +8,9 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { describe, expect, it } from "vitest";
+import type { AgentsSkillResult } from "../agentsSkill";
 import {
+  agentsSkillSentence,
   agentsSnippetSentence,
   buildConnectAgentItems,
   buildDisconnectAgentItems,
@@ -102,15 +104,17 @@ const FORMAT_FIRST: FormatFirstAgentId[] = ["cursor-inapp", "cursor-cli", "winds
 describe("Connect an Agent: AGENTS.md first, the review tools optional", () => {
   const items = buildConnectAgentItems({ cursorInApp: true, copilot: true });
 
-  it("every entry but Claude Code says AGENTS.md comes first, before the tools", () => {
+  it("every entry but Claude Code says AGENTS.md and the review skill come first, before the tools", () => {
     for (const item of items.filter((i) => i.id !== "claude")) {
-      expect(item.description, item.id).toMatch(/^Writes AGENTS\.md, then offers /);
+      expect(item.description, item.id).toMatch(/^Writes AGENTS\.md and the review skill \(~\/\.agents\/skills\), then offers /);
       expect(item.description, item.id).toMatch(/review tools/);
     }
   });
 
-  it("the Claude Code entry doesn't mention AGENTS.md — it is unchanged", () => {
-    expect(items.find((i) => i.id === "claude")!.description).not.toContain("AGENTS.md");
+  it("the Claude Code entry mentions neither AGENTS.md nor the skill directory — it is unchanged", () => {
+    const description = items.find((i) => i.id === "claude")!.description!;
+    expect(description).not.toContain("AGENTS.md");
+    expect(description).not.toContain(".agents");
   });
 
   it.each([
@@ -137,7 +141,31 @@ describe("Connect an Agent: AGENTS.md first, the review tools optional", () => {
     }
     expect(agentsSnippetSentence("customized", "my-repo")).toMatch(/left as is/);
   });
+
+  it("says what happened to the review skill, with ~ for the home directory, for every outcome", () => {
+    const home = "/home/me";
+    const at = `${home}/.agents/skills/markdown-collab/SKILL.md`;
+    const results: AgentsSkillResult[] = [
+      { action: "installed", path: at },
+      { action: "updated", path: at },
+      { action: "already-present", path: at },
+      { action: "exists-differs", path: at },
+      { action: "refused", path: at, reason: `${home}/.agents/skills is a symlink` },
+    ];
+    const sentences = results.map((r) => agentsSkillSentence(r, home));
+    for (const sentence of sentences) {
+      expect(sentence).toContain("~/.agents/skills");
+      expect(sentence).not.toContain(home);
+    }
+    expect(sentences[0]).toBe("Added the review skill to ~/.agents/skills.");
+    expect(sentences[1]).toBe("Updated the review skill in ~/.agents/skills.");
+    expect(sentences[2]).toBe("The review skill in ~/.agents/skills is up to date.");
+    expect(sentences[3]).toMatch(/left as is/);
+    expect(sentences[4]).toMatch(/is a symlink — left as is/);
+  });
 });
+
+const SKILL_SENTENCE = "Added the review skill to ~/.agents/skills.";
 
 describe("connectFormatFirst", () => {
   /** A recording host: `answer` is what the human clicks on the follow-up question. */
@@ -147,6 +175,10 @@ describe("connectFormatFirst", () => {
       writeAgentsSnippet: async () => {
         log.push("agents");
         return opts.agents === undefined ? "Created AGENTS.md in ws." : opts.agents;
+      },
+      installSkill: async () => {
+        log.push("skill");
+        return SKILL_SENTENCE;
       },
       serverRunning: opts.serverRunning ?? true,
       ask: async (message, ...actions) => {
@@ -159,13 +191,16 @@ describe("connectFormatFirst", () => {
     return { io, log };
   }
 
-  it.each(FORMAT_FIRST)("%s: writes AGENTS.md, then asks, then registers on yes", async (id) => {
+  it.each(FORMAT_FIRST)("%s: writes AGENTS.md, installs the skill, then asks once, then registers on yes", async (id) => {
     const { io, log } = host({ answer: (accept) => accept });
     expect(await connectFormatFirst(id, io)).toBe("registered");
-    expect(log).toHaveLength(3);
+    expect(log).toHaveLength(4);
     expect(log[0]).toBe("agents");
-    expect(log[1]).toBe(`ask: Markdown Collab: Created AGENTS.md in ws. ${mcpOfferFor(id).question} [${mcpOfferFor(id).accept} | Not now]`);
-    expect(log[2]).toBe("register");
+    expect(log[1]).toBe("skill");
+    expect(log[2]).toBe(
+      `ask: Markdown Collab: Created AGENTS.md in ws. ${SKILL_SENTENCE} ${mcpOfferFor(id).question} [${mcpOfferFor(id).accept} | Not now]`,
+    );
+    expect(log[3]).toBe("register");
   });
 
   it("Not now, or dismissing the question, stops after AGENTS.md", async () => {
@@ -176,27 +211,27 @@ describe("connectFormatFirst", () => {
     }
   });
 
-  it("without the tool server, AGENTS.md is still written and the step is explained instead of offered", async () => {
+  it("without the tool server, AGENTS.md and the skill are still written and the step is explained instead of offered", async () => {
     const { io, log } = host({ serverRunning: false, answer: (accept) => accept });
     expect(await connectFormatFirst("cursor-cli", io)).toBe("agents-only");
-    expect(log[0]).toBe("agents");
-    expect(log[1]).toMatch(/^tell: Markdown Collab: Created AGENTS\.md in ws\. .*reload the window/);
+    expect(log.slice(0, 2)).toEqual(["agents", "skill"]);
+    expect(log[2]).toMatch(/^tell: Markdown Collab: Created AGENTS\.md in ws\. Added the review skill to ~\/\.agents\/skills\. .*reload the window/);
     expect(log.some((l) => l.startsWith("ask:") || l === "register")).toBe(false);
   });
 
-  it("a failed AGENTS.md write stops there — the error was already shown", async () => {
+  it("a failed AGENTS.md write stops there — the skill isn't installed and the error was already shown", async () => {
     const { io, log } = host({ agents: null, answer: (accept) => accept });
     expect(await connectFormatFirst("copilot", io)).toBe("failed");
     expect(log).toEqual(["agents"]);
   });
 });
 
-describe("Disconnect an Agent: the tools only, never AGENTS.md", () => {
+describe("Disconnect an Agent: the tools only, never AGENTS.md or the review skill", () => {
   const items = buildDisconnectAgentItems({ cursorInApp: true, copilot: true });
 
-  it("every entry whose Connect wrote AGENTS.md says it is left as is", () => {
+  it("every entry whose Connect wrote AGENTS.md and the skill says both are left as is", () => {
     for (const item of items.filter((i) => i.id !== "claude")) {
-      expect(item.detail, item.id).toMatch(/AGENTS\.md is left as is/);
+      expect(item.detail, item.id).toMatch(/AGENTS\.md and the review skill in ~\/\.agents\/skills are left as is/);
     }
   });
 

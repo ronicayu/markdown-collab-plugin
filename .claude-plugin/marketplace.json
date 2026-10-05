@@ -9,7 +9,7 @@
       "name": "markdown-collab",
       "source": "./plugin",
       "description": "The Claude side of Markdown Collab: the review workflow as a skill (/markdown-collab:review), the marker-safe `mdc` CLI on PATH, and a hook that tells Claude when an edit breaks a review-comment marker.",
-      "version": "0.35.44"
+      "version": "0.35.45"
     }
   ]
 }

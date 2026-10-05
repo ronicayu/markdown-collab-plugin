@@ -14,6 +14,7 @@ vi.mock("../mcpServer", () => ({
   ensureMcpJsonRegistration: vi.fn(),
 }));
 vi.mock("../mcpServer/agentConnections");
+vi.mock("../agentsSkill", () => ({ refreshAgentsSkill: vi.fn(async () => null) }));
 vi.mock("../transports/headlessHost");
 vi.mock("../claudeStatusBar");
 vi.mock("../transports/terminalTracker");

@@ -91,8 +91,8 @@ function json(value) {
 }
 
 /**
- * Load src/skillText.ts. It is pure TypeScript with no imports, so esbuild
- * can hand it back as one ESM module without touching the disk.
+ * Load src/skillText.ts. It is pure TypeScript whose only import is pure too,
+ * so esbuild can hand it back as one ESM module without touching the disk.
  */
 export async function loadSkillText() {
   const result = await esbuild.build({

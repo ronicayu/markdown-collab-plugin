@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.35.45 — 2026-10-05 (GitHub only)
+
+### Added: Connect an Agent installs the review skill for Codex, Cursor, Copilot and Windsurf
+
+Agents other than Claude Code only had the short AGENTS.md section. Connect an
+Agent now also writes the full review workflow as a skill in
+`~/.agents/skills/markdown-collab/`, a folder those four agents read. It is one
+copy for the whole machine, so Disconnect leaves it in place, and the extension
+refreshes it on startup when it changes. A skill someone else put at that path
+is never overwritten, and neither is anything behind a symlink; the Connect
+message says so. Send prompts now name the skill under each of its names. The
+standalone Claude skill tells an agent that isn't Claude Code to use the new one
+instead, so it shows the update prompt once. (#25)
+
+### Tests
+
+- The skill's text, the by-hand rules it shares with AGENTS.md, and the install,
+  update, refresh and symlink cases, all against a temporary home directory.
+- Connect writes AGENTS.md and the skill with one message for Codex and Cursor's
+  in-app agent, and the skill is not written for Claude Code.
+- The startup refresh runs once in a trusted window and not in Restricted Mode.
+
 ## 0.35.44 — 2026-10-05 (GitHub only)
 
 ### Fixed: in a multi-root window, an agent started in another folder found no config

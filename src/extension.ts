@@ -1,5 +1,7 @@
+import * as os from "os";
 import * as vscode from "vscode";
 import { createLogger } from "./logging";
+import { refreshAgentsSkill } from "./agentsSkill";
 import { setCliGate, setCliLogger } from "./pr/cli";
 import { folderForDocument } from "./workspaceFolder";
 import { activateEditorPresence } from "./editorPresence";
@@ -208,6 +210,8 @@ export function activate(context: vscode.ExtensionContext): void {
     // skill) is missing or out of date — otherwise they only find out by opening
     // the comments panel. Gated so it prompts once per version, not every time.
     void maybePromptSkillUpdate(context, skillLog);
+
+    refreshAgentsSkill(os.homedir()).catch((e) => skillLog.warn("agents skill refresh failed", e));
   };
 
   if (vscode.workspace.isTrusted) {

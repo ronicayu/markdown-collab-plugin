@@ -28,14 +28,14 @@ import { LEGACY_SKILL_NAME, PLUGIN_NAME, renderSkill } from "./skillText";
 export const SKILL_CONTENT = renderSkill("legacy");
 
 /**
- * Every version of this extension wrote a SKILL.md whose frontmatter names the
- * skill `vs-markdown-collab`, and nothing marks which version — so that name
- * is how an earlier shipped skill is told apart from a file someone wrote.
+ * Every version of this extension wrote a SKILL.md whose frontmatter carries
+ * the same name, and nothing marks which version — so that name is how an
+ * earlier shipped skill is told apart from a file someone wrote.
  */
-function isShippedSkill(content: string): boolean {
+export function skillNamed(content: string, skillName: string): boolean {
   const frontmatter = /^\uFEFF?\s*---[ \t]*\r?\n([\s\S]*?)\r?\n---/.exec(content);
   const name = frontmatter && /^name:[ \t]*["']?([^"'\r\n]*?)["']?[ \t\r]*$/m.exec(frontmatter[1]);
-  return name?.[1] === LEGACY_SKILL_NAME;
+  return name?.[1] === skillName;
 }
 
 export async function installClaudeSkill(
@@ -62,7 +62,7 @@ export async function installClaudeSkill(
   // clean them up rather than leaving dead scripts behind.
   await deleteStaleHelpers(homeDir);
 
-  const shipped = existing !== null && isShippedSkill(existing);
+  const shipped = existing !== null && skillNamed(existing, LEGACY_SKILL_NAME);
   if (existing !== null) {
     if (existing === SKILL_CONTENT) {
       return { action: "already-present", path: target };

@@ -1,10 +1,12 @@
 // The review workflow, as named sections rendered for every place it is read.
 //
-// The same workflow reaches an agent four ways: the
+// The same workflow reaches an agent five ways: the
 // standalone skill older installs keep in `~/.claude/skills/`, the Claude Code
-// plugin's skill (where `mdc` is on PATH), the system prompt of a headless run
-// (tools only — no CLI, no Edit tool), and the MCP server's `instructions` for
-// any client that connects without either. Four hand-kept copies would drift:
+// plugin's skill (where `mdc` is on PATH), the skill every other agent reads from
+// `~/.agents/skills/` (no `mdc`; the tools if it has them, the file format if not),
+// the system prompt of a headless run (tools only — no CLI, no Edit tool), and the
+// MCP server's `instructions` for any client that connects without any of them.
+// Five hand-kept copies would drift:
 // one of them would eventually tell
 // an agent to do something another forbids. So there is one text, cut into
 // sections, and each target is a rendering of it: a rule changes in one place
@@ -16,7 +18,9 @@
 // Pure — no fs, no vscode. Imported by the skill installer, the headless
 // runner, the MCP server, and (through esbuild) scripts/build-plugin.mjs.
 
-export type SkillTarget = "legacy" | "plugin" | "headless";
+import { FORMAT_SPEC_URL, HAND_EDIT_RULES } from "./handEditRules";
+
+export type SkillTarget = "legacy" | "plugin" | "agents" | "headless";
 
 /** The standalone skill's name, and its directory under `~/.claude/skills/`. */
 export const LEGACY_SKILL_NAME = "vs-markdown-collab";
@@ -25,9 +29,23 @@ export const PLUGIN_NAME = "markdown-collab";
 /** The skill's name inside the plugin: `/markdown-collab:review`. */
 export const PLUGIN_SKILL_NAME = "review";
 
-/** Text that only exists where the `mdc` CLI does (not in a headless run). */
+const SKILL_NAMES: Record<Exclude<SkillTarget, "headless">, string> = {
+  legacy: LEGACY_SKILL_NAME,
+  plugin: PLUGIN_SKILL_NAME,
+  agents: PLUGIN_NAME,
+};
+
+/** Where the `mdc` CLI exists: only inside a Claude Code session. */
+function hasCli(t: SkillTarget): boolean {
+  return t === "legacy" || t === "plugin";
+}
+
 function cliOnly(t: SkillTarget, text: string): string {
-  return t === "headless" ? "" : text;
+  return hasCli(t) ? text : "";
+}
+
+function agentsOnly(t: SkillTarget, text: string): string {
+  return t === "agents" ? text : "";
 }
 
 function cliInvocation(t: SkillTarget): string {
@@ -44,6 +62,8 @@ interface ToolRow {
   what: string;
   /** Appended to `what` only where the CLI exists. */
   cliNote?: string;
+  /** What the row says to a reader that isn't Claude. */
+  whatAgents?: string;
 }
 
 const TOOL_ROWS: readonly ToolRow[] = [
@@ -56,6 +76,7 @@ const TOOL_ROWS: readonly ToolRow[] = [
     tool: "`mc_reply(file, threadId, body)`",
     cli: "`reply <file> <threadId> --body TEXT`",
     what: "Appends a reply authored by `claude` with the correct `c<N>` id and timestamp.",
+    whatAgents: "Appends a reply authored by you with the correct `c<N>` id and timestamp.",
   },
   {
     tool: "`mc_rewrite(file, threadId, with)`",
@@ -101,10 +122,12 @@ const TOOL_ROWS: readonly ToolRow[] = [
 ];
 
 function toolTable(t: SkillTarget): string {
-  if (t === "headless") {
-    return ["| MCP tool | What it does |", "| --- | --- |", ...TOOL_ROWS.map((r) => `| ${r.tool} | ${r.what} |`)].join(
-      "\n",
-    );
+  if (!hasCli(t)) {
+    return [
+      "| MCP tool | What it does |",
+      "| --- | --- |",
+      ...TOOL_ROWS.map((r) => `| ${r.tool} | ${(t === "agents" && r.whatAgents) || r.what} |`),
+    ].join("\n");
   }
   return [
     "| MCP tool | `mdc` CLI form | What it does |",
@@ -116,6 +139,10 @@ function toolTable(t: SkillTarget): string {
 const PASS_SIGNALS =
   "Two of these do more than they look like they do: **`mc_check` ends the pass** — the extension shows the human a \"Waiting for the agent…\" row on every thread it sent you, and your closing `mc_check` on a file is what clears it; skip it and they're left watching a spinner for work you already finished. **`mc_status` is free and worth it** — a review pass over three files is minutes of silence otherwise, and one short present-tense phrase per phase shows up next to the indicator and in the status bar.";
 
+const TOOLS_REFUSE = `Ordinary prose edits — text outside an anchored span — use \`mc_edit\`, which refuses anything that would break a marker or touch the threads region. Every mutating tool validates before writing and refuses a change that would introduce a new integrity problem, so a refused call leaves the file untouched rather than half-edited.
+
+**The tools refuse rather than guess.** Ambiguous passage (appears more than once)? Pass the occurrence. Inside a code span? Choose a different anchor. Never work around a refusal — it's telling you the edit was unsafe.`;
+
 function changePaths(t: SkillTarget): string {
   if (t === "headless") {
     return `## How to change a document — the tools
@@ -126,9 +153,28 @@ ${toolTable(t)}
 
 ${PASS_SIGNALS}
 
-Ordinary prose edits — text outside an anchored span — use \`mc_edit\`, which refuses anything that would break a marker or touch the threads region. Every mutating tool validates before writing and refuses a change that would introduce a new integrity problem, so a refused call leaves the file untouched rather than half-edited.
+${TOOLS_REFUSE}`;
+  }
+  if (t === "agents") {
+    return `## How to change a document — two paths
 
-**The tools refuse rather than guess.** Ambiguous passage (appears more than once)? Pass the occurrence. Inside a code span? Choose a different anchor. Never work around a refusal — it's telling you the edit was unsafe.`;
+Marker surgery by hand is the single most common way this workflow breaks: one dropped \`-->\` silently orphans a reviewer's comment. So when the \`markdown-collab\` MCP tools are in your tool list, every change goes through them (Path 1) — they run the *same* engine the editor itself uses: edits go through the editor, undoable with Cmd+Z, validated before they land. Only when they are absent do you edit by hand (Path 2).
+
+### Path 1 — the MCP tools
+
+${toolTable(t)}
+
+${PASS_SIGNALS}
+
+${TOOLS_REFUSE}
+
+### Path 2 — by hand, when the tools are absent
+
+The workflow below names a tool for each step; without the tools, do that step by hand with the matching rule here, and skip \`mc_status\` and \`mc_check\`:
+
+${HAND_EDIT_RULES.map((rule) => `- ${rule}`).join("\n")}
+
+**Then check the file:** ask the human to run **Markdown Collab: Repair Comment Anchors** on it.`;
   }
   return `## How to change a document — the two safe paths
 
@@ -158,6 +204,9 @@ const VERIFY_DAMAGE_WITH_CLI =
 const VERIFY_DAMAGE_TOOLS_ONLY =
   "The tools refuse any change that would introduce damage, so anything the check reports was already there — name it in your report (the human can run **Markdown Collab: Repair Comment Anchors**) rather than trying to fix markers yourself.";
 
+const VERIFY_DAMAGE_AGENTS =
+  "The tools refuse any change that would introduce damage, so after tool edits the check only reports what was already there — name it in your report. After hand edits, damage you introduced is yours to fix; name anything you can't fix, and the human can run **Markdown Collab: Repair Comment Anchors**.";
+
 // Thread records have no delete tool — deliberately: the record is history, and
 // the one-click delete belongs to the human in the review view.
 const DELETION_TOOLS_ONLY = `### Phase 4 — Deletion (opt-in)
@@ -169,6 +218,10 @@ You only delete a thread when the human's body or trailing reply unambiguously a
 const MAINTENANCE_TOOLS_ONLY = `## Every \`.md\` edit goes through the tools
 
 Whenever you change a file that contains \`<!--mc:threads:begin-->\` — for any reason, not only to address a comment — make the change with \`mc_edit\` or \`mc_rewrite\`: they refuse an edit that would break a marker, which a plain text edit can't. If you **rewrote an anchored passage**, \`mc_rewrite\` kept its markers on the new wording; if you **removed one**, the thread surfaces as unanchored — correct, don't re-anchor it to unrelated nearby text. Do NOT change any \`<!--mc:t {…}-->\` line — only the human reviewer and the reply workflow append to threads. Finish with \`mc_check\`.`;
+
+const MAINTENANCE_AGENTS = `## Every \`.md\` edit keeps the markers intact
+
+Whenever you change a file that contains \`<!--mc:threads:begin-->\` — for any reason, not only to address a comment — use \`mc_edit\` or \`mc_rewrite\` when you have the tools: they refuse an edit that would break a marker, which a plain text edit can't. Without them, follow Path 2. If you **rewrote an anchored passage**, keep its markers on the new wording; if you **removed one**, both markers go and the thread surfaces as unanchored — correct, don't re-anchor it to unrelated nearby text. Do NOT change any \`<!--mc:t {…}-->\` line except to append a reply — only the human reviewer and the reply workflow append to threads. Finish with \`mc_check\`, or ask the human to run **Markdown Collab: Repair Comment Anchors**.`;
 
 /**
  * How a section appears in the compact MCP `instructions`: an opening line, a
@@ -193,16 +246,18 @@ const SECTIONS: readonly SkillSection[] = [
     // Skill-loader metadata. A headless run's system prompt isn't loaded as a
     // skill, so it would only be noise there.
     render: (t) => (t === "headless" ? null : `---
-name: ${t === "plugin" ? PLUGIN_SKILL_NAME : LEGACY_SKILL_NAME}
+name: ${SKILL_NAMES[t]}
 description: Agentic workflow for addressing review comments on Markdown (.md) files in a Markdown Collab workspace, AND for reviewing Markdown docs by leaving review comments for the human. Comments are stored INLINE in the .md file itself (look for \`<!--mc:threads:begin-->\`). TRIGGER when the user asks to address, resolve, respond to, incorporate, or act on review comments, notes, suggestions, or feedback on any Markdown document — trigger phrases include "address the comments on foo.md", "apply the review feedback", "respond to the notes in README", "incorporate the suggestions", "fix the markdown collab comments", "work through the review on docs/spec.md". ALSO TRIGGER on review-mode requests where the user asks YOU to play reviewer — "review this doc", "leave your thoughts on README", "do a review pass on docs/spec.md", "second pair of eyes on this", "what would you flag in this file", "review the markdown collab doc on X".
 ---`),
   },
-  { id: "intro", render: () => `# Markdown Collab — agentic review-address skill
+  { id: "intro", render: (t) => `# Markdown Collab — agentic review-address skill
 
-You are addressing human review comments left on Markdown files via the Markdown Collab VS Code extension. The user runs the IDE; you do the writing.` },
+${t === "agents"
+    ? "You are addressing human review comments left on Markdown files with the Markdown Collab extension in the user's editor. The user runs the editor; you do the writing."
+    : `You are addressing human review comments left on Markdown files via the Markdown Collab VS Code extension. The user runs the IDE; you do the writing.${t === "legacy" ? " If you are not Claude Code and have a \`markdown-collab\` skill, use that one instead of this." : ""}`}` },
   {
     id: "storage",
-    render: () => `## Storage format
+    render: (t) => `## Storage format
 
 Comments are stored INLINE in the \`.md\` file itself — there is no sidecar.
 
@@ -210,7 +265,9 @@ Comments are stored INLINE in the \`.md\` file itself — there is no sidecar.
 - One block at the end of the file holds one \`<!--mc:t {JSON}-->\` line per thread, fenced by \`<!--mc:threads:begin-->\`/\`<!--mc:threads:end-->\`: \`{"id":"<ID>","quote":"<original anchor text>","status":"open"|"resolved","comments":[Comment, …]}\`.
 - Each \`Comment\`: \`{"id":"c<N>","parent"?:"c<N>","author":"<name>","ts":"<ISO-8601 UTC>","body":"<markdown>","editedTs"?:"<ISO-8601 UTC>","deleted"?:true}\`.
 
-**Detection:** the file contains the literal string \`<!--mc:threads:begin-->\` — its absence means no comments yet. A named file with no threads region: if the user asked you to **address** comments, there are none — tell them and stop; if they asked you to **initiate** a thread (opt-in, Phase 5), create the region.`,
+**Detection:** the file contains the literal string \`<!--mc:threads:begin-->\` — its absence means no comments yet. A named file with no threads region: if the user asked you to **address** comments, there are none — tell them and stop; if they asked you to **initiate** a thread (opt-in, Phase 5), create the region.${agentsOnly(t, `
+
+Every marker and field is defined in the format spec: ${FORMAT_SPEC_URL}`)}`,
     brief: {
       kind: "intro",
       text: "Review threads and suggestions live INLINE in the .md file — `<!--mc:a:ID-->…<!--mc:/a:ID-->` anchor markers plus one `<!--mc:threads:begin-->` block at the end. These tools are the only safe way to change them: never hand-edit a marker or a thread line.",
@@ -232,7 +289,7 @@ Comments are stored INLINE in the \`.md\` file itself — there is no sidecar.
 
 Call \`mc_list(file, actionable: true)\`${cliOnly(t, " (CLI: `list <file> --actionable`)")} for the threads still waiting on you — open, last spoken to by someone other than you. Each comes with \`id\`, \`quote\`, \`comments\`, and \`anchoredText\` (the live text between that thread's markers — the passage the reviewer meant). A thread with \`"anchored": false\` has lost its markers; treat \`quote\` as the locator and see Phase 7.
 
-Read the file itself too — the threads are only the part someone commented on.`,
+Read the file itself too — the threads are only the part someone commented on.${agentsOnly(t, " Without the tools, the threads are the `<!--mc:t {…}-->` lines: one is waiting on you when its `status` is `open` and its last comment is not yours.")}`,
     brief: {
       kind: "step",
       text: "Discover — `mc_list(file, actionable: true)` gives the threads waiting on you, with ids and live anchored text. Read the file too.",
@@ -249,7 +306,7 @@ For each thread, in order:
 
 1. **Make the prose change.** Rewriting the anchored passage: replace the text *between* the markers with \`mc_rewrite(file, threadId, with: "…")\`${cliOnly(t, ' (CLI: `rewrite <file> <threadId> --with "…"`)')} — updates \`quote\` in the same operation, can't drop or split a marker. Editing prose outside the anchored span: use \`mc_edit\`${cliOnly(t, "/`mdc edit` (or the Edit tool interactively)")}, markers stay put. Removing the anchored passage: delete the open marker, the passage, and the close marker together with \`mc_edit\`${cliOnly(t, "/`mdc edit` (or the Edit tool interactively)")} — \`old\` spans both markers, so nothing is split; the thread orphans and shows as "broken anchor", the correct outcome; do NOT re-anchor to nearby unrelated text.
 
-2. **Append a reply:** \`mc_reply(file, threadId, body: "…")\`${cliOnly(t, ' (CLI: `reply <file> <threadId> --body "…"`)')}. Assigns the next \`c<N>\` id, sets \`author\` to \`"claude"\` and \`ts\` to now, appends to the thread, leaves everything else untouched. Write one or two specific sentences — quote the new wording, name the section or file/function you changed. Don't say "done".
+2. **Append a reply:** \`mc_reply(file, threadId, body: "…")\`${cliOnly(t, ' (CLI: `reply <file> <threadId> --body "…"`)')}. Assigns the next \`c<N>\` id, sets \`author\` to ${t === "agents" ? "your name" : '\`"claude"\`'} and \`ts\` to now, appends to the thread, leaves everything else untouched. Write one or two specific sentences — quote the new wording, name the section or file/function you changed. Don't say "done".
 
 3. **For threads you can't fully address** (ambiguous, missing info, conflicting with another thread), reply explaining what you tried and what you need — don't pretend it's done.`,
     brief: {
@@ -257,7 +314,7 @@ For each thread, in order:
       text: "Act — `mc_rewrite` changes text inside a thread's anchor; `mc_edit` changes prose outside anchors (an `old` spanning both markers of an anchor deletes that passage: the thread is left unanchored by design — never re-anchor it to nearby text). Then `mc_reply` with one or two specific sentences quoting what changed.",
     },
   },
-  { id: "deletion", render: (t) => (t === "headless" ? DELETION_TOOLS_ONLY : `### Phase 4 — Deletion (opt-in)
+  { id: "deletion", render: (t) => (!hasCli(t) ? DELETION_TOOLS_ONLY : `### Phase 4 — Deletion (opt-in)
 
 You only delete or tombstone a thread when the human's body or trailing reply unambiguously asks for it ("delete this comment", "remove this thread", "drop this", "this comment is no longer relevant"):
 
@@ -282,7 +339,7 @@ These are judgement calls the tools can't make for you. You MUST NOT:
 - Edit prose in Review Mode: there you OPEN threads, never modify doc text. Even obvious typos go in a thread unless told to "fix as you go".
 - Reformat the threads region (newlines, key order, escaping) for any reason.
 
-The mechanical invariants — \`c<N>\` id sequence, thread ids/quotes staying put, threads-region formatting — ${t === "headless" ? "are enforced by the tools; the judgement calls above are yours." : "are enforced by the tools and CLI, and only yours to maintain when hand-editing (see the appendix)."} Reporting isn't exempt either: quote what changed rather than saying "applied", and never say a comment is addressed when it isn't.`,
+The mechanical invariants — \`c<N>\` id sequence, thread ids/quotes staying put, threads-region formatting — ${t === "headless" ? "are enforced by the tools; the judgement calls above are yours." : t === "agents" ? "are enforced by the tools, and only yours to maintain when working by hand (Path 2); the judgement calls above are yours either way." : "are enforced by the tools and CLI, and only yours to maintain when hand-editing (see the appendix)."} Reporting isn't exempt either: quote what changed rather than saying "applied", and never say a comment is addressed when it isn't.`,
     brief: {
       kind: "rule",
       text: "Only the human resolves: never call `mc_resolve`, `mc_accept` or `mc_reject` unless asked. The record is append-only history — add replies, never edit or delete anyone's comments.",
@@ -290,11 +347,11 @@ The mechanical invariants — \`c<N>\` id sequence, thread ids/quotes staying pu
   },
   {
     id: "review-mode",
-    render: (t) => `### Review Mode (inline) — Claude as the reviewer
+    render: (t) => `### Review Mode (inline) — ${t === "agents" ? "you" : "Claude"} as the reviewer
 
 When the human's request matches **Review Mode** trigger phrases — "review this doc", "leave your thoughts on X", "do a review pass on Y", "second pair of eyes on README", "what would you flag in this file", or the Markdown Collab extension's "Ask Agent to Review This Doc" / "Ask Agent to Review These Docs" commands — you switch from addressing existing comments to **initiating** new review threads. The human will triage them in the sidebar. When the prompt names more than one file, read the *Multi-file review passes* section below before starting.
 
-The mechanics are the same as Phase 5: pick a passage, allocate an id, insert paired markers, append a \`<!--mc:t {…}-->\` line with a single \`c1\` comment authored by \`"claude"\`, verify. Read Phase 5 first if you have not — it carries the invariants you must respect when wrapping passages.
+The mechanics are the same as Phase 5: pick a passage, allocate an id, insert paired markers, append a \`<!--mc:t {…}-->\` line with a single \`c1\` comment authored by ${t === "agents" ? "you" : '\`"claude"\`'}, verify. Read Phase 5 first if you have not — it carries the invariants you must respect when wrapping passages.
 
 #### Focus directive
 
@@ -392,11 +449,11 @@ Read the doc end to end first. Initiate threads one at a time, in document order
     id: "verify",
     render: (t) => `### Phase 7 — Verify, and end the pass
 
-Finish every file you touched with \`mc_check(file)\`${cliOnly(t, " (CLI: `check <file>`)")}. \`"ok": true\` means every marker is paired, every thread is anchored, and every thread line is valid JSON; otherwise you get the list — unpaired markers, orphaned anchors, unanchored threads, empty quotes, malformed thread JSON, duplicate ids — each saying whether it's \`repairable\`${cliOnly(t, " (the CLI also exits `2`)")}.
+Finish every file you touched with \`mc_check(file)\`${cliOnly(t, " (CLI: `check <file>`)")}. \`"ok": true\` means every marker is paired, every thread is anchored, and every thread line is valid JSON; otherwise you get the list — unpaired markers, orphaned anchors, unanchored threads, empty quotes, malformed thread JSON, duplicate ids — each saying whether it's \`repairable\`${cliOnly(t, " (the CLI also exits `2`)")}.${agentsOnly(t, " By hand you can't run it: ask the human to run **Markdown Collab: Repair Comment Anchors** on the file.")}
 
 This call does double duty: it's your correctness check, **and** it's how the extension learns your pass on that file is over — clearing the "Waiting for the agent…" row the human is watching. Skip it and they're left watching a spinner for work you already finished.
 
-${t === "headless" ? VERIFY_DAMAGE_TOOLS_ONLY : VERIFY_DAMAGE_WITH_CLI} One case is not damage: **a thread whose passage you deliberately removed is expected to be unanchored.** Deletions become orphans by design — report it, don't "fix" it by re-anchoring to unrelated text.
+${t === "headless" ? VERIFY_DAMAGE_TOOLS_ONLY : t === "agents" ? VERIFY_DAMAGE_AGENTS : VERIFY_DAMAGE_WITH_CLI} One case is not damage: **a thread whose passage you deliberately removed is expected to be unanchored.** Deletions become orphans by design — report it, don't "fix" it by re-anchoring to unrelated text.
 
 Then confirm, from \`mc_list\`, that each addressed thread ends with your comment and is still \`"status":"open"\`.`,
     brief: {
@@ -410,9 +467,9 @@ Then confirm, from \`mc_list\`, that each addressed thread ends with your commen
 
 When the human asks you to **suggest** or **propose** changes rather than make them ("suggest edits", "don't apply, let me accept them", or a send payload requesting suggest mode), do NOT edit the prose directly — every change becomes a pending suggestion via \`mc_suggest(file, quote: "…", with: "…", note: "why")\`${cliOnly(t, ' (CLI: `suggest <file> --quote "…" --with "…" --note "…"`)')}.
 
-The original text stays in the file; the proposal is recorded separately. \`${t === "headless" ? "note" : "--note"}\` is your rationale, shown on the suggestion card — always include it. Same anchoring rules as opening a thread: ambiguous, or in code/frontmatter/the threads region, gets refused — pass \`occurrence\` or pick a different span. **One suggestion changes one sentence or one list item.** Re-read between several so offsets stay valid. A paragraph-level rewrite is split into several suggestions, one per sentence; when it genuinely can't be split (the change reworks the paragraph as a whole), open a comment carrying the proposed text instead of forcing it into one giant suggestion. A \`with\` far longer than the quoted passage is refused (\`suggestion_too_large\`) — that's the tool telling you to split it, not a limit to work around. **Do NOT accept or reject your own suggestions** — that's the human's call in the review UI, only on explicit instruction. Verify with \`mc_check\` and \`mc_list\` (reports each suggestion's \`original\` and \`proposed\`).
+The original text stays in the file; the proposal is recorded separately. \`${hasCli(t) ? "--note" : "note"}\` is your rationale, shown on the suggestion card — always include it. Same anchoring rules as opening a thread: ambiguous, or in code/frontmatter/the threads region, gets refused — pass \`occurrence\` or pick a different span. **One suggestion changes one sentence or one list item.** Re-read between several so offsets stay valid. A paragraph-level rewrite is split into several suggestions, one per sentence; when it genuinely can't be split (the change reworks the paragraph as a whole), open a comment carrying the proposed text instead of forcing it into one giant suggestion. A \`with\` far longer than the quoted passage is refused (\`suggestion_too_large\`) — that's the tool telling you to split it, not a limit to work around. **Do NOT accept or reject your own suggestions** — that's the human's call in the review UI, only on explicit instruction. Verify with \`mc_check\` and \`mc_list\` (reports each suggestion's \`original\` and \`proposed\`).${agentsOnly(t, " Without the tools, write the suggestion line described in Path 2.")}
 
-Mutually exclusive with direct edits per request: if the human wants suggestions, route ALL changes through \`${t === "headless" ? "mc_suggest" : "suggest"}\`, never mix in a few direct edits. Review Mode is unaffected — it never edits prose at all.`,
+Mutually exclusive with direct edits per request: if the human wants suggestions, route ALL changes through \`${hasCli(t) ? "suggest" : "mc_suggest"}\`, never mix in a few direct edits. Review Mode is unaffected — it never edits prose at all.`,
     brief: {
       kind: "rule",
       text: "Suggest mode: route every change through `mc_suggest` (with a `note`) — no direct edits at all.",
@@ -420,26 +477,26 @@ Mutually exclusive with direct edits per request: if the human wants suggestions
   },
   // When a skill loader should pick the skill up. Nothing to trigger in a
   // headless run.
-  { id: "when-applies", render: (t) => (t === "headless" ? null : `## When this skill applies
+  { id: "when-applies", render: (t) => (!hasCli(t) ? null : `## When this skill applies
 
 Invoke when:
 - The user names one or more \`.md\` files and asks you to act on review comments / feedback / notes.
 - The user says "address the markdown collab comments" without naming files (operate workspace-wide).
 - The user references a specific comment thread or quote and asks you to apply / respond.`) },
-  { id: "maintenance", render: (t) => (t === "headless" ? MAINTENANCE_TOOLS_ONLY : `## Anchor maintenance applies on EVERY \`.md\` edit, not just comment-driven ones
+  { id: "maintenance", render: (t) => (t === "headless" ? MAINTENANCE_TOOLS_ONLY : t === "agents" ? MAINTENANCE_AGENTS : `## Anchor maintenance applies on EVERY \`.md\` edit, not just comment-driven ones
 
 Whenever you modify a \`.md\` file in a Markdown Collab workspace — for any reason, not only when addressing review comments — reconcile that file's anchors after the edit. Rewording a sentence, refactoring a heading, fixing a typo: any of these can break an existing anchor.
 
 After your Edit, run \`mc_check\` (or \`mdc check <file>\`) — it reports every unpaired, dropped, or duplicated marker an ordinary prose edit introduces; fix anything it reports.${t === "plugin" ? " This plugin also runs that check after every Edit and Write, and tells you when one broke a marker." : ""} For each thread whose markers are still paired: if you **rewrote the passage in place**, keep the markers on the new wording (\`mc_rewrite\`/\`mdc rewrite\` can't drop a marker); if you **removed the passage**, both markers should be gone and the thread surfaces as unanchored — correct, don't re-add markers to wrap unrelated nearby text. Do NOT change any \`<!--mc:t {…}-->\` line during maintenance — only the human reviewer and the reply workflow append to threads. This applies whether or not a review batch was active.`) },
   // A headless run is handed the tools; there is nothing to go and get.
-  { id: "getting-tools", render: (t) => (t === "headless" ? null : `## Getting the MCP tools (if you don't have them)
+  { id: "getting-tools", render: (t) => (!hasCli(t) ? null : `## Getting the MCP tools (if you don't have them)
 
 If \`mc_list\` and friends aren't in your tool list, add them with **Markdown Collab: Connect an Agent…** → Claude Code, then restart. They only exist while that VS Code window stays open; elsewhere, or with MCP disabled by policy, use the \`mdc\` CLI instead — not degraded, just different.`) },
-  { id: "reporting", render: () => `## Reporting
+  { id: "reporting", render: (t) => `## Reporting
 
-Tell the user, per file, using each thread's id (1–12 char base36) so they can find it in VS Code: threads addressed (+ one-line summary of each change), threads initiated on explicit request (+ anchored passage + the note you left), threads deleted on explicit request, threads left unanchored/orphaned because their target was removed (+ why), threads answered without a prose change (+ the question you replied with), and anything you skipped and why.` },
+Tell the user, per file, using each thread's id (1–12 char base36) so they can find it in ${t === "agents" ? "their editor" : "VS Code"}: threads addressed (+ one-line summary of each change), threads initiated on explicit request (+ anchored passage + the note you left), threads deleted on explicit request, threads left unanchored/orphaned because their target was removed (+ why), threads answered without a prose change (+ the question you replied with), and anything you skipped and why.` },
   // Edit-tool marker surgery: meaningless where there is no Edit tool.
-  { id: "appendix", render: (t) => (t === "headless" ? null : `## Appendix: hand-editing markers (last resort)
+  { id: "appendix", render: (t) => (!hasCli(t) ? null : `## Appendix: hand-editing markers (last resort)
 
 **Only when neither the \`markdown-collab\` MCP tools ${t === "plugin" ? "nor the `mdc` CLI is" : "nor `mdc.mjs` is"}
 available.** Everything below is string surgery on a format that is unforgiving
@@ -499,7 +556,8 @@ Say in your report that you worked without them.`) },
 
 /**
  * The skill for one target. `legacy` is `~/.claude/skills/vs-markdown-collab/SKILL.md`,
- * `plugin` is the plugin's `skills/review/SKILL.md`, `headless` is the
+ * `plugin` is the plugin's `skills/review/SKILL.md`, `agents` is
+ * `~/.agents/skills/markdown-collab/SKILL.md`, `headless` is the
  * tools-only workflow (no frontmatter, no CLI, no Edit tool) that a headless
  * run's system prompt carries and `mc_help` returns.
  */

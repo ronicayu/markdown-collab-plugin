@@ -4,6 +4,8 @@ import * as os from "os";
 import * as path from "path";
 import { existsSync, readFileSync } from "fs";
 import { AGENTS_SENTINEL, AGENTS_SNIPPET, FORMAT_SPEC_URL, ensureAgentsSnippet, refuseSymlink, sectionHash } from "../agents";
+import { AGENTS_SKILL_CONTENT } from "../agentsSkill";
+import { HAND_EDIT_RULES } from "../handEditRules";
 import { opAccept, opCheck, opList } from "../inlineComments/docOps";
 import { addThread, parse } from "../inlineComments/format";
 import { serialize } from "../inlineComments/serializeState";
@@ -73,6 +75,13 @@ describe("AGENTS_SNIPPET: the format is the contract", () => {
     expect(AGENTS_SNIPPET).toContain("**Suggesting an edit**");
     expect(AGENTS_SNIPPET).toContain("<!--mc:s {");
     expect(AGENTS_SNIPPET).toContain("## <!--mc:a:ID-->Title<!--mc:/a:ID-->");
+  });
+
+  it("lists the same by-hand rules as the skill every agent reads, from one source", () => {
+    for (const rule of HAND_EDIT_RULES) {
+      expect(AGENTS_SNIPPET).toContain(`- ${rule}`);
+      expect(AGENTS_SKILL_CONTENT).toContain(`- ${rule}`);
+    }
   });
 
   it("stays under ~35 lines", () => {

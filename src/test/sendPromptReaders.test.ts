@@ -31,7 +31,9 @@ afterEach(() => {
 });
 
 function expectsEveryKindOfReader(prompt: string): void {
-  expect(prompt).toContain("`markdown-collab:review`");
+  expect(prompt).toContain("`markdown-collab:review` in Claude Code");
+  expect(prompt).toContain("`markdown-collab` elsewhere");
+  expect(prompt).toContain("`vs-markdown-collab` on older installs");
   expect(prompt).toContain("if you don't have it");
   expect(prompt).toContain('"Markdown review comments" section of this workspace\'s AGENTS.md');
   expect(prompt).toContain(FORMAT_SPEC_URL);

@@ -5,6 +5,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import type { Logger } from "../logging";
 import { agentsSectionPresent, ensureAgentsSnippet, type AgentsSnippetOutcome } from "../agents";
+import { installAgentsSkill, type AgentsSkillResult } from "../agentsSkill";
 import { checkClaudeSkill, installClaudeSkill, removeLegacySkill, skillFingerprint } from "../skill";
 import {
   LOCAL_MARKETPLACE_DIRNAME,
@@ -354,6 +355,23 @@ export function agentsSnippetSentence(action: AgentsSnippetOutcome, folderName: 
   }
 }
 
+const withTilde = (text: string, homeDir: string): string => text.split(homeDir).join("~");
+
+export function agentsSkillSentence(result: AgentsSkillResult, homeDir: string): string {
+  switch (result.action) {
+    case "installed":
+      return "Added the review skill to ~/.agents/skills.";
+    case "updated":
+      return "Updated the review skill in ~/.agents/skills.";
+    case "already-present":
+      return "The review skill in ~/.agents/skills is up to date.";
+    case "exists-differs":
+      return `${withTilde(result.path, homeDir)} is a different skill — left as is.`;
+    case "refused":
+      return `The review skill wasn't written: ${withTilde(result.reason, homeDir)} — left as is.`;
+  }
+}
+
 /** A failure is shown here and comes back as null. */
 async function applyAgentsSnippet(folder: vscode.WorkspaceFolder, log: Logger): Promise<string | null> {
   try {
@@ -364,6 +382,16 @@ async function applyAgentsSnippet(folder: vscode.WorkspaceFolder, log: Logger): 
       `Failed to update AGENTS.md: ${(e as Error).message}`,
     );
     return null;
+  }
+}
+
+async function applyAgentsSkill(log: Logger): Promise<string> {
+  const home = os.homedir();
+  try {
+    return agentsSkillSentence(await installAgentsSkill(home), home);
+  } catch (e) {
+    log.error("installAgentsSkill failed", e);
+    return `The review skill wasn't written to ~/.agents/skills: ${withTilde((e as Error).message, home)}`;
   }
 }
 
@@ -418,41 +446,41 @@ export function buildConnectAgentItems(caps: { cursorInApp: boolean; copilot: bo
     items.push({
       id: "cursor-inapp",
       label: "Cursor (in-app agent)",
-      description: "Writes AGENTS.md, then offers to register the review tools live with Cursor's agent — nothing on disk.",
+      description: "Writes AGENTS.md and the review skill (~/.agents/skills), then offers to register the review tools live with Cursor's agent — nothing on disk.",
     });
   }
   items.push({
     id: "cursor-cli",
     label: "Cursor CLI (cursor-agent)",
-    description: "Writes AGENTS.md, then offers .cursor/mcp.json for the review tools — env references only, no token.",
+    description: "Writes AGENTS.md and the review skill (~/.agents/skills), then offers .cursor/mcp.json for the review tools — env references only, no token.",
   });
   items.push({
     id: "windsurf",
     label: "Windsurf (Cascade)",
     description:
-      "Writes AGENTS.md, then offers the review tools' URL and a session token in a scratch document for Windsurf's MCP config.",
+      "Writes AGENTS.md and the review skill (~/.agents/skills), then offers the review tools' URL and a session token in a scratch document for Windsurf's MCP config.",
   });
   items.push({
     id: "codex",
     label: "Codex",
-    description: "Writes AGENTS.md, then offers .codex/config.toml for the review tools — no token on disk.",
+    description: "Writes AGENTS.md and the review skill (~/.agents/skills), then offers .codex/config.toml for the review tools — no token on disk.",
   });
   if (caps.copilot) {
     items.push({
       id: "copilot",
       label: "GitHub Copilot (agent mode)",
-      description: "Writes AGENTS.md, then offers to register the review tools live with Copilot — nothing on disk.",
+      description: "Writes AGENTS.md and the review skill (~/.agents/skills), then offers to register the review tools live with Copilot — nothing on disk.",
     });
   }
   items.push({
     id: "other",
     label: "Other agent…",
-    description: "Writes AGENTS.md, then offers the review tools' URL and a session token in a scratch document.",
+    description: "Writes AGENTS.md and the review skill (~/.agents/skills), then offers the review tools' URL and a session token in a scratch document.",
   });
   return items;
 }
 
-/** Every Connect entry but Claude Code: AGENTS.md first, the tools second. */
+/** Every Connect entry but Claude Code: AGENTS.md and the skill first, the tools second. */
 export type FormatFirstAgentId = Exclude<ConnectAgentItem["id"], "claude">;
 
 export interface McpOffer {
@@ -504,6 +532,8 @@ function isFormatFirst(id: ConnectAgentItem["id"]): id is FormatFirstAgentId {
 export interface FormatFirstIo {
   /** Write or refresh AGENTS.md; the sentence saying what happened, or null when it failed (already reported). */
   writeAgentsSnippet(): Promise<string | null>;
+  /** Install the review skill; the sentence saying what happened. Never fails Connect. */
+  installSkill(): Promise<string>;
   /** False when the tool server isn't running: there is nothing to register then. */
   serverRunning: boolean;
   /** A non-modal question; resolves to the button clicked, or undefined when dismissed. */
@@ -522,8 +552,9 @@ export async function connectFormatFirst(
   id: FormatFirstAgentId,
   io: FormatFirstIo,
 ): Promise<"agents-only" | "registered" | "failed"> {
-  const agents = await io.writeAgentsSnippet();
-  if (agents === null) return "failed";
+  const written = await io.writeAgentsSnippet();
+  if (written === null) return "failed";
+  const agents = `${written} ${await io.installSkill()}`;
   if (!io.serverRunning) {
     io.tell(
       `Markdown Collab: ${agents} The review tool server isn't running, so registering the tools isn't offered — reload the window to get that step.`,
@@ -653,6 +684,7 @@ async function invokeConnectAgent(deps: CommandDeps): Promise<void> {
     }
     await connectFormatFirst(id, {
       writeAgentsSnippet: () => applyAgentsSnippet(folder, log),
+      installSkill: () => applyAgentsSkill(log),
       serverRunning: handle !== null,
       ask: (message, ...actions) => Promise.resolve(vscode.window.showInformationMessage(message, ...actions)),
       tell: (message) => void vscode.window.showInformationMessage(message),
@@ -693,7 +725,8 @@ async function invokeConnectAgent(deps: CommandDeps): Promise<void> {
   }
 }
 
-const AGENTS_KEPT = " AGENTS.md is left as is — other agents may be reading it.";
+const FILES_KEPT = "AGENTS.md and the review skill in ~/.agents/skills are left as is";
+const AGENTS_KEPT = ` ${FILES_KEPT} — other agents and workspaces may be reading them.`;
 
 export interface DisconnectAgentItem extends vscode.QuickPickItem {
   id: "claude" | "cursor-inapp" | "cursor-cli" | "windsurf" | "codex" | "copilot" | "other";
@@ -856,13 +889,13 @@ async function invokeDisconnectAgent(deps: CommandDeps): Promise<void> {
     }
     case "windsurf": {
       void vscode.window.showInformationMessage(
-        "Markdown Collab: nothing to remove — the connection details were never saved by this extension. If you pasted them into ~/.codeium/windsurf/mcp_config.json, delete the markdown-collab entry there. AGENTS.md is left as is.",
+        `Markdown Collab: nothing to remove — the connection details were never saved by this extension. If you pasted them into ~/.codeium/windsurf/mcp_config.json, delete the markdown-collab entry there. ${FILES_KEPT}.`,
       );
       break;
     }
     case "other": {
       void vscode.window.showInformationMessage(
-        "Markdown Collab: nothing to remove for a generic agent — its connection details were never saved. AGENTS.md is left as is.",
+        `Markdown Collab: nothing to remove for a generic agent — its connection details were never saved. ${FILES_KEPT}.`,
       );
       break;
     }

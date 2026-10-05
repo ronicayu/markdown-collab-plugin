@@ -21,7 +21,7 @@ import { Uri, workspace } from "./vscode-stub";
 
 const ROOT = "/ws";
 const INSTALLED =
-  "Use the Markdown Collab review skill (`markdown-collab:review`, or `vs-markdown-collab` on older installs) — " +
+  "Use the Markdown Collab review skill (`markdown-collab:review` in Claude Code, `markdown-collab` elsewhere, or `vs-markdown-collab` on older installs) — " +
   "or, if you don't have it, follow the \"Markdown review comments\" section of this workspace's AGENTS.md " +
   `(if it has none, the format is defined at ${FORMAT_SPEC_URL}) —`;
 const INLINE = "Follow the Markdown Collab review workflow in your instructions";
@@ -53,6 +53,16 @@ describe("workflowOpener", () => {
   it("defaults to the installed skill", () => {
     expect(workflowOpener()).toBe(INSTALLED);
     expect(workflowOpener("inline")).toBe(INLINE);
+  });
+
+  it("names the skill under each of its three names", () => {
+    for (const name of ["`markdown-collab:review` in Claude Code", "`markdown-collab` elsewhere", "`vs-markdown-collab` on older installs"]) {
+      expect(workflowOpener()).toContain(name);
+    }
+  });
+
+  it("the headless opener names no skill", () => {
+    expect(workflowOpener("inline")).not.toContain("markdown-collab");
   });
 });
 

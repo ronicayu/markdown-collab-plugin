@@ -1,4 +1,5 @@
 import { readFileSync } from "fs";
+import * as os from "os";
 import { resolve } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { commands, window, workspace } from "./vscode-stub";
@@ -6,6 +7,7 @@ import { ensureMcpJsonRegistration, startMcpServer } from "../mcpServer";
 import { reconnectAgents } from "../mcpServer/agentConnections";
 import { claudeBinaryFound } from "../transports/headlessHost";
 import { maybePromptSkillUpdate } from "../commands/setup";
+import { refreshAgentsSkill } from "../agentsSkill";
 import { getCliRunner, setCliGate, setCliRunner } from "../pr/cli";
 
 vi.mock("../editorPresence");
@@ -19,6 +21,7 @@ vi.mock("../mcpServer", () => ({
   ensureMcpJsonRegistration: vi.fn(),
 }));
 vi.mock("../mcpServer/agentConnections");
+vi.mock("../agentsSkill", () => ({ refreshAgentsSkill: vi.fn(async () => null) }));
 vi.mock("../transports/headlessHost");
 vi.mock("../claudeStatusBar");
 vi.mock("../transports/terminalTracker");
@@ -56,6 +59,7 @@ beforeEach(() => {
   executed = [];
   vi.mocked(startMcpServer).mockClear();
   vi.mocked(maybePromptSkillUpdate).mockClear();
+  vi.mocked(refreshAgentsSkill).mockReset().mockResolvedValue(null);
   w.workspaceFolders = undefined;
   w.textDocuments = [];
   w.findFiles = async () => [];
@@ -77,12 +81,13 @@ afterEach(() => {
 });
 
 describe("activation in Restricted Mode", () => {
-  it("starts neither the tool server nor the skill check while untrusted", async () => {
+  it("starts neither the tool server nor the skill checks while untrusted", async () => {
     w.isTrusted = false;
     await activateExtension();
 
     expect(startMcpServer).not.toHaveBeenCalled();
     expect(maybePromptSkillUpdate).not.toHaveBeenCalled();
+    expect(refreshAgentsSkill).not.toHaveBeenCalled();
   });
 
   it("closes the git gate while untrusted", async () => {
@@ -106,6 +111,7 @@ describe("activation in Restricted Mode", () => {
 
     expect(startMcpServer).toHaveBeenCalledTimes(1);
     expect(maybePromptSkillUpdate).toHaveBeenCalledTimes(1);
+    expect(refreshAgentsSkill).toHaveBeenCalledTimes(1);
     expect(executed).toContain("markdownCollab.uncommittedRefresh");
   });
 
@@ -114,7 +120,23 @@ describe("activation in Restricted Mode", () => {
 
     expect(startMcpServer).toHaveBeenCalledTimes(1);
     expect(maybePromptSkillUpdate).toHaveBeenCalledTimes(1);
+    expect(refreshAgentsSkill).toHaveBeenCalledTimes(1);
     expect(grant).toBeUndefined();
+  });
+
+  it("refreshes the review skill in the real home directory, once, without waiting for the tool server", async () => {
+    await activateExtension();
+
+    expect(refreshAgentsSkill).toHaveBeenCalledWith(os.homedir());
+  });
+
+  it("carries on when the skill refresh fails", async () => {
+    vi.mocked(refreshAgentsSkill).mockRejectedValue(new Error("EACCES"));
+
+    await activateExtension();
+
+    await vi.waitFor(() => expect(refreshAgentsSkill).toHaveBeenCalledTimes(1));
+    expect(startMcpServer).toHaveBeenCalledTimes(1);
   });
 
   it("closes the git gate before any controller that runs git is constructed", () => {
