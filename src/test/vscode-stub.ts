@@ -82,6 +82,18 @@ class RelativePattern {
   constructor(public base: any, public pattern: string) {}
 }
 
+class TabInputText {
+  constructor(public uri: any) {}
+}
+
+class TabInputCustom {
+  constructor(public uri: any, public viewType: string) {}
+}
+
+class TabInputTextDiff {
+  constructor(public original: any, public modified: any) {}
+}
+
 const CommentMode = { Editing: 0, Preview: 1 } as const;
 const CommentThreadCollapsibleState = { Collapsed: 0, Expanded: 1 } as const;
 const CommentThreadState = { Unresolved: 0, Resolved: 1 } as const;
@@ -136,6 +148,7 @@ const window = {
   }),
   createTreeView: () => ({ dispose: () => undefined }),
   showTextDocument: async () => undefined,
+  tabGroups: { all: [] as any[], activeTabGroup: { activeTab: undefined as any } as any },
 };
 
 const comments = {
@@ -191,6 +204,9 @@ export {
   TreeItemCollapsibleState,
   TextDocumentChangeReason,
   TreeItem,
+  TabInputText,
+  TabInputCustom,
+  TabInputTextDiff,
   Uri,
   workspace,
   window,

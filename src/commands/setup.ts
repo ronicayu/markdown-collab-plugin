@@ -41,6 +41,7 @@ import {
   writeCursorCliConfig,
 } from "../mcpServer/agentConnections";
 import { hasCopilotProviderApi } from "../mcpServer/clients/copilot";
+import { activeMarkdownUri } from "../activeMarkdown";
 import type { CommandDeps } from "./deps";
 
 /**
@@ -370,9 +371,9 @@ async function invokeInitializeAgents(log: Logger): Promise<void> {
 async function pickWorkspaceFolder(): Promise<vscode.WorkspaceFolder | undefined> {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) return undefined;
-  const active = vscode.window.activeTextEditor;
+  const active = vscode.window.activeTextEditor?.document.uri ?? activeMarkdownUri();
   if (active) {
-    const f = vscode.workspace.getWorkspaceFolder(active.document.uri);
+    const f = vscode.workspace.getWorkspaceFolder(active);
     if (f) return f;
   }
   if (folders.length === 1) return folders[0];

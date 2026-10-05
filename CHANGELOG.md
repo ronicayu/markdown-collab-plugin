@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.35.35 — 2026-10-05 (GitHub only)
+
+### Fixed: commands said "Open a Markdown file first" while the review view was open
+
+With the review view or the Welcome page focused, Send to Claude, Ask Agent to
+Review, Remove Resolved Comments, Finalize and the other palette commands didn't
+see the Markdown file on screen. They now use the file in the focused review
+view, or the one Markdown file open in another editor group when the Welcome
+page has focus. Comment on Selection still needs a text editor with a selection.
+(#17)
+
+### Tests
+
+- The active-file lookup picks the text editor, then the focused tab, then the
+  one Markdown file in the other groups, and gives up when two compete.
+- Send, review and comment commands run with only the review view focused.
+- In a real editor, Send to Claude from the palette copies the prompt for the
+  file open in the review view.
+
 ## 0.35.34 — 2026-10-05 (GitHub only)
 
 ### Fixed: no warning when an agent broke a comment marker, and the Comment Threads view never appeared

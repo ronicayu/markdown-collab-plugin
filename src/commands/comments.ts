@@ -20,6 +20,7 @@ import {
   opResolve,
 } from "../inlineComments/docOps";
 import type { ReviewNode } from "../reviewView";
+import { activeMarkdownUri } from "../activeMarkdown";
 import type { CommandDeps } from "./deps";
 import { reviewViewOptsFrom } from "./reviewViewRouter";
 
@@ -34,7 +35,7 @@ import { reviewViewOptsFrom } from "./reviewViewRouter";
  * history from the file. It is one undo step, which the modal says.
  */
 async function invokeRemoveResolvedComments(arg: vscode.Uri | undefined, log: Logger): Promise<void> {
-  const uri = arg instanceof vscode.Uri ? arg : vscode.window.activeTextEditor?.document.uri;
+  const uri = arg instanceof vscode.Uri ? arg : activeMarkdownUri();
   if (!uri) {
     void vscode.window.showWarningMessage("Open a Markdown file first, then run this command.");
     return;
@@ -120,7 +121,7 @@ async function saveOrWarn(doc: vscode.TextDocument, log: Logger, action: string)
  * modal says so when there are any. One undo step.
  */
 async function invokeFinalizeDocument(arg: vscode.Uri | undefined, log: Logger): Promise<void> {
-  const uri = arg instanceof vscode.Uri ? arg : vscode.window.activeTextEditor?.document.uri;
+  const uri = arg instanceof vscode.Uri ? arg : activeMarkdownUri();
   if (!uri) {
     void vscode.window.showWarningMessage("Open a Markdown file first, then run this command.");
     return;
@@ -279,7 +280,7 @@ async function invokeRepairInlineComments(
   log: Logger,
   fsPathArg?: string,
 ): Promise<void> {
-  const fsPath = fsPathArg ?? vscode.window.activeTextEditor?.document.uri.fsPath;
+  const fsPath = fsPathArg ?? activeMarkdownUri()?.fsPath;
   if (!fsPath) {
     void vscode.window.showWarningMessage("Open a markdown file to repair its comment anchors.");
     return;
@@ -552,10 +553,7 @@ export function registerCommentsCommands(deps: CommandDeps): void {
   // `ReviewViewOpts` as the second argument; a menu's own second argument
   // (the editor group, the explorer selection) is ignored.
   const openReviewViewCommand = async (arg?: vscode.Uri, opts?: unknown): Promise<void> => {
-    const uri =
-      arg instanceof vscode.Uri
-        ? arg
-        : vscode.window.activeTextEditor?.document.uri;
+    const uri = arg instanceof vscode.Uri ? arg : activeMarkdownUri();
     if (!uri) {
       void vscode.window.showWarningMessage(
         "Open a Markdown file first, then run this command.",

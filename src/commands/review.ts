@@ -21,6 +21,7 @@ import { CONVENTIONS_REL, CONVENTIONS_TEMPLATE } from "../reviewConventions";
 import { buildReviewDigest, type DigestFile } from "../reviewDigest";
 import type { ReviewView } from "../reviewView";
 import type { TerminalTracker } from "../transports/terminalTracker";
+import { activeMarkdownUri } from "../activeMarkdown";
 import { dispatchReviewPayload } from "./send";
 import type { CommandDeps } from "./deps";
 import type { OpenReviewView } from "./reviewViewRouter";
@@ -127,7 +128,7 @@ function resolveSelection(arg?: vscode.Uri, selected?: vscode.Uri[]): vscode.Uri
     if (uris.length > 0) return uris;
   }
   if (arg instanceof vscode.Uri) return [arg];
-  const active = vscode.window.activeTextEditor?.document.uri;
+  const active = activeMarkdownUri();
   return active ? [active] : [];
 }
 

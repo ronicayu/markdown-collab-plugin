@@ -18,3 +18,8 @@ export function isInsideRoot(target: string, root: string): boolean {
   if (path.isAbsolute(rel)) return false;
   return true;
 }
+
+export function isMarkdownPath(p: string): boolean {
+  const lower = p.toLowerCase();
+  return lower.endsWith(".md") || lower.endsWith(".markdown");
+}

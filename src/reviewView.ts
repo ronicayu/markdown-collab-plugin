@@ -1,6 +1,7 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import type { Logger } from "./logging";
+import { isMarkdownPath } from "./pathUtils";
 import { isClaudeUnread } from "./inlineComments/claudeUnread";
 import { parse, type InlineThread } from "./inlineComments/format";
 import { IntegrityGuard, summarize, type GuardDecision } from "./inlineComments/integrityGuard";
@@ -41,11 +42,6 @@ const CONCURRENCY = 8;
 const FILE_CHANGE_DEBOUNCE_MS = 100;
 const MARKDOWN_GLOB = "**/*.{md,markdown}";
 const THREADS_MARKER = "<!--mc:threads:begin-->";
-
-function isMarkdownPath(p: string): boolean {
-  const lower = p.toLowerCase();
-  return lower.endsWith(".md") || lower.endsWith(".markdown");
-}
 
 /** Skip vendored trees the full scan also excludes, so the watcher and scan agree. */
 function isVendored(p: string): boolean {

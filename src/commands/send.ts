@@ -4,6 +4,7 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import type { Logger } from "../logging";
+import { activeMarkdownUri } from "../activeMarkdown";
 import { folderForDocument } from "../workspaceFolder";
 import { workflowOpener } from "../skillDelivery";
 import {
@@ -52,16 +53,15 @@ async function readConventions(folder: vscode.WorkspaceFolder): Promise<string |
 }
 
 async function invokeCopyClaudePrompt(): Promise<void> {
-  const editor = vscode.window.activeTextEditor;
-  if (!editor || editor.document.languageId !== "markdown") {
+  const uri = activeMarkdownUri();
+  if (!uri) {
     void vscode.window.showWarningMessage(
       "Open a Markdown file first, then run this command.",
     );
     return;
   }
-  const doc = editor.document;
-  const folder = folderForDocument(doc.uri);
-  const rel = path.relative(folder.uri.fsPath, doc.uri.fsPath);
+  const folder = folderForDocument(uri);
+  const rel = path.relative(folder.uri.fsPath, uri.fsPath);
   // The command is "Copy Prompt" (the id keeps its old name): the prompt opens
   // with the skill's workflow line, but whichever agent it is pasted into reads it.
   const prompt = `${workflowOpener("installed")} to address the unresolved review comments on ${rel}.`;
@@ -469,10 +469,7 @@ export function registerSendCommands(deps: CommandDeps): void {
     vscode.commands.registerCommand(
       "markdownCollab.sendAllToClaude",
       async (arg?: vscode.Uri): Promise<DispatchOutcome> => {
-        const uri =
-          arg instanceof vscode.Uri
-            ? arg
-            : vscode.window.activeTextEditor?.document.uri;
+        const uri = arg instanceof vscode.Uri ? arg : activeMarkdownUri();
         if (!uri) {
           void vscode.window.showWarningMessage(
             "Open a Markdown file first, then run this command.",
