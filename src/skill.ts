@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 export const SKILL_REL_PATH = ".claude/skills/vs-markdown-collab/SKILL.md";
 export const CLI_SCRIPT_REL = ".claude/skills/vs-markdown-collab/mdc.mjs";
 
-// Stale helpers from the deleted channel transports (10x-plan-4 P0.3) — no
+// Stale helpers from the deleted channel transports — no
 // longer installed, but `installClaudeSkill` still deletes them if it finds
 // them left over from an older install of this extension.
 const STALE_HELPER_RELS = [
@@ -57,7 +57,7 @@ export async function installClaudeSkill(
   // can still pick up CLI fixes.
   await syncCliScript(homeDir);
 
-  // Helpers for the channel transports deleted in 10x-plan-4 P0.3. An install
+  // Helpers for the deleted channel transports. An install
   // from before that release may still have them on disk; they're ours, so we
   // clean them up rather than leaving dead scripts behind.
   await deleteStaleHelpers(homeDir);
@@ -79,7 +79,6 @@ export async function installClaudeSkill(
 
 export type SkillStatus = "missing" | "outdated" | "current";
 
-/** Where Claude Code records the plugins installed for this user. */
 export const PLUGIN_REGISTRY_REL = ".claude/plugins/installed_plugins.json";
 
 export interface InstalledPlugin {
@@ -97,7 +96,7 @@ export interface InstalledPlugin {
  * the "is Claude set up?" banner doesn't justify. The file is Claude Code's
  * internal format (`{version, plugins: {id: [{scope, version, …}]}}`), so it
  * is read defensively — anything unexpected reads as "not installed", and the
- * legacy check decides as it always did. Project- and local-scope entries
+ * legacy check decides. Project- and local-scope entries
  * don't count: they belong to one project, and this can't tell which.
  */
 export async function installedClaudePlugin(
@@ -210,7 +209,6 @@ async function syncCliScript(homeDir: string): Promise<void> {
   await syncScript(path.join(homeDir, CLI_SCRIPT_REL), CLI_SCRIPT_CONTENT);
 }
 
-/** Remove helpers the deleted channel transports installed, if still present. */
 async function deleteStaleHelpers(homeDir: string): Promise<void> {
   for (const rel of STALE_HELPER_RELS) {
     try {

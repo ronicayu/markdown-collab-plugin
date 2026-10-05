@@ -78,7 +78,6 @@ export function drawioRejectReasonMessage(reason: ResolveErr["reason"]): string 
 export function isDrawioHref(href: string): boolean {
   const trimmed = (href || "").trim().toLowerCase();
   if (!trimmed) return false;
-  // Strip any fragment or query.
   const cleaned = trimmed.split("#")[0]!.split("?")[0]!;
   return ALLOWED_EXTENSIONS.some((ext) => cleaned.endsWith(ext));
 }

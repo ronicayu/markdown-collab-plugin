@@ -1,4 +1,4 @@
-// The live editor sidebar's host half (10x-plan-6 P4): which messages it
+// The live editor sidebar's host half: which messages it
 // claims from the provider, and that each one runs the review view's operation
 // on the file's own source — never on anything the editor serialized.
 

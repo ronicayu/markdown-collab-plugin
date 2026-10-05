@@ -1,4 +1,4 @@
-// The MCP tool server against a real Extension Host (10x-plan-2 P0.1).
+// The MCP tool server against a real Extension Host.
 //
 // The unit tests cover the verbs, the protocol, and the socket. What only the
 // host can show is the property the whole initiative exists for: a tool call
@@ -213,7 +213,7 @@ suite("mcpServer: over HTTP", () => {
     assert.strictEqual(parse(doc.getText()).threads.length, 1);
   });
 
-  // 10x-plan-4 P1.2: the author a tool call lands in the document comes from
+  // The author a tool call lands in the document comes from
   // the session's own `initialize`, not a hardcoded "claude" — a Codex
   // session's reply must land as Codex's, over the real transport this time
   // (mcpTools.test.ts covers the same claim against callTool directly).

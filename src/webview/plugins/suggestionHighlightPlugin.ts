@@ -10,9 +10,8 @@
 // apart.
 //
 // In read-only mode client.ts passes a `place` function, and suggestions are
-// placed by source position exactly as threads are (docs/one-view-design.md):
-// the text-and-ordinal search below has the same wrong-occurrence failure the
-// one-view spike measured for threads. Edit mode keeps the search.
+// placed by source position exactly as threads are: the text-and-ordinal search
+// below can land on the wrong occurrence. Edit mode keeps the search.
 import { Plugin, PluginKey } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import { locateAnchorInLiveText, locateNthOccurrence } from "../../collab/liveAnchorLocator";

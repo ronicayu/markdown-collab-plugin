@@ -1,4 +1,4 @@
-// Click-level coverage for the live (Milkdown) editor webview — 10x-plan-2 P2.1.
+// Click-level coverage for the live (Milkdown) editor webview.
 //
 // Milkdown wouldn't boot under the earlier JSDOM-ish harness, so this surface
 // was only ever "verified by construction": its logic had unit tests, its
@@ -93,7 +93,7 @@ test("selecting text and adding a comment posts add-comment with the selected an
   const anchor = msg.anchor as { text: string; contextBefore: string; contextAfter: string };
   expect(anchor.text).toBe("Suggest");
   // Edit mode names the selection by structure for the host to find in the
-  // file's own bytes (docs/one-view-design.md) — its first and last
+  // file's own bytes — its first and last
   // characters, so an off-by-one here anchors the wrong span. Nothing the
   // editor serialized goes with it.
   expect(msg.fullMd).toBeUndefined();
@@ -102,7 +102,7 @@ test("selecting text and adding a comment posts add-comment with the selected an
 });
 
 test("Resolve and the card's Send post the thread-scoped messages", async ({ page }) => {
-  // The review view's messages (10x-plan-6 P4): the sidebar is shared now.
+  // The review view's messages: the sidebar is shared now.
   const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
   await card.locator(".thread-actions").getByRole("button", { name: "Resolve", exact: true }).click();
   expect(await awaitPosted(page, "toggle-resolve")).toEqual({
@@ -144,7 +144,7 @@ test("a pending thread shows 'Claude is working…' until the sidecar update cle
 });
 
 test("the waiting row follows the phase Claude reports", async ({ page }) => {
-  // 10x-plan-2 P0.2. A phase update changes nothing else about the thread — so
+  // A phase update changes nothing else about the thread — so
   // this is also the regression test for the repaint.
   const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
   await pushToWebview(page, {

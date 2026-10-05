@@ -1,4 +1,4 @@
-// The gate of docs/one-view-design.md, "Phase B: edit mode": a keystroke may
+// The gate for edit mode: a keystroke may
 // only change the bytes of the top-level block it happened in.
 //
 // On every document the one-view spike used, with a thread added to every

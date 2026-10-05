@@ -1,4 +1,4 @@
-// The redesigned sidebar chrome (docs/sidebar-chrome-redesign.md): the
+// The redesigned sidebar chrome: the
 // document toolbar's comments toggle, the footer and its send-options menu,
 // the filter tabs' own counts, and the header-height budget that keeps the
 // clutter this redesign removed from creeping back.

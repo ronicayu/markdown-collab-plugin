@@ -1,7 +1,6 @@
-// Multi-file Review Mode payloads (10x-plan P1.3).
+// Multi-file Review Mode payloads.
 //
-// "Ask Claude to Review" started per-file, but real doc work is a `docs/`
-// folder or a PR's worth of files. This module builds ONE Review Mode payload
+// This module builds ONE Review Mode payload
 // for a set of files: the same review contract as the single-file prompt, plus
 // the one dimension that only exists across files — consistency between them
 // (drifting terminology, contradictory claims, guidance duplicated then
@@ -14,11 +13,9 @@ import { reviewModeClosing, type ReviewPayload } from "./sendToClaude";
 import { workflowOpener, type SkillDelivery } from "./skillDelivery";
 
 export interface ReviewFile {
-  /** Workspace-relative path, POSIX separators. */
   rel: string;
   /** What the prompt names the file by when `rel` would be ambiguous (see `promptPathFor`). */
   promptPath?: string;
-  /** File size in bytes, used for the summed soft-confirm. */
   bytes: number;
 }
 
@@ -46,8 +43,8 @@ export const CROSS_DOCUMENT_DIMENSION = [
  * told to work in, so threads land in a predictable sequence.
  *
  * Mirrors `buildReviewRequestPayload` for the single-file case: rank and cap
- * at five threads *per file* with a per-file summary thread for the rest
- * (10x-plan-6 P3), no prose edits, optional free-form focus directive.
+ * at five threads *per file* with a per-file summary thread for the rest,
+ * no prose edits, optional free-form focus directive.
  */
 export function buildMultiFileReviewPayload(
   files: ReviewFile[],
@@ -76,7 +73,6 @@ export function buildMultiFileReviewPayload(
   };
 }
 
-/** Total bytes across the selection — the input to the summed soft confirm. */
 export function totalBytes(files: ReviewFile[]): number {
   return files.reduce((sum, f) => sum + f.bytes, 0);
 }

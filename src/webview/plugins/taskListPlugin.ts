@@ -7,9 +7,7 @@
 // ships no command for this, so a click inside the glyph's hit area flips the
 // node's `checked` attr directly via `setNodeMarkup`.
 //
-// `view.editable` gates the toggle off in a read-only view (the live editor
-// has no read-only mode yet, but this plugin shouldn't assume that stays
-// true).
+// `view.editable` gates the toggle off in a read-only view.
 
 import { Plugin } from "prosemirror-state";
 import type { Node as PmNode } from "prosemirror-model";

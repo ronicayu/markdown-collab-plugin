@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Structural check on the committed Claude Code plugin (10x-plan-4 P0.2).
+// Structural check on the committed Claude Code plugin.
 //
 // The plugin is generated (scripts/build-plugin.mjs) but committed, because
 // the GitHub marketplace serves it straight from the repository — so the

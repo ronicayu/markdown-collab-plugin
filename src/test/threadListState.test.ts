@@ -131,7 +131,7 @@ describe("claudeSummary", () => {
     expect(s.unread).toBe(0);
   });
 
-  // 10x-plan-4 P1.2: the label names whichever agent(s) the unread threads
+  // The label names whichever agent(s) the unread threads
   // actually came from.
   it("names Codex when every unread thread came from Codex", () => {
     const s = claudeSummary([thread("a", { author: "codex" }), thread("b", { author: "codex" })]);

@@ -1,4 +1,4 @@
-// Reverse navigation, host side (10x-plan-4 P2.4): "Open in editor" from an
+// Reverse navigation, host side: "Open in editor" from an
 // inline-comments thread card opens a real text editor with the anchored
 // text selected, and an unanchored thread (its marker text has been edited
 // away) shows an information toast instead of opening anything.

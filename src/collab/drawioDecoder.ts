@@ -1,21 +1,11 @@
-// Decode a .drawio file's XML payload into the inner mxGraphModel XML
-// that mxgraph can render.
+// Decode a .drawio file's XML payload into the inner mxGraphModel XML that
+// mxgraph can render.
 //
-// drawio supports two on-disk shapes:
-//
-// 1. Plain — `<mxfile><diagram>...mxGraphModel xml...</diagram></mxfile>`
-//    The diagram's text content is the mxGraphModel XML directly.
-//
-// 2. Compressed — `<mxfile><diagram>BASE64...</diagram></mxfile>`
-//    The diagram's text content is base64( deflateRaw( encodeURIComponent(
-//    mxGraphModel xml ) ) ). drawio uses raw deflate (no zlib wrapper)
-//    plus URI encoding to keep the payload ASCII-clean inside XML.
-//
-// For multi-page files we just decode the first <diagram>; the inline
-// link viewer is single-page by design.
-//
-// The decoder is split out from the renderer so we can unit-test the
-// format handling without pulling in mxgraph's DOM-heavy module.
+// Two on-disk shapes: plain (`<mxfile><diagram>` holds the mxGraphModel XML) and
+// compressed (`<diagram>` holds base64( deflateRaw( encodeURIComponent( xml ) ) )
+// — raw deflate, no zlib wrapper, plus URI encoding to keep the payload
+// ASCII-clean inside XML). Multi-page files decode the first <diagram>; the
+// inline link viewer is single-page by design.
 
 import pako from "pako";
 
@@ -46,12 +36,10 @@ export function decodeDrawioFile(rawXml: string): DecodeResult {
     return { ok: false, reason: "no-diagram", detail: "Could not find a <diagram> element with content." };
   }
 
-  // If the diagram body is already mxGraphModel XML, use it as is.
   if (/<mxGraphModel\b/i.test(diagramText)) {
     return { ok: true, mxGraphModelXml: diagramText };
   }
 
-  // Otherwise treat as the compressed shape.
   const decoded = decompressDiagram(diagramText);
   if (!decoded.ok) return decoded;
   if (!/<mxGraphModel\b/i.test(decoded.mxGraphModelXml)) {
@@ -136,7 +124,6 @@ function base64ToBytes(b64: string): Uint8Array {
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
   }
-  // Node fallback — tests run under Node, so this path is exercised.
   const buf = Buffer.from(b64, "base64");
   return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
 }

@@ -1,4 +1,4 @@
-// Inline-comment format — the default storage layout in v0.27+. Comments
+// Inline-comment format. Comments
 // live in two places inside the .md file itself:
 //
 //   1. Anchored span: paired HTML comments wrap the highlighted text
@@ -18,11 +18,11 @@
 import { hashAnchorText } from "./staleness";
 
 /**
- * How an agent's write reached the file (10x-plan-6 P1.4): `"tools"` through
- * the extension's MCP server — which includes every `mdc` write forwarded to
- * it — and `"cli"` for `mdc` writing the file itself. A hand-edited comment has
- * no such field, and that absence is the third answer, not a gap: it is how a
- * reply from an agent following the file format alone shows up.
+ * How an agent's write reached the file: `"tools"` through the extension's MCP
+ * server — which includes every `mdc` write forwarded to it — and `"cli"` for
+ * `mdc` writing the file itself. A hand-edited comment has no such field, and
+ * that absence is the third answer, not a gap: it is how a reply from an agent
+ * following the file format alone shows up.
  */
 export type WriteVia = "tools" | "cli";
 
@@ -38,25 +38,23 @@ export interface InlineComment {
   parent?: string;
   author: string;
   /**
-   * Set by the tools/CLI on every comment an agent writes (10x-plan-4 P1.2).
-   * Optional and additive, like `anchorHash`: a file written before this
-   * change has no such field on any comment, and `isAgentComment` falls back
-   * to recognizing the author string itself for those. New agent-authored
-   * comments always carry it, regardless of which agent's slug `author` is —
-   * that is what keeps a future, not-yet-known agent's comments recognizable
-   * without another format change.
+   * Set by the tools/CLI on every comment an agent writes. Optional and
+   * additive, like `anchorHash`: `isAgentComment` falls back to recognizing the
+   * author string for comments without it. New agent-authored comments always
+   * carry it, whichever agent's slug `author` is, which keeps a future,
+   * not-yet-known agent's comments recognizable without another format change.
    */
   agent?: boolean;
   /**
-   * Which path wrote this comment (10x-plan-6 P1.4). Optional and additive,
-   * like `agent`: set only by the tools and the CLI, absent on everything a
-   * human or a hand-editing agent wrote. An unrecognized value is dropped at
-   * parse, so every reader sees one of the two values or nothing.
+  /**
+   * Which path wrote this comment. Optional and additive, like `agent`: set
+   * only by the tools and the CLI, absent on everything a human or a
+   * hand-editing agent wrote. An unrecognized value is dropped at parse, so
+   * every reader sees one of the two values or nothing.
    */
   via?: WriteVia;
   /** ISO-8601 UTC timestamp. */
   ts: string;
-  /** Markdown body. */
   body: string;
   /** ISO-8601 UTC timestamp. Present iff the body has been edited. */
   editedTs?: string;
@@ -74,12 +72,11 @@ export interface InlineThread {
   resolvedTs?: string;
   comments: InlineComment[];
   /**
-   * Hash of the anchored span as it read when the last comment was written
-   * (10x-plan-2 P1.3). Distinct from `quote`, which is the creation-time text
-   * kept as a re-anchoring locator and must not move.
+   * Hash of the anchored span as it read when the last comment was written.
+   * Distinct from `quote`, the creation-time text kept as a re-anchoring
+   * locator, which must not move.
    *
-   * Optional on purpose: a file written by an older version has no hash, and
-   * "unknown" is the honest answer for it — never "unchanged".
+   * Optional on purpose: a file without a hash gets "unknown", never "unchanged".
    */
   anchorHash?: string;
 }
@@ -100,25 +97,23 @@ export interface InlineSuggestion {
   /** Optional link to a comment thread this suggestion discusses. */
   threadId?: string;
   author: string;
-  /** Same contract as `InlineComment.agent` (10x-plan-4 P1.2). */
+  /** Same contract as `InlineComment.agent`. */
   agent?: boolean;
-  /** Same contract as `InlineComment.via` (10x-plan-6 P1.4). */
+  /** Same contract as `InlineComment.via`. */
   via?: WriteVia;
   /** ISO-8601 UTC timestamp. */
   ts: string;
   /** The current text, wrapped by this suggestion's anchor markers. */
   original: string;
-  /** The proposed replacement text. */
   proposed: string;
   /** Why the change — Claude's rationale, shown in the suggestion card. */
   note?: string;
 }
 
 /**
- * A per-file record of "Claude reviewed the document in this state"
- * (10x-plan-2 P1.1). Written when a review pass finishes; read to work out what
- * has changed since, so the next pass costs what the edit cost instead of what
- * the document costs.
+ * A per-file record of "Claude reviewed the document in this state". Written
+ * when a review pass finishes; read to work out what has changed since, so the
+ * next pass costs what the edit cost instead of what the document costs.
  */
 export interface ReviewCheckpoint {
   /** ISO-8601 UTC of the pass that recorded it. */
@@ -128,10 +123,9 @@ export interface ReviewCheckpoint {
   /** Git ref the file was at, when the workspace could tell us. */
   gitRef?: string;
   /**
-   * A hash per heading-section, in document order. This is what makes a delta
-   * review possible without keeping a copy of the old file: comparing these
-   * says exactly which sections moved. Absent on a checkpoint written before
-   * they existed, which degrades to a full pass.
+   * A hash per heading-section, in document order: comparing these says which
+   * sections moved without keeping a copy of the old file. Absent on older
+   * checkpoints, which degrade to a full pass.
    */
   sections?: Array<{ heading: string | null; hash: string }>;
 }
@@ -148,15 +142,11 @@ export interface ParsedDocument {
   suggestions: InlineSuggestion[];
   /** Marker positions keyed by thread id AND suggestion anchorId. */
   anchors: Map<string, AnchorRange>;
-  /**
-   * Threads referenced in `<!--mc:t ...-->` but with no matching anchor
-   * markers in the prose. Surface in UI as "broken anchor — fix with quote
-   * fallback".
-   */
+  /** Threads referenced in `<!--mc:t ...-->` but with no matching anchor markers in the prose. */
   unanchoredThreadIds: string[];
   /** Suggestions in `<!--mc:s ...-->` whose anchor markers are missing. */
   unanchoredSuggestionIds: string[];
-  /** The last recorded review checkpoint, when the file carries one (P1.1). */
+  /** The last recorded review checkpoint, when the file carries one. */
   checkpoint: ReviewCheckpoint | null;
   /**
    * Half-open `[start, end)` range covering the threads region (including
@@ -192,10 +182,8 @@ const THREAD_LINE_RE = /<!--mc:t\s+(\{[\s\S]*?\})\s*-->/g;
 const SUGGESTION_LINE_RE = /<!--mc:s\s+(\{[\s\S]*?\})\s*-->/g;
 const CHECKPOINT_LINE_RE = /<!--mc:rev\s+(\{[\s\S]*?\})\s*-->/g;
 
-/** Compute a [start, end) bitmap of "this offset is inside code". */
 function buildCodeMask(source: string): Uint8Array {
   const mask = new Uint8Array(source.length);
-  // Pass 1: fenced code blocks (```...``` or ~~~...~~~ at line start).
   const fenceLineRe = /^[ \t]{0,3}(```+|~~~+)[^\n]*$/gm;
   let fenceMatch: RegExpExecArray | null;
   let inFence = false;
@@ -218,8 +206,6 @@ function buildCodeMask(source: string): Uint8Array {
     for (let i = fenceStart; i < source.length; i++) mask[i] = 1;
   }
 
-  // Pass 2: inline code spans (`...`). Skip pairs that are already inside
-  // a fenced block.
   const tickRe = /`+/g;
   let tickMatch: RegExpExecArray | null;
   const ticks: Array<{ start: number; end: number; len: number }> = [];
@@ -243,11 +229,9 @@ function buildCodeMask(source: string): Uint8Array {
     }
   }
 
-  // Pass 3: indented code blocks. Any line starting with 4+ spaces (and
-  // not preceded by a paragraph line) is a code block. We approximate
-  // pragmatically: 4-space-indent lines that aren't already in a fence.
-  // This is intentionally loose — false positives just mean we ignore a
-  // marker, which a reviewer can fix by un-indenting their code sample.
+  // Pass 3: indented code blocks, approximated loosely: any 4-space-indented
+  // line not already in a fence. False positives just mean a marker is ignored,
+  // which a reviewer can fix by un-indenting their code sample.
   let lineStart = 0;
   for (let i = 0; i <= source.length; i++) {
     if (i === source.length || source[i] === "\n") {
@@ -264,11 +248,8 @@ function buildCodeMask(source: string): Uint8Array {
  * True when `[start, end)` touches a fenced block, an indented block, or an
  * inline code span.
  *
- * Markers inside code are deliberately ignored by the parser so a literal
- * `<!--mc:a:xxx-->` in a code sample is inert. That protection cuts both
- * ways: markers written there for a *real* thread are inert too, so the
- * thread would come back unanchored with no explanation. Callers use this
- * to refuse up front instead.
+ * Markers in code are inert, so markers written there for a *real* thread would
+ * come back unanchored with no explanation. Callers use this to refuse up front.
  */
 export function isInCode(source: string, start: number, end: number): boolean {
   const mask = buildCodeMask(source);
@@ -336,19 +317,15 @@ function pairAnchors(markers: RawMarker[]): { anchors: Map<string, AnchorRange>;
 }
 
 function findThreadsRegion(source: string): { start: number; end: number; body: string } | null {
-  // The region this engine writes is always the file's tail, so the last
-  // begin marker followed by nothing but whitespace after its end marker is
-  // the real one — and that check is all the common case costs.
+  // The region this engine writes is always the file's tail, so the last begin
+  // marker followed by nothing but whitespace after its end marker is the real
+  // one — that check is all the common case costs.
   //
   // Anything else has to prove it isn't code. A document that *describes* the
-  // format (a README, the walkthrough) carries a sample region in a fenced
-  // block; taking the last begin marker at face value made that sample the
-  // live region, so the first comment on such a file was written inside the
-  // fence and the sample's own thread came back unanchored. Markers in code
-  // are already inert for anchors (see `buildCodeMask`); the region now
-  // follows the same rule. The tail check comes first so an unterminated
-  // fence earlier in the file — which masks to end of file — can't hide a
-  // real region that sits after it.
+  // format carries a sample region in a fenced block; taking the last begin
+  // marker at face value would make that sample the live region. The tail check
+  // comes first so an unterminated fence earlier in the file — which masks to
+  // end of file — can't hide a real region that sits after it.
   let mask: Uint8Array | null = null;
   let from = source.length;
   for (;;) {
@@ -371,10 +348,6 @@ function findThreadsRegion(source: string): { start: number; end: number; body: 
   }
 }
 
-/**
- * A `<!--mc:t ...-->` line that could not be turned into a thread.
- * `offset` is relative to the threads-region body.
- */
 export interface MalformedThreadLine {
   /** The raw JSON text between `<!--mc:t ` and `-->`. */
   raw: string;
@@ -404,18 +377,15 @@ function parseThreads(body: string, malformed?: MalformedThreadLine[]): InlineTh
         anchorHash: typeof obj.anchorHash === "string" ? obj.anchorHash : undefined,
       });
     } catch {
-      // Malformed JSON — skipped by `parse()` so a damaged line never takes
-      // the whole document down. `inspect()` surfaces it instead.
+      // Skipped by `parse()` so a damaged line never takes the whole document
+      // down; `inspect()` surfaces it instead.
       malformed?.push({ raw: m[1], offset: m.index, reason: "json-parse-error" });
     }
   }
   return threads;
 }
 
-/**
- * The review checkpoint from a threads-region body, or null. A malformed record
- * reads as "no checkpoint", which degrades to a full review — the safe direction.
- */
+/** A malformed record reads as "no checkpoint", which degrades to a full review — the safe direction. */
 function parseCheckpoint(body: string): ReviewCheckpoint | null {
   CHECKPOINT_LINE_RE.lastIndex = 0;
   let last: ReviewCheckpoint | null = null;
@@ -462,11 +432,10 @@ function parseSuggestions(body: string): InlineSuggestion[] {
         anchorId: obj.anchorId,
         threadId: typeof obj.threadId === "string" ? obj.threadId : undefined,
         author: typeof obj.author === "string" ? obj.author : "claude",
-        // Unlike a thread's `comments` array (kept as the raw parsed objects,
-        // so any field on them — including this one — already survives a
-        // round trip for free), a suggestion is rebuilt field by field here.
-        // Forgetting a field in this list means it was never truly optional —
-        // it was silently deleted the moment the file was next saved.
+        // A thread's `comments` array is kept as the raw parsed objects, so any
+        // field on them survives a round trip for free; a suggestion is rebuilt
+        // field by field here. A field forgotten in this list is silently deleted
+        // the next time the file is saved.
         agent: typeof obj.agent === "boolean" ? obj.agent : undefined,
         via: isWriteVia(obj.via) ? obj.via : undefined,
         ts: typeof obj.ts === "string" ? obj.ts : "",
@@ -494,10 +463,9 @@ function isValidComment(c: unknown): c is InlineComment {
 }
 
 /**
- * The comment as parsed, minus a `via` this version doesn't recognize. Every
- * other field stays the raw parsed object's (see `parseSuggestions`), so this
- * copies only when there is something to drop — a comment without the field,
- * which is every comment written before it existed, passes through untouched.
+ * The comment as parsed, minus a `via` this version doesn't recognize. Copies
+ * only when there is something to drop, so a comment without the field passes
+ * through untouched.
  */
 function withKnownVia(c: InlineComment): InlineComment {
   if (!("via" in c) || isWriteVia(c.via)) return c;
@@ -507,20 +475,15 @@ function withKnownVia(c: InlineComment): InlineComment {
 }
 
 /**
- * Detect a YAML (`---`) or TOML (`+++`) frontmatter block at the very
- * top of the source. The opening fence must be the first non-BOM line;
- * the closing fence must be on its own line and match the opening
- * format. Returns `null` when no valid block is found.
+ * Detect a YAML (`---`) or TOML (`+++`) frontmatter block at the very top of the
+ * source. Returns `null` when no valid block is found.
  *
- * The returned range covers everything from the opening `---` to the
- * `\n` that ends the closing fence's line — stripping that range
- * eliminates the frontmatter cleanly without leaving a blank gap at
- * the top of the prose.
+ * The returned range runs through the `\n` that ends the closing fence's line,
+ * so stripping it leaves no blank gap at the top of the prose.
  */
 export function findFrontmatter(source: string): { start: number; end: number } | null {
   // Skip a UTF-8 BOM so files saved with one still detect frontmatter.
   const offset = source.charCodeAt(0) === 0xfeff ? 1 : 0;
-  // Opening fence: exactly `---` or `+++` followed by an end-of-line or EOF.
   const head = source.slice(offset, offset + 4);
   let fence: string | null = null;
   if (head.startsWith("---") && (head.length === 3 || head[3] === "\n" || head[3] === "\r")) {
@@ -530,9 +493,7 @@ export function findFrontmatter(source: string): { start: number; end: number } 
   }
   if (!fence) return null;
 
-  // Walk lines after the opening fence looking for a matching closing
-  // fence line (`---` or `...` for YAML; `+++` for TOML). Bail if EOF
-  // hits first — partial frontmatter isn't a frontmatter.
+  // Bail if EOF hits first — partial frontmatter isn't a frontmatter.
   let cursor = offset + fence.length;
   // Eat the newline after the opening fence (it might be missing if
   // the doc is a one-liner, in which case there's no closing fence
@@ -571,7 +532,6 @@ export function parse(source: string): ParsedDocument {
   const checkpoint = region ? parseCheckpoint(region.body) : null;
   const frontmatter = findFrontmatter(source);
 
-  // Sort threads by anchor position; threads without an anchor go to the end.
   threads.sort((a, b) => {
     const ai = anchors.get(a.id)?.openStart ?? Number.POSITIVE_INFINITY;
     const bi = anchors.get(b.id)?.openStart ?? Number.POSITIVE_INFINITY;
@@ -613,9 +573,9 @@ export interface UnpairedMarker {
 
 /**
  * Everything `parse()` deliberately swallows, for callers that need to
- * *diagnose* a document rather than render it. `parse()` stays lenient —
- * a damaged line must never take the whole document down — so integrity
- * checking reads from here instead.
+ * *diagnose* a document rather than render it. `parse()` stays lenient so a
+ * damaged line never takes the whole document down; integrity checking reads
+ * from here instead.
  */
 export interface DocumentInspection {
   parsed: ParsedDocument;
@@ -629,10 +589,7 @@ export interface DocumentInspection {
   orphanAnchorIds: string[];
 }
 
-/**
- * Diagnostic pass over a document. Shares every helper with `parse()` —
- * this is a second view of the same parse, never a second parser.
- */
+/** A second view of the same parse, sharing every helper with `parse()` — never a second parser. */
 export function inspect(source: string): DocumentInspection {
   const mask = buildCodeMask(source);
   const markers = findMarkers(source, mask);
@@ -665,7 +622,6 @@ export function inspect(source: string): DocumentInspection {
   };
 }
 
-/** Render the threads region as text, with leading/trailing newlines suitable for appending to a markdown file. */
 export function renderThreadsRegion(
   threads: InlineThread[],
   suggestions: InlineSuggestion[] = [],
@@ -711,12 +667,10 @@ export function renderThreadsRegion(
 }
 
 /**
- * `JSON.stringify` + escape any literal `-->` (and the leading `<!--`)
- * that would otherwise terminate or confuse the surrounding HTML
- * comment in which we embed the JSON. We escape `>` after `--` to
- * `>`; on read, `JSON.parse` reverses the `>` back to `>` so
- * comment bodies round-trip losslessly. Belt-and-braces — also escape
- * `<` after `!` to `<` in case an AI emits a literal `<!-- block.
+ * `JSON.stringify` + escape any literal `-->` (and the leading `<!--`) that
+ * would otherwise terminate or confuse the surrounding HTML comment in which
+ * the JSON is embedded. `JSON.parse` reverses the escapes, so comment bodies
+ * round-trip losslessly.
  */
 function safeStringify(obj: unknown): string {
   return JSON.stringify(obj)
@@ -725,10 +679,9 @@ function safeStringify(obj: unknown): string {
 }
 
 /**
- * Replace (or insert) the threads region of `source` with `threads` and
- * `suggestions`. When `suggestions` is omitted, the source's existing
- * suggestions are preserved — so thread operations never disturb pending
- * suggestions, and suggestion operations pass the updated list explicitly.
+ * When `suggestions` is omitted, the source's existing suggestions are
+ * preserved — so thread operations never disturb pending suggestions, and
+ * suggestion operations pass the updated list explicitly.
  */
 export function withThreads(
   source: string,
@@ -750,10 +703,10 @@ export function withThreads(
     const before = source.slice(0, region.start);
     const after = source.slice(region.end);
     if (rendered === "") {
-      // Removing the region. Collapse the newline run on BOTH sides of where
-      // it sat down to a single separator: stripping only one newline (as we
-      // used to) left an extra behind on every removal, so an add/remove
-      // cycle appended a blank line to the document each time it ran.
+      // Removing the region. Collapse the newline run on BOTH sides of where it
+      // sat down to a single separator: stripping only one newline left an extra
+      // behind on every removal, so an add/remove cycle grew the document by a
+      // blank line each time.
       const head = before.replace(/\n+$/, "");
       const tail = after.replace(/^\n+/, "");
       const joiner = before.endsWith("\n") || after.startsWith("\n") ? "\n" : "";
@@ -769,7 +722,6 @@ export function withThreads(
 
 const ID_CHARSET = "0123456789abcdefghijklmnopqrstuvwxyz";
 
-/** Mint a 5-char base36 id that doesn't collide with any existing thread. */
 export function mintThreadId(existing: Iterable<string>): string {
   const taken = new Set(existing);
   for (let attempt = 0; attempt < 50; attempt++) {
@@ -799,11 +751,10 @@ export function startPastHeadingPrefix(text: string, start: number, limit: numbe
   const m = /^[ \t]{0,3}#{1,6}[ \t]+/.exec(line);
   if (!m) return start;
   const contentStart = lineStart + m[0].length;
-  if (start >= contentStart) return start; // already past the prefix
-  return Math.min(contentStart, limit); // bump, but don't cross the selection end
+  if (start >= contentStart) return start;
+  return Math.min(contentStart, limit);
 }
 
-/** Wrap `[selStart, selEnd)` in `source` with anchor markers and append a thread. */
 export function addThread(
   source: string,
   selStart: number,
@@ -816,9 +767,9 @@ export function addThread(
   const parsed = parse(source);
   const id = mintThreadId(parsed.threads.map((t) => t.id));
   // Strip any *other* thread's markers the selection happens to span — a quote
-  // is the verbatim anchored text, never embedded `<!--mc:...-->` markup. A
-  // marker-laden quote would otherwise show up raw in comment UIs and break
-  // re-anchoring (it can't be found in the marker-free rendered text).
+  // is the verbatim anchored text, never embedded markup, which would show raw
+  // in comment UIs and break re-anchoring (it isn't in the marker-free rendered
+  // text).
   const quote = source.slice(selStart, selEnd).replace(OPEN_RE, "").replace(CLOSE_RE, "");
   const openMarker = `<!--mc:a:${id}-->`;
   const closeMarker = `<!--mc:/a:${id}-->`;
@@ -833,14 +784,14 @@ export function addThread(
         author: comment.author,
         ...(comment.agent ? { agent: true as const } : {}),
         // Only when set, so a comment written without it serializes to exactly
-        // the bytes it always did.
+        // the same bytes.
         ...(comment.via ? { via: comment.via } : {}),
         ts,
         body: comment.body,
       },
     ],
     // The author is looking at this text right now, so it is the baseline the
-    // "text changed since this comment" badge compares against (P1.3).
+    // "text changed since this comment" badge compares against.
     anchorHash: hashAnchorText(quote),
   };
   assertAnchorable(parsed, source, selStart, selEnd);
@@ -901,14 +852,12 @@ export function replaceThread(source: string, id: string, next: InlineThread | n
   return withThreads(body, nextThreads);
 }
 
-/** Remove both anchor markers for `id` from `source`. Idempotent. */
 export function stripAnchorMarkers(source: string, id: string): string {
   const open = `<!--mc:a:${id}-->`;
   const close = `<!--mc:/a:${id}-->`;
   return source.split(open).join("").split(close).join("");
 }
 
-/** Strip ALL inline-comment markers and the threads region. Used for the "rendered" view. */
 export function stripAllInlineMarkup(source: string): string {
   const region = findThreadsRegion(source);
   const stripped = region ? source.slice(0, region.start).replace(/\n+$/, "\n") + source.slice(region.end) : source;
@@ -926,7 +875,6 @@ export function finalizeSource(source: string): string {
   return withThreads(source, [], [], null).replace(OPEN_RE, "").replace(CLOSE_RE, "");
 }
 
-/** Add a reply to an existing thread. Returns the new thread or null if not found. */
 export function appendReply(
   thread: InlineThread,
   reply: { author: string; body: string; ts?: string; parent?: string; agent?: boolean; via?: WriteVia },
@@ -959,12 +907,9 @@ function nextCommentId(thread: InlineThread): string {
   return `c${max + 1}`;
 }
 
-// --- suggestions (suggest mode) --------------------------------------------
-
 /**
- * Wrap `[selStart, selEnd)` (the original text) in anchor markers and append a
- * pending suggestion proposing `proposed` in its place. The file still renders
- * as the original — the proposed text lives only in the `<!--mc:s ...-->` line.
+ * The file still renders as the original — the proposed text lives only in the
+ * `<!--mc:s ...-->` line.
  */
 export function addSuggestion(
   source: string,

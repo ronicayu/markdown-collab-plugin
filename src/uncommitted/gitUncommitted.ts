@@ -1,9 +1,7 @@
 /**
- * Git queries for the uncommitted-changes review view. Everything diffs the
- * working tree against HEAD — no remote, no platform CLI, no PR context.
- *
- * vscode-free; the runner is injectable so tests stub the one chokepoint,
- * same pattern as `../pr/diff`.
+ * Git queries for the uncommitted-changes review view: everything diffs the
+ * working tree against HEAD. The runner is injectable so tests stub the one
+ * chokepoint.
  */
 
 import {
@@ -139,8 +137,7 @@ export async function headFileContent(
 
 /**
  * Review threads still embedded in `source` — every entry in the
- * `<!--mc:t …-->` block, whatever its status (10x-plan-6 P5.1's stage-time
- * reminder). Deliberately not "unresolved only": a resolved thread is still
+ * `<!--mc:t …-->` block, whatever its status. Deliberately not "unresolved only": a resolved thread is still
  * review data sitting in the file until **Remove All Review Data** runs, and
  * that command strips all of it, not just what's still open.
  */

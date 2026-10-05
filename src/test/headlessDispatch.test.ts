@@ -1,5 +1,5 @@
-// Source-level guards for how the dispatcher treats headless (10x-plan-4
-// P0.1). The behavior is covered end to end in the integration suite; these
+// Source-level guards for how the dispatcher treats headless. The behavior
+// is covered end to end in the integration suite; these
 // pin the rules that a refactor could quietly break while every test that
 // exercises one path still passes.
 
@@ -19,7 +19,7 @@ function dispatcherBody(): string {
 
 describe("headless is offered, never chosen", () => {
   it("auto-detection never picks it", () => {
-    // Open question 1 of 10x-plan-4 is Ronica's: until it's answered, nothing
+    // The open question is Ronica's: until it's answered, nothing
     // but the human's pick (or their setting) runs Claude in the background.
     for (const claudeTerminal of [true, false]) {
       expect(detectSendMode({ claudeTerminal })?.mode).not.toBe("headless");

@@ -134,7 +134,7 @@ describe("stageStates", () => {
 });
 
 describe("countReviewThreads", () => {
-  // 10x-plan-6 P5.1: the stage-time reminder counts threads still embedded
+  // The stage-time reminder counts threads still embedded
   // in the file, so it needs to agree with the review format's own parser —
   // no reimplementing the `<!--mc:t …-->` shape here.
   const withThreadsBlock = (...lines: string[]) =>

@@ -113,7 +113,7 @@ describe("isClaudeUnread × isClaudeReviewed — mutual exclusion on claude-init
   });
 });
 
-// 10x-plan-4 P1.2: any agent, not just Claude, can open or answer a thread —
+// Any agent, not just Claude, can open or answer a thread —
 // "unread"/"reviewed" is about whether a HUMAN has engaged, not which agent.
 describe("isClaudeUnread / isClaudeReviewed — non-Claude agents", () => {
   it("a codex-only open thread is unread", () => {

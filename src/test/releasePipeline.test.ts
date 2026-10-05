@@ -1,5 +1,4 @@
-// The release pipeline's rules, asserted against the workflow file itself
-// (10x-plan-2 P2.2).
+// The release pipeline's rules, asserted against the workflow file itself.
 //
 // This is the one part of the system with no runtime and no unit under test: it
 // is YAML that runs once per tag, in an environment nobody has locally, doing

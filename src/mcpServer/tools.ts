@@ -1,14 +1,11 @@
-// The `mc_*` tools Claude calls, dispatched onto the shared review ops.
+// The `mc_*` tools Claude calls, dispatched onto the same shared review ops as the
+// `mdc` CLI (`inlineComments/docOps.ts`). The CLI reads and writes the file directly;
+// here the host injects document I/O that goes through a `WorkspaceEdit`, so edits are
+// ordered against unsaved buffers, land in the undo stack, and are validated before
+// they touch anything.
 //
-// These are the same verbs as the `mdc` CLI, and they run the same functions
-// (`inlineComments/docOps.ts`) — the only difference is what happens either side
-// of the operation. The CLI reads and writes the file directly; here the host
-// injects document I/O that goes through a `WorkspaceEdit`, so Claude's edits
-// are ordered against unsaved buffers, land in the editor's undo stack, and are
-// validated before they touch anything.
-//
-// Pure apart from the injected `ToolDeps`, so the whole tool surface is
-// unit-testable against an in-memory document.
+// Pure apart from the injected `ToolDeps`, so it is unit-testable against an
+// in-memory document.
 
 import {
   DocOpError,
@@ -40,9 +37,9 @@ export interface ToolDeps {
   writeDoc(key: string, next: string): Promise<void>;
   /**
    * Called for every tool invocation before it runs, with the resolved document
-   * key when the tool names one. The lifecycle signals (P0.2) hang off this:
-   * it is the first hard evidence that Claude is actually working. `agent` is
-   * the calling session's slug (10x-plan-4 P1.2).
+   * key when the tool names one. It is the first hard evidence that Claude is
+   * actually working, so the lifecycle signals hang off it. `agent` is the
+   * calling session's slug.
    */
   onCall?(event: { tool: string; file?: string; note?: string; agent: string }): void;
   /** Fired when a call is refused. The result still goes back to Claude. */
@@ -50,11 +47,10 @@ export interface ToolDeps {
   now?(): string;
   /**
    * Whether the human's `markdownCollab.proposeEditsAsSuggestions` choice is on
-   * for this document (10x-plan-6 P2.1), keyed by the same document key
-   * `resolveFile` returned. `mc_edit`/`mc_rewrite` refuse outright when it is —
-   * optional so a caller that predates the setting (a test harness, the
-   * `mdc` CLI's own local-write path, which can't ask a VS Code window
-   * anything) keeps today's behaviour: direct edits allowed.
+   * for this document, keyed by the same document key `resolveFile` returned.
+   * `mc_edit`/`mc_rewrite` refuse outright when it is. Optional so a caller with
+   * no VS Code window to ask (a test harness, the `mdc` CLI's local-write path)
+   * keeps allowing direct edits.
    */
   suggestModeFor?(file: string): boolean;
 }
@@ -72,11 +68,10 @@ export class ToolRefusal extends Error {
 }
 
 /**
- * 10x-plan-6 P2.1: suggest mode used to be a request the agent could ignore
- * (and did — the plan's whole reason for enforcing it here). `mc_edit` and
- * `mc_rewrite` now refuse outright when it's on for the file, writing
- * nothing; the forwarded `mdc edit`/`mdc rewrite` inherit the refusal for
- * free because they run this same `callTool`.
+ * `mc_edit` and `mc_rewrite` refuse outright when suggest mode is on for the
+ * file, writing nothing — a request the agent can ignore is not enforcement. The
+ * forwarded `mdc edit`/`mdc rewrite` inherit the refusal because they run this
+ * same `callTool`.
  */
 function refuseIfSuggestMode(deps: ToolDeps, key: string): void {
   if (deps.suggestModeFor?.(key)) {
@@ -88,16 +83,15 @@ function refuseIfSuggestMode(deps: ToolDeps, key: string): void {
 }
 
 /**
- * 10x-plan-6 P2.3: a suggestion is meant to read as one sentence or one list
- * item, not a whole paragraph pasted into `with`. The multiplier gives a
- * short quote room to grow into a fuller clause; the flat floor keeps a long
- * quote from earning a proportionally enormous replacement. Whichever is
- * larger wins, so neither end of the quote-length range is unfairly strict.
+ * A suggestion is meant to read as one sentence or one list item, not a whole
+ * paragraph pasted into `with`. The multiplier gives a short quote room to grow
+ * into a fuller clause; the flat floor keeps a long quote from earning a
+ * proportionally enormous replacement. Whichever is larger wins, so neither end
+ * of the quote-length range is unfairly strict.
  */
 export const SUGGESTION_MAX_MULTIPLE_OF_QUOTE = 3;
 export const SUGGESTION_MIN_CHARS = 300;
 
-/** Exported for tests — the refusal itself only ever runs through `mc_suggest`. */
 export function suggestionTooLarge(quote: string, replacement: string): boolean {
   return replacement.length > Math.max(SUGGESTION_MAX_MULTIPLE_OF_QUOTE * quote.length, SUGGESTION_MIN_CHARS);
 }
@@ -123,8 +117,8 @@ const BASE_TOOLS: readonly McpTool[] = [
         ...FILE_PROP,
         actionable: {
           type: "boolean",
-          // Read by every connected agent (10x-plan-4 P1.1), not just Claude —
-          // "you" here is whichever agent is asking, per its own session.
+          // Read by every connected agent, not just Claude — "you" here is whichever
+          // agent is asking, per its own session.
           description: "Only threads that are open and not already answered by you.",
         },
       },
@@ -323,10 +317,10 @@ const MUTATING_TOOLS = new Set([
 export const HELP_HINT = " If unsure of the workflow, call mc_help first.";
 
 /**
- * `mc_help` (10x-plan-4 P1.3): the whole tools-only workflow, for clients that
- * don't show `instructions` to the model (or show them and still leave it
- * unsure). The same text a headless run gets as its system prompt, minus that
- * run's preamble — see `renderSkill` in skillText.ts.
+ * `mc_help`: the whole tools-only workflow, for clients that don't show
+ * `instructions` to the model (or show them and still leave it unsure). The same
+ * text a headless run gets as its system prompt, minus that run's preamble — see
+ * `renderSkill` in skillText.ts.
  */
 const HELP_TOOL: McpTool = {
   name: "mc_help",
@@ -367,10 +361,7 @@ function str(args: Record<string, unknown>, name: string): string {
   return v;
 }
 
-/**
- * Like `str`, but accepts "" — `mc_edit`'s `new` is legitimately empty (a
- * deletion), where `str`'s "missing" heuristic would wrongly refuse it.
- */
+/** Like `str`, but accepts "" — `mc_edit`'s `new` is legitimately empty (a deletion). */
 function strAllowEmpty(args: Record<string, unknown>, name: string): string {
   const v = args[name];
   if (typeof v !== "string") {
@@ -388,18 +379,12 @@ function optionalStr(args: Record<string, unknown>, name: string): string | unde
   return v;
 }
 
-/**
- * Run one tool call. Every refusal — bad arguments, unknown thread, a change
- * that would break integrity — comes back as an `isError` result carrying a
- * machine-readable code, and the document is left untouched.
- */
 /** Read the machine-readable code back out of a refusal result, for logging. */
 function refusalCode(r: ToolResult): string {
   try {
     const first = r.content?.[0];
     if (first && first.type === "text") {
-      // `refusal()` nests the code under `error`; reading the top level logged
-      // every refusal as "unknown".
+      // `refusal()` nests the code under `error`.
       const parsed = JSON.parse(first.text) as { error?: { code?: unknown } };
       return String(parsed.error?.code ?? "unknown");
     }
@@ -409,16 +394,19 @@ function refusalCode(r: ToolResult): string {
   return "unknown";
 }
 
+/**
+ * Run one tool call. Every refusal — bad arguments, unknown thread, a change that
+ * would break integrity — comes back as an `isError` result carrying a
+ * machine-readable code, and the document is left untouched.
+ */
 export async function callTool(
   name: string,
   args: Record<string, unknown>,
   deps: ToolDeps,
   /**
-   * The calling session's agent slug (10x-plan-4 P1.2) — resolved by the
-   * protocol layer from `initialize`'s `clientInfo.name` before the call ever
-   * reaches here. Defaults to `claude` so every existing caller (the `mdc`
-   * CLI without `--author`, a test harness that never wires up sessions)
-   * keeps behaving exactly as it did before this parameter existed.
+   * The calling session's agent slug, resolved by the protocol layer from
+   * `initialize`'s `clientInfo.name`. Defaults to `claude` for callers with no
+   * session (the `mdc` CLI without `--author`, a test harness).
    */
   author = "claude",
 ): Promise<ToolResult> {
@@ -443,10 +431,9 @@ export async function callTool(
       return text({ file: key, ...opList(source, args.actionable === true) });
     }
     if (name === "mc_check") {
-      // A healthy document also gets a review checkpoint: this call is the one
-      // moment we know a pass over this file finished (P1.1). Shared with
-      // `mdc check` (no `--repair`) via `opCheckAndCheckpoint` so the two
-      // front ends can't drift on when a checkpoint gets written.
+      // A healthy document also gets a review checkpoint: this call is the one moment we
+      // know a pass over this file finished. Shared with `mdc check` (no `--repair`) via
+      // `opCheckAndCheckpoint` so the two front ends can't drift on when one is written.
       const { report, next, checkpoint } = opCheckAndCheckpoint(source, now);
       if (next !== undefined && checkpoint) {
         await deps.writeDoc(key, next);
@@ -460,9 +447,8 @@ export async function callTool(
       return text({ action, file: key, ...outcome.result });
     };
 
-    // Every comment or suggestion written here is stamped as arriving through
-    // the tools (10x-plan-6 P1.4) — a forwarded `mdc` write included, since it
-    // is this same call by the time it lands.
+    // Every comment or suggestion written here is stamped as arriving through the
+    // tools — a forwarded `mdc` write included, since it is this same call by then.
     switch (name) {
       case "mc_reply":
         return write(opReply(source, str(args, "threadId"), str(args, "body"), now, author, true, "tools"), "reply");

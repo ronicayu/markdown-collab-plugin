@@ -1,6 +1,6 @@
 // Several guard tests read the extension host's source as text and assert on
 // it (no addThread call outside opOpenAt, no workspace-folder gate, the
-// dispatcher marks pending, etc). Before 10x-plan-4 P3.2 that source was one
+// dispatcher marks pending, etc). Before the split that source was one
 // file, `src/extension.ts`. The split moved the logic these guards watch into
 // `src/commands/*.ts`; this file is the one place that knows the new map, so a
 // future re-split only has to update `HOST_FILES` once.

@@ -1,5 +1,4 @@
-// Performance headroom on documents bigger than anything hand-written
-// (10x-plan P3.2).
+// Performance headroom on documents bigger than anything hand-written.
 //
 // The engine is O(n) in places that used to be O(n²) — `findProseIndex` was a
 // linear scan called twice per thread, so building the preview for a doc with

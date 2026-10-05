@@ -1,6 +1,6 @@
-// Who holds the review workflow when a prompt goes out (10x-plan-4 P0.1).
+// Who holds the review workflow when a prompt goes out.
 //
-// Every send used to open with "Use the vs-markdown-collab skill…". That is
+// An opener of "Use the vs-markdown-collab skill…" is
 // right for a Claude session with the skill installed and wrong for a headless
 // run: there the skill text rides along as the system prompt, and a prompt that
 // names a skill Claude can't find sends it looking for one instead of working.

@@ -1,6 +1,5 @@
-// "Claude is working…" in the status bar (10x-plan-2 P0.2), and — since
-// 10x-plan-4 P2.2 — "sent for review" for the one wait that used to have no
-// pulse at all.
+// "Claude is working…" in the status bar, and "sent for review" for the one wait
+// that has no per-thread row.
 //
 // The per-thread row is the primary affordance — the wait belongs to a thread,
 // and that is where the human is looking. But during a review pass the human is
@@ -19,16 +18,15 @@
 // all — it's a fact about what the extension did, and reads like one
 // (`$(clock)`, not `$(loading~spin)`, and no verb attached to Claude).
 //
-// Headless runs (10x-plan-4 P0.1) are the other exception that proves the
+// Headless runs are the other exception that proves the
 // rule: the extension started that process and reads its event stream, so
 // "Claude is reviewing" with a running clock is an observation, not an
 // assumption. While one is active it owns the item; nothing else is shown
 // until it's gone. The text itself is built in `headlessStatusText.ts`.
 //
 // Priority when more than one thing wants this one item (`chooseStatusBarView`,
-// below): an active headless run outright (10x-plan-4 P0.1 already owns the
-// item while it runs, and nothing here duplicates that) > a live review pass
-// (10x-plan-4 P2.2 — the pulse this file's second half exists for) > a
+// below): an active headless run outright (it already owns the
+// item while it runs, and nothing here duplicates that) > a live review pass > a
 // per-thread protocol wait > a finished/failed headless notice, which sits
 // last because it is a look-back at something already over, and anything
 // still live is more worth a glance than a look-back.
@@ -50,7 +48,7 @@ import {
 /** How long "Claude finished …" stays up. Long enough to notice, short enough to not linger. */
 const DONE_FLASH_MS = 8000;
 
-/** How long "Review arrived" stays up before it goes back to silent — same duration and the same reasoning as `DONE_FLASH_MS`. */
+/** How long "Review arrived" stays up before it goes back to silent. Same as `DONE_FLASH_MS`. */
 const REVIEW_ARRIVED_FLASH_MS = 8000;
 
 /**
@@ -68,7 +66,6 @@ export function statusBarText(status: PendingStatus, fileLabel: string): string 
   return `$(loading~spin) Sent ${fileLabel} to ${agent.sentence}`;
 }
 
-/** One thing that can occupy the status bar item, and the command a click on it runs. */
 export type StatusBarSource = "headless" | "review-pass" | "pending" | "notice";
 
 export interface StatusBarChoice {
@@ -81,7 +78,7 @@ export interface StatusBarChoice {
 
 /**
  * The per-thread wait's tooltip, named for whichever agent the protocol
- * evidence actually came from (1.3) — `statusBarText` above already resolves
+ * evidence actually came from — `statusBarText` above already resolves
  * the same `status.agent ?? "agent"` value for the status bar text itself;
  * this is the tooltip's share of that same resolution, not a second guess.
  */
@@ -89,11 +86,6 @@ export function protocolTooltip(agentSlug?: string): string {
   return `Markdown Collab: ${sentenceLead(agentDisplayName(agentSlug ?? "agent"))} is working through the review tools`;
 }
 
-/**
- * The priority rule from the module header, as a pure function of the four
- * things that can want this one status bar item — unit-tested without
- * spinning up a real status bar item or any of the trackers behind it.
- */
 export function chooseStatusBarView(inputs: {
   headless: { text: string; tooltip: string } | null;
   reviewPass: { text: string; tooltip: string } | null;
@@ -123,15 +115,9 @@ function currentReviewPassView(now: number): { record: ReviewPassRecord; view: {
   return { record, view: reviewPassStatusText(record, now) };
 }
 
-/**
- * Show the phase of any protocol-backed pass — a live review pass, or an
- * active headless run — in the status bar. Returns a disposable that also
- * removes the item.
- */
 export function activateClaudeStatusBar(): vscode.Disposable {
   const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
 
-  /** The last text/tooltip the protocol-evidence path asked for (null = hidden). */
   let pendingView: { text: string; tooltip: string } | null = null;
   /**
    * The finished run still being shown: "finished" for a few seconds, a
@@ -231,10 +217,6 @@ export function activateClaudeStatusBar(): vscode.Disposable {
     render();
   };
 
-  /**
-   * Open the review view on one of a pass's files, by doc key (`uri.toString()`),
-   * on the first thread the agent opened that you haven't answered.
-   */
   const openReviewPassFile = async (docKey: string | undefined): Promise<void> => {
     if (!docKey) return;
     let uri: vscode.Uri;
@@ -246,10 +228,6 @@ export function activateClaudeStatusBar(): vscode.Disposable {
     await vscode.commands.executeCommand("markdownCollab.openInlineCommentsView", uri, { focusNewFromAgent: true });
   };
 
-  /**
-   * The status bar click. A running headless pass offers the three things a
-   * human watching it might want; a finished one goes where its text points.
-   */
   const headlessMenu = vscode.commands.registerCommand("markdownCollab.headlessRunMenu", async () => {
     const running = activeHeadlessRuns()[0];
     if (running) {
@@ -270,7 +248,7 @@ export function activateClaudeStatusBar(): vscode.Disposable {
   });
 
   /**
-   * The review-pass item's click (10x-plan-4 P2.2). Branches on the pass's
+   * The review-pass item's click. Branches on the pass's
    * own state rather than baking a fixed menu into the item: "waiting" and
    * "receiving" are both still in flight and offer the same two options,
    * "stale" offers the recovery options, and "arrived" offers none at all —
@@ -322,7 +300,6 @@ export function activateClaudeStatusBar(): vscode.Disposable {
   };
 }
 
-/** The run's first file in the review view, on the first thread the agent opened that you haven't answered. */
 async function openFirstFile(record: HeadlessRunRecord): Promise<void> {
   const first = record.files[0];
   if (!first) return;

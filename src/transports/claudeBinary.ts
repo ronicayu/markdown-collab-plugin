@@ -1,4 +1,4 @@
-// Finding the `claude` executable, and asking it what it is (10x-plan-4 P0.1).
+// Finding the `claude` executable, and asking it what it is.
 //
 // Headless mode is only ever offered when this answers — the picker must never
 // list an option that fails on click. Three places are searched, in order:
@@ -49,7 +49,6 @@ export function versionAtLeast(v: ClaudeVersion, min: readonly [number, number, 
  */
 export const PERMISSION_PROMPTS_MIN = [2, 1, 259] as const;
 
-/** The machine, as far as the search is concerned. */
 export interface ResolveEnv {
   platform: NodeJS.Platform;
   env: Record<string, string | undefined>;
@@ -68,7 +67,6 @@ function pathApi(platform: NodeJS.Platform): path.PlatformPath {
   return platform === "win32" ? path.win32 : path.posix;
 }
 
-/** File names to try in each PATH directory. */
 function executableNames(e: ResolveEnv): string[] {
   if (e.platform !== "win32") return ["claude"];
   // The native installer ships claude.exe; the npm install is a claude.cmd shim.
@@ -79,7 +77,6 @@ function executableNames(e: ResolveEnv): string[] {
   return (exts.length > 0 ? exts : [".exe", ".cmd"]).map((x) => `claude${x}`);
 }
 
-/** Installer locations checked when PATH comes up empty. */
 export function wellKnownClaudePaths(e: ResolveEnv): string[] {
   const p = pathApi(e.platform);
   if (e.platform === "win32") {
@@ -103,7 +100,6 @@ function expandHome(p: string, e: ResolveEnv): string {
   return p;
 }
 
-/** Find the binary. Pure over `e`. */
 export function resolveClaudeBinary(configured: string, e: ResolveEnv): BinaryResolution {
   const setting = configured.trim();
   if (setting !== "") {
@@ -131,7 +127,6 @@ export function resolveClaudeBinary(configured: string, e: ResolveEnv): BinaryRe
   return { ok: false, error: "no `claude` executable on PATH or in the usual install locations" };
 }
 
-/** The real machine. */
 export function defaultResolveEnv(): ResolveEnv {
   return {
     platform: process.platform,
@@ -167,7 +162,6 @@ export function spawnCommand(
   return { command: bin, args, shell: false };
 }
 
-/** Quote one argument for cmd.exe. Exported for tests. */
 export function quoteForCmd(arg: string): string {
   if (arg !== "" && !/[\s"&|<>^()%!,;=]/.test(arg)) return arg;
   return `"${arg.replace(/"/g, '""')}"`;

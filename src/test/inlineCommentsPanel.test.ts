@@ -62,7 +62,7 @@ describe("inlineComments/panel - serialize", () => {
   });
 });
 
-// 10x-plan-6 P5.2: the host tells the webview who to name instead of it
+// The host tells the webview who to name instead of it
 // hardcoding "Claude" — the agent behind whichever comment or suggestion in
 // the file has the latest timestamp, among agent-authored ones only.
 describe("mostRecentAgentName", () => {

@@ -1,4 +1,4 @@
-// Word-level diff for the suggestion card (round-6 P2.2).
+// Word-level diff for the suggestion card.
 //
 // Dependency-free: tokenizes on whitespace/punctuation boundaries and finds
 // the longest common subsequence of tokens, so a one-word change reads as a
@@ -82,7 +82,6 @@ export function diffTokens(a: string[], b: string[]): DiffOp[] {
   return ops;
 }
 
-/** Word-level diff between two strings (tokenizes both, then `diffTokens`). */
 export function diffWords(original: string, proposed: string): DiffOp[] {
   return diffTokens(tokenize(original), tokenize(proposed));
 }
@@ -95,14 +94,14 @@ const MAX_INLINE_LEN = 600;
 const MAX_CHANGE_RATIO = 0.6;
 
 /**
- * Hard cap on tokens per side for `diffTokens`' O(n·m) table (round-9 P1.1,
- * security review — a pasted-in rewrite big enough on both sides froze the
- * webview: 8k words/side took 1.15s and ~800MB, ~100KB/side needed gigabytes).
- * In practice `MAX_INLINE_LEN` already keeps any single side under 600
- * characters — well under this many tokens — before `diffTokens` ever runs,
- * so this mostly documents the boundary explicitly and gives `commentUi.ts`
- * a cheap, direct answer to "is it even safe to offer the inline toggle",
- * independent of that length guard's exact value.
+ * Hard cap on tokens per side for `diffTokens`' O(n·m) table: a pasted-in
+ * rewrite big enough on both sides froze the webview (8k words/side took 1.15s
+ * and ~800MB, ~100KB/side needed gigabytes). In practice `MAX_INLINE_LEN`
+ * already keeps any single side under 600 characters — well under this many
+ * tokens — before `diffTokens` ever runs, so this mostly documents the boundary
+ * explicitly and gives `commentUi.ts` a cheap, direct answer to "is it even
+ * safe to offer the inline toggle", independent of that length guard's exact
+ * value.
  */
 export const MAX_DIFF_TOKENS = 2000;
 
@@ -137,13 +136,13 @@ function gistQuote(text: string): string {
 }
 
 /**
- * A short one-line gist of a suggestion's change — "'notes' → 'highlights'"
- * — for a collapsed suggestion card's header (round-8 P1), where there's no
- * room for the full diff. Built from the same word-level diff the inline
- * view renders, so the words it quotes are exactly the ones that would show
- * struck through / inserted if the card were expanded. Past `isBulkRewrite`'s
- * guard the changed words are most of the passage, so quoting a few would
- * mislead about how much actually changed — the gist falls back to sizes.
+ * A short one-line gist of a suggestion's change — "'notes' → 'highlights'" —
+ * for a collapsed suggestion card's header, where there's no room for the full
+ * diff. Built from the same word-level diff the inline view renders, so the
+ * words it quotes are exactly the ones that would show struck through /
+ * inserted if the card were expanded. Past `isBulkRewrite`'s guard the changed
+ * words are most of the passage, so quoting a few would mislead about how much
+ * actually changed — the gist falls back to sizes.
  */
 export function suggestionGist(original: string, proposed: string): string {
   if (isBulkRewrite(original, proposed)) {

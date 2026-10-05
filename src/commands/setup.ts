@@ -1,7 +1,3 @@
-// First-run and setup commands: Set Up Claude Code (the plugin, or the
-// standalone skill as a fallback), AGENTS.md, the playground tutorial, and
-// re-registering the MCP server (10x-plan-4 P3.2 split of extension.ts).
-
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import * as os from "os";
@@ -48,11 +44,6 @@ import { activeMarkdownUri } from "../activeMarkdown";
 import { agentFolder, setAgentFolder } from "../workspaceFolder";
 import type { CommandDeps } from "./deps";
 
-/**
- * Write the playground document and open it in the review view
- * (10x-plan-2 P3.1). The point is that the accept/reject loop is clickable in
- * the first minute, with no skill install, no send mode, and no Claude session.
- */
 async function invokeOpenTutorial(log: Logger): Promise<void> {
   if (!requireTrust("The playground")) return;
   const folder = vscode.workspace.workspaceFolders?.[0];
@@ -88,13 +79,11 @@ async function invokeOpenTutorial(log: Logger): Promise<void> {
   }
 
   const doc = await vscode.workspace.openTextDocument(uri);
-  // Straight into the review surface — the text file is not the point.
   await vscode.commands.executeCommand("markdownCollab.openInlineCommentsView", doc.uri);
 }
 
 const SKILL_PROMPT_KEY = "markdownCollab.skillPromptedFingerprint";
 const NO_AGENT_PROMPT_KEY = "markdownCollab.noAgentPrompted";
-/** The extension version the plugin-drift check last ran for. */
 const PLUGIN_PROMPT_KEY = "markdownCollab.pluginPromptedVersion";
 
 /** Every `claude plugin …` step gets this long; a registry refresh is seconds. */
@@ -103,8 +92,7 @@ const PLUGIN_COMMAND_TIMEOUT_MS = 60_000;
 /**
  * `claude <args>` through `execFile`: an argument array, never a command
  * string (on Windows a `.cmd` shim needs the shell, and `spawnCommand` quotes
- * every argument for it). Output goes to the log at trace level — it is what a
- * "Set Up didn't work" report needs, and noise otherwise.
+ * every argument for it).
  */
 export function claudeRunner(bin: string, log: Logger): ClaudeRunner {
   return (args) =>
@@ -132,7 +120,6 @@ export function claudeRunner(bin: string, log: Logger): ClaudeRunner {
     });
 }
 
-/** The plugin shipped inside this extension, and where its local marketplace lives. */
 function pluginPaths(context: vscode.ExtensionContext): { sourcePluginDir: string; marketplaceDir: string } {
   return {
     sourcePluginDir: path.join(context.extensionPath, "plugin"),
@@ -141,15 +128,11 @@ function pluginPaths(context: vscode.ExtensionContext): { sourcePluginDir: strin
 }
 
 /**
- * On startup, nudge the user when the Claude side is out of date — otherwise
- * they only find out by opening the comments panel.
- *
  * Plugin installs are checked once per extension version, through
  * `claude plugin list --json` (a process, so not on every activation): the
  * plugin comes from this extension's own local marketplace, so a version that
- * differs from the extension's means the Claude side is stale. Standalone
- * skill installs keep the fingerprint check they always had, gated per skill
- * version so it prompts once, not every time. "No agent connected yet" is said
+ * differs from the extension's means the Claude side is stale.
+ * "No agent connected yet" is said
  * once per machine, and not at all to a workspace that already has an agent.
  */
 export async function maybePromptSkillUpdate(
@@ -190,11 +173,9 @@ export async function maybePromptSkillUpdate(
   }
   if (status === "current") return;
 
-  // 1.1: the first-activation nudge — nothing set up yet — points at Connect
-  // an Agent, the one setup front door, rather than assuming Claude Code.
-  // "out of date" is a different situation (something *is* set up, and it's
-  // specifically the Claude skill that's stale), so that branch still goes
-  // straight to the Claude-specific update.
+  // The first-activation nudge points at Connect an Agent rather than assuming
+  // Claude Code; "out of date" means the Claude skill specifically is stale,
+  // so that branch goes straight to the Claude-specific update.
   const missing = status === "missing";
   if (missing) {
     if (context.globalState.get<boolean>(NO_AGENT_PROMPT_KEY)) return;
@@ -242,7 +223,7 @@ async function updatePluginFromNudge(
   }
 }
 
-/** What `setUpClaudeCode` did, for a caller that folds it into its own toast (1.1: Connect an Agent → Claude Code does both the plugin *and* `.mcp.json` in one go). */
+/** What `setUpClaudeCode` did, for a caller that folds it into its own toast. */
 export interface ClaudeCodeSetupOutcome {
   /** The plugin route succeeded (installed, updated, or already current) — as opposed to the standalone-skill fallback. */
   pluginOk: boolean;
@@ -255,15 +236,12 @@ export interface ClaudeCodeSetupOutcome {
 }
 
 /**
- * Set Up Claude Code's actual work, minus the toast: the plugin is the way —
+ * The plugin is the way —
  * skill, CLI on PATH, and the marker hook, installed from the extension's own
  * local marketplace — with the standalone skill as the fallback (a `claude`
  * binary the editor can't see but a `~/.claude` that exists, a Claude Code
  * without plugin commands, or any step failing). With neither a binary nor a
- * `~/.claude` nothing is written and the outcome says `notFound`. Split
- * out from the toast so `invokeSetUpClaudeCode` (still a working alias) and
- * Connect an Agent → Claude Code (1.1, which also registers `.mcp.json`) can
- * share the work and fold the result into whichever toast is theirs.
+ * `~/.claude` nothing is written and the outcome says `notFound`.
  */
 async function setUpClaudeCode(context: vscode.ExtensionContext, log: Logger): Promise<ClaudeCodeSetupOutcome> {
   const lookup = await lookupClaude(log);
@@ -315,12 +293,6 @@ function showClaudeCodeNotFound(summary: string): void {
   });
 }
 
-/**
- * Set Up Claude Code (`markdownCollab.installClaudeSkill`, the id kept from
- * when this only installed the skill; hidden from the palette after 1.1 —
- * Connect an Agent → Claude Code is the one front door now, and does this
- * plus `.mcp.json`).
- */
 async function invokeSetUpClaudeCode(context: vscode.ExtensionContext, log: Logger): Promise<void> {
   if (!requireTrust("Setting up Claude Code")) return;
   const outcome = await setUpClaudeCode(context, log);
@@ -339,7 +311,7 @@ async function invokeSetUpClaudeCode(context: vscode.ExtensionContext, log: Logg
   void vscode.window.showInformationMessage(`${outcome.summary}${hint}`);
 }
 
-/** Today's standalone install, with why the plugin wasn't used folded in — a summary string instead of its own toast, so `setUpClaudeCode`'s callers control when and how it's shown. Null means nothing to report (the user cancelled an overwrite prompt). */
+/** The standalone install, with why the plugin wasn't used folded in. Null means nothing to report (the user cancelled an overwrite prompt). */
 export async function installLegacySkillSummary(log: Logger, fallbackReason: string): Promise<string | null> {
   const why = `(the Claude Code plugin wasn't used: ${fallbackReason})`;
   try {
@@ -367,7 +339,6 @@ export async function installLegacySkillSummary(log: Logger, fallbackReason: str
   }
 }
 
-/** What `ensureAgentsSnippet` did, as one sentence for a toast. Pure. */
 export function agentsSnippetSentence(action: AgentsSnippetOutcome, folderName: string): string {
   switch (action) {
     case "created":
@@ -383,13 +354,7 @@ export function agentsSnippetSentence(action: AgentsSnippetOutcome, folderName: 
   }
 }
 
-/**
- * Run `ensureAgentsSnippet` and say what it did. Shared by `initializeAgents`
- * (still works, just hidden from the palette after 0.4) and the first step of
- * Connect an Agent for every agent but Claude Code (10x-plan-6 P1.1), which
- * folds the sentence into its own follow-up question rather than stacking two
- * toasts. A failure is shown here and comes back as null.
- */
+/** A failure is shown here and comes back as null. */
 async function applyAgentsSnippet(folder: vscode.WorkspaceFolder, log: Logger): Promise<string | null> {
   try {
     return agentsSnippetSentence(await ensureAgentsSnippet(folder.uri.fsPath), folder.name);
@@ -431,21 +396,14 @@ async function pickWorkspaceFolder(): Promise<vscode.WorkspaceFolder | undefined
   return pick?.folder;
 }
 
-/** One entry in the Connect an Agent quick pick. */
 export interface ConnectAgentItem extends vscode.QuickPickItem {
   id: "claude" | "cursor-inapp" | "cursor-cli" | "windsurf" | "codex" | "copilot" | "other";
 }
 
 /**
- * Build the Connect an Agent quick-pick list. Pure — no vscode APIs beyond
- * the plain data shape of `QuickPickItem` — so which entries show up for a
- * given host is guard-testable without a real extension host: Cursor's
- * in-app agent and Copilot's agent-mode provider are the two whose API might
+ * Cursor's in-app agent and Copilot's agent-mode provider are the two whose API might
  * not exist (older forks, older VS Code); Claude Code, Cursor CLI, Codex, and
  * the generic fallback need no runtime capability and are always offered.
- *
- * Every entry but Claude Code reads "Writes AGENTS.md, then offers …" so the
- * human sees the order before picking (10x-plan-6 P1.1).
  */
 export function buildConnectAgentItems(caps: { cursorInApp: boolean; copilot: boolean }): ConnectAgentItem[] {
   const items: ConnectAgentItem[] = [
@@ -494,14 +452,11 @@ export function buildConnectAgentItems(caps: { cursorInApp: boolean; copilot: bo
   return items;
 }
 
-/** Every Connect entry but Claude Code: AGENTS.md first, the tools second (10x-plan-6 P1.1). */
+/** Every Connect entry but Claude Code: AGENTS.md first, the tools second. */
 export type FormatFirstAgentId = Exclude<ConnectAgentItem["id"], "claude">;
 
-/** The optional second step, as it is offered once AGENTS.md is written. */
 export interface McpOffer {
-  /** The question, naming the client and what a yes writes or registers. */
   question: string;
-  /** The button that says yes. */
   accept: string;
 }
 
@@ -538,17 +493,14 @@ const MCP_OFFERS: Record<FormatFirstAgentId, McpOffer> = {
   },
 };
 
-/** The follow-up question for one client. Pure, so the copy is testable. */
 export function mcpOfferFor(id: FormatFirstAgentId): McpOffer {
   return MCP_OFFERS[id];
 }
 
-/** Every entry with a second step to offer is, by construction, one that writes AGENTS.md first. */
 function isFormatFirst(id: ConnectAgentItem["id"]): id is FormatFirstAgentId {
   return Object.prototype.hasOwnProperty.call(MCP_OFFERS, id);
 }
 
-/** What `connectFormatFirst` needs from the host — injected so the order is testable. */
 export interface FormatFirstIo {
   /** Write or refresh AGENTS.md; the sentence saying what happened, or null when it failed (already reported). */
   writeAgentsSnippet(): Promise<string | null>;
@@ -562,11 +514,7 @@ export interface FormatFirstIo {
 }
 
 /**
- * Connect an agent that isn't Claude Code (10x-plan-6 P1.1).
- *
- * The file format is the API: the only non-Claude loop anyone has run was
- * Copilot hand-editing the markers from a pasted prompt, and they survived.
- * So AGENTS.md is written first, every time, and the MCP registration is only
+ * AGENTS.md is written first, every time, and the MCP registration is only
  * offered after it — optional, because the agent can already do the job
  * without it; what the tools add is that its edits land in the undo stack.
  */
@@ -589,10 +537,6 @@ export async function connectFormatFirst(
   return "registered";
 }
 
-/**
- * The second step of `connectFormatFirst` for each client — what Connect an
- * Agent did on its own before 10x-plan-6 P1.1, toasts included.
- */
 async function registerWithClient(
   id: FormatFirstAgentId,
   handle: McpServerHandle,
@@ -719,17 +663,12 @@ async function invokeConnectAgent(deps: CommandDeps): Promise<void> {
     return;
   }
 
-  // Claude Code is unchanged by 10x-plan-6 P1.1: the plugin carries the skill
-  // and `mdc`, so it never needed AGENTS.md, and `.mcp.json` stays part of
-  // the one setup.
+  // The plugin carries the skill and `mdc`, so Claude Code never needs AGENTS.md;
+  // `.mcp.json` stays part of the one setup.
   if (!handle) {
     void vscode.window.showWarningMessage(toolServerDownMessage());
     return;
   }
-  // 1.1: one setup does both — the plugin install (same code
-  // `installClaudeSkill`/`Set Up Claude Code` uses, kept working as a hidden
-  // alias) and the `.mcp.json` registration (same code `registerMcpServer`
-  // uses, also kept as a hidden alias) — one toast summarizing both outcomes.
   const pluginOutcome = await setUpClaudeCode(context, log);
   if (pluginOutcome.notFound) {
     showClaudeCodeNotFound(pluginOutcome.summary!);
@@ -745,7 +684,7 @@ async function invokeConnectAgent(deps: CommandDeps): Promise<void> {
   if (mcpOutcome !== "declined") {
     parts.push("Connected via `.mcp.json` in this workspace (no token written to the file).");
   }
-  if (parts.length === 0) return; // both declined/cancelled — nothing to report
+  if (parts.length === 0) return;
   const hint = " Restart running Claude sessions (or run /reload-plugins and /mcp inside it) to pick this up.";
   if (pluginOutcome.failed) {
     void vscode.window.showErrorMessage(`Markdown Collab: ${parts.join(" ")}`);
@@ -754,23 +693,15 @@ async function invokeConnectAgent(deps: CommandDeps): Promise<void> {
   }
 }
 
-/** Appended to every Disconnect item whose Connect wrote AGENTS.md. */
 const AGENTS_KEPT = " AGENTS.md is left as is — other agents may be reading it.";
 
-/** One entry in the Disconnect Agent quick pick — the inverse listing of `ConnectAgentItem` (4.4). */
 export interface DisconnectAgentItem extends vscode.QuickPickItem {
   id: "claude" | "cursor-inapp" | "cursor-cli" | "windsurf" | "codex" | "copilot" | "other";
 }
 
 /**
- * Build the Disconnect Agent quick-pick list. Pure, same shape and same
- * capability-gating as `buildConnectAgentItems` — an entry only shows up for
- * a client this host could have connected in the first place. Every item's
- * `detail` says exactly what running it removes, since "disconnect" is
- * otherwise a vague promise (4.4: "Connect an Agent has no inverse").
- *
  * Disconnect only ever undoes the MCP registration. The AGENTS.md section
- * Connect wrote first (10x-plan-6 P1.1) is shared by every agent that reads
+ * Connect wrote first is shared by every agent that reads
  * the file, so no single agent's Disconnect gets to remove it — each of those
  * items says so.
  */
@@ -826,13 +757,6 @@ export function buildDisconnectAgentItems(caps: { cursorInApp: boolean; copilot:
   return items;
 }
 
-/**
- * `markdownCollab.disconnectAgent` (4.4) — the inverse of Connect an Agent.
- * Each branch undoes exactly what its Connect counterpart did: the same file
- * edits in reverse for the three file-based clients, the same live
- * registration torn down for the two session-scoped ones, and a plain
- * explanation for "Other" (there was never anything to undo).
- */
 async function invokeDisconnectAgent(deps: CommandDeps): Promise<void> {
   if (!requireTrust("Connecting an agent")) return;
   const { context } = deps;
@@ -945,11 +869,10 @@ async function invokeDisconnectAgent(deps: CommandDeps): Promise<void> {
   }
 }
 
-/** Register the setup family of commands: skill, AGENTS.md, tutorial, MCP re-registration. */
 export function registerSetupCommands(deps: CommandDeps): void {
   const { context, rootLog, skillLog, reviewLog, log } = deps;
 
-  // GitHub Copilot's agent-mode MCP discovery (10x-plan-4 P1.1): registered
+  // GitHub Copilot's agent-mode MCP discovery: registered
   // once at activation whenever the host supports it — older forks (Cursor,
   // Windsurf, VSCodium) simply don't have `vscode.lm.registerMcpServerDefinitionProvider`,
   // which is the feature-detect this goes through rather than raising
@@ -983,7 +906,7 @@ export function registerSetupCommands(deps: CommandDeps): void {
       await invokeSetUpClaudeCode(context, skillLog);
     }),
     // `reviewLog`, not `skillLog`: the tutorial is a review-view entry point,
-    // logged like the rest of that surface (matches the original wiring).
+    // logged like the rest of that surface.
     vscode.commands.registerCommand("markdownCollab.openTutorial", async () => {
       await invokeOpenTutorial(reviewLog);
     }),

@@ -1,5 +1,4 @@
-// Webview panel for the "inline comments stored in the markdown itself"
-// view — the default storage layout in v0.27+. One panel per file. The
+// Webview panel for the inline-comments view. One panel per file. The
 // panel:
 //
 //   - reads the .md file (via the open TextDocument), parses it for
@@ -9,10 +8,6 @@
 //     WorkspaceEdit so the user's normal undo/redo + dirty state work
 //   - re-parses + re-pushes when the document changes (whether from this
 //     panel, the text editor, or an external write)
-//
-// Intentionally separate from the existing sidecar-based system: this is
-// a standalone experiment, not an integration. No coupling to
-// commentController or the sidecar.
 
 import * as fs from "fs/promises";
 import * as os from "os";
@@ -39,9 +34,9 @@ import { inlineCommentsAppBody } from "./webviewShell";
 import { buildInlinePayload, buildSingleThreadPayload } from "./sendToClaude";
 import type { ReviewPayload } from "../sendToClaude";
 
-// Re-exported from here since v0.27: callers (and tests) import the serializer
-// from the panel. The implementation moved to a vscode-free module so the
-// webview e2e harness can build real init payloads outside the Extension Host.
+// The implementation lives in a vscode-free module so the webview e2e harness
+// can build real init payloads outside the Extension Host; callers still import
+// it from here.
 export { serialize, type SerializedState } from "./serializeState";
 
 /**
@@ -81,19 +76,16 @@ interface InitMessage {
     workspaceFolder: string | null;
   };
   plantuml: { serverUrl: string; format: "svg" | "png" };
-  /** Whether the installed Claude skill is missing / outdated / current. */
   skillStatus: SkillStatus;
   /** Whether "Send to Claude" proposes edits as suggestions (accept/reject). */
   suggestMode: boolean;
-  /** Threads dispatched to Claude that haven't been answered yet (P1.2). */
+  /** Threads dispatched to Claude that haven't been answered yet. */
   pendingThreadIds: string[];
   /** What to say under those threads — protocol evidence earns a specific phrase. */
   pendingLabel: string;
   /**
-   * Display name of the agent that most recently wrote to this file — the
-   * host's answer to "who should the Send button and pending text say?"
-   * instead of the client hardcoding "Claude" (10x-plan-6 P5.2). "Claude"
-   * when no agent has written here yet.
+   * Display name of the agent that most recently wrote to this file, so the
+   * client doesn't hardcode "Claude". "Claude" when no agent has written here yet.
    */
   agentName: string;
 }
@@ -122,7 +114,6 @@ interface ReviewPendingMessage {
 
 interface ScrollToMessage {
   type: "scroll-to";
-  /** Prose offset to scroll into view. */
   proseOffset: number;
 }
 
@@ -271,9 +262,8 @@ type ClientMessage =
 /** Dependencies the panel needs from the extension host (kept narrow so tests can stub them). */
 export interface InlinePanelDeps {
   /**
-   * Route an inline-comments payload through the user's configured send
-   * mode (terminal / clipboard, with the same ask-once-and-remember UX as
-   * the sidecar path). Wired in extension.ts so the panel doesn't need to
+   * Route an inline-comments payload through the user's configured send mode
+   * (terminal / clipboard). Wired in extension.ts so the panel doesn't need to
    * know about transports.
    */
   dispatchToClaude: (payload: ReviewPayload) => Promise<void>;
@@ -357,7 +347,6 @@ export class InlineCommentsPanel {
   /** Set by reveal() when an open request includes a scroll target. Consumed once on the next `ready` after init. */
   private pendingScroll: RevealOpts | null = null;
 
-  /** Whether to overlay uncommitted-vs-HEAD diff stripes. */
   private diffMode = false;
   /**
    * Prose of the HEAD version of this file. `undefined` = not fetched yet,
@@ -452,14 +441,11 @@ export class InlineCommentsPanel {
     );
     const cspSource = this.panel.webview.cspSource;
     // `unsafe-eval` is required because mermaid's bundled DOMPurify uses
-    // `Function()` under the hood for its config parsing. img-src allows
-    // data: URIs because mermaid emits foreignObject contents that can
-    // reference inline images.
-    // img-src widened so the rendered preview can show:
-    //   - workspace-relative images via asWebviewUri (the `${cspSource}` slot)
-    //   - external http(s) images (e.g. badges, hosted screenshots)
-    //   - inline data: URIs
-    // matches VSCode's built-in markdown preview behavior.
+    // `Function()` under the hood for its config parsing. img-src allows data:
+    // URIs because mermaid emits foreignObject contents that can reference inline
+    // images, workspace-relative images via asWebviewUri (the `${cspSource}`
+    // slot), and external http(s) images (badges, hosted screenshots) — matching
+    // VSCode's built-in markdown preview.
     const csp =
       `default-src 'none'; ` +
       `style-src ${cspSource} 'unsafe-inline'; ` +
@@ -486,15 +472,12 @@ ${inlineCommentsAppBody()}
   /**
    * Re-acquire the document if VS Code closed our instance behind our back.
    *
-   * The uncommitted-diff flow opens files with `openTextDocument` and no
-   * editor tab, and VS Code garbage-collects editor-less documents after a
-   * few minutes. The panel then holds a closed snapshot: `getText()` is
-   * frozen at close time, change events stop arriving, and `save()` fights
-   * the (newer) file on disk — which surfaced as "comment applied but save
-   * failed: content of the file is newer" the first time someone commented
-   * after reading a diff for a while. Reopening by URI returns the live
-   * document (reloaded from disk when needed); all listeners compare by URI,
-   * so swapping the reference is safe.
+   * The uncommitted-diff flow opens files with `openTextDocument` and no editor
+   * tab, and VS Code garbage-collects editor-less documents after a few minutes.
+   * The panel would then hold a closed snapshot: `getText()` frozen, change
+   * events stopped, and `save()` fighting the newer file on disk. Reopening by
+   * URI returns the live document; all listeners compare by URI, so swapping the
+   * reference is safe.
    */
   private async ensureLiveDoc(): Promise<void> {
     if (!this.doc.isClosed) return;
@@ -512,9 +495,8 @@ ${inlineCommentsAppBody()}
           await this.scrollTo(opts);
         }
         return;
-      // Document mutations all run through the same pure handler — see
-      // `mutations.ts`. The panel's job is the side effects: applying the
-      // edit and surfacing whatever warning the handler returns.
+      // Mutations all run through the same pure handler (`mutations.ts`); the
+      // panel's job is the side effects.
       case "add-comment":
       case "reply":
       case "edit-comment":
@@ -572,10 +554,8 @@ ${inlineCommentsAppBody()}
       );
       return;
     }
-    // Route through the shared dispatcher so the inline view honors the
-    // user's `markdownCollab.sendMode` setting (terminal / clipboard) the
-    // same way the sidecar-based command does. Terminal is the natural
-    // default — drops the prompt straight into a running Claude session.
+    // Route through the shared dispatcher so the inline view honors the user's
+    // `markdownCollab.sendMode` setting the same way the sidecar-based command does.
     await this.deps.dispatchToClaude(payload);
   }
 
@@ -627,15 +607,10 @@ ${inlineCommentsAppBody()}
   }
 
   /**
-   * "Review with Claude" / "Ask Claude to review this doc" from the
-   * first-run empty-state card (10x-plan-4 P2.4) — the first-minute path for
-   * a document with zero threads. Used to force this dispatch through
-   * headless whenever it could run, skipping the send-mode prompt entirely;
-   * 10x-plan-6 P0.1b drops that override — the grill established terminal,
-   * not headless, is the mode actually used, so the button now goes through
-   * the same ask-review flow as the title-bar entry point: the remembered
-   * send mode, or the picker when there isn't one yet. This is the same
-   * command normal "Ask Claude to Review" runs through, focus prompt
+   * "Review with Claude" / "Ask Claude to review this doc" from the first-run
+   * empty-state card — the first-minute path for a document with zero threads.
+   * It goes through the same ask-review flow as the title-bar entry point (the
+   * remembered send mode, or the picker when there isn't one yet), focus prompt
    * included — not a second, cut-down copy of that flow.
    */
   private async handleEmptyStateReview(): Promise<void> {
@@ -643,17 +618,14 @@ ${inlineCommentsAppBody()}
   }
 
   /**
-   * Resolve a click on a rendered markdown link.
-   *
-   * Same-doc `#fragment` links are handled webview-side. By the time we
-   * get here, `href` either has an explicit path or an external scheme.
+   * Same-doc `#fragment` links are handled webview-side; here `href` either has
+   * an explicit path or an external scheme.
    *
    * - `http(s)://`, `mailto:`, `tel:` → `openExternal`
    * - other schemes → refused
    * - `<path>[:N][#heading][?query]` → resolved against the doc's dir,
    *   must stay inside the workspace folder, opened in VS Code:
-   *     - `.md` → open another inline-comments panel; jump to heading
-   *       by re-using the existing setSelection-after-open trick.
+   *     - `.md` → open another inline-comments panel; jump to heading.
    *     - everything else → `vscode.open` default opener.
    */
   private async handleOpenLink(rawHref: string): Promise<void> {
@@ -719,10 +691,9 @@ ${inlineCommentsAppBody()}
     if (resolved.toLowerCase().endsWith(".md")) {
       try {
         const targetDoc = await vscode.workspace.openTextDocument(targetUri);
-        // Reveal in another inline-comments panel for `.md` targets so
-        // the user stays in the review workflow. The reveal opts carry
-        // any heading/line suffix from the link; the panel scrolls the
-        // preview to the matching span after init.
+        // Reveal in another inline-comments panel so the user stays in the
+        // review workflow; the reveal opts carry any heading/line suffix from the
+        // link.
         InlineCommentsPanel.reveal(this.context, targetDoc, this.deps, {
           line: parsed.line ?? undefined,
           heading: parsed.heading ?? undefined,
@@ -796,17 +767,12 @@ ${inlineCommentsAppBody()}
   /**
    * The line to show under a waiting thread. With MCP evidence this names the
    * phase Claude reported; otherwise it stays the vaguer inferred wording,
-   * because that state IS a guess (10x-plan-2 P0.2).
+   * because that state IS a guess.
    */
   private pendingLabelText(): string {
     return pendingLabel(claudePending.status(this.doc.uri.toString(), parse(this.doc.getText()).threads));
   }
 
-  /**
-   * Run one webview mutation through the pure handler and apply the result.
-   * The handler decides what the document becomes; the panel owns the
-   * `WorkspaceEdit`, the save, and the warning toast.
-   */
   private async applyClientMutation(msg: MutationMessage): Promise<void> {
     let warning: string | undefined;
     await this.applyMutation((parsed) => {
@@ -843,12 +809,10 @@ ${inlineCommentsAppBody()}
         void vscode.window.showErrorMessage("Inline comments: edit failed to apply.");
         return;
       }
-      // The inline-comments format treats the .md file as the source of
-      // truth. Mutations from this panel are review actions (add / reply /
-      // resolve / delete) — the user expects them to persist immediately,
-      // not sit in an unsaved buffer. Save right after every successful
-      // apply. If the user has other pending edits in the text editor,
-      // those flush with this save too — same as a manual Cmd+S would do.
+      // The .md file is the source of truth, and review actions (add / reply /
+      // resolve / delete) are expected to persist immediately, not sit in an
+      // unsaved buffer. Other pending edits in the text editor flush with this
+      // save too — same as a manual Cmd+S.
       try {
         const saved = await this.doc.save();
         if (!saved) {
@@ -917,7 +881,6 @@ ${inlineCommentsAppBody()}
     await this.panel.webview.postMessage(msg);
   }
 
-  /** Install / update the bundled Claude skill, then refresh the panel's banner. */
   private async handleInstallSkill(): Promise<void> {
     // Route through the existing command so the "a customized SKILL.md exists"
     // overwrite confirmation + toasts are reused rather than duplicated.
@@ -971,15 +934,10 @@ ${inlineCommentsAppBody()}
 }
 
 /**
- * Reverse navigation (10x-plan-4 P2.4): open the anchored text of one thread
- * in a text editor. Source offsets, not prose offsets — `openEnd`..`closeStart`
- * is exactly the raw markdown between the marker pair, excluding the markers
- * themselves, which is what a human editing the file wants selected. Opens in
- * the active editor group, consistent with 0.34.94's "review views open in
- * the current editor group" decision. Exported (like `resolveScrollProseOffset`
- * and `findHeadingLine` below) so the integration suite can drive it directly
- * against a real `vscode.TextDocument`, without a live webview panel to post
- * the triggering message through.
+ * Open the anchored text of one thread in a text editor. Source offsets, not
+ * prose offsets — `openEnd`..`closeStart` is exactly the raw markdown between
+ * the marker pair, excluding the markers themselves, which is what a human
+ * editing the file wants selected. Opens in the active editor group.
  */
 export async function openThreadInEditor(doc: vscode.TextDocument, threadId: string): Promise<void> {
   const anchor = parse(doc.getText()).anchors.get(threadId);
@@ -1002,13 +960,12 @@ export async function openThreadInEditor(doc: vscode.TextDocument, threadId: str
 }
 
 /**
- * Translate a `{ line, heading }` request into a prose-space offset
- * suitable for posting to the webview. Returns null when neither is
- * resolvable (heading not found, line past EOF, both absent).
+ * Returns null when neither is resolvable (heading not found, line past EOF,
+ * both absent).
  *
- * Heading resolution takes priority when both are provided since users
- * tend to write `foo.md:42#api` meaning the heading; line is the
- * fallback when the heading isn't present.
+ * Heading resolution takes priority when both are provided since users tend to
+ * write `foo.md:42#api` meaning the heading; line is the fallback when the
+ * heading isn't present.
  */
 export function resolveScrollProseOffset(
   doc: vscode.TextDocument,
@@ -1026,11 +983,9 @@ export function resolveScrollProseOffset(
 }
 
 /**
- * Find the 1-based line number of the first ATX heading (`#`, `##`, …)
- * whose slug matches the requested fragment. Returns null if no heading
- * matches. Operates on the raw document text — markdown-collab markers
- * inside the heading text are stripped before slugifying so they don't
- * leak into the slug.
+ * Find the 1-based line number of the first ATX heading whose slug matches the
+ * requested fragment. Markers inside the heading text are stripped before
+ * slugifying so they don't leak into the slug.
  */
 export function findHeadingLine(
   doc: vscode.TextDocument,
@@ -1069,7 +1024,6 @@ function readPlantumlConfig(): { serverUrl: string; format: "svg" | "png" } {
   };
 }
 
-/** Whether the preview should label blocks with their source line. */
 function readLineNumbers(): boolean {
   return vscode.workspace
     .getConfiguration("markdownCollab")
@@ -1081,15 +1035,11 @@ function readSuggestMode(): boolean {
 }
 
 /**
- * The display name of the agent that most recently wrote to this file —
- * across every comment and suggestion, resolved or pending, whichever has
- * the latest timestamp (10x-plan-6 P5.2). Reuses `agentIdentity`'s slug→copy
- * map so a Codex- or Cursor-written file says so instead of the client
- * hardcoding "Claude"; a file no agent has written to yet defaults to
- * "Claude", same as `agentGroupLabel`'s empty-group fallback.
- *
- * Exported for the unit test; pure over an already-parsed document so it
- * needs no vscode surface of its own.
+ * The display name of the agent that most recently wrote to this file — across
+ * every comment and suggestion, resolved or pending, whichever has the latest
+ * timestamp. Reuses `agentIdentity`'s slug→copy map; a file no agent has
+ * written to yet defaults to "Claude", same as `agentGroupLabel`'s empty-group
+ * fallback.
  */
 export function mostRecentAgentName(parsed: ParsedDocument): string {
   let latestTs: string | undefined;

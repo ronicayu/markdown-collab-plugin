@@ -1,4 +1,4 @@
-// Tests for the watch-time integrity guard (10x-plan P0.2).
+// Tests for the watch-time integrity guard.
 
 import { describe, expect, it, vi } from "vitest";
 import { addThread, parse } from "../inlineComments/format";

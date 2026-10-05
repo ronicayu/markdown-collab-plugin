@@ -7,9 +7,7 @@ import { deltaScope } from "./inlineComments/deltaReview";
 import { buildDeltaPrompt } from "./inlineComments/deltaPrompt";
 import { workflowOpener, type SkillDelivery } from "./skillDelivery";
 
-// 10x-plan-4 P0.3: `mcp` folded into `terminal`, `channel` / `mcp-channel`
-// were deleted outright. P0.1 added `headless` — the extension runs Claude
-// itself — as one more entry in the picker builder
+// `headless` (the extension runs Claude itself) is one more entry in the picker builder
 // (`transports/sendModePicker.ts`), not a second list to keep in sync.
 export type SendMode = "headless" | "terminal" | "clipboard" | "ask";
 
@@ -29,7 +27,6 @@ export function mcpToolsDirective(): string {
 }
 
 export interface ReviewPayload {
-  /** The prompt for a session with the skill installed (terminal, clipboard). */
   prompt: string;
   /**
    * The same prompt for a session whose skill rides along as the system
@@ -59,7 +56,7 @@ export interface ReviewPayload {
 
 /**
  * The terms of a Review Mode pass, shared by the single-file and multi-file
- * prompts (10x-plan-6 P3): rank by severity, open threads for the five that
+ * prompts: rank by severity, open threads for the five that
  * matter most, summarize the rest, and no prose edits — the human triages
  * from the sidebar. Multi-file passes cap and summarize per file, not once
  * across the whole pass (`multiFileReview.ts`'s `CROSS_DOCUMENT_DIMENSION`
@@ -77,8 +74,7 @@ export function reviewModeClosing(fileCount: number): string {
 }
 
 /**
- * Build the payload sent to Claude when the user clicks "Ask Claude to
- * Review This Doc" (v2 Review Mode). The doc need not have any existing
+ * The doc need not have any existing
  * comments — Claude will create review threads from scratch. If the
  * caller passes a focus directive, embed it on its own line so the skill
  * can use it as the primary filter for what warrants a thread.
@@ -99,7 +95,7 @@ export function buildReviewRequestPayload(
   const trimmedFocus = focus?.trim();
 
   if (opts.delta) {
-    // 10x-plan-2 P1.1: cost the pass at what the edit cost, not what the
+    // Cost the pass at what the edit cost, not what the
     // document costs. The scope comes from the checkpoint the last pass left.
     const scope = deltaScope(parseInline(doc.getText()));
     if (scope.kind === "unchanged") return { kind: "unchanged" };

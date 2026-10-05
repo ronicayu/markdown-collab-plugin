@@ -1,9 +1,7 @@
 // Compact relative-time formatter for comment + reply timestamps.
 //
-// Exports a pure function so the webview rendering and unit tests share
-// one source of truth. Output strings are short (e.g. "2m", "3h", "Aug
-// 12") because the sidebar is narrow and we want every reply card to
-// stay one line per metadata row.
+// Output is short ("2m", "3h", "Aug 12") because the sidebar is narrow and
+// every reply card should stay one line per metadata row.
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -46,7 +44,6 @@ export function formatRelativeTime(
   if (diff < DAY) return `${Math.floor(diff / HOUR)}h`;
   if (diff < 7 * DAY) return `${Math.floor(diff / DAY)}d`;
 
-  // > 7 days: switch to absolute date.
   const d = new Date(then);
   const sameYear = new Date(nowMs).getFullYear() === d.getFullYear();
   const month = MONTHS[d.getMonth()];

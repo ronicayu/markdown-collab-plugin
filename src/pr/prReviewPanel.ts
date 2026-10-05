@@ -1,16 +1,3 @@
-/**
- * Preview-mode PR review surface. Renders the head-side markdown of a
- * changed file in a webview, paints a left stripe along any rendered
- * block whose source byte range overlaps an added-line range from the
- * PR diff, and lets the reviewer select prose to draft a PR comment.
- *
- * Storage stays with `PrReviewController` (workspaceState drafts). This
- * panel is a UI layer over the same draft store the legacy source-mode
- * CommentController used.
- *
- * One panel per (file, PR) pair, keyed by `${prKey}:${relPath}`.
- */
-
 import * as crypto from "crypto";
 import * as path from "path";
 import * as vscode from "vscode";
@@ -171,10 +158,9 @@ export class PrReviewPanel {
   }
 
   /**
-   * Fully re-render every open panel for this PR — re-reads the file from
-   * disk, recomputes diff ranges, and re-fetches platform comments. Used by
-   * the Changed Files refresh button. The caller is responsible for clearing
-   * any cached comments on the shared host first.
+   * Re-reads the file from disk, recomputes diff ranges, and re-fetches platform
+   * comments. Used by the Changed Files refresh button; the caller must clear any
+   * cached comments on the shared host first.
    */
   static refreshAll(prCtx: PrContext): void {
     const prefix = `${prKeyFor(prCtx)}::`;
@@ -239,8 +225,7 @@ export class PrReviewPanel {
       plantuml: readPlantumlConfig(),
     };
     await this.panel.webview.postMessage(msg);
-    // Existing comments arrive after init so the preview renders fast;
-    // they show up in the sidebar once the API call settles.
+    // Existing comments arrive after init so the preview renders fast.
     void this.host.getExistingCommentsFor(this.relPath).then(async (comments) => {
       const m: ExistingCommentsMessage = { type: "existing-comments", comments };
       await this.panel.webview.postMessage(m);
@@ -286,10 +271,8 @@ export class PrReviewPanel {
   }
 
   /**
-   * Post a reply to an existing comment thread, then re-fetch this file's
-   * comments and push them so the reply shows nested under its thread. On
-   * failure, tell the webview (so it re-enables the composer) and surface
-   * the error to the user.
+   * Post a reply, then re-fetch and push this file's comments. On failure, tell the
+   * webview (so it re-enables the composer) and surface the error to the user.
    */
   private async handleReply(threadId: string, body: string): Promise<void> {
     try {
@@ -306,11 +289,10 @@ export class PrReviewPanel {
   }
 
   /**
-   * Resolve or unresolve an existing thread, then re-fetch this file's
-   * comments and push them — the confirmed `resolved` value is what drives
-   * the card's collapse in the webview, not an optimistic guess here. On
-   * failure, tell the webview (so it re-enables the button) and surface the
-   * platform's own error message to the user. Mirrors `handleReply` above.
+   * Resolve or unresolve a thread, then re-fetch and push this file's comments — the
+   * confirmed `resolved` value drives the card's collapse in the webview, not an
+   * optimistic guess here. On failure, tell the webview (so it re-enables the button)
+   * and surface the platform's own error message to the user.
    */
   private async handleResolveThread(resolveId: string, resolved: boolean): Promise<void> {
     try {

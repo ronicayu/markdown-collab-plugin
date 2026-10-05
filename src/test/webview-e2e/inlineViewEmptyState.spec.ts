@@ -1,4 +1,4 @@
-// The inline-comments thread list's empty state (10x-plan-4 P2.4): a
+// The inline-comments thread list's empty state: a
 // first-run card that teaches how to start a thread when the doc has never
 // had one, vs. the plain one-line message when a filter is hiding threads
 // that do exist.

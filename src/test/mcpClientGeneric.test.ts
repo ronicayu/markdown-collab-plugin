@@ -1,4 +1,4 @@
-// The "Other agent" fallback snippet (10x-plan-4 P1.1) — no file is ever
+// The "Other agent" fallback snippet — no file is ever
 // written for this one, so the only contract to test is the text shown to
 // the human.
 

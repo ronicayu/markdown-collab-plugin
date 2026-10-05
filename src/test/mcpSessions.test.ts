@@ -1,4 +1,4 @@
-// 10x-plan-4 P1.2: the session→slug map `handleRpc`/`httpServer.ts` build on.
+// The session→slug map `handleRpc`/`httpServer.ts` build on.
 
 import { describe, expect, it } from "vitest";
 import { SessionRegistry } from "../mcpServer/sessions";

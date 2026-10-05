@@ -1,4 +1,4 @@
-// The corpus documents, driven entirely through the MCP tools (10x-plan-2 P0.3).
+// The corpus documents, driven entirely through the MCP tools.
 //
 // The round-trip corpus proves the *engine* survives gnarly documents. This
 // proves the same for the path Claude actually takes once the skill is

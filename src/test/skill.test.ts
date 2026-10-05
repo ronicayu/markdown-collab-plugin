@@ -16,7 +16,7 @@ import {
 } from "../skill";
 import { createHash } from "crypto";
 
-// Stale helpers from the channel transports deleted in 10x-plan-4 P0.3.
+// Stale helpers from the deleted channel transports.
 // installClaudeSkill must clean these up if they're left over from an older
 // install of this extension — see the "deletes stale channel helpers" tests.
 const STALE_TAIL_REL = ".claude/skills/vs-markdown-collab/mdc-tail.mjs";
@@ -49,7 +49,7 @@ describe("SKILL_CONTENT instructions", () => {
     expect(SKILL_CONTENT).toContain("Deletions become orphans by design");
   });
 
-  // 10x-plan-4 P0.3: the channel transports (event log + MCP channel) were
+  // The channel transports (event log + MCP channel) were
   // deleted outright, not just hidden. Nothing in the shipped skill should
   // still send Claude looking for them.
   it("carries no channel-transport references", () => {
@@ -70,7 +70,7 @@ describe("SKILL_CONTENT instructions", () => {
     }
   });
 
-  // Target set by 10x-plan-4 P0.3 (6,477 words before the shrink, 4,570
+  // Target (6,477 words before the shrink, 4,570
   // after). Every sentence is one an agent can misread, so the ceiling is a
   // real constraint, not a vanity number — keep cutting rather than raising
   // it. Counted in words, not lines: un-wrapping a paragraph shrinks the line
@@ -81,7 +81,7 @@ describe("SKILL_CONTENT instructions", () => {
   });
 });
 
-// 10x-plan-2 P0.3. The tools enforce what the prose used to warn about, so the
+// The tools enforce what the prose used to warn about, so the
 // happy path should read as orchestration — and the marker-surgery lore has to
 // stay quarantined in the appendix, or Claude will reach for it while holding a
 // tool that does the same thing safely.
@@ -129,7 +129,7 @@ describe("SKILL_CONTENT — tools-first structure", () => {
   });
 
   it("caps Review Mode at five threads, with a summary thread for the rest (10x-plan-6 P3)", () => {
-    // The grill behind 10x-plan-6 overturned the old never-ration rule: too
+    // The grill overturned the old never-ration rule: too
     // many comments landed even though most were sound findings.
     expect(SKILL_CONTENT).toContain("Rank concerns by severity and open threads for the **five** that matter most.");
     expect(SKILL_CONTENT).toContain("Also noticed (N): …");
@@ -274,7 +274,7 @@ describe("installClaudeSkill", () => {
     expect(await fs.readFile(cliTarget, "utf8")).toBe(CLI_SCRIPT_CONTENT);
   });
 
-  // 10x-plan-4 P0.3: the tail/channel scripts are gone, but a machine that ran
+  // The tail/channel scripts are gone, but a machine that ran
   // an older version of this extension may still have them on disk. They're
   // ours, so we clean up rather than leaving dead scripts behind.
   describe("deletes stale channel helpers", () => {
@@ -310,7 +310,7 @@ describe("checkClaudeSkill", () => {
     expect(await checkClaudeSkill(tmpHome)).toBe("missing");
   });
 
-  // 10x-plan-4 P0.2: the plugin carries its own skill and the standalone files
+  // The plugin carries its own skill and the standalone files
   // are removed when it's installed — so a plugin user must never be told the
   // skill is missing (the inline view's banner reads this).
   it("reports 'current' when the plugin is installed, with no standalone skill at all", async () => {
@@ -456,7 +456,7 @@ describe("skillFingerprint", () => {
     const installed = await fs.readdir(skillDir, { recursive: true, withFileTypes: true });
     const files = installed.filter((e) => e.isFile()).map((e) => e.name).sort();
     // SKILL.md + mdc.mjs only — the tail/channel helpers were deleted in
-    // 10x-plan-4 P0.3. A new entry here means skillFingerprint (and
+    // A new entry here means skillFingerprint (and
     // checkClaudeSkill) need it too.
     expect(files).toEqual([path.basename(CLI_SCRIPT_REL), path.basename(SKILL_REL_PATH)].sort());
   });

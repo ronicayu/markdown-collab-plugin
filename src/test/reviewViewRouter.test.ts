@@ -1,4 +1,4 @@
-// The review view's router (10x-plan-6 P4, the switch): which view opens —
+// The review view's router: which view opens —
 // the live editor, or the previous panel while
 // `markdownCollab.classicReviewView` is on — and where it lands.
 

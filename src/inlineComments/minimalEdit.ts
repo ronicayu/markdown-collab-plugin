@@ -1,13 +1,11 @@
-// Narrow a whole-document rewrite to the span that actually changed
-// (10x-plan P3.2).
+// Narrow a whole-document rewrite to the span that actually changed.
 //
 // Every comment operation runs the document through the format engine and
-// produces a new string, which used to be applied as a single `WorkspaceEdit`
-// replacing the entire file. That is correct but wasteful: replying to a
-// thread changes one line in the threads region, and rewriting 500 KB to say
-// so makes VS Code re-tokenize the whole buffer, disturbs folds and
-// decorations, and writes a diff that looks like "everything changed" to
-// anything watching the file.
+// produces a new string. Replacing the entire file with it is correct but
+// wasteful: replying to a thread changes one line in the threads region, and
+// rewriting 500 KB to say so makes VS Code re-tokenize the whole buffer,
+// disturbs folds and decorations, and writes a diff that looks like
+// "everything changed" to anything watching the file.
 //
 // Stripping the common prefix and suffix gives the minimal replacement for
 // the kinds of edits the engine actually makes (insert markers, rewrite one
@@ -20,7 +18,6 @@ export interface MinimalEdit {
   start: number;
   /** End offset in the OLD text of the range to replace (exclusive). */
   end: number;
-  /** Text to put there. */
   replacement: string;
 }
 

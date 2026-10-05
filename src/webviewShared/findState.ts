@@ -1,10 +1,9 @@
-// Find-in-view state for the inline comments webview (10x-plan P2.4).
+// Find-in-view state for the inline comments webview.
 //
 // The webview owns Cmd+F because a webview can't reach VS Code's editor find
 // widget. The DOM half (walking text nodes, wrapping matches in <mark>) has to
-// stay in the client; the parts that used to be wrong — where the matches are,
-// which one is current after stepping, and what the counter reads — are pure
-// and live here.
+// stay in the client; where the matches are, which one is current after
+// stepping, and what the counter reads are pure and live here.
 
 export interface FindMatch {
   /** Offset of the match in the searched string. */

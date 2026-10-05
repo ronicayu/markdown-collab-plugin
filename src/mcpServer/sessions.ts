@@ -1,12 +1,7 @@
-// Per-connection agent identity for the MCP server (10x-plan-4 P1.2).
-//
-// The server was stateless until now — every request stood on its own, which
-// is fine for `tools/call` (each one names its own file) but leaves nothing
-// to hang "which agent is this?" off. Streamable HTTP already has the answer:
-// the transport issues an `Mcp-Session-Id` on `initialize` and the client
-// echoes it on every request after, so a session id is exactly the key this
-// needs. This module is the map from that id to the slug `initialize`'s
-// `clientInfo.name` resolved to.
+// Per-connection agent identity for the MCP server. Each `tools/call` names its own
+// file but nothing else says "which agent is this?"; streamable HTTP's `Mcp-Session-Id`
+// (issued on `initialize`, echoed on every request after) is exactly the key. This
+// module is the map from that id to the slug `initialize`'s `clientInfo.name` resolved to.
 //
 // Kept pure (no http, no crypto) — `httpServer.ts` mints the id and reads the
 // header; this just remembers what it was told.
@@ -24,7 +19,6 @@ export class SessionRegistry {
    * to the end, which is exactly the recency `evict()` needs. */
   private readonly slugs = new Map<string, string>();
 
-  /** Record the slug an `initialize` resolved to, for `sessionId`. */
   record(sessionId: string, clientName: string | undefined): void {
     const slug = agentSlugFromClientName(clientName);
     this.slugs.delete(sessionId);

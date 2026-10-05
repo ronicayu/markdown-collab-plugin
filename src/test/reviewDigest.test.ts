@@ -68,7 +68,7 @@ describe("countsFor", () => {
     expect(countsFor(parse(open(DOC, "nested lists", "?").source)).fromClaude).toBe(0);
   });
 
-  // 10x-plan-4 P1.2: any agent's thread counts here, not just claude's — the
+  // Any agent's thread counts here, not just claude's — the
   // old literal `=== "claude"` check missed a Codex-opened or Codex-answered
   // thread entirely.
   it("counts a codex-opened thread as fromClaude (any agent, despite the field name)", () => {

@@ -1,4 +1,4 @@
-// The prompt for "review what changed since last time" (10x-plan-2 P1.1).
+// The prompt for "review what changed since last time".
 //
 // Pure string assembly over `deltaScope`, kept separate from the command that
 // dispatches it so the wording is testable — and so the two things most likely

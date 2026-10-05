@@ -1,9 +1,9 @@
-// The one way into the review view (10x-plan-6 P4, the switch).
+// The one way into the review view.
 //
 // The review view is the live editor (custom editor
 // `markdownCollab.collabEditor`): the rendered document with the threads
 // sidebar, read-only until its Edit switch is turned on. The markdown-it panel
-// (`InlineCommentsPanel`) stays for one release behind
+// (`InlineCommentsPanel`) stays behind
 // `markdownCollab.classicReviewView`. Every entry point — the command and its
 // menus and key, the hover link, the tree rows, the unread walk, the status
 // bar — comes through the router built here, so the setting is read in one
@@ -25,7 +25,6 @@ export interface ReviewViewOpts {
   focusNewFromAgent?: boolean;
 }
 
-/** What to open, and what to ask of it. */
 export type ReviewViewRoute =
   | { view: "classic"; line?: number; showDiff?: boolean }
   | { view: "live"; revealThreadId?: string; diff?: boolean };

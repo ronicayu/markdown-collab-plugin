@@ -1,4 +1,4 @@
-// `checkIntegrity` on a thread opened on nothing (ux-review-2026-09 0.1).
+// `checkIntegrity` on a thread opened on nothing.
 //
 // `mdc open --occurrence banana` wrapped zero characters at byte 0 and
 // recorded `"quote":""`, and `mdc check` then said `ok: true`. An empty quote

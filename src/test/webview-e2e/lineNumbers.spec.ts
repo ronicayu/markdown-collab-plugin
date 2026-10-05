@@ -130,8 +130,8 @@ test.describe("live editor", () => {
       .poll(() => page.evaluate(() => !!document.activeElement?.closest(".milkdown")))
       .toBe(true);
     await page.keyboard.type("x");
-    // Edit mode posts the blocks the keystroke changed, each serialized
-    // (docs/one-view-design.md, "Phase B"), not the whole document.
+    // Edit mode posts the blocks the keystroke changed, each serialized,
+    // not the whole document.
     const edit = await awaitPosted(page, "edit-blocks");
     // The gutter's widgets are decorations, not nodes: the host is told about
     // exactly the document's two blocks.

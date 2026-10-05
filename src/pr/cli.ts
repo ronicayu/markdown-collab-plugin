@@ -27,7 +27,6 @@ export type CliRunner = (
   opts?: RunCliOptions,
 ) => Promise<RunCliResult>;
 
-/** Default runner — real subprocess. Tests inject a stub. */
 export const runCli: CliRunner = (bin, args, opts = {}) =>
   new Promise((resolve, reject) => {
     const child = spawn(bin, args, {

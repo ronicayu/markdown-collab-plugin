@@ -1,5 +1,5 @@
 // Legacy `markdownCollab.sendMode` values, and the remembered-per-workspace
-// equivalent, both normalize to `terminal` (10x-plan-4 P0.3) — `mcp`,
+// equivalent, both normalize to `terminal` — `mcp`,
 // `channel`, and `mcp-channel` all delivered to a terminal already, and
 // `ipc` was `channel`'s name before 0.11.0. Garbage that was never a real
 // value at all keeps the older "fall back to ask and warn" behavior.

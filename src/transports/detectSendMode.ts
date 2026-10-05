@@ -1,8 +1,6 @@
-// Pick a send mode from what's actually running (10x-plan P3.1).
+// Pick a send mode from what's actually running.
 //
-// The first "Send to Claude" click used to open a quick-pick whose options
-// needed a comparison table to explain before the user had any way to know
-// which their setup supported. Most of the time the environment answers the
+// Most of the time the environment answers the
 // question: a `claude` REPL is already running in a terminal. Detect that,
 // use it, and say so.
 //
@@ -36,6 +34,5 @@ export function detectSendMode(evidence: SendModeEvidence): SendModeDetection | 
   return null;
 }
 
-/** The suffix appended to a detection toast, naming the escape hatch. */
 export const CHANGE_HINT =
   ' Run "Markdown Collab: Reset Send Mode" to pick a different one.';

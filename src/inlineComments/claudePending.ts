@@ -1,17 +1,12 @@
-// "Claude is working…" — which threads are awaiting a reply (10x-plan P1.2),
-// and how sure we are (10x-plan-2 P0.2).
+// "Claude is working…" — which threads are awaiting a reply, and how sure we are.
 //
-// Sending comments to Claude is the one moment in the workflow with no
-// feedback: you click, the payload goes out, and nothing changes until the
-// file is rewritten underneath you. The extension already knows more than it
-// shows — it dispatched a payload for specific threads and hasn't seen a reply
-// land in the threads block yet — so this turns that knowledge into a per-card
-// indicator.
+// The extension dispatched a payload for specific threads and hasn't seen a
+// reply land in the threads block yet; this turns that knowledge into a
+// per-card indicator.
 //
 // There are two grades of knowledge here, and the difference matters:
 //
-//   "inferred"  — every dispatch starts here (10x-plan-4 P0.3 deleted the mode
-//                 that used to mark "protocol" up front). Resolution is
+//   "inferred"  — every dispatch starts here. Resolution is
 //                 comment-shaped: a thread stops waiting when a comment
 //                 authored by Claude appears that wasn't there at dispatch. A
 //                 timeout exists only because a dispatch can go unanswered
@@ -61,14 +56,12 @@ export interface PendingThread {
   lastSignal: number;
 }
 
-/** The shape this module needs from a parsed thread. */
 export interface PendingInputThread {
   id: string;
   status: "open" | "resolved";
   comments: Array<{ author: string; deleted?: boolean; agent?: boolean }>;
 }
 
-/** What the views need to render the wait. */
 export interface PendingStatus {
   threadIds: string[];
   /** The strongest evidence among the waiting threads. */
@@ -90,7 +83,6 @@ function liveComments(t: PendingInputThread): Array<{ author: string; deleted?: 
   return t.comments.filter((c) => !c.deleted);
 }
 
-/** Snapshot the threads a dispatch covers, so their replies can be detected. */
 export function snapshotPending(
   threads: PendingInputThread[],
   threadIds: string[],
@@ -113,10 +105,10 @@ export function snapshotPending(
  * Has this thread been answered since its snapshot?
  *
  * Answered means: a new comment arrived AND the last one is an agent's (any
- * agent — 10x-plan-4 P1.2: whichever one picked up the reply, the human isn't
- * the one still owed an answer). Counting alone would clear the indicator
- * when the *human* adds a note while waiting; checking only the author would
- * clear it on a thread an agent had already replied to before the dispatch.
+ * agent — whichever one picked up the reply, the human isn't the one still owed
+ * an answer). Counting alone would clear the indicator when the *human* adds a
+ * note while waiting; checking only the author would clear it on a thread an
+ * agent had already replied to before the dispatch.
  */
 export function isAnswered(snapshot: PendingThread, thread: PendingInputThread | undefined): boolean {
   if (!thread) return true; // deleted while waiting — nothing left to wait for
@@ -126,10 +118,7 @@ export function isAnswered(snapshot: PendingThread, thread: PendingInputThread |
   return isAgentComment(live[live.length - 1]!);
 }
 
-/**
- * The snapshots still waiting: not yet answered, not yet silent for too long.
- * Threads that have been answered or that have aged out drop off the list.
- */
+/** The snapshots still waiting: not yet answered, not yet silent for too long. */
 export function stillPending(
   snapshots: PendingThread[],
   threads: PendingInputThread[],
@@ -142,7 +131,6 @@ export function stillPending(
   );
 }
 
-/** Per-document protocol state, separate from the per-thread snapshots. */
 interface DocSignals {
   /** Claude has called at least one tool since the dispatch. */
   active: boolean;
@@ -182,7 +170,6 @@ export class ClaudePendingTracker {
     private readonly cancel: (t: ReturnType<typeof setTimeout>) => void = (t) => clearTimeout(t),
   ) {}
 
-  /** Record that a payload covering `threadIds` just went out for `docKey`. */
   public mark(
     docKey: string,
     threads: PendingInputThread[],
@@ -207,13 +194,12 @@ export class ClaudePendingTracker {
   /**
    * Claude called a tool against this document. Upgrades the wait from "sent"
    * to "active", records the phase when one came with it, and pushes the
-   * silence deadline out — this is the signal the timeout used to stand in for.
+   * silence deadline out.
    *
-   * A tool call is itself protocol evidence, whatever the wait started as: since
-   * 10x-plan-4 P0.3 every dispatch is marked "inferred" up front (the `mcp` mode
-   * that used to earn "protocol" at dispatch time is gone), so this is the only
-   * place a wait ever becomes "protocol" — and it upgrades every snapshot for the
-   * document, not just ones that already had it.
+   * A tool call is itself protocol evidence, whatever the wait started as: every
+   * dispatch is marked "inferred" up front, so this is the only place a wait
+   * ever becomes "protocol" — and it upgrades every snapshot for the document,
+   * not just ones that already had it.
    */
   public noteActivity(docKey: string, opts: { phase?: string; agent?: string } = {}): void {
     const snapshots = this.byDoc.get(docKey);
@@ -273,7 +259,6 @@ export class ClaudePendingTracker {
     return this.status(docKey, threads).threadIds;
   }
 
-  /** The full wait state for a document: ids plus how much we actually know. */
   public status(docKey: string, threads: PendingInputThread[]): PendingStatus {
     const snapshots = this.byDoc.get(docKey);
     if (!snapshots || snapshots.length === 0) {
@@ -318,7 +303,6 @@ export class ClaudePendingTracker {
     };
   }
 
-  /** Drop the waits on exactly these threads, leaving any other thread's wait alone. */
   public unmark(docKey: string, threadIds: string[]): void {
     const snapshots = this.byDoc.get(docKey);
     if (!snapshots) return;

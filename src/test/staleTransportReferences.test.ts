@@ -1,5 +1,5 @@
-// 10x-plan-4 P0.3 deleted the channel transports outright, not just hid
-// them. This is the trip-wire: none of the strings that only ever meant
+// The channel transports were deleted outright, not just hidden.
+// This is the trip-wire: none of the strings that only ever meant
 // "the event-log / MCP-channel send modes" may resurface in anything a user
 // or Claude reads — the README, the shipped skill, the walkthrough copy, or
 // package.json.

@@ -1,5 +1,5 @@
 // Rendering-parity gaps between the live (Milkdown) editor and the review
-// view, closed per docs/spike-one-view.md section A: PlantUML fences, hiding
+// view, closed: PlantUML fences, hiding
 // a mermaid fence's source once it renders (reappearing on error), task-list
 // checkboxes, and inline `<br>`. The suggestion-highlight gap and the drawio
 // `![alt](x.drawio)` image-syntax gap have their own homes — the fixture they

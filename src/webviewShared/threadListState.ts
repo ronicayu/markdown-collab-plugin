@@ -1,11 +1,5 @@
-// Thread-list state for the comment panels (10x-plan P2.4).
-//
-// The webview clients are the churned layer of this codebase, and most of what
-// they got wrong over 126 versions was not DOM manipulation but the arithmetic
-// around it: which threads a filter admits, what the counters say, which
-// thread the "Next" button should land on, and whether a card's content
-// actually changed. That logic is pure. It lives here so it can be tested
-// without a DOM, and so the inline view and the live editor agree on it.
+// Thread-list state for the comment panels, kept free of the DOM so it can be
+// tested without one and so the inline view and the live editor agree on it.
 //
 // Structural input types: the two clients carry different thread shapes
 // (SerializedState.threads vs CommentSummary), so these take the narrowest
@@ -22,7 +16,6 @@ export interface ListThread {
   comments: Array<{ author: string; deleted?: boolean }>;
 }
 
-/** Does `filter` admit this thread? */
 export function matchesFilter(thread: ListThread, filter: ThreadFilter): boolean {
   if (filter === "open") return thread.status === "open";
   if (filter === "resolved") return thread.status === "resolved";
@@ -30,21 +23,15 @@ export function matchesFilter(thread: ListThread, filter: ThreadFilter): boolean
   return true;
 }
 
-/** The threads a filter shows, in input order. */
 export function filterThreads<T extends ListThread>(threads: T[], filter: ThreadFilter): T[] {
   return threads.filter((t) => matchesFilter(t, filter));
 }
 
-/** The inline view's header counter: `"3 open · 7 total"`. */
 export function threadCountLabel(threads: ListThread[]): string {
   const open = threads.filter((t) => t.status === "open").length;
   return `${open} open · ${threads.length} total`;
 }
 
-/**
- * Per-tab counts for the live editor's filter row (sidebar-chrome-redesign):
- * each tab reads its own count instead of one combined header line.
- */
 export interface FilterCounts {
   open: number;
   all: number;
@@ -86,8 +73,8 @@ export interface ClaudeSummary {
    * The same agent noun baked into `text` ("Claude", another agent's name, or
    * "agents"), exposed separately so callers with their own copy to fill in —
    * the filter chip, a button's title — can name the actual agent instead of
-   * hardcoding "Claude" (round-4 P3, agent-neutral copy). Falls back to the
-   * generic "Agent" when there are no unread threads to derive it from.
+   * hardcoding "Claude". Falls back to the generic "Agent" when there are no
+   * unread threads to derive it from.
    */
   agentNoun: string;
 }
@@ -96,10 +83,9 @@ export interface ClaudeSummary {
  * Counts for the "N new from Claude · M reviewed" row. A thread is counted
  * once: unread until the human replies or resolves it, reviewed after.
  *
- * The label names whichever agent(s) the unread threads actually came from
- * (the wording rule: name the agent when the code knows it): the one agent's
- * name ("Claude", "Codex", …) when every unread thread came from the same
- * agent, and the generic "agents" when more than one distinct agent
+ * The label names whichever agent(s) the unread threads actually came from: the
+ * one agent's name ("Claude", "Codex", …) when every unread thread came from
+ * the same agent, and the generic "agents" when more than one distinct agent
  * contributed.
  */
 export function claudeSummary(threads: ListThread[]): ClaudeSummary {
@@ -126,22 +112,19 @@ export function claudeSummary(threads: ListThread[]): ClaudeSummary {
   };
 }
 
-/** What an empty thread list should say, given why it's empty. */
 export function emptyListMessage(filter: ThreadFilter): string {
   if (filter === "open") {
     return "No open comments. Select text in the preview to start a thread.";
   }
   if (filter === "claude-unread") {
-    // Command renamed to "Ask Agent to Review This Doc" (package.json). This
-    // function only gets `filter`, not the thread list, so there's no agent to
-    // name — there are no unread threads to draw one from, which is exactly
+    // This function only gets `filter`, not the thread list, so there's no agent
+    // to name — there are no unread threads to draw one from, which is exactly
     // why this message is showing — and the wording rule says "an agent".
     return "No unread threads from an agent. Run 'Ask Agent to Review This Doc' to start one.";
   }
   return "No comments match this filter.";
 }
 
-/** A filter is hiding threads that exist — the plain one-line message. */
 export interface FilteredEmptyState {
   kind: "filtered";
   message: string;
@@ -149,9 +132,9 @@ export interface FilteredEmptyState {
 
 /**
  * The doc has never had a comment on it — the first-minute path, not a filter
- * artifact. Rendered as a small card instead of a line of grey text (10x-plan-4
- * P2.4 / round-3 P3.1): a brand-new user staring at a blank sidebar has no way
- * to know a comment is even possible, let alone that an agent can start one.
+ * artifact. Rendered as a small card instead of a line of grey text: a
+ * brand-new user staring at a blank sidebar has no way to know a comment is
+ * even possible, let alone that an agent can start one.
  */
 export interface FirstRunEmptyState {
   kind: "first-run";
@@ -224,9 +207,8 @@ export function nextUnreadThreadId(threads: ListThread[], currentId: string | nu
 /**
  * The next/previous card in `filter`'s current list, wrapping at both ends.
  * `delta` is +1 for "next" (`n`), -1 for "previous" (`p`) — the in-webview
- * thread navigation (10x-plan-4 P2.1), which walks whatever the filter is
- * currently showing rather than a fixed "unread" subset like
- * `nextUnreadThreadId` does.
+ * thread navigation, which walks whatever the filter is currently showing
+ * rather than a fixed "unread" subset like `nextUnreadThreadId` does.
  *
  * `currentId` not being in the filtered list (nothing highlighted yet, the
  * highlighted thread just left the filter, or the filter itself just
@@ -263,8 +245,7 @@ export function nextCollapseAllAction(
 
 /**
  * A card the thread list can fold — a thread or a pending suggestion,
- * described just enough to pick its default collapse state (round-8 P1,
- * "every kind of comment collapses").
+ * described just enough to pick its default collapse state.
  */
 export type CollapsibleCard =
   | { kind: "thread"; id: string; status: "open" | "resolved" }
@@ -295,16 +276,13 @@ export function initialCollapsed(card: CollapsibleCard, overrides: ReadonlyMap<s
 
 /**
  * How many thread cards to build in one pass. Each card is a non-trivial DOM
- * subtree (header, body, replies, an always-on reply box), so a review pass
- * that opened 300 threads used to build 300 of them synchronously before the
- * panel painted anything.
+ * subtree (header, body, replies, an always-on reply box), so building hundreds
+ * synchronously delays the panel's first paint.
  */
 export const THREAD_RENDER_CHUNK = 100;
 
 export interface ThreadChunk<T> {
-  /** The threads to build cards for now. */
   visible: T[];
-  /** How many are held back behind the "show more" control. */
   remaining: number;
   /** Label for that control, or null when everything is rendered. */
   moreLabel: string | null;
@@ -335,7 +313,6 @@ export function chunkThreads<T>(threads: T[], shown: number): ThreadChunk<T> {
   };
 }
 
-/** A thread's rendered content, for the live editor's reconciler. */
 export interface SignatureThread {
   author: string;
   createdAt: string;
@@ -356,10 +333,8 @@ export interface SignatureThread {
  * `pending` is part of the signature because the card renders a waiting row
  * from it, and that row is the one thing that changes with no accompanying
  * content change — a dispatch flips it on while author, body, and replies all
- * stay identical. Leaving it out kept the indicator off the live editor
- * entirely (caught by the webview e2e suite, 10x-plan-2 P2.1). Pass the row's
- * *text* rather than a flag when there is one, so a phase update from
- * `mc_status` repaints too (10x-plan-2 P0.2).
+ * stay identical. Pass the row's *text* rather than a flag when there is one,
+ * so a phase update from `mc_status` repaints too.
  */
 export function threadSignature(c: SignatureThread, pending: boolean | string = false): string {
   return JSON.stringify({

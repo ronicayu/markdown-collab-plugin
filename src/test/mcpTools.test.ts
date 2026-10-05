@@ -89,7 +89,7 @@ describe("mcp tool catalog", () => {
     }
   });
 
-  // 10x-plan-4 P1.3: a client that doesn't surface `instructions` sees only the
+  // A client that doesn't surface `instructions` sees only the
   // tool descriptions, so every write points at the workflow.
   it("ends every mutating tool's description with the mc_help hint, and only those", () => {
     const mutating = ["mc_reply", "mc_open", "mc_rewrite", "mc_edit", "mc_resolve", "mc_suggest", "mc_accept", "mc_reject"];
@@ -232,7 +232,7 @@ describe("refusals", () => {
     expect(anchored.size).toBe(1);
   });
 
-  // ux-review-2026-09 0.1: the same validator the CLI and the ops use.
+  // The same validator the CLI and the ops use.
   it.each(["banana", -1, 1.5, "1e0"])("refuses occurrence %j as invalid_arguments, writing nothing", async (occurrence) => {
     const h = harness();
     const before = h.read();
@@ -369,7 +369,7 @@ describe("author threading (10x-plan-4 P1.2)", () => {
   });
 });
 
-// 10x-plan-6 P1.4: a write through the tools says so in the file, and mc_list
+// A write through the tools says so in the file, and mc_list
 // hands the same field back so an agent can see it too.
 describe("via: tools", () => {
   it("mc_open, mc_reply and mc_suggest stamp via: tools, and mc_list reports it", async () => {
@@ -408,7 +408,7 @@ describe("via: tools", () => {
   });
 });
 
-// 10x-plan-6 P2.1: suggest mode used to be a request the model could ignore.
+// Suggest mode used to be a request the model could ignore.
 // `suggestModeFor` on `ToolDeps` is how a host tells `callTool` it's on for a
 // given document key; `mc_edit`/`mc_rewrite` must refuse outright rather than
 // silently applying the change, and every other tool (mc_suggest above all)
@@ -488,7 +488,7 @@ describe("suggest mode refusal (10x-plan-6 P2.1)", () => {
   });
 });
 
-// 10x-plan-6 P2.3: one suggestion, one change — a `with` that reads like a
+// One suggestion, one change — a `with` that reads like a
 // whole-paragraph rewrite is refused rather than accepted as a "suggestion".
 describe("mc_suggest size guard (10x-plan-6 P2.3)", () => {
   it("suggestionTooLarge is the max of the multiple-of-quote and the flat floor", () => {

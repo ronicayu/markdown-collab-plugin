@@ -1,4 +1,4 @@
-// Cursor CLI's `.cursor/mcp.json` writer (10x-plan-4 P1.1).
+// Cursor CLI's `.cursor/mcp.json` writer.
 
 import { describe, expect, it } from "vitest";
 import { cursorMcpEntry, mergeCursorMcpJson } from "../mcpServer/clients/cursor";

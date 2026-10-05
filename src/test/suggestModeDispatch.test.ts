@@ -105,7 +105,7 @@ describe("every send path reads the suggest-mode toggle", () => {
   // optional argument, which type-checks fine and which builder tests can't
   // see. Anything that dispatches a payload has to consult the setting.
   //
-  // "extension.ts" until 10x-plan-4 P3.2 moved these call sites into
+  // "extension.ts" until these call sites moved into
   // src/commands/send.ts along with the rest of the send family.
   const HOSTS = ["commands/send.ts", "inlineComments/inlineCommentsPanel.ts"];
 
@@ -145,7 +145,7 @@ describe("dispatch marks its threads pending", () => {
   // Marking lives in `dispatchReviewPayload`'s delivery branches rather than
   // in each command, so a new send path cannot forget it — the earlier draft
   // of this feature marked at call sites and immediately missed one.
-  // dispatchReviewPayload lives in src/commands/send.ts since 10x-plan-4 P3.2.
+  // dispatchReviewPayload lives in src/commands/send.ts.
   const source = fs.readFileSync(path.join(__dirname, "..", "commands/send.ts"), "utf8");
 
   function dispatcherBody(): string {

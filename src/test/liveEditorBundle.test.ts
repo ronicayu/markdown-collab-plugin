@@ -1,7 +1,7 @@
 // The review view's webview bundle, out/webview/client.js, has an upper
-// bound (10x-plan-6 P4). It replaced the "no growth" budget from when the
-// live editor was a side editor with no new features coming (10x-plan-4
-// P3.1); it's now the review view and grows with it, so the bound leaves
+// bound. It replaced the "no growth" budget from when the
+// live editor was a side editor with no new features coming; it's now the
+// review view and grows with it, so the bound leaves
 // room for that and still catches a jump — a dependency pulled in whole, or
 // one of the lazy imports below turned into a static one.
 // scripts/verify-package.mjs checks the same number on the packaged .vsix.

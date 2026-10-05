@@ -1,4 +1,4 @@
-// The review-pass pulse against a real Extension Host (10x-plan-4 P2.2).
+// The review-pass pulse against a real Extension Host.
 //
 // The unit suite (`reviewPassPending.test.ts`) exercises the pure tracker in
 // isolation. What only the host can show is the whole path a dispatch takes:
@@ -84,7 +84,7 @@ async function dispatchReviewAndWaitForClipboard(uri: vscode.Uri, marker: string
     const config = vscode.workspace.getConfiguration("markdownCollab");
     previousMode = config.inspect("sendMode")?.workspaceValue;
     // Clipboard avoids needing a real terminal in the test host — the pulse
-    // is the same for both non-headless modes (10x-plan-4 P2.2's design).
+    // is the same for both non-headless modes.
     await config.update("sendMode", "clipboard", vscode.ConfigurationTarget.Workspace);
   });
 

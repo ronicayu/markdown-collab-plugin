@@ -1,6 +1,5 @@
-// Parse markdown link hrefs and compute heading slugs. Pure functions —
-// shared by the webview client (for in-doc # navigation) and the panel
-// host (for cross-file navigation). No DOM, no vscode API.
+// Shared by the webview client (in-doc # navigation) and the panel host
+// (cross-file navigation), so no DOM and no vscode API.
 
 /**
  * True when `href` looks like an absolute URL (worth handing off to the
@@ -32,15 +31,12 @@ export interface ParsedLinkHref {
   path: string;
   /** Heading fragment (without leading `#`), or null. Lower-priority than `line`. */
   heading: string | null;
-  /** 1-based line number from a `:N` suffix, or null. */
   line: number | null;
   /** Query string (without leading `?`), or null. Carried through verbatim. */
   query: string | null;
 }
 
 /**
- * Split a markdown link href into path / fragment / line / query.
- *
  * Supports:
  * - `foo/bar.md`
  * - `foo/bar.md#section-heading`
@@ -56,7 +52,6 @@ export interface ParsedLinkHref {
 export function parseLinkHref(raw: string): ParsedLinkHref {
   let rest = raw;
 
-  // Pull off the fragment first.
   let heading: string | null = null;
   const hashIdx = rest.indexOf("#");
   if (hashIdx !== -1) {
@@ -64,7 +59,6 @@ export function parseLinkHref(raw: string): ParsedLinkHref {
     rest = rest.slice(0, hashIdx);
   }
 
-  // Then the query.
   let query: string | null = null;
   const qIdx = rest.indexOf("?");
   if (qIdx !== -1) {
@@ -94,7 +88,6 @@ export function parseLinkHref(raw: string): ParsedLinkHref {
     }
   }
 
-  // Decode the path; tolerate badly-encoded input by falling back to raw.
   let p = rest;
   try {
     p = decodeURIComponent(p);
@@ -107,17 +100,9 @@ export function parseLinkHref(raw: string): ParsedLinkHref {
 }
 
 /**
- * Slugify a markdown heading the way GitHub's renderer does. This is the
- * format markdown-it `anchor`-style plugins emit when given default
- * options, and is the de facto standard for in-doc heading links.
- *
- * Rules:
- * - lowercase
- * - strip punctuation except `-` and `_`
- * - whitespace runs collapse to a single `-`
- * - leading / trailing `-` stripped
- *
- * Returns an empty string when the heading has no slug-safe characters.
+ * Slugify a markdown heading the way GitHub's renderer does — the de facto
+ * standard for in-doc heading links. Returns an empty string when the heading
+ * has no slug-safe characters.
  */
 export function slugifyHeading(text: string): string {
   return text

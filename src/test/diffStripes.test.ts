@@ -1,4 +1,4 @@
-// The live editor's diff-overlay range→node mapping (10x-plan-6 P4 phase B).
+// The live editor's diff-overlay range→node mapping.
 // The full pipeline (a real Milkdown doc, real decorations) is exercised by
 // the webview-e2e gate (liveEditorDiff.spec.ts); these pin the pure mapping
 // on hand-built ProseMirror-shaped trees, the same style

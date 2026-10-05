@@ -1,4 +1,4 @@
-// The one host-wide review-pass tracker (10x-plan-4 P2.2).
+// The one host-wide review-pass tracker.
 //
 // Same role as `claudePendingService.ts`, for the pure tracker in
 // `reviewPassPending.ts`: a single shared instance and a fan-out so the status

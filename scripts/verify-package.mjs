@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Verify a packaged .vsix actually contains what the extension loads at
-// runtime (10x-plan P2.4).
+// runtime.
 //
 // This replaces a CI step that asserted `node_modules/yjs`, `y-protocols`,
 // `ws`, and `markdown-it` were inside the vsix. That was true when the host
@@ -45,7 +45,7 @@ const REQUIRED = [
   "extension/node_modules/mermaid/dist/mermaid.min.js",
   "extension/node_modules/mermaid/package.json",
   // The Claude Code plugin, which Set Up Claude Code copies into a local
-  // marketplace and installs from (10x-plan-4 P0.2). A package without it
+  // marketplace and installs from. A package without it
   // silently falls back to the standalone skill on every machine.
   "extension/plugin/.claude-plugin/plugin.json",
   "extension/plugin/skills/review/SKILL.md",
@@ -114,7 +114,7 @@ if (shipped.length > 0) {
   process.exit(1);
 }
 
-// The review view's webview bundle has an upper bound (10x-plan-6 P4), the
+// The review view's webview bundle has an upper bound, the
 // same one src/test/liveEditorBundle.test.ts checks on out/: this checks what
 // actually shipped. `mermaid` and `mxgraph` stay dynamic imports, guarded by
 // that test's source checks.
@@ -131,7 +131,7 @@ const clientJsBuffer = execFileSync("unzip", ["-p", vsix, "extension/out/webview
 });
 if (clientJsBuffer.length > WEBVIEW_CLIENT_BUDGET_BYTES) {
   console.error(
-    `::error::extension/out/webview/client.js is ${clientJsBuffer.length} bytes, over the review view's bound of ${WEBVIEW_CLIENT_BUDGET_BYTES} bytes (10x-plan-6 P4) — check for a dependency bundled whole or a lazy import made static; if this growth is deliberate, remeasure and update scripts/verify-package.mjs and src/test/liveEditorBundle.test.ts`,
+    `::error::extension/out/webview/client.js is ${clientJsBuffer.length} bytes, over the review view's bound of ${WEBVIEW_CLIENT_BUDGET_BYTES} bytes — check for a dependency bundled whole or a lazy import made static; if this growth is deliberate, remeasure and update scripts/verify-package.mjs and src/test/liveEditorBundle.test.ts`,
   );
   process.exit(1);
 }

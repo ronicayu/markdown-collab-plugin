@@ -3,10 +3,6 @@
 // Inline comments live inside the .md file itself, so we build the payload
 // directly from the parser output and shim it into the `ReviewPayload` shape
 // the transports (terminal / clipboard) expect.
-//
-// The prompt explicitly documents the on-disk inline format so Claude can
-// parse and update threads in place — replying on the relevant
-// `<!--mc:t {...}-->` line after addressing each thread.
 
 import * as path from "path";
 import * as vscode from "vscode";
@@ -21,10 +17,7 @@ export interface InlineReviewPayload extends ReviewPayload {
   inlineThreads: InlineThread[];
 }
 
-/**
- * Convert a single open thread to a `ReviewPayload`-compatible shape.
- * Returns null when the thread is not found or is already resolved.
- */
+/** Returns null when the thread is not found or is already resolved. */
 export function buildSingleThreadPayload(
   doc: vscode.TextDocument,
   threadId: string,
@@ -59,7 +52,6 @@ export function buildSingleThreadPayload(
 }
 
 /**
- * Convert open inline threads to a `ReviewPayload`-compatible shape.
  * Returns null when there's nothing to send. When `suggestMode` is set, the
  * prompt asks Claude to propose its edits as suggestions rather than applying
  * them directly.
@@ -158,6 +150,5 @@ function oneLine(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
-/** Exported for tests — exposes the comment shimming so tests don't need to import internal helpers. */
 export const _internal = { threadToComment, buildPrompt };
 export type _InternalInlineComment = InlineComment;

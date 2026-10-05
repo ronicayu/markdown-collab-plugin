@@ -93,7 +93,7 @@ describe("serveMcp", () => {
     expect(JSON.parse(r.body).result.serverInfo.name).toBe("markdown-collab");
   });
 
-  // 10x-plan-4 P1.2: streamable HTTP issues a session id on `initialize` so a
+  // Streamable HTTP issues a session id on `initialize` so a
   // later `tools/call` can be attributed to whichever agent connected.
   it("issues an Mcp-Session-Id on initialize when the client sent none", async () => {
     const s = await start();

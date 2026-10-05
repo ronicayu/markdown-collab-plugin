@@ -1,15 +1,11 @@
-// Document mutations requested by the inline-comments webview (10x-plan P2.4).
+// Document mutations requested by the inline-comments webview.
 //
 // Every comment operation the human performs arrives as a postMessage and ends
 // as a full-document rewrite. That transform — message + current document in,
-// new document out — is the highest-risk code in the extension and used to be
-// buried in the panel class next to `WorkspaceEdit` plumbing and `vscode.window`
-// calls, where it could only be tested through an Extension Host.
-//
-// It lives here as a pure function so the host↔webview protocol can be tested
-// as a contract: feed a recorded message and a document, assert the resulting
-// document. The panel keeps the side effects (applying the edit, showing the
-// warning this returns, and the non-document messages like open-link).
+// new document out — lives here as a pure function so the host↔webview protocol
+// can be tested as a contract without an Extension Host. The panel keeps the
+// side effects (applying the edit, showing the warning this returns, and the
+// non-document messages like open-link).
 
 import {
   acceptSuggestion,
@@ -25,7 +21,6 @@ import {
 import { mapProseToSource } from "./proseMapping";
 import { withRefreshedAnchorHash } from "./staleness";
 
-/** The webview messages that rewrite the document. */
 export type MutationMessage =
   | { type: "add-comment"; selStart: number; selEnd: number; body: string }
   | { type: "reply"; threadId: string; body: string; parentCommentId?: string }
@@ -35,7 +30,7 @@ export type MutationMessage =
   | { type: "delete-comment"; threadId: string; commentId: string }
   | { type: "accept-suggestion"; anchorId: string }
   | { type: "reject-suggestion"; anchorId: string }
-  /** Accept every anchored suggestion in the file, in one undoable step (P3.3). */
+  /** Accept every anchored suggestion in the file, in one undoable step. */
   | { type: "accept-all-suggestions" };
 
 export interface MutationContext {
@@ -57,8 +52,6 @@ export interface MutationResult {
 }
 
 /**
- * Apply one webview mutation to the parsed document.
- *
  * Unknown or stale ids return the source unchanged rather than throwing: the
  * webview's state can lag the file by one edit (Claude may have just resolved
  * the thread on disk), and a no-op is the right answer to "reply to a thread
@@ -81,7 +74,7 @@ export function applyClientMutation(
         parent: msg.parentCommentId,
       });
       // The replier just read the passage as it stands, so this reply is the
-      // new baseline for "text changed since this comment" (P1.3).
+      // new baseline for "text changed since this comment".
       return {
         source: replaceThread(parsed.source, t.id, withRefreshedAnchorHash(parsed, next)),
       };

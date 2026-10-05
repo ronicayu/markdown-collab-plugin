@@ -1,23 +1,13 @@
-// What the raw text editor should show for a reviewed .md file (10x-plan-3 P0.1).
-//
-// The inline format is the product's core virtue — review state travels inside
-// the document — but its first impression in the plain text editor is
-// `<!--mc:a:x7k2p-->` marker soup and a wall of thread JSON at the bottom. The
-// extension knows exactly what every one of those bytes means and, until now,
-// said nothing: no decorations, no folding, no hovers. A collaborator opening
-// the file sees something that looks corrupted.
-//
-// This module is the pure half: given a parsed document it returns offset
-// ranges to decorate, a fold for the threads region, and the hover text for a
-// position. No `vscode` import, so the interesting logic is unit-testable and
-// the wiring in `index.ts` stays thin enough to read.
+// What the raw text editor should show for a reviewed .md file: given a parsed
+// document, the offset ranges to decorate, a fold for the threads region, and
+// the hover text for a position. No `vscode` import, so the logic is
+// unit-testable and the wiring in `index.ts` stays thin.
 
 import type { InlineThread, ParsedDocument } from "../inlineComments/format";
 import { isClaudeUnread, unreadAgentSlug } from "../inlineComments/claudeUnread";
 import { agentGroupLabel } from "../agentIdentity";
 import { formatRelativeTime } from "../collab/relativeTime";
 
-/** Half-open `[start, end)` offsets into the document source. */
 export interface OffsetRange {
   start: number;
   end: number;
@@ -30,17 +20,13 @@ export interface PresenceRanges {
    * markers are how the format keeps its promise.
    */
   markers: OffsetRange[];
-  /** Anchored spans of open threads. */
   openSpans: OffsetRange[];
-  /** Anchored spans of resolved threads — same idea, quieter. */
   resolvedSpans: OffsetRange[];
-  /** Anchored originals of pending suggestions, which read as tracked changes. */
   suggestionSpans: OffsetRange[];
   /** Threads region including its fences, or null when the file has none. */
   threadsRegion: OffsetRange | null;
 }
 
-/** Everything the decoration pass needs, in one walk of the parse. */
 export function presenceRanges(parsed: ParsedDocument): PresenceRanges {
   const markers: OffsetRange[] = [];
   const openSpans: OffsetRange[] = [];
@@ -53,7 +39,6 @@ export function presenceRanges(parsed: ParsedDocument): PresenceRanges {
   for (const [id, a] of parsed.anchors) {
     markers.push({ start: a.openStart, end: a.openEnd });
     markers.push({ start: a.closeStart, end: a.closeEnd });
-    // The anchored text is what sits between the markers.
     const span = { start: a.openEnd, end: a.closeStart };
     if (span.end <= span.start) continue; // an empty anchor highlights nothing
     if (suggestionIds.has(id)) suggestionSpans.push(span);
@@ -70,12 +55,10 @@ export function presenceRanges(parsed: ParsedDocument): PresenceRanges {
   };
 }
 
-/** Does this document carry any inline review state at all? */
 export function hasPresence(parsed: ParsedDocument): boolean {
   return parsed.anchors.size > 0 || parsed.threadsRegion !== null;
 }
 
-/** 0-based line number containing `offset`. */
 export function lineAt(source: string, offset: number): number {
   let line = 0;
   const cap = Math.min(offset, source.length);
@@ -153,7 +136,6 @@ export function threadAt(parsed: ParsedDocument, offset: number): InlineThread |
   return best?.thread ?? null;
 }
 
-/** Author, age, and body of the newest comment that hasn't been deleted. */
 function latestLive(thread: InlineThread): { author: string; ts: string; body: string } | null {
   for (let i = thread.comments.length - 1; i >= 0; i--) {
     const c = thread.comments[i];
@@ -162,7 +144,6 @@ function latestLive(thread: InlineThread): { author: string; ts: string; body: s
   return null;
 }
 
-/** One quoted line of a comment body, short enough to live in a hover. */
 function gist(body: string, max = 220): string {
   const flat = body.replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
@@ -172,7 +153,7 @@ function gist(body: string, max = 220): string {
  * Escape Markdown syntax characters in text that came from the document
  * itself — a comment's author or body — so it renders as plain text inside
  * the trusted `MarkdownString` `index.ts` builds, rather than becoming a
- * link, an image, emphasis, or a heading (M1). A comment body of
+ * link, an image, emphasis, or a heading. A comment body of
  * `[Mark reviewed](command:markdownCollab.resolveThread?…)` must read as
  * exactly that string; only the extension's own links, appended after this
  * escaping runs, are ever live. Escaping `!` alongside `[`, `]`, `(`, and `)`
@@ -234,11 +215,8 @@ export function hoverFor(
   if (opts.commandLinks && opts.file) {
     // Encoded as a JSON array, which is what VS Code expects in a command URI.
     const args = encodeURIComponent(JSON.stringify([opts.file, thread.id]));
-    // Reply and Resolve/Reopen (3.7) give the hover its own path to the two
-    // things the webview could always do — no palette entry, no keybinding,
-    // reply-box-in-a-sidebar required. "Reopen" is the resolved-thread label;
-    // both labels point at the same command, which reads the thread's current
-    // status itself.
+    // "Reopen" is the resolved-thread label; both labels point at the same
+    // command, which reads the thread's current status itself.
     const resolveLabel = thread.status === "resolved" ? "Reopen" : "Resolve";
     lines.push("");
     lines.push(

@@ -1,26 +1,15 @@
-// "Sent for review" — a pulse for the one wait `claudePending.ts` structurally
-// can't cover (10x-plan-4 P2.2, née 10x-plan-3 P2.1).
+// A pulse for the one wait `claudePending.ts` can't cover: a review REQUEST
+// ("Ask Claude to Review") carries no comments, so there is nothing for that
+// tracker to snapshot and nothing ever resolves.
 //
-// `claudePending.ts` tracks threads Claude owes a reply on. A review REQUEST
-// ("Ask Claude to Review", single file / folder / "changes since last pass")
-// carries no comments at all — it asks Claude to open threads from scratch —
-// so there is nothing for that tracker to snapshot and nothing ever resolves.
-// The result, before this module: one toast on send, then silence until
-// threads happen to land, indistinguishable from a paste that never arrived.
+// One entry per dispatched review request, with the same "inferred" vs
+// "protocol" evidence grade as `ClaudePendingTracker` (inferred is a guess,
+// protocol is a tool call) and the same injected clock/scheduler.
 //
-// This module is that pass's own record, parallel in shape and in spirit to
-// `ClaudePendingTracker`: one entry per dispatched review request, an
-// "inferred" vs "protocol" evidence grade with the same meaning (see
-// `claudePending.ts`'s module header — the short version: inferred is a
-// guess, protocol is a tool call), and the same injected clock/scheduler so
-// the timeouts are testable without waiting for real.
-//
-// What's different from the per-thread tracker: a review pass has no prior
-// threads to answer, so "done" means something else, and it isn't one-shot —
-// the skill opens threads ONE AT A TIME as it reads, so a pass over a big
-// file can write thirty of them over a couple of minutes. Resolving the whole
-// pass on the FIRST one would show "1 new comment" while twenty-nine more are
-// still coming, which is its own kind of lie. So there's a state in between:
+// A pass isn't one-shot: the skill opens threads ONE AT A TIME as it reads, so
+// a pass over a big file can write thirty of them over a couple of minutes.
+// Resolving on the FIRST one would show "1 new comment" while twenty-nine more
+// are still coming. So there's a state in between:
 //
 //   waiting    — dispatched; nothing has landed yet.
 //   receiving  — at least one new agent-authored thread has landed, and the
@@ -33,8 +22,8 @@
 //                `mdc` CLI stamps one on a healthy `mdc check`, same as
 //                `mc_check` does) — or, for a session that never checks in at
 //                all, a quiet period elapsed with no new thread. A pass that
-//                completes having found nothing is still `arrived`, honestly,
-//                with a zero count — not a pass stuck in `waiting` forever.
+//                completes having found nothing is still `arrived`, with a
+//                zero count — not a pass stuck in `waiting` forever.
 //   stale      — `waiting` for the full ten-minute timeout with NOTHING
 //                received at all. A `receiving` pass never goes stale; once
 //                something has landed, the only way out is completion (by
@@ -45,26 +34,22 @@
 // a `FileSystemWatcher`, and the same MCP tool-call signals the per-thread
 // tracker reads. `ReviewPassPayload`/`ReviewPassIntent` below are duplicated
 // (not imported) from `sendToClaude.ts` / `commands/send.ts`'s shapes for
-// exactly that reason — TypeScript's structural typing means the real
-// `ReviewPayload` and `DispatchIntent` satisfy them without a cast, so nothing
-// is lost by not reaching across the vscode boundary to import them.
+// exactly that reason — structural typing means the real `ReviewPayload` and
+// `DispatchIntent` satisfy them without a cast.
 
 import { agentDisplayName, isAgentComment, sentenceLead } from "./agentIdentity";
 import { formatElapsed } from "./headlessStatusText";
 
-/** How long a `waiting` pass may go with NOTHING received before it's declared stale. Same duration as the per-thread wait — it's the same "how long is too long to say nothing" question. */
+/** How long a `waiting` pass may go with NOTHING received before it's declared stale. Same duration as the per-thread wait. */
 export const REVIEW_PASS_TIMEOUT_MS = 10 * 60 * 1000;
 
-/** How long a `receiving` pass may go with no NEW thread before it's called done anyway — the fallback for a session that opens threads but never checks in. Short, relative to the stale timeout: silence here already has other evidence (threads did land), so there's much less to lose by calling it early. */
+/** How long a `receiving` pass may go with no NEW thread before it's called done anyway — the fallback for a session that opens threads but never checks in. Short relative to the stale timeout: threads did land, so there's less to lose by calling it early. */
 export const REVIEW_PASS_QUIET_MS = 90 * 1000;
 
-/** How the tracker knows about this pass. See the module comment and `claudePending.ts`. */
 export type ReviewPassEvidence = "inferred" | "protocol";
 
-/** Where a live pass currently stands. See the module header for what separates each from the next. */
 export type ReviewPassPhase = "waiting" | "receiving" | "arrived" | "stale";
 
-/** The shape this module needs from a parsed thread. */
 export interface ReviewPassInputThread {
   id: string;
   comments: Array<{ author: string; deleted?: boolean; agent?: boolean }>;
@@ -94,27 +79,24 @@ export interface ReviewPassIntent {
   hasFocus: boolean;
 }
 
-/** One dispatched review request. */
 export interface ReviewPassRecord {
   id: string;
   /** `vscode.WorkspaceFolder.uri.toString()` — the "one live pass per folder" key. */
   folderKey: string;
-  /** `uri.toString()` for every file the pass covers. */
   files: string[];
   dispatchedAt: number;
-  /** Epoch ms of the most recent evidence this pass is still alive — see `claudePending.ts`'s field of the same name. Drives the `waiting` stale timeout AND the `receiving` quiet period, whichever the current state uses. */
+  /** Epoch ms of the most recent evidence this pass is still alive. Drives the `waiting` stale timeout AND the `receiving` quiet period, whichever the current state uses. */
   lastSignal: number;
   evidence: ReviewPassEvidence;
   /** Latest phase Claude reported via `mc_status`, if any. */
   phase?: string;
-  /** Agent slug protocol evidence was last recorded under (10x-plan-4 P1.2). */
+  /** Agent slug protocol evidence was last recorded under. */
   agent?: string;
   /** Snapshot of each file's thread ids at dispatch — what "new" is measured against. */
   knownThreadIds: Map<string, Set<string>>;
   state: ReviewPassPhase;
   /** Files not yet COMPLETE — no `mc_check`/CLI checkpoint seen for them since dispatch. Empties (by either signal) to trigger the "every file done" resolution. */
   outstanding: Set<string>;
-  /** New agent-authored thread count discovered so far, per file. */
   newThreadCounts: Map<string, number>;
   /** Kept verbatim so "Resend" can re-dispatch through the exact same path. */
   payload: ReviewPassPayload;
@@ -123,7 +105,7 @@ export interface ReviewPassRecord {
 
 /** Is `t` a thread the snapshot didn't know about, opened by an agent? A
  * human opening a new thread of their own while Claude is out doesn't mean
- * the pass landed — only an agent's does (10x-plan-4 P1.2: any agent, not
+ * the pass landed — only an agent's does (any agent, not
  * just Claude, same rule `isAgentComment` applies everywhere else). */
 function isNewAgentThread(known: Set<string>, t: ReviewPassInputThread): boolean {
   if (known.has(t.id)) return false;
@@ -132,7 +114,6 @@ function isNewAgentThread(known: Set<string>, t: ReviewPassInputThread): boolean
   return isAgentComment(live[0]!);
 }
 
-/** Total new-thread count across every file in the pass — what "N new comments" counts. */
 export function totalNewThreads(record: ReviewPassRecord): number {
   let total = 0;
   for (const n of record.newThreadCounts.values()) total += n;
@@ -155,8 +136,6 @@ function isLive(state: ReviewPassPhase): boolean {
 }
 
 /**
- * Per-folder record of a review request Claude hasn't finished yet.
- *
  * Lives in the extension host (via `reviewPassPendingService.ts`) rather than
  * a webview so the status bar item works with no panel open at all — exactly
  * the case this exists for, since a review REQUEST is dispatched precisely
@@ -168,7 +147,6 @@ export class ReviewPassTracker {
   private seq = 0;
 
   constructor(
-    /** Called whenever a folder's live pass changes state. */
     private readonly onChange: (folderKey: string) => void = () => {},
     private readonly now: () => number = () => Date.now(),
     private readonly timeoutMs: number = REVIEW_PASS_TIMEOUT_MS,
@@ -181,7 +159,7 @@ export class ReviewPassTracker {
   ) {}
 
   /**
-   * Start tracking a freshly dispatched review request. Only one live pass
+   * Only one live pass
    * per folder: a new dispatch replaces whatever was there, discarding its
    * progress along with it — the same rule `claudePending.mark` follows for a
    * re-sent thread.
@@ -192,7 +170,7 @@ export class ReviewPassTracker {
     knownThreadIds: Map<string, Set<string>>;
     payload: ReviewPassPayload;
     intent: ReviewPassIntent;
-    /** Always "inferred" in production — see the module header. Overridable for tests. */
+    /** Always "inferred" in production; overridable for tests. */
     evidence?: ReviewPassEvidence;
   }): ReviewPassRecord {
     this.clearTimer(opts.folderKey);
@@ -217,7 +195,6 @@ export class ReviewPassTracker {
     return record;
   }
 
-  /** The record whose file list contains `docKey`, if it's still live. */
   private forDoc(docKey: string): ReviewPassRecord | undefined {
     for (const record of this.byFolder.values()) {
       if (record.files.includes(docKey)) return record;
@@ -226,20 +203,11 @@ export class ReviewPassTracker {
   }
 
   /**
-   * A file in a live pass changed. Two independent things can be true of the
-   * SAME change, and both are checked every time:
+   * Two independent things can be true of the SAME change, and both are checked every time:
+   *   - a thread not in the dispatch-time snapshot, agent-authored → counts as newly arrived, and moves a `waiting` pass into `receiving`.
+   *   - the file's own review checkpoint moved to at or after the pass's dispatch time → this ONE file is complete (a terminal Claude using the `mdc` CLI stamps this on a healthy `mdc check` and never calls `mc_check`).
    *
-   *   - a thread not in the dispatch-time snapshot, agent-authored → counts
-   *     as newly arrived, and moves a `waiting` pass into `receiving` (a
-   *     `receiving` pass just keeps accumulating).
-   *   - the file's own review checkpoint moved to at or after the pass's
-   *     dispatch time → this ONE file is complete (same "the pass finished"
-   *     signal `noteComplete`/`mc_check` gives, just noticed a different way:
-   *     a terminal Claude using the `mdc` CLI stamps this on a healthy
-   *     `mdc check`, and never calls `mc_check` at all).
-   *
-   * The whole pass resolves to `arrived` once every file is complete —
-   * whichever of the two ways got each one there.
+   * The whole pass resolves to `arrived` once every file is complete.
    */
   public noteDocument(
     docKey: string,
@@ -282,7 +250,6 @@ export class ReviewPassTracker {
     this.onChange(record.folderKey);
   }
 
-  /** Applies an activity signal to one live record. Shared by `noteActivity` and `noteActivityEverywhere`. */
   private applyActivity(record: ReviewPassRecord, opts: { phase?: string; agent?: string }): void {
     record.evidence = "protocol";
     if (opts.phase !== undefined) record.phase = opts.phase;
@@ -292,12 +259,7 @@ export class ReviewPassTracker {
     this.onChange(record.folderKey);
   }
 
-  /**
-   * Claude called a tool against this file. Upgrades the pass to "protocol"
-   * evidence and pushes the silence deadline out (`waiting`'s stale timeout,
-   * or `receiving`'s quiet period — whichever the current state uses), same
-   * as `claudePending.noteActivity`.
-   */
+  /** Upgrades the pass to "protocol" evidence and pushes the silence deadline out, same as `claudePending.noteActivity`. */
   public noteActivity(docKey: string, opts: { phase?: string; agent?: string } = {}): void {
     const record = this.forDoc(docKey);
     if (!record || !isLive(record.state)) return;
@@ -312,12 +274,7 @@ export class ReviewPassTracker {
   }
 
   /**
-   * Claude finished its pass on this file (`mc_check`). Only resolves the
-   * WHOLE pass once every file it covers has checked in — a multi-file pass
-   * is not done because the first of three files is. A pass that never finds
-   * anything to comment on still finishes this way: "arrived" with a zero
-   * count is a legitimate, honest outcome (the skill's own rule), not a
-   * silent one.
+   * Claude finished its pass on this file (`mc_check`). The WHOLE pass resolves only once every file has checked in. A pass that finds nothing still finishes this way: "arrived" with a zero count is a legitimate outcome.
    */
   public noteComplete(docKey: string): void {
     const record = this.forDoc(docKey);
@@ -332,7 +289,6 @@ export class ReviewPassTracker {
     }
   }
 
-  /** The live (or just-resolved) pass for one folder, or undefined if none. */
   public get(folderKey: string): ReviewPassRecord | undefined {
     return this.byFolder.get(folderKey);
   }
@@ -350,7 +306,7 @@ export class ReviewPassTracker {
     return best;
   }
 
-  /** Forget a folder's pass outright — the status bar's "Dismiss" action, for a live or a stale pass alike. */
+  /** Forget a folder's pass outright (the status bar's "Dismiss"). */
   public dismiss(folderKey: string): void {
     const had = this.byFolder.delete(folderKey);
     this.clearTimer(folderKey);
@@ -384,14 +340,10 @@ export class ReviewPassTracker {
     if (!record || !isLive(record.state)) return;
     const deadlineMs = record.state === "waiting" ? this.timeoutMs : this.quietMs;
     const delay = Math.max(0, record.lastSignal + deadlineMs - this.now());
-    // Only `recordId` is captured — everything else the callback reads is
-    // read LIVE off `this.byFolder` when it actually fires, not frozen here.
-    // `record` and whatever `this.byFolder.get(folderKey)` returns later are
-    // the SAME object as long as no new dispatch replaced it (mutations
-    // happen in place), so comparing `record.state` to itself would never
-    // catch anything — the callback has to be correct standing alone, the
-    // same way `ClaudePendingTracker`'s timer recomputes from scratch rather
-    // than trusting who scheduled it.
+    // Only `recordId` is captured — everything else is read LIVE off `this.byFolder`
+    // when the callback fires. `record` and `this.byFolder.get(folderKey)` are the
+    // SAME object unless a new dispatch replaced it, so comparing `record.state` to
+    // itself would never catch anything; the callback has to be correct standing alone.
     const recordId = record.id;
     const timer = this.schedule(() => {
       this.timers.delete(folderKey);

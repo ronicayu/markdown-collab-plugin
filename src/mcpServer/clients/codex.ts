@@ -1,4 +1,4 @@
-// Codex CLI — 10x-plan-4 P1.1.
+// Codex CLI: `.codex/config.toml` upsert.
 //
 // Codex reads `~/.codex/config.toml` and, for projects it has been told to
 // trust, a project-scoped `.codex/config.toml`. A server goes in as
@@ -9,7 +9,7 @@
 // `.cursor/mcp.json`, this file needs rewriting when the port moves (the same
 // "rewrite only when changed" rule `.mcp.json` already follows).
 //
-// No TOML library: this is a tiny, pure, line-based upsert of exactly one
+// No TOML library: this is a tiny, line-based upsert of exactly one
 // table, so it never has to parse — or risk mangling — the rest of a file
 // that is otherwise the user's own. It finds the table's header line (either
 // spelling), replaces everything between it and the next `[` header (or
@@ -17,11 +17,10 @@
 // line untouched. Appends a fresh table, canonically spelled, when ours
 // isn't there yet.
 //
-// L4 hardening: the header scan tolerates a trailing `# comment` on the
-// header line, never mistakes a `[`-shaped line inside a `"""`/`'''`
-// multi-line string for a table header, and a merge preserves any key the
-// user added to our table beyond the two (`url`, `bearer_token_env_var`)
-// this file owns.
+// The header scan tolerates a trailing `# comment` on the header line and never
+// mistakes a `[`-shaped line inside a `"""`/`'''` multi-line string for a table header;
+// a merge preserves any key the user added to our table beyond the two (`url`,
+// `bearer_token_env_var`) this file owns.
 
 import type { MergeResult, RemovalResult } from "../registration";
 import { ENV_TOKEN } from "../registration";
@@ -34,7 +33,6 @@ export interface CodexEntry {
   bearer_token_env_var: string;
 }
 
-/** The `[mcp_servers.markdown-collab]` table for a server on `port`. */
 export function codexEntry(port: number): CodexEntry {
   return {
     url: `http://127.0.0.1:${port}/mcp`,
@@ -47,11 +45,10 @@ function bodyLines(entry: CodexEntry): string[] {
 }
 
 /**
- * Strip a TOML trailing comment — an unquoted `#` and everything after it —
- * so a header written as `[mcp_servers.markdown-collab] # managed by …`
- * still reads as our header (L4). TOML comments run from an unquoted `#` to
- * end of line; a value like `bearer_token_env_var = "FOO#BAR"` must keep its
- * `#`, so quote state is tracked rather than just searching for the character.
+ * Strip a TOML trailing comment — an unquoted `#` and everything after it — so a
+ * header written as `[mcp_servers.markdown-collab] # managed by …` still reads as our
+ * header. A value like `bearer_token_env_var = "FOO#BAR"` must keep its `#`, so quote
+ * state is tracked rather than just searching for the character.
  */
 function stripTrailingComment(line: string): string {
   let inSingle = false;
@@ -75,13 +72,11 @@ function isTableHeader(line: string): boolean {
 }
 
 /**
- * For each line, whether it STARTS inside a `"""`/`'''` multi-line string
- * left open by an earlier line (L4) — the state the header scan needs so it
- * never mistakes a `[`-shaped line of a string's own content for a table
- * header (a description field quoting an example config, say). Approximate
- * but safe: this only has to agree with a real TOML parser on well-formed
- * files, which is all this module ever runs against — a malformed file isn't
- * something a line-based upsert can make worse than it already is.
+ * For each line, whether it STARTS inside a `"""`/`'''` multi-line string left open by
+ * an earlier line — the state the header scan needs so it never mistakes a `[`-shaped
+ * line of a string's own content for a table header (a description field quoting an
+ * example config, say). Approximate but safe: this only has to agree with a real TOML
+ * parser on well-formed files, which is all this module ever runs against.
  */
 function computeInMultilineString(lines: string[]): boolean[] {
   const inside: boolean[] = [];
@@ -128,11 +123,9 @@ function findTableEnd(lines: string[], inString: boolean[], from: number): numbe
 const OWNED_KEYS = new Set(["url", "bearer_token_env_var"]);
 
 /**
- * True when `line` assigns one of the keys this table's merge owns. Used to
- * separate "our stale value, safe to replace" from "a key the user added to
- * this table, which a merge must not silently drop" (L4) — the old comments
- * and blank lines in between are still discarded, matching how this module
- * has always treated its own table's leftover formatting.
+ * True when `line` assigns a key this table's merge doesn't own — separates "our stale
+ * value, safe to replace" from "a key the user added, which a merge must not silently
+ * drop". The comments and blank lines in between are still discarded.
  */
 function isExtraUserKeyLine(line: string): boolean {
   const m = /^([A-Za-z0-9_-]+)\s*=/.exec(stripTrailingComment(line).trim());
@@ -179,7 +172,7 @@ export function mergeCodexToml(existing: string | null, port: number): MergeResu
   } else {
     replaced = true;
     const end = findTableEnd(lines, inString, headerIdx + 1);
-    // Preserve a key the user added to our table (L4): only `url` and
+    // Preserve a key the user added to our table: only `url` and
     // `bearer_token_env_var` are ours to rewrite; any other `key = value`
     // line in the old body survives, appended right after our fresh two.
     const oldBody = lines.slice(headerIdx + 1, end);
@@ -205,11 +198,10 @@ export function mergeCodexToml(existing: string | null, port: number): MergeResu
 }
 
 /**
- * The inverse of `mergeCodexToml` (4.4: Disconnect Agent → Codex) — drop our
- * table (either header spelling) up to the next table header or EOF, leaving
- * every other table, comment, and blank line untouched. `text: null` when the
- * table isn't there at all, so Disconnect on a workspace that never ran
- * Connect is a no-op.
+ * The inverse of `mergeCodexToml` — drop our table (either header spelling) up to the
+ * next table header or EOF, leaving every other table, comment, and blank line
+ * untouched. `text: null` when the table isn't there at all, so Disconnect on a
+ * workspace that never ran Connect is a no-op.
  */
 export function removeCodexTable(existing: string | null): RemovalResult {
   if (existing === null || !codexTablePresent(existing)) return { text: null, removed: false };

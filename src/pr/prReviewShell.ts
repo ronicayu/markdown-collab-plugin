@@ -7,12 +7,10 @@
 // skeleton the panel serves, instead of a hand-copied stand-in that can drift
 // out of sync with a rename here.
 //
-// Same chrome language as the live editor's comment sidebar
-// (docs/sidebar-chrome-redesign.md, docs/pr-review-redesign.md): `#drafts-pane`
-// carries `mc-thread-sidebar` and reuses threadSidebar.css / controls.css /
-// comments.css's ids and class names verbatim, so the two sidebars share one
-// stylesheet instead of two copies that can drift apart. PR-only hooks are
-// prefixed `pr-`.
+// Same chrome language as the live editor's comment sidebar: `#drafts-pane` carries
+// `mc-thread-sidebar` and reuses threadSidebar.css / controls.css / comments.css's ids
+// and class names verbatim, so the two sidebars share one stylesheet instead of two
+// copies that can drift apart. PR-only hooks are prefixed `pr-`.
 
 const ARROW_UP_SVG =
   '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" ' +

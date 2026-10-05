@@ -1,8 +1,5 @@
-// The table-of-contents panel, built once for both rendered surfaces.
-//
-// A tree of headings with expand/collapse per node, a click that scrolls the
-// surface, and a highlight for the section being read. The surfaces differ only
-// in how they scroll to a heading, which arrives as a callback.
+// The table-of-contents panel, shared by both rendered surfaces; each supplies
+// its own scroll-to-heading callback.
 //
 // Collapse state is keyed by slug rather than by position, so it survives an
 // edit that adds a paragraph above — keying by index would silently transfer a
@@ -11,23 +8,19 @@
 import { outlineSize, type OutlineNode } from "./outline";
 
 export interface OutlinePanelOptions {
-  /** Scroll the surface to this heading. */
   onNavigate(node: OutlineNode): void;
   /** Slugs the user has collapsed, mutated in place as they toggle. */
   collapsed: Set<string>;
-  /** Persist `collapsed` after a change. */
   onCollapseChanged?(): void;
 }
 
 export interface OutlinePanelHandle {
   el: HTMLElement;
-  /** Re-render for a new outline. */
   update(nodes: OutlineNode[]): void;
   /** Highlight the section containing the reader, by heading index. */
   setActive(index: number | null): void;
 }
 
-/** Build the panel. Call `update` to fill it. */
 export function buildOutlinePanel(opts: OutlinePanelOptions): OutlinePanelHandle {
   const el = document.createElement("div");
   el.className = "mc-outline";

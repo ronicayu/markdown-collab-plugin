@@ -1,5 +1,5 @@
 // PR review webview — same chrome language as the live editor's comment
-// sidebar (docs/pr-review-redesign.md): `#drafts-pane` reuses
+// sidebar: `#drafts-pane` reuses
 // threadSidebar.css / controls.css / comments.css's ids and class names, so
 // most of what this file drives (the header, the filter tabs, the "…" menu,
 // the card shell) is the shared sidebar under test elsewhere

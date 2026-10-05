@@ -1,5 +1,5 @@
-// The live editor's sidebar before and outside of a review (10x-plan-6 P4,
-// sidebar parity): the pre-init "Loading…" placeholder, the first-run empty
+// The live editor's sidebar before and outside of a review (sidebar
+// parity): the pre-init "Loading…" placeholder, the first-run empty
 // state, the skill banner, and the scroll to an agent's first new thread —
 // the review view's loadingState / inlineViewEmptyState coverage and its
 // review-pending path, run against the live editor.

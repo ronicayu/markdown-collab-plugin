@@ -1,4 +1,4 @@
-// Gate 1 of docs/one-view-design.md: 0 misplaced highlights.
+// Gate 1: 0 misplaced highlights.
 //
 // The one-view spike threaded 164 probe words through 8 documents (repeated
 // words first, the hard case) and compared the two views. The review view put

@@ -241,11 +241,10 @@ function parseSuggestions(body) {
         anchorId: obj.anchorId,
         threadId: typeof obj.threadId === "string" ? obj.threadId : void 0,
         author: typeof obj.author === "string" ? obj.author : "claude",
-        // Unlike a thread's `comments` array (kept as the raw parsed objects,
-        // so any field on them — including this one — already survives a
-        // round trip for free), a suggestion is rebuilt field by field here.
-        // Forgetting a field in this list means it was never truly optional —
-        // it was silently deleted the moment the file was next saved.
+        // A thread's `comments` array is kept as the raw parsed objects, so any
+        // field on them survives a round trip for free; a suggestion is rebuilt
+        // field by field here. A field forgotten in this list is silently deleted
+        // the next time the file is saved.
         agent: typeof obj.agent === "boolean" ? obj.agent : void 0,
         via: isWriteVia(obj.via) ? obj.via : void 0,
         ts: typeof obj.ts === "string" ? obj.ts : "",
@@ -465,14 +464,14 @@ function addThread(source, selStart, selEnd, comment) {
         author: comment.author,
         ...comment.agent ? { agent: true } : {},
         // Only when set, so a comment written without it serializes to exactly
-        // the bytes it always did.
+        // the same bytes.
         ...comment.via ? { via: comment.via } : {},
         ts,
         body: comment.body
       }
     ],
     // The author is looking at this text right now, so it is the baseline the
-    // "text changed since this comment" badge compares against (P1.3).
+    // "text changed since this comment" badge compares against.
     anchorHash: hashAnchorText(quote)
   };
   assertAnchorable(parsed, source, selStart, selEnd);
@@ -1356,7 +1355,7 @@ var USAGE = `mdc \u2014 Markdown Collab inline-comment CLI
                                               exit 2 + report on stderr if the edited .md has broken markers
 
   --author SLUG applies to reply/open/resolve/suggest \u2014 the agent writing the
-  comment (10x-plan-4 P1.2). Defaults to "claude"; every headless Claude Code
+  comment. Defaults to "claude"; every headless Claude Code
   run is that default, so nothing changes for it. Sets the comment's JSON
   "agent" flag alongside "author".
 
@@ -1721,7 +1720,7 @@ async function main() {
         tool: "mc_reply",
         args: { threadId, body },
         // `run` is only the direct write — the forwarded one runs `mc_reply`,
-        // which stamps "tools" itself (10x-plan-6 P1.4).
+        // which stamps "tools" itself.
         run: (s) => opReply(s, threadId, body, void 0, author, true, "cli")
       });
     }

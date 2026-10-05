@@ -1,32 +1,26 @@
-// Wiring for "Connect an Agent" (10x-plan-4 P1.1): which clients are hooked
-// up, and keeping them hooked up across restarts.
+// Wiring for "Connect an Agent": which clients are hooked up, and keeping them hooked
+// up across restarts. This is the optional second step for agents that aren't Claude
+// Code: Connect writes AGENTS.md first (see `connectFormatFirst` in commands/setup.ts),
+// because the file format is what those agents are held to, and only then offers a
+// registration from here.
 //
-// Since 10x-plan-6 P1.1 everything here is the optional second step for the
-// agents that aren't Claude Code: Connect writes AGENTS.md first (see
-// `connectFormatFirst` in commands/setup.ts), because the file format is what
-// those agents are held to, and only then offers a registration from here.
+// Two kinds of "stay connected":
+//   - Cursor CLI's `.cursor/mcp.json` and Codex's `.codex/config.toml` are files.
+//     `.cursor/mcp.json` references the env vars, so it never goes stale;
+//     `.codex/config.toml` carries a literal port, so it can, but the file *having our
+//     table at all* is the remembered "yes" (like `.mcp.json`'s consent, stored in the
+//     file instead of `workspaceState`). Neither needs `workspaceState` bookkeeping.
+//   - Cursor's in-app agent and Copilot's agent mode are told the URL and token directly,
+//     in-process, every session — there is no file to leave behind, so nothing reconnects
+//     after a restart unless `reconnectAgents` does it: run once per activation, after
+//     the server has a port and a token, it re-registers whichever of these the workspace
+//     previously connected.
 //
-// Two different kinds of "stay connected":
-//   - Cursor CLI's `.cursor/mcp.json` and Codex's `.codex/config.toml` are
-//     files. `.cursor/mcp.json` references the env vars the way Cursor CLI
-//     can, so it never goes stale once written; `.codex/config.toml` carries
-//     a literal port, so it can go stale, but the file *having our table at
-//     all* is the remembered "yes" — same idea as `.mcp.json`'s consent, just
-//     stored in the file instead of `workspaceState`. Either way, no
-//     `workspaceState` bookkeeping is needed for these two.
-//   - Cursor's in-app agent and Copilot's agent mode are told the URL and
-//     token directly, in-process, every session — there is no file to leave
-//     behind, which also means there is nothing to reconnect to after a
-//     restart unless we do it ourselves. That's what the `workspaceState`
-//     tracking below is for, and `reconnectAgents` is the "ourselves": run
-//     once per activation, after the server has a port and a token, it
-//     re-registers whichever of these the workspace previously connected.
-//
-// Nothing here writes a file the human didn't ask for (Codex's self-heal only
-// ever *rewrites* a table that's already there, never creates one), and
-// nothing here ever writes a token to disk — only Codex's config carries a
-// port, and only because `bearer_token_env_var` is the one part of its config
-// Codex is willing to read from the environment instead.
+// Nothing here writes a file the human didn't ask for (Codex's self-heal only ever
+// *rewrites* a table that's already there, never creates one), and nothing here ever
+// writes a token to disk — only Codex's config carries a port, and only because
+// `bearer_token_env_var` is the one part of its config Codex is willing to read from the
+// environment instead.
 
 import { lstat } from "node:fs/promises";
 import * as path from "node:path";
@@ -70,7 +64,7 @@ export async function markAgentConnected(context: vscode.ExtensionContext, id: S
   await context.workspaceState.update(key, Array.from(set));
 }
 
-/** Forget that `id` was connected (4.4: Disconnect Agent) — the inverse of `markAgentConnected`, so `reconnectAgents` doesn't resurrect it on the next restart. */
+/** Forget that `id` was connected — the inverse of `markAgentConnected`, so `reconnectAgents` doesn't resurrect it on the next restart. */
 export async function markAgentDisconnected(context: vscode.ExtensionContext, id: SessionAgentId): Promise<void> {
   const key = workspaceKey(context);
   if (!key) return;
@@ -79,14 +73,9 @@ export async function markAgentDisconnected(context: vscode.ExtensionContext, id
   await context.workspaceState.update(key, Array.from(set));
 }
 
-// ---------------------------------------------------------------------------
-// Cursor (in-app agent)
-// ---------------------------------------------------------------------------
-
-/** Cursor exposes this beyond the standard vscode API — verified 2026-09
- *  against `vscode.cursor.mcp.{register,unregister}Server`. Absent
- *  everywhere else, including plain VS Code, so this is the feature-detect
- *  every call site guards on rather than assuming from any version field. */
+/** Cursor exposes this beyond the standard vscode API (`vscode.cursor.mcp.{register,unregister}Server`).
+ *  Absent everywhere else, including plain VS Code, so this is the feature-detect every
+ *  call site guards on rather than assuming from any version field. */
 export function hasCursorInAppApi(): boolean {
   return typeof (vscode as unknown as { cursor?: { mcp?: { registerServer?: unknown } } }).cursor?.mcp
     ?.registerServer === "function";
@@ -108,10 +97,8 @@ export function registerCursorInApp(handle: Pick<McpServerHandle, "url" | "token
 }
 
 /**
- * Unregister from Cursor's in-app agent (4.4: Disconnect Agent) — the
- * inverse of `registerCursorInApp`. Nothing was ever written to disk for
- * this client, so this is the entire undo: the live registration goes away
- * for the rest of the session.
+ * Inverse of `registerCursorInApp`. Nothing was ever written to disk for this client,
+ * so this is the entire undo: the live registration goes away for the rest of the session.
  */
 export function unregisterCursorInApp(): void {
   const cursor = (
@@ -121,10 +108,6 @@ export function unregisterCursorInApp(): void {
   ).cursor;
   cursor.mcp.unregisterServer(MCP_SERVER_NAME);
 }
-
-// ---------------------------------------------------------------------------
-// GitHub Copilot (agent mode)
-// ---------------------------------------------------------------------------
 
 let copilotProvider: CopilotMcpProvider | null = null;
 
@@ -151,21 +134,16 @@ export function currentCopilotProvider(): CopilotMcpProvider | null {
   return copilotProvider;
 }
 
-// ---------------------------------------------------------------------------
-// File writers (Cursor CLI, Codex) and the generic fallback
-// ---------------------------------------------------------------------------
-
 export type FileWriteOutcome = "written" | "unchanged";
 
 /**
- * Refuse to write through a symlink (L5): `lstat` the target itself (if it
- * exists) and its parent directory, following neither. A symlinked
- * `.cursor/`, `.codex/`, or `.mcp.json` could otherwise land one of the
- * writers/removers below somewhere outside the workspace the human never
- * agreed to touch. Duplicated (rather than shared) in `agents.ts` and
- * `mcpServer/index.ts`, which guard the same class of write for AGENTS.md and
- * `.mcp.json`'s own create path — each is small and self-contained, and none
- * of the three otherwise depends on the others.
+ * Refuse to write through a symlink: `lstat` the target itself (if it exists) and its
+ * parent directory, following neither. A symlinked `.cursor/`, `.codex/`, or
+ * `.mcp.json` could otherwise land one of the writers/removers below somewhere outside
+ * the workspace the human never agreed to touch. Duplicated (rather than shared) in
+ * `agents.ts` and `mcpServer/index.ts`, which guard the same class of write for
+ * AGENTS.md and `.mcp.json`'s own create path — each is small and none of the three
+ * otherwise depends on the others.
  */
 export async function refuseSymlink(targetUri: vscode.Uri): Promise<string | null> {
   for (const p of [path.dirname(targetUri.fsPath), targetUri.fsPath]) {
@@ -224,11 +202,8 @@ export async function writeCodexConfig(folder: vscode.Uri, port: number): Promis
   return "written";
 }
 
-// ---------------------------------------------------------------------------
-// File removers (4.4: Disconnect Agent) — the inverse of the writers above.
-// Each is idempotent: called on a workspace that never connected, it reads
-// the file, finds nothing of ours, and writes nothing back.
-// ---------------------------------------------------------------------------
+// File removers — the inverse of the writers above. Each is idempotent: called on a
+// workspace that never connected, it finds nothing of ours and writes nothing back.
 
 /** Remove the `markdown-collab` entry from the workspace's `.mcp.json`, leaving every other server untouched. */
 export async function removeClaudeMcpJson(folder: vscode.Uri): Promise<FileWriteOutcome> {
@@ -293,17 +268,11 @@ export async function openGenericSnippetDocument(
   await vscode.window.showTextDocument(doc);
 }
 
-// ---------------------------------------------------------------------------
-// Activation-time self-heal
-// ---------------------------------------------------------------------------
-
 /**
- * Re-establish every client whose connection can go stale across a restart —
- * the session-scoped ones from `workspaceState`, and Codex's config if its
- * table's port is out of date. Called once per activation, right after the
- * server has a handle (see `extension.ts`); a fresh window mints a fresh
- * token and, occasionally, a fresh port, and this is what makes a workspace
- * that connected an agent last session not have to run the command again.
+ * Re-establish every client whose connection can go stale across a restart — the
+ * session-scoped ones from `workspaceState`, and Codex's config if its table's port is
+ * out of date. Called once per activation, right after the server has a handle (see
+ * `extension.ts`): a fresh window mints a fresh token and, occasionally, a fresh port.
  */
 export async function reconnectAgents(
   context: vscode.ExtensionContext,

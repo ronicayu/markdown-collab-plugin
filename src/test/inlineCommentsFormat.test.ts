@@ -369,7 +369,7 @@ describe("inlineComments/format - threads region inside code", () => {
   });
 });
 
-// 10x-plan-6 P1.4: `via` is optional and additive. A file written before it
+// `via` is optional and additive. A file written before it
 // existed must re-serialize to the same bytes, a value this version doesn't
 // know reads as absent, and the two known values survive every rewrite.
 describe("inlineComments/format - the via field", () => {

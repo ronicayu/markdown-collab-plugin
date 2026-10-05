@@ -1,22 +1,17 @@
 // The extension-hosted MCP server: lifecycle, document I/O, registration.
 //
-// WHY THIS EXISTS (10x-plan-2 P0.1). Until now every Claude edit reached the
-// document the same way: a separate process wrote the file and the extension
-// found out by watching it change. That loses three things at once — the edit
-// races whatever is unsaved in the editor, it can't be undone with Cmd+Z, and
-// integrity is checked after the damage rather than before it. Hosting the
-// server here inverts all three: Claude calls a tool, the tool runs the same
-// shared op the CLI runs, and the write goes out as a `WorkspaceEdit` against
-// the live TextDocument.
+// Hosting it here means a Claude edit goes out as a `WorkspaceEdit` against the live
+// TextDocument — ordered against unsaved edits, undoable with Cmd+Z, and
+// integrity-checked before the write rather than after — instead of a separate
+// process writing the file and the extension finding out by watching.
 //
-// What this file owns: starting/stopping the listener, resolving a
-// caller-supplied path to a document inside the workspace, applying edits, and
-// telling Claude Code where to find us. The verbs are in `tools.ts`, the wire
-// protocol in `protocol.ts`, the socket in `httpServer.ts`.
+// This file owns starting/stopping the listener, resolving a caller-supplied path to
+// a document inside the workspace, applying edits, and telling Claude Code where to
+// find us. The verbs are in `tools.ts`, the wire protocol in `protocol.ts`, the
+// socket in `httpServer.ts`.
 //
-// MCP is never the default (see docs/10x-plan-2.md): the server runs, but the
-// send-mode picker only *offers* it, and terminal/clipboard/CLI keep working
-// unchanged for any Claude session that can't reach it.
+// MCP is never the default: the send-mode picker only offers it, and
+// terminal/clipboard/CLI keep working for any session that can't reach it.
 
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
@@ -50,23 +45,21 @@ export interface McpServerHandle {
   dispose(): void;
 }
 
-/** Callbacks the rest of the extension wires in (lifecycle signals land here). */
 export interface McpHostDeps {
   log: Logger;
-  /** Fired for every tool call, before it runs. `agent` is the calling
-   * session's slug (10x-plan-4 P1.2) — Claude when the client is Claude Code,
-   * whatever `agentSlugFromClientName` resolved otherwise. */
+  /** Fired for every tool call, before it runs. `agent` is the calling session's
+   * slug: Claude when the client is Claude Code, else whatever
+   * `agentSlugFromClientName` resolved. */
   onToolCall?(event: { tool: string; file?: string; note?: string; agent: string }): void;
 }
 
 let running: (McpServerHandle & { server: McpHttpServer }) | null = null;
 
-/** The live server, or null when it isn't running. */
 export function currentMcpServer(): McpServerHandle | null {
   return running;
 }
 
-/** Extensions a tool call is ever allowed to touch (L1). */
+/** Extensions a tool call is ever allowed to touch. */
 const EDITABLE_EXTENSIONS = new Set([".md", ".markdown"]);
 /** Path segments that must never appear in a tool-editable file, even one
  *  lexically inside the workspace: repo config and editor settings are not
@@ -74,10 +67,9 @@ const EDITABLE_EXTENSIONS = new Set([".md", ".markdown"]);
 const FORBIDDEN_SEGMENTS = new Set([".git", ".vscode"]);
 
 /**
- * Syntactic check only, no filesystem access: `.md`/`.markdown` extension,
- * and no path segment named `.git` or `.vscode`. Applied twice — to the
- * lexical candidate and again to its resolved real path (L1) — so a symlink
- * can't launder either rule.
+ * Syntactic check only, no filesystem access: `.md`/`.markdown` extension, and no
+ * path segment named `.git` or `.vscode`. Applied to the lexical candidate and again
+ * to its resolved real path, so a symlink can't launder either rule.
  */
 function looksEditable(candidate: string): boolean {
   const ext = path.extname(candidate).toLowerCase();
@@ -88,12 +80,11 @@ function looksEditable(candidate: string): boolean {
 /**
  * Resolve a caller-supplied path to a `.md`/`.markdown` file inside one of the
  * workspace folders: an absolute path as given, a relative one against each
- * folder — refused as ambiguous when it exists in more than one. Everything
- * else is refused: a tool server reachable from
- * a model is not a general filesystem (L1) — `mc_edit` must not be able to
- * reach `.git/config` or `.vscode/tasks.json` just because they sit lexically
- * inside the workspace, and a symlink must not be able to smuggle a call
- * anywhere `fs.realpath` says is actually outside it.
+ * folder — refused as ambiguous when it exists in more than one. A tool server
+ * reachable from a model is not a general filesystem: `mc_edit` must not reach
+ * `.git/config` or `.vscode/tasks.json` just because they sit lexically inside the
+ * workspace, and a symlink must not smuggle a call anywhere `fs.realpath` says is
+ * actually outside it.
  */
 export async function resolveWorkspaceFile(file: string): Promise<vscode.Uri> {
   const folders = vscode.workspace.workspaceFolders ?? [];
@@ -114,7 +105,7 @@ export async function resolveWorkspaceFile(file: string): Promise<vscode.Uri> {
   const matches: { uri: vscode.Uri; index: number }[] = [];
   for (const [index, candidate] of candidates.entries()) {
     const inside = folders.some((f) => isInsideRoot(candidate, f.uri.fsPath));
-    if (!inside) continue; // unchanged: falls through to file_not_found below, same as before L1
+    if (!inside) continue; // falls through to file_not_found below
     if (!looksEditable(candidate)) {
       sawWrongKind = true;
       continue;
@@ -173,12 +164,10 @@ export async function resolveWorkspaceFile(file: string): Promise<vscode.Uri> {
 }
 
 /**
- * Apply `next` to the document as a `WorkspaceEdit`, then save.
- *
- * Three properties this buys over a raw disk write, all of them the point of
- * P0.1: the edit is ordered against the buffer's unsaved state instead of
- * racing it, it joins the editor's undo stack (Cmd+Z undoes Claude), and every
- * open view re-renders from the document-change event it already listens to.
+ * Apply `next` to the document as a `WorkspaceEdit`, then save. Unlike a raw disk
+ * write, the edit is ordered against the buffer's unsaved state instead of racing
+ * it, joins the editor's undo stack (Cmd+Z undoes Claude), and every open view
+ * re-renders from the document-change event it already listens to.
  */
 async function applyDocumentEdit(uri: vscode.Uri, next: string): Promise<void> {
   const doc = await vscode.workspace.openTextDocument(uri);
@@ -209,13 +198,10 @@ export function buildToolDeps(deps: McpHostDeps): ToolDeps {
     resolveFile: async (file) => (await resolveWorkspaceFile(file)).toString(),
     readDoc: async (key) => (await vscode.workspace.openTextDocument(vscode.Uri.parse(key))).getText(),
     writeDoc: async (key, next) => applyDocumentEdit(vscode.Uri.parse(key), next),
-    // 10x-plan-6 P2.1: read fresh on every call, never cached — the human can
-    // flip `markdownCollab.proposeEditsAsSuggestions` mid-session (the
-    // status-bar toggle, "Send to Claude"'s own checkbox) and the very next
-    // tool call must see it. Scoped to the document's own URI: the setting is
-    // declared "window"-scoped in package.json today, so every folder in a
-    // multi-root workspace answers alike, but resolving against the resource
-    // means a future per-folder scope needs no change here.
+    // Read fresh on every call, never cached — the human can flip
+    // `markdownCollab.proposeEditsAsSuggestions` mid-session and the very next tool
+    // call must see it. Resolved against the document's own URI so a future
+    // per-folder scope needs no change here.
     suggestModeFor: (key) =>
       vscode.workspace.getConfiguration("markdownCollab", vscode.Uri.parse(key)).get<boolean>(
         "proposeEditsAsSuggestions",
@@ -242,22 +228,18 @@ export function buildToolDeps(deps: McpHostDeps): ToolDeps {
 }
 
 /**
- * Turn tool calls into lifecycle signals (10x-plan-2 P0.2).
- *
- * This is what replaces the guessing. A call against a document is hard
+ * Turn tool calls into lifecycle signals. A call against a document is hard
  * evidence Claude is working on it; `mc_status` says what it's doing; and the
- * closing `mc_check` — which the skill runs on every file it touched — is the
- * end of the pass. The timer stays only as a silence detector.
+ * closing `mc_check` — which the skill runs on every file it touched — is the end
+ * of the pass. The timer stays only as a silence detector.
  *
  * `mc_status` without a file applies to every document currently waiting: the
  * beacon is about the pass, and a multi-file pass reports phases like "reading
  * 2 of 3" that belong to all of them.
  *
- * Feeds the review-pass tracker (`reviewPassPending`, 10x-plan-4 P2.2)
- * alongside the per-thread one, unconditionally: a tool call against a
- * document that isn't part of any live review pass is simply ignored there
- * (there's nothing to look up), so this never needs to know which of the two
- * — or both, or neither — actually apply.
+ * Also feeds the review-pass tracker (`reviewPassPending`) unconditionally: a tool
+ * call against a document that isn't part of any live review pass is simply ignored
+ * there, so this never needs to know which tracker applies.
  */
 export function pendingSignalsFromToolCalls(event: {
   tool: string;
@@ -305,9 +287,8 @@ export async function startMcpServer(
   // sitting in a file with no process behind it.
   const token = randomBytes(32).toString("hex");
   const toolDeps = buildToolDeps(deps);
-  // One registry per running server: which agent a session belongs to is
-  // only meaningful for as long as the connection issuing it is alive
-  // (10x-plan-4 P1.2).
+  // One registry per running server: which agent a session belongs to is only
+  // meaningful for as long as the connection issuing it is alive.
   const sessions = new SessionRegistry();
 
   let server: McpHttpServer;
@@ -319,8 +300,8 @@ export async function startMcpServer(
       onWarn: (m) => deps.log.warn(m),
       handlers: {
         serverInfo: { name: MCP_SERVER_NAME, version: extensionVersion(context) },
-        // The workflow in brief, from the same sections as the skill (10x-plan-4
-        // P1.3): a client with no skill installed still learns list → act → check.
+        // The workflow in brief, from the same sections as the skill: a client with
+        // no skill installed still learns list → act → check.
         instructions: renderMcpInstructions(),
         tools: TOOLS,
         callTool: (name, args, author) => callTool(name, args, toolDeps, author),
@@ -335,12 +316,9 @@ export async function startMcpServer(
 
   // Terminals VS Code spawns inherit these, which is how `.mcp.json`'s
   // `${VAR}` references resolve without a secret in the repo.
-  //
-  // `persistent = false` (L2b): VS Code otherwise remembers this collection
-  // across restarts in its own storage so a terminal that reopens before the
-  // extension re-activates still sees it — exactly the credential-with-no-
-  // server-behind-it this file already refuses to leave in `process.env` on
-  // dispose (below), just in a different store. The token is fresh every
+  // `persistent = false`: VS Code otherwise remembers this collection across restarts
+  // in its own storage — a credential with no server behind it, the same thing this
+  // file refuses to leave in `process.env` on dispose. The token is fresh every
   // session; nothing about it is meant to survive one.
   context.environmentVariableCollection.persistent = false;
   context.environmentVariableCollection.replace(ENV_URL, server.url);
@@ -348,15 +326,12 @@ export async function startMcpServer(
   context.environmentVariableCollection.description =
     "Markdown Collab: MCP tool server address and per-session token";
 
-  // Also set these directly on the extension host's own process (10x-plan-4
-  // P1.1) — every extension shares this one process, so a CLI agent that
-  // ANOTHER extension spawns after us (Claude Code's own VS Code extension
-  // starting `claude`, the Codex IDE extension starting its app-server)
-  // inherits them exactly like a VS Code terminal does, and `.mcp.json` /
-  // `bearer_token_env_var` references resolve for those sessions too. This is
-  // the same exposure `environmentVariableCollection` already gives every
-  // terminal — same user, same machine, child processes either way — just
-  // extended to a second kind of child process VS Code itself doesn't spawn.
+  // Also set these directly on the extension host's own process — every extension
+  // shares it, so a CLI agent that ANOTHER extension spawns after us (Claude Code's
+  // own VS Code extension starting `claude`, the Codex IDE extension starting its
+  // app-server) inherits them like a VS Code terminal does, and `.mcp.json` /
+  // `bearer_token_env_var` references resolve for those sessions too. Same exposure
+  // `environmentVariableCollection` already gives every terminal.
   process.env[ENV_URL] = server.url;
   process.env[ENV_TOKEN] = token;
 
@@ -395,18 +370,16 @@ function extensionVersion(context: vscode.ExtensionContext): string {
   return (context.extension?.packageJSON?.version as string | undefined) ?? "0.0.0";
 }
 
-/** L2a: the README recommends ignoring everything under `.markdown-collab/`
- *  except `conventions.md` — this is what makes that true by construction
- *  rather than by the user remembering to write it themselves. */
+/** The README recommends ignoring everything under `.markdown-collab/` except
+ *  `conventions.md`; this makes that true by construction. */
 const MC_GITIGNORE_BODY = "*\n!conventions.md\n!.gitignore\n";
 
 /**
  * `.markdown-collab/`, created fresh if it doesn't exist, refused if it's a
- * symlink (L2a: the descriptor and its token must land inside a real,
- * predictable directory, not wherever a symlink happens to point — the same
- * reasoning L5 applies to the agent-connection config files), and carrying a
- * `.gitignore` that keeps everything but `conventions.md` (and itself) out of
- * version control.
+ * symlink (the descriptor and its token must land inside a real, predictable
+ * directory, not wherever a symlink happens to point — the same reasoning as the
+ * agent-connection config files), and carrying a `.gitignore` that keeps everything
+ * but `conventions.md` (and itself) out of version control.
  */
 export async function ensureMarkdownCollabDir(dir: string): Promise<void> {
   let lst: import("node:fs").Stats | undefined;
@@ -431,13 +404,12 @@ export async function ensureMarkdownCollabDir(dir: string): Promise<void> {
 }
 
 /**
- * Write the descriptor at mode 0600 (L2a) — `vscode.workspace.fs.writeFile`
- * lands at the process umask's default (0644 on a typical machine), which is
- * world-readable; Node's `fs` is what actually exposes file permissions, so
- * the descriptor switches to it here. `writeFile`'s own `mode` option only
- * takes effect when the file doesn't already exist, so an explicit `chmod`
- * follows to tighten a descriptor left over from a build before this fix, or
- * from a filesystem/umask that ignored the create-time mode.
+ * Write the descriptor at mode 0600 — `vscode.workspace.fs.writeFile` lands at the
+ * process umask's default (0644 on a typical machine), which is world-readable;
+ * Node's `fs` is what exposes file permissions, so the descriptor uses it here.
+ * `writeFile`'s own `mode` option only takes effect when the file doesn't already
+ * exist, so an explicit `chmod` follows to tighten a pre-existing descriptor or one
+ * on a filesystem/umask that ignored the create-time mode.
  */
 export async function writeDescriptorFile(filePath: string, body: string): Promise<void> {
   const symlink = await refuseSymlink(filePath);
@@ -480,14 +452,12 @@ async function removeDescriptor(folder: vscode.Uri): Promise<void> {
 }
 
 /**
- * Refuse to write through a symlink (L5): `lstat` the target itself (if it
- * exists) and its parent directory, following neither. A symlinked
- * `.mcp.json` or workspace root could otherwise land a write somewhere
- * outside the workspace the human never agreed to touch. Duplicated (rather
- * than shared) in `mcpServer/agentConnections.ts` and `agents.ts`, which
- * guard the same class of write for the other agent-connection files — each
- * is small and self-contained, and none of the three otherwise depends on
- * the others.
+ * Refuse to write through a symlink: `lstat` the target itself (if it exists) and
+ * its parent directory, following neither. A symlinked `.mcp.json` or workspace
+ * root could otherwise land a write somewhere outside the workspace the human never
+ * agreed to touch. Duplicated (rather than shared) in `mcpServer/agentConnections.ts`
+ * and `agents.ts`, which guard the same class of write for the other
+ * agent-connection files — each is small and none depends on the others.
  */
 async function refuseSymlink(targetFsPath: string): Promise<string | null> {
   for (const p of [path.dirname(targetFsPath), targetFsPath]) {
@@ -513,9 +483,8 @@ export function mcpJsonConsentGranted(context: vscode.ExtensionContext): boolean
   return folder !== undefined && context.workspaceState.get<"yes" | "no">(consentKey(folder)) === "yes";
 }
 
-/** What `ensureMcpJsonRegistration` actually did, for a caller (the Connect
- *  an Agent command) that wants to show its own toast only when something
- *  really happened rather than after a declined consent prompt. */
+/** What `ensureMcpJsonRegistration` actually did, so a caller can show its own toast
+ *  only when something really happened rather than after a declined consent prompt. */
 export type McpJsonRegistrationOutcome = "declined" | "written" | "unchanged";
 
 /**
@@ -566,9 +535,8 @@ export async function ensureMcpJsonRegistration(
   try {
     const merged = mergeMcpJson(existing, handle.port);
     if (merged.text === null) return "unchanged";
-    // L5: refuse a symlinked .mcp.json (or workspace root) rather than follow
-    // it — the same guard agentConnections.ts's writers apply to the other
-    // agent-connection config files.
+    // Refuse a symlinked .mcp.json (or workspace root) rather than follow it, like
+    // the writers in agentConnections.ts.
     const symlink = await refuseSymlink(uri.fsPath);
     if (symlink) throw new Error(`refusing to write through a symlink: ${symlink}`);
     await vscode.workspace.fs.writeFile(uri, Buffer.from(merged.text, "utf8"));

@@ -1,4 +1,4 @@
-// Source-level guards for 10x-plan-2 P0.1's central rule: the `mdc` CLI and the
+// Source-level guards for the central rule: the `mdc` CLI and the
 // MCP tools are two front ends over ONE implementation of each verb.
 //
 // Type-checking can't catch the failure this prevents. Both front ends compile

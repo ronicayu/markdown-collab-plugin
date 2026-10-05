@@ -1,4 +1,4 @@
-// Contract tests for the inline-comments host↔webview protocol (10x-plan P2.4).
+// Contract tests for the inline-comments host↔webview protocol.
 //
 // Each test is a recorded message applied to a document, asserting the
 // document that comes back. This is the layer the CHANGELOG's regression
@@ -415,7 +415,7 @@ describe("addThread offset contract", () => {
   });
 });
 
-// 10x-plan-2 P3.3: accepting suggestions one at a time is fine for one; a
+// Accepting suggestions one at a time is fine for one; a
 // review pass that proposes twelve makes it a chore with twelve chances to
 // mis-click.
 describe("accept-all-suggestions", () => {
@@ -467,7 +467,7 @@ Suggest mode ships behind a setting.
   });
 });
 
-// 10x-plan-6 P1.4: `via` names the path an agent's write took. The human's own
+// `via` names the path an agent's write took. The human's own
 // comments from the view carry none, and editing an agent's comment leaves the
 // record of how it arrived alone.
 describe("via", () => {

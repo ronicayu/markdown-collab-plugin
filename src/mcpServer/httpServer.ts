@@ -77,14 +77,13 @@ function send(res: ServerResponse, status: number, body?: unknown, extraHeaders?
   res.end(text);
 }
 
-/** The `Mcp-Session-Id` header value, or undefined when the client sent none. */
 function sessionIdFromRequest(req: IncomingMessage): string | undefined {
   const header = req.headers["mcp-session-id"];
   return typeof header === "string" ? header : undefined;
 }
 
 /** True for a bare (non-batched) `initialize` request — the one message
- * shape allowed to mint a fresh session id (10x-plan-4 P1.2). */
+ * shape allowed to mint a fresh session id. */
 function isInitializeMessage(msg: unknown): boolean {
   return typeof msg === "object" && msg !== null && !Array.isArray(msg) && (msg as { method?: unknown }).method === "initialize";
 }
@@ -113,7 +112,6 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-/** Start the listener. Resolves once it is accepting connections. */
 export async function serveMcp(opts: ServeOptions): Promise<McpHttpServer> {
   const path = opts.path ?? "/mcp";
   let lastUnauthorizedReport = -Infinity;
@@ -182,10 +180,10 @@ export async function serveMcp(opts: ServeOptions): Promise<McpHttpServer> {
       return;
     }
 
-    // The session id to attribute this request's calls to (10x-plan-4 P1.2):
-    // whatever the client echoed back, or — only for a fresh `initialize` —
-    // one minted here and handed back in the response so the client can echo
-    // it from then on, per the streamable-HTTP transport's session contract.
+    // The session id to attribute this request's calls to: whatever the client echoed
+    // back, or — only for a fresh `initialize` — one minted here and handed back in the
+    // response so the client can echo it from then on, per the streamable-HTTP
+    // transport's session contract.
     const incomingSessionId = sessionIdFromRequest(req);
     const isInitBatch = Array.isArray(parsed) ? parsed.some(isInitializeMessage) : isInitializeMessage(parsed);
     const sessionId = incomingSessionId ?? (isInitBatch ? mintSessionId() : undefined);

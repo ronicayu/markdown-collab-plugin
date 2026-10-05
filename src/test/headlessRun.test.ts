@@ -1,4 +1,4 @@
-// `HeadlessRun` end to end, minus VS Code (10x-plan-4 P0.1): a real child
+// `HeadlessRun` end to end, minus VS Code: a real child
 // process (the stub `claude` the integration suite also uses), a real MCP
 // server on a real socket, a real document on disk. What's left for the
 // integration suite is the part only a host can show — the write going through

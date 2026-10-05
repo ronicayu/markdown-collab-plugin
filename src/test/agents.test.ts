@@ -26,7 +26,7 @@ describe("AGENTS_SNIPPET constant", () => {
   });
 });
 
-// 10x-plan-6 P1.3: the format is the API for every agent that isn't Claude
+// The format is the API for every agent that isn't Claude
 // Code. The snippet leads with the contract, doesn't pretend `mdc` is on every
 // agent's PATH, and gives the human's Repair command as the check for everyone
 // else.
@@ -254,7 +254,7 @@ describe("ensureAgentsSnippet", () => {
     expect(after).toContain(AGENTS_SENTINEL);
   });
 
-  // 10x-plan-6 P1.1: Connect an Agent writes AGENTS.md first for every agent
+  // Connect an Agent writes AGENTS.md first for every agent
   // that isn't Claude Code, so a workspace set up under the old snippet — the
   // one that sent every agent looking for `mdc` — has to get the new one.
   it("refreshes an untouched earlier snippet in place", async () => {

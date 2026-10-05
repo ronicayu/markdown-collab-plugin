@@ -69,7 +69,7 @@ export async function collectDiagnostics(
       : { error: lookup.error };
   }, undefined);
 
-  // Headless (10x-plan-4 P0.1): available now, and the last finished run's
+  // Headless: available now, and the last finished run's
   // shape only — never the prompt or the report text `runHeadless` produced.
   const headless = await safe<DiagnosticsSnapshot["headless"]>(async () => {
     const availability = await headlessAvailability(context.workspaceState);
@@ -97,7 +97,7 @@ export async function collectDiagnostics(
     };
   }, undefined);
 
-  // Agent connections (10x-plan-4 P1.1): in-process state for the clients
+  // Agent connections: in-process state for the clients
   // that don't write a file, plus a yes/no read of each client's config —
   // never its contents (a header the file happens to hold, port included, is
   // not secret; the token it never carries is what matters).

@@ -57,7 +57,6 @@ export function renderPlantumlFence(source: string, server: string, format: "svg
   );
 }
 
-/** UTF-8 bytes → lowercase hex string. */
 export function encodeAsHex(source: string): string {
   const bytes = new TextEncoder().encode(source);
   let hex = "";

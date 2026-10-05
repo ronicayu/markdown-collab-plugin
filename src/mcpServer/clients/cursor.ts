@@ -1,8 +1,7 @@
-// Cursor CLI (`cursor-agent`) — 10x-plan-4 P1.1.
+// Cursor CLI (`cursor-agent`).
 //
 // `cursor-agent` reads a project's `.cursor/mcp.json` and interpolates
-// `${env:NAME}` inside `url` and `headers` (verified against Cursor's docs,
-// 2026-09). Launched from a VS Code terminal it inherits the same
+// `${env:NAME}` inside `url` and `headers`. Launched from a VS Code terminal it inherits the same
 // `MARKDOWN_COLLAB_MCP_URL` / `MARKDOWN_COLLAB_MCP_TOKEN` env vars Claude
 // Code's `.mcp.json` entry already relies on — so this file carries neither a
 // literal port nor a token, only the two references. That also means, unlike
@@ -46,7 +45,7 @@ export function mergeCursorMcpJson(existing: string | null): MergeResult {
   return mergeMcpServersJson(existing, MCP_SERVER_NAME, cursorMcpEntry());
 }
 
-/** The inverse of `mergeCursorMcpJson` (4.4: Disconnect Agent → Cursor CLI). */
+/** The inverse of `mergeCursorMcpJson`. */
 export function removeCursorMcpEntry(existing: string | null): RemovalResult {
   return removeMcpServersJsonEntry(existing, MCP_SERVER_NAME);
 }

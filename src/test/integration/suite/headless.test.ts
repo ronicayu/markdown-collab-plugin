@@ -1,4 +1,4 @@
-// "Run Claude for me" against a real Extension Host (10x-plan-4 P0.1).
+// "Run Claude for me" against a real Extension Host.
 //
 // The unit suite runs HeadlessRun against a stub `claude` and a bare tool
 // server. What only the host can show is the whole path a click takes: the

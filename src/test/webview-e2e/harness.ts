@@ -1,4 +1,4 @@
-// Boot helpers for the webview e2e suite (10x-plan-2 P2.1).
+// Boot helpers for the webview e2e suite.
 //
 // These specs run the *shipped* webview bundles (`out/**/client.js`) in real
 // Chromium with `acquireVsCodeApi` stubbed, then assert the exact message the

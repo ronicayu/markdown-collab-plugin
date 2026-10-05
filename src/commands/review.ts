@@ -1,7 +1,3 @@
-// "Ask Claude to Review" (v2 Review Mode entry point), the review-conventions
-// editor, and the review-summary/unread-walk commands (10x-plan-4 P3.2 split
-// of extension.ts).
-
 import * as path from "path";
 import * as vscode from "vscode";
 import type { Logger } from "../logging";
@@ -70,8 +66,7 @@ async function invokeEditReviewConventions(log: Logger): Promise<void> {
 }
 
 /**
- * Summarize the review state of the selection into a scratch document
- * (10x-plan-2 P3.2). Everything it says is already in the files, so this is a
+ * Everything it says is already in the files, so this is a
  * pure read — no Claude round trip to restate facts it could read itself.
  */
 async function invokeReviewSummary(
@@ -164,8 +159,7 @@ async function expandMarkdownSelection(uris: vscode.Uri[]): Promise<vscode.Uri[]
 }
 
 /**
- * Entry point for "Ask Claude to Review", for any selection shape: one file
- * (the original flow), a folder, or a multi-select. A multi-file selection
+ * A multi-file selection
  * becomes ONE review pass so Claude can compare the files against each other.
  */
 async function invokeAskClaudeToReviewSelection(
@@ -177,7 +171,7 @@ async function invokeAskClaudeToReviewSelection(
   delta = false,
   /** A focus decided by the caller; skips the focus prompt. "" = general review. */
   presetFocus?: string,
-  /** Force this dispatch's send mode, bypassing config/remembered/ask (10x-plan-4 P2.4). */
+  /** Force this dispatch's send mode, bypassing config/remembered/ask. */
   forceMode?: SendMode,
 ): Promise<void> {
   if (selection.length === 0) {
@@ -231,11 +225,6 @@ async function invokeAskClaudeToReviewSelection(
   );
 }
 
-/**
- * One Review Mode pass over several files. Everything the single-file flow
- * does — soft size confirm, focus prompt, pending-review notification — but
- * the confirm is on the summed size and the payload lists every file.
- */
 async function invokeAskClaudeToReviewMulti(
   uris: vscode.Uri[],
   log: Logger,
@@ -279,7 +268,7 @@ async function invokeAskClaudeToReviewMulti(
   }
 
   const focus = presetFocus ?? (await promptForFocus(globalState));
-  if (focus === undefined) return; // user cancelled
+  if (focus === undefined) return;
   const trimmedFocus = focus === "" ? undefined : focus;
   if (trimmedFocus) await pushRecentFocus(globalState, trimmedFocus);
 
@@ -316,9 +305,7 @@ function workspaceRelPosix(folder: vscode.WorkspaceFolder, uri: vscode.Uri): str
 }
 
 /**
- * Walk every thread Claude opened and the human hasn't answered yet, across
- * all files in the Markdown Review tree. Each invocation advances one thread
- * and wraps at the end; the cursor is module state, so the walk survives
+ * The cursor is module state, so the walk survives
  * switching editors but not a window reload (by design — a reload should start
  * the pass over rather than resume mid-list from stale positions).
  */
@@ -349,10 +336,8 @@ async function invokeNextUnreadFromClaude(
   unreadWalkCursor = { docPath: next.docPath, threadId: next.thread.id };
 
   try {
-    // The review view, not the source file (10x-plan-3 P0.3). The thing being
-    // walked is a thread, and a thread's home is the panel that can show its
-    // replies and let you answer. This walk used to end on the raw text
-    // editor, i.e. on the marker soup the thread is stored in.
+    // The review view, not the source file: a thread's home is the panel that
+    // can show its replies and let you answer.
     await openReviewView(vscode.Uri.file(next.docPath), { revealThreadId: next.thread.id });
   } catch (e) {
     log.error(`next-unread failed for ${next.docPath}`, e);
@@ -376,15 +361,14 @@ async function invokeAskClaudeToReview(
   tracker: TerminalTracker,
   workspaceState: vscode.Memento,
   globalState: vscode.Memento,
-  /** Review only what changed since the last recorded pass (10x-plan-2 P1.1). */
+  /** Review only what changed since the last recorded pass. */
   delta = false,
   presetFocus?: string,
-  /** Force this dispatch's send mode, bypassing config/remembered/ask (10x-plan-4 P2.4). */
+  /** Force this dispatch's send mode, bypassing config/remembered/ask. */
   forceMode?: SendMode,
 ): Promise<void> {
   const folder = folderForDocument(doc.uri);
 
-  // Soft size confirm — large docs may take a while; let the user back out.
   const byteSize = Buffer.byteLength(doc.getText(), "utf8");
   if (byteSize > LARGE_DOC_WARN_BYTES) {
     const kb = Math.round(byteSize / 1024);
@@ -398,7 +382,7 @@ async function invokeAskClaudeToReview(
   }
 
   const focus = presetFocus ?? (await promptForFocus(globalState));
-  if (focus === undefined) return; // user cancelled
+  if (focus === undefined) return;
   const trimmedFocus = focus === "" ? undefined : focus;
 
   const result = buildReviewRequestPayload(doc, trimmedFocus, { delta });
@@ -521,8 +505,8 @@ function presetFocusFrom(opts: { focus?: unknown } | undefined): string | undefi
 }
 
 /**
- * A send mode forced by a programmatic caller (10x-plan-4 P2.4's empty-state
- * button, via `handleEmptyStateReview`) — anything not one of the three
+ * A send mode forced by a programmatic caller (the empty-state button, via
+ * `handleEmptyStateReview`) — anything not one of the three
  * concrete modes means "don't force one", same as an absent value.
  */
 function forceModeFrom(opts: { forceMode?: unknown } | undefined): SendMode | undefined {
@@ -530,8 +514,6 @@ function forceModeFrom(opts: { forceMode?: unknown } | undefined): SendMode | un
   return mode === "headless" || mode === "terminal" || mode === "clipboard" ? mode : undefined;
 }
 
-/** Register the review-mode family of commands: conventions, summary, "Ask
- * Claude to Review" (single/folder/changes), and the unread walk. */
 export function registerReviewCommands(deps: CommandDeps): void {
   const { context, reviewLog, reviewView, terminalTracker, openReviewView } = deps;
 

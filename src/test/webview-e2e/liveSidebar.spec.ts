@@ -1,4 +1,4 @@
-// The live editor's thread sidebar, card by card (10x-plan-6 P4, sidebar
+// The live editor's thread sidebar, card by card (sidebar
 // parity): the review view's inlineView.spec.ts, run against the live editor,
 // which now renders the same sidebar (webviewShared/threadSidebar.ts). Same
 // selectors, same messages — where the review view posts something, the live
@@ -456,7 +456,7 @@ test.describe("with the review fixture", () => {
   });
 
   // The host opens the review view on a thread (a hover link, a tree row, the
-  // unread walk) and posts `reveal-thread` (10x-plan-6 P4, the switch).
+  // unread walk) and posts `reveal-thread`.
   test("reveal-thread from the host makes the card current and pulses its highlight", async ({ page }) => {
     await pushToWebview(page, { type: "reveal-thread", threadId: fixture.openThreadId });
     await expect(page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`)).toHaveClass(/highlighted/);

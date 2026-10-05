@@ -1,16 +1,7 @@
-// Classify an `href` from a link the user clicked in the collab editor.
-//
-// A link can be one of:
-//   - external: http(s) / mailto — open in the OS handler
-//   - workspace: a file inside one of the workspace folders — open via
-//     vscode.open so the user's preferred editor handles it
-//   - fragment: pure `#anchor` within the current doc — caller decides
-//     what to do (currently we just no-op)
-//   - blocked: anything we refuse (file://, javascript:, traversal that
-//     escapes the workspace, control chars, …)
-//
-// This module is a pure function — no `vscode` import — so it can be
-// unit-tested in vitest without a webview/Extension Host.
+// Classify an `href` from a link clicked in the collab editor. `blocked` covers
+// anything we refuse (file://, javascript:, traversal that escapes the
+// workspace, control chars, …); `fragment` is a pure `#anchor`, and the caller
+// decides what to do with it.
 
 import * as path from "path";
 
@@ -73,7 +64,6 @@ export function classifyLink(
     return { kind: "blocked", reason: "control characters in href" };
   }
 
-  // Pure-fragment links: '#section'.
   if (href.startsWith("#")) {
     return { kind: "fragment", id: href.slice(1) };
   }
@@ -99,7 +89,6 @@ export function classifyLink(
   const queryIdx = pathPart.indexOf("?");
   const cleanPath = queryIdx >= 0 ? pathPart.slice(0, queryIdx) : pathPart;
 
-  // Decode the path segments so '%20' → ' ', etc.
   const segments = cleanPath.split("/").map((s) => safeDecode(s));
   if (segments.some((s) => s === null)) {
     return { kind: "blocked", reason: "malformed percent-encoding" };

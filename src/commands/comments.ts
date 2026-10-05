@@ -1,7 +1,3 @@
-// Comment mutations on a document: remove-resolved, finalize, comment-on-
-// selection, repair, and the review-view entry points
-// (10x-plan-4 P3.2 split of extension.ts).
-
 import * as path from "path";
 import { fileURLToPath } from "node:url";
 import * as vscode from "vscode";
@@ -25,12 +21,6 @@ import type { CommandDeps } from "./deps";
 import { reviewViewOptsFrom } from "./reviewViewRouter";
 
 /**
- * Delete every resolved thread in a document.
- *
- * Resolved threads accumulate: they are settled, nobody reads them again, and
- * they crowd the ones still waiting on someone. Removing them one at a time
- * through the per-thread confirm is the tedium this exists to end.
- *
  * Confirmed with a modal that names the count, because it removes review
  * history from the file. It is one undo step, which the modal says.
  */
@@ -111,9 +101,6 @@ async function saveOrWarn(doc: vscode.TextDocument, log: Logger, action: string)
 }
 
 /**
- * Finalize a document: strip every comment, marker, suggestion, and the
- * threads region, leaving clean markdown ready to commit (issue #1).
- *
  * The confirm is a modal that names exactly what goes, because unlike
  * remove-resolved this deletes open conversations too — the entire review
  * history leaves the file in one keystroke. A pending suggestion is discarded
@@ -195,11 +182,6 @@ async function invokeFinalizeDocument(arg: vscode.Uri | undefined, log: Logger):
 }
 
 /**
- * Comment on the text editor's selection, with no webview and no mouse
- * (10x-plan-3 P0.2).
- *
- * The format engine could always anchor to any source range; what was missing
- * was a path to it that didn't start with "open the rendered view and drag".
  * The write goes through the shared `opOpenAt` verb and a `WorkspaceEdit`, so
  * it is integrity-checked before it lands and undoable once it has.
  */
@@ -228,7 +210,7 @@ async function invokeCommentOnSelection(log: Logger): Promise<void> {
     ignoreFocusOut: true,
     validateInput: (v) => (v.trim().length === 0 ? "A comment needs a body." : null),
   });
-  if (body === undefined) return; // cancelled
+  if (body === undefined) return;
 
   const author = currentAuthorName();
 
@@ -270,8 +252,6 @@ async function invokeCommentOnSelection(log: Logger): Promise<void> {
 }
 
 /**
- * Repair damaged comment anchors in a markdown file.
- *
  * Only ever touches markers and the threads region — `repairIntegrity`
  * abandons the whole batch if a repair would alter prose — and the edit goes
  * through a WorkspaceEdit so it lands in the undo stack like any other change.
@@ -324,9 +304,9 @@ async function invokeRepairInlineComments(
 
 /**
  * Validate a `fileArg` the way every command a hover's `command:` link can
- * reach must (M1): a `file:` URI naming a `.md`/`.markdown` file inside an
+ * reach must: a `file:` URI naming a `.md`/`.markdown` file inside an
  * open workspace folder, or null when it's anything else. The hover's own
- * markdown is now escaped so the extension's own links are the only ones
+ * markdown is escaped so the extension's own links are the only ones
  * that can ever fire, but `resolveThread`/`replyToThread`/`revealThread` are
  * ordinary VS Code commands — anything on the machine can invoke them with
  * any argument — so the handlers refuse on their own rather than trust the
@@ -361,9 +341,8 @@ const NOT_A_SAFE_TARGET =
   "Markdown Collab: that link doesn't point at a Markdown file in this workspace.";
 
 /**
- * Resolve a thread from outside the review view (3.7) — today, the source
- * editor's hover link; the same command works from a future keybinding or the
- * palette. Internal: not in package.json, invoked as
+ * Resolve a thread from outside the review view (the source editor's hover link).
+ * Internal: not in package.json, invoked as
  * `(fileArg, threadId)` from a `command:` URI.
  *
  * A toggle: an open thread is resolved, a resolved one reopened — the hover
@@ -426,7 +405,7 @@ async function invokeResolveThread(
 }
 
 /**
- * Reply to a thread from outside the review view (3.7) — the source editor's
+ * Reply to a thread from outside the review view — the source editor's
  * hover link. Internal: not in package.json, invoked as
  * `(fileArg, threadId)` from a `command:` URI.
  */
@@ -463,7 +442,7 @@ async function invokeReplyToThread(
     ignoreFocusOut: true,
     validateInput: (v) => (v.trim().length === 0 ? "A reply needs a body." : null),
   });
-  if (body === undefined) return; // cancelled
+  if (body === undefined) return;
 
   const author = currentAuthorName();
 
@@ -472,7 +451,7 @@ async function invokeReplyToThread(
     // `agent: false` — this is the human replying from the hover, not an
     // agent through mc_reply/mdc reply, so it neither stamps the comment as
     // an agent's nor reopens a resolved thread the way an agent's reply does
-    // (ux-review-2026-09 0.6's rule, `opReply`'s own doc comment).
+    // (`opReply`'s own doc comment).
     const outcome = opReply(source, threadId, body.trim(), () => new Date().toISOString(), author, false);
     next = outcome.next;
   } catch (e) {
@@ -492,7 +471,6 @@ async function invokeReplyToThread(
   await saveOrWarn(doc, log, "Reply added");
 }
 
-/** Register the comment-mutation and review-view-entry family of commands. */
 export function registerCommentsCommands(deps: CommandDeps): void {
   const { context, log, reviewLog, formatLog, openReviewView } = deps;
 
@@ -512,7 +490,7 @@ export function registerCommentsCommands(deps: CommandDeps): void {
     vscode.commands.registerCommand("markdownCollab.commentOnSelection", async () => {
       await invokeCommentOnSelection(reviewLog);
     }),
-    // Invoked from the source editor's hover (3.7). Internal: not in the palette.
+    // Invoked from the source editor's hover. Internal: not in the palette.
     vscode.commands.registerCommand(
       "markdownCollab.resolveThread",
       async (fileArg?: string | vscode.Uri, threadId?: string) => {
@@ -536,9 +514,7 @@ export function registerCommentsCommands(deps: CommandDeps): void {
       async (node: ReviewNode | undefined) => {
         if (!node || node.kind !== "comment") return;
         try {
-          // Into the review view, scrolled to the thread. This used to open
-          // the raw source and not even scroll ("opening the doc is enough"),
-          // which left the reader looking at markers.
+          // Into the review view, scrolled to the thread.
           await openReviewView(vscode.Uri.file(node.docPath), { revealThreadId: node.thread.id });
         } catch (e) {
           log.error(`revealComment failed for ${node.docPath}`, e);
@@ -547,8 +523,7 @@ export function registerCommentsCommands(deps: CommandDeps): void {
     ),
   );
 
-  // The review view. `openCollabEditor` was the live editor's own command
-  // before the live editor became the review view; it stays, hidden from the
+  // The review view. `openCollabEditor` stays, hidden from the
   // palette, as an alias for anything that still calls it. A caller can pass
   // `ReviewViewOpts` as the second argument; a menu's own second argument
   // (the editor group, the explorer selection) is ignored.

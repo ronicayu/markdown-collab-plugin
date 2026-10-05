@@ -119,7 +119,7 @@ describe("tools/call", () => {
   });
 });
 
-// 10x-plan-4 P1.2: the author a `tools/call` gets attributed to comes from
+// The author a `tools/call` gets attributed to comes from
 // the session's `initialize`, not a global default — two sessions on the
 // same server must never bleed into each other.
 describe("session-scoped author", () => {

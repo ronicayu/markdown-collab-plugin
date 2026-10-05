@@ -1,4 +1,4 @@
-// Golden round-trip corpus (10x-plan P0.3).
+// Golden round-trip corpus.
 //
 // The four chronic failure classes in this project's history — anchoring,
 // live-editor sync, image rendering, tables — were each fixed one CHANGELOG
@@ -54,7 +54,7 @@ type Op =
   | { do: "reply"; thread: number; body: string }
   /**
    * An agent-authored thread — `agent: true` on the JSON, same as `mc_open`
-   * writes (10x-plan-4 P1.2). `agent` here is the slug (`"claude"`,
+   * writes. `agent` here is the slug (`"claude"`,
    * `"codex"`, ...), not the boolean flag.
    */
   | { do: "agentComment"; quote: string; occurrence?: number; body?: string; agent: string }
@@ -362,7 +362,7 @@ const SCRIPTS: Script[] = [
     ],
   },
   {
-    // 10x-plan-4 P1.2: `agent: true` comments from two different agents in
+    // `agent: true` comments from two different agents in
     // the same file — Codex opens a thread, Claude opens a separate one and
     // Codex later replies to it, and a human resolves the first. Every
     // invariant (including I5, serialization stability) must hold exactly as
@@ -397,7 +397,7 @@ describe("round-trip corpus", () => {
   }
 });
 
-// 10x-plan-4 P1.2: the generic corpus loop above proves the agent-authored
+// The generic corpus loop above proves the agent-authored
 // script satisfies every existing invariant; this checks the specific claim
 // that initiative adds — the `agent` field actually reaches the bytes on
 // disk (not just a self-consistent in-memory round trip) and both agents'
@@ -697,7 +697,7 @@ describe("round-trip corpus: comment bodies with comment-terminating sequences",
   }
 });
 
-// 10x-plan-2 P1.3. The anchor hash is a new optional field on every thread, so
+// The anchor hash is a new optional field on every thread, so
 // it has to survive the same round trips as the rest of the record — and its
 // absence has to survive too, because that is what every file written before
 // this version looks like.
@@ -747,7 +747,7 @@ describe("round-trip corpus: the anchor hash", () => {
   });
 });
 
-// 10x-plan-6 P1.4. `via` is another optional field, on comments and
+// `via` is another optional field, on comments and
 // suggestions this time — same two obligations as the anchor hash: survive the
 // round trips when present, and never appear when nobody wrote it.
 describe("round-trip corpus: via", () => {

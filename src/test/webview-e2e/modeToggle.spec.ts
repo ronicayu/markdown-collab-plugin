@@ -1,5 +1,5 @@
 // Edit mode through real keystrokes, and the in-view Reading/Editing mode
-// control (docs/one-view-design.md, "Phase B").
+// control.
 //
 // blockSplice.spec.ts gates every block of 17 documents through the bundle's
 // test seam; this drives the path a person takes — the keyboard, the edit
@@ -173,7 +173,7 @@ test("an edit still in the debounce is posted before the mode switch", async ({ 
     .toEqual(["edit-blocks", "set-read-only"]);
 });
 
-// sidebar-chrome-redesign: #edit-mode-toggle moved into the document toolbar,
+// #edit-mode-toggle moved into the document toolbar,
 // specifically so the mode switch stays reachable with the sidebar collapsed
 // (the old floating .mdc-sidebar-toggle left no way to switch mode once
 // collapsed).
@@ -352,7 +352,7 @@ test("pasting two paragraphs adds exactly them, with a blank line between", asyn
   expect(pasted.message.edits.map((e) => e.types)).toEqual([["paragraph", "paragraph"]]);
 });
 
-// Cmd+Z no longer runs a local ProseMirror undo (docs/editor-undo-and-keys.md)
+// Cmd+Z no longer runs a local ProseMirror undo
 // — the file's undo history is the only one. It flushes the keystroke, asks
 // the host to undo the file, and the file's answer puts the document back.
 test("undo after typing puts the file back byte for byte, markers included", async ({ page }) => {
@@ -501,7 +501,7 @@ const LONG = Array.from({ length: 60 }, (_, i) => `Paragraph ${i + 1} of a long 
 // through that replacement — all onto the end of the new document — so Cmd+Z
 // undid nothing and parked the cursor (and the scroll) at the end of the file.
 // Now Cmd+Z has nothing of its own to map: the file's undo history is the
-// only one (docs/editor-undo-and-keys.md), so it undoes whatever changed the
+// only one, so it undoes whatever changed the
 // file last — the agent's edit, here, not the keystroke typed before it.
 test.describe("undo after an outside change", () => {
   test("undoes the agent's edit — the file's last change — and reveals it, not the end of the doc", async ({ page }) => {
@@ -547,7 +547,7 @@ test.describe("undo after an outside change", () => {
 
 // Mod-z/Mod-Shift-z/Mod-y in Editing mode: never a local undo (there is none
 // any more) — they flush the pending edit, ask the host, and wait for its
-// answer (docs/editor-undo-and-keys.md).
+// answer.
 test.describe("undo and redo keys", () => {
   test("Cmd+Z posts the pending edit still in the debounce, then undo; the document doesn't change until the host answers", async ({
     page,

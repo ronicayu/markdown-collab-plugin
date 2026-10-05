@@ -1,14 +1,13 @@
-// Which slices of a prose span's text nodes a highlight covers (10x-plan P2.4).
+// Which slices of a prose span's text nodes a highlight covers.
 //
 // A rendered prose span starts as one text node, but every highlight applied
 // to it splits that node into before/mark/after. So the second comment in a
 // paragraph has to be placed against a span whose text now lives across
 // several nodes — and getting that wrong is invisible: the highlight simply
-// doesn't appear (which it didn't, until this was fixed).
+// doesn't appear.
 //
 // The DOM half (splitText + replaceChild) stays in the webview client. The
-// offset arithmetic — the part that was wrong — is here, where it can be
-// tested without a DOM.
+// offset arithmetic is here, where it can be tested without a DOM.
 
 export interface TextPiece {
   /** Length of this text node's data. */

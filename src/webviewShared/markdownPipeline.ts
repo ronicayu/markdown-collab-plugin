@@ -1,15 +1,7 @@
-// The markdown-it pipeline, built once (10x-plan P2.3).
-//
-// Two of the three review surfaces render with markdown-it: the inline
-// comments view and the PR/MR review view. (The live editor is
-// Milkdown/ProseMirror and always will be — converging that is not realistic,
-// which is why the plan scopes P2.3 to the asset/embed layer.) Those two used
-// to construct their renderer with the same options and the same plugins, by
-// copy-paste, in two files — which is how the PR view ended up with its own
-// stale image resolver while the inline view got the fixed one.
-//
-// One factory, one place to add an embed type, and a test can render exactly
-// what the surfaces render rather than a replica of it.
+// The markdown-it pipeline, built once. The inline comments view and the PR/MR
+// review view render with markdown-it (the live editor is Milkdown/ProseMirror
+// and always will be). One factory means one place to add an embed type, and a
+// test can render exactly what the surfaces render rather than a replica of it.
 
 import MarkdownIt from "markdown-it";
 import { installSourceOffsetPlugin } from "../inlineComments/webview/renderWithOffsets";

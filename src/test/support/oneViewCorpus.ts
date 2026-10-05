@@ -1,5 +1,5 @@
-// The one-view spike's documents (docs/spike-one-view.md, "Method"), shared by
-// the read-only gates of docs/one-view-design.md: the vitest host check and
+// The one-view spike's documents, shared by
+// the read-only gates: the vitest host check and
 // the webview-e2e runs through the real bundle.
 //
 // Fixtures are read from disk, the assembled/probe documents are the spike's

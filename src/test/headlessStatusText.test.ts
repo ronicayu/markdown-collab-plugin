@@ -1,4 +1,4 @@
-// The status bar and toasts for a headless run (10x-plan-4 P0.1). Every state
+// The status bar and toasts for a headless run. Every state
 // a run can be in has one rendering, pinned here — including the two that
 // render as nothing, which is a decision too.
 

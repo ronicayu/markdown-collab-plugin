@@ -1,6 +1,5 @@
-// Milkdown glue for the uncommitted-diff overlay (10x-plan-6 P4 phase B,
-// docs/one-view-design.md). The range→node mapping itself is pure and lives
-// in `src/collab/diffStripes.ts` (same split as
+// Milkdown glue for the uncommitted-diff overlay. The range→node mapping itself
+// is pure and lives in `src/collab/diffStripes.ts` (same split as
 // `src/webview/sourcePositionPlugin.ts` / `src/collab/sourcePositions.ts`);
 // this file turns that into ProseMirror decorations: a `.mdc-diff-changed`
 // node decoration per changed block, and a `.mdc-diff-removed` DOM widget
@@ -18,9 +17,6 @@ import {
   type DiffState,
 } from "../../collab/diffStripes";
 
-// Re-exported so client.ts (and anything else wiring this plugin up) has one
-// place to import the wire types from, without also needing to know they
-// actually live in `collab/diffStripes.ts`.
 export type { DiffLineRange, DiffPmNode, DiffRemovedRun, DiffState } from "../../collab/diffStripes";
 
 export const DIFF_STRIPES_KEY = new PluginKey("mdc-diff-stripes");
@@ -69,12 +65,10 @@ export type GetProse = () => string;
 /**
  * Decorates changed top-level blocks with `.mdc-diff-changed` and inserts a
  * `.mdc-diff-removed` widget for each deleted run — the live editor's
- * read-only counterpart of the review view's stripes (10x-plan-6 P4 phase
- * B). `getDiff`/`getProse` are read fresh on every (re)build — same contract
- * as `makeSuggestionHighlightPlugin`'s `getSuggestions`: this plugin never
- * caches the diff itself, so client.ts owns when a stale one would show
- * wrong stripes, by dispatching a `{ refresh: true }` meta on this key
- * (mirrors `forceHighlightRefresh`).
+ * read-only counterpart of the review view's stripes. `getDiff`/`getProse` are
+ * read fresh on every (re)build: this plugin never caches the diff itself, so
+ * client.ts owns when a stale one would show wrong stripes, by dispatching a
+ * `{ refresh: true }` meta on this key.
  */
 export function makeDiffStripesPlugin(getDiff: GetDiff, getProse: GetProse): Plugin {
   return new Plugin({

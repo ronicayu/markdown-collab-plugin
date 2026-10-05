@@ -1,6 +1,5 @@
-// The uncommitted-diff overlay in the live editor's read-only mode
-// (10x-plan-6 P4 phase B, docs/one-view-design.md) — mirrors
-// uncommittedDiff.spec.ts (the review view's gate) so the two surfaces are
+// The uncommitted-diff overlay in the live editor's read-only mode —
+// mirrors uncommittedDiff.spec.ts (the review view's gate) so the two surfaces are
 // held to the same bar: stripes for the "after", removed-text widgets for
 // the "before", change navigation, and a marker-only change staying
 // unstriped because the diff is computed prose-against-prose.
@@ -189,8 +188,7 @@ test.describe("change navigation", () => {
     // three-paragraph DOC above doesn't overflow the viewport. (The scrolling
     // element used to be `.mdc-editor-pane` itself; the redesign split the
     // pane's padding and scrolling into this inner wrapper so the document
-    // toolbar above it can span the pane's full width and stay put —
-    // docs/sidebar-chrome-redesign.md.)
+    // toolbar above it can span the pane's full width and stay put.)
     const longDoc =
       "# Title\n\n" + Array.from({ length: 40 }, (_, i) => `Paragraph ${i}.`).join("\n\n") + "\n";
     await bootLiveEditor(page, {

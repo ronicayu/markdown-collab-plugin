@@ -1,13 +1,7 @@
-// The live editor's sidebar, host half (10x-plan-6 P4, sidebar parity).
-//
-// Handles every message the sidebar posts (`webviewShared/sidebarProtocol.ts`)
-// the way the review view's panel does: document operations run through the
-// same pure `applyClientMutation` on the file's own source, sends go through
-// the same commands and dispatcher, and the few bits of logic that lived only
-// inside inlineCommentsPanel.ts (copy-all, open-in-editor, author, the
-// headless probe for the empty state) are here, so the live editor stops
-// depending on a panel that is about to be removed. That panel keeps its own
-// copies until then.
+// The live editor's sidebar, host half: handles every message the sidebar posts
+// (`webviewShared/sidebarProtocol.ts`) the way the review view's panel does —
+// document operations through the pure `applyClientMutation` on the file's own
+// source, sends through the same commands and dispatcher.
 //
 // Nothing here reads the editor's serialization: a mutation parses
 // `document.getText()`, rewrites it, and hands the whole new source back to the
@@ -52,9 +46,9 @@ export interface SidebarHostContext {
   post(msg: unknown): void;
 }
 
-// `accept-suggestion` / `reject-suggestion` aren't admitted: the provider has
-// always handled exactly these two messages, on the source, with the same
-// result, so they stay on that path. `handleSidebarMessage` still takes them.
+// `accept-suggestion` / `reject-suggestion` aren't admitted: the provider handles
+// exactly these two messages on the source, so they stay on that path.
+// `handleSidebarMessage` still takes them.
 const MUTATIONS: ReadonlySet<string> = new Set<SidebarMutation["type"]>([
   "reply",
   "edit-comment",
@@ -188,7 +182,6 @@ async function applySidebarMutation(msg: SidebarMutation, ctx: SidebarHostContex
   if (result.warning) void vscode.window.showWarningMessage(result.warning);
 }
 
-/** Copy the prompt for every open thread, as the agent would receive it. */
 async function copyAllPrompt(doc: vscode.TextDocument): Promise<void> {
   const payload = buildInlinePayload(doc, { suggestMode: readSuggestMode() });
   if (!payload) {
@@ -226,7 +219,6 @@ function sidebarAuthor(): string {
   return currentAuthorName();
 }
 
-/** Whether Send asks the agent for suggestions instead of edits. */
 export function readSuggestMode(): boolean {
   return vscode.workspace.getConfiguration("markdownCollab").get<boolean>("proposeEditsAsSuggestions", false);
 }

@@ -41,9 +41,9 @@ interface FileNode {
   /** Missing when the stage query failed; the file still lists and opens. */
   stage?: StageState;
   /**
-   * Review threads still embedded in the working-tree copy of this file
-   * (10x-plan-6 P5.1). Zero/absent when the file carries none, or when it
-   * couldn't be read — either way it renders the same as "nothing to flag".
+   * Review threads still embedded in the working-tree copy of this file.
+   * Zero/absent when the file carries none, or when it couldn't be read —
+   * either way it renders the same as "nothing to flag".
    */
   threadCount?: number;
 }
@@ -60,7 +60,7 @@ export class UncommittedChangesController implements vscode.Disposable {
   /** Serializes refreshes; a refresh requested mid-refresh runs once more after. */
   private refreshing: Promise<void> | null = null;
   private refreshQueued = false;
-  /** One stage-time reminder per file per session (10x-plan-6 P5.1). */
+  /** One stage-time reminder per file per session. */
   private readonly threadReminders = new SessionThreadReminderGate();
 
   constructor(
@@ -68,11 +68,9 @@ export class UncommittedChangesController implements vscode.Disposable {
     private readonly openFile: (uri: vscode.Uri, opts: { showDiff: boolean }) => Promise<void>,
     private readonly log: Logger,
     /**
-     * Open a file in the live editor with the diff overlay (10x-plan-6 P4
-     * phase B), whatever `markdownCollab.classicReviewView` says. Optional so
-     * every existing caller (and every existing test) is unaffected; when
-     * absent, `openInLiveEditor` below silently does nothing rather than
-     * throw.
+     * Open a file in the live editor with the diff overlay, whatever
+     * `markdownCollab.classicReviewView` says. When absent, `openInLiveEditor`
+     * silently does nothing.
      */
     private readonly openLiveFile?: (uri: vscode.Uri) => Promise<void>,
   ) {
@@ -95,8 +93,7 @@ export class UncommittedChangesController implements vscode.Disposable {
       ),
       // The command above goes through the review view's router, which picks
       // the previous view while `markdownCollab.classicReviewView` is on; this
-      // one always opens the live editor (10x-plan-6 P4 phase B). No tree item
-      // or menu uses it — it's for direct invocation.
+      // one always opens the live editor. No tree item or menu uses it.
       vscode.commands.registerCommand(
         "markdownCollab.openUncommittedFileInLiveEditor",
         (file: ChangedFile) => this.openInLiveEditor(file),
@@ -181,9 +178,8 @@ export class UncommittedChangesController implements vscode.Disposable {
   /**
    * Threads still embedded in each file's *working-tree* copy — not HEAD's —
    * since staging is exactly the moment that content is about to be
-   * committed (10x-plan-6 P5.1). Best-effort per file: an unreadable file
-   * counts as carrying none rather than failing the whole refresh, the same
-   * degrade-don't-fail shape as the stage-state query above.
+   * committed. Best-effort per file: an unreadable file counts as carrying
+   * none rather than failing the whole refresh.
    */
   private async readThreadCounts(files: ChangedFile[]): Promise<Map<string, number>> {
     const root = this.repoRoot;
@@ -226,14 +222,7 @@ export class UncommittedChangesController implements vscode.Disposable {
     await this.openFile(vscode.Uri.file(abs), { showDiff: true });
   }
 
-  /**
-   * Open a file in the live editor with the uncommitted-diff overlay, even
-   * while `markdownCollab.classicReviewView` is on (10x-plan-6 P4 phase B).
-   * Next to `open()` above on purpose: same shape, same guard, a fixed
-   * destination. `openLiveFile` is optional (see the constructor), so this
-   * degrades to a no-op rather than throwing where the caller hasn't wired
-   * the live editor in.
-   */
+  /** Open a file in the live editor with the uncommitted-diff overlay, even while `markdownCollab.classicReviewView` is on. */
   private async openInLiveEditor(file: ChangedFile): Promise<void> {
     if (!this.repoRoot || !this.openLiveFile) return;
     const abs = path.join(this.repoRoot, ...file.path.split("/"));
@@ -260,10 +249,9 @@ export class UncommittedChangesController implements vscode.Disposable {
 
   /**
    * One nudge, once per file per session, when staging a file that still
-   * carries review-thread data (10x-plan-6 P5.1). This only ever points at
-   * the existing "Remove All Review Data" command — it never runs it and
-   * never touches the file itself; that command's own confirmation still
-   * applies when the human picks it.
+   * carries review-thread data. This only ever points at the existing
+   * "Remove All Review Data" command — it never runs it and never touches the
+   * file itself; that command's own confirmation still applies.
    */
   private remindAboutThreads(relPath: string, count: number): void {
     if (!this.threadReminders.shouldRemind(relPath)) return;
@@ -329,7 +317,6 @@ class UncommittedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     this.emitter.fire();
   }
 
-  /** Message shown via the view's welcome content when the tree is empty. */
   get emptyMessage(): string {
     switch (this.state.kind) {
       case "no-workspace":
@@ -363,9 +350,8 @@ class UncommittedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     const stage = node.stage ?? "unstaged";
     item.description = stage === "unstaged" ? status : `${status} · ${stage}`;
     let tooltip = `${node.file.path} (${status}, ${stage})`;
-    // A small marker for a file that still carries review-thread data
-    // (10x-plan-6 P5.1) — the stage-time reminder's lead-in, not a warning:
-    // nothing here is wrong, it's just what "Remove All Review Data" is for.
+    // A small marker, not a warning: nothing here is wrong, it's just what
+    // "Remove All Review Data" is for.
     if (node.threadCount) {
       const label = node.threadCount === 1 ? "1 thread" : `${node.threadCount} threads`;
       item.description += ` · ${label}`;

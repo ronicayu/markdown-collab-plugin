@@ -1,12 +1,11 @@
-// PlantUML fences (```plantuml / ```puml) as a rendered-image widget —
-// the live editor's counterpart to the review view's `src/plantumlPlugin.ts`.
+// PlantUML fences (```plantuml / ```puml) as a rendered-image widget — the
+// live editor's counterpart to the review view's `src/plantumlPlugin.ts`.
 //
 // Reuses that same module's `renderPlantumlFence` so both surfaces hit the
 // same server URL, hex encoding and format setting
 // (`markdownCollab.plantuml.serverUrl` / `.format`, passed down from the host
 // on `init` — see `setPlantumlConfig`). The fence's raw source is hidden once
-// the widget is showing, matching the review view (a plain `<figure><img>`,
-// no visible fence) rather than the "both show" bug this closes.
+// the widget is showing, matching the review view.
 
 import { Plugin, PluginKey } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
@@ -34,9 +33,9 @@ export const PLANTUML_SOURCE_HIDDEN_CLASS = "mdc-plantuml-source-hidden";
 
 const plantumlPluginKey = new PluginKey("mdc-plantuml");
 
-/** How long a fence's source must sit unchanged before its image re-fetches
- * (security review — every keystroke was sending that draft to the
- * configured PlantUML server, plantuml.com by default). */
+/** How long a fence's source must sit unchanged before its image re-fetches;
+ * otherwise every keystroke sends that draft to the configured PlantUML server
+ * (plantuml.com by default). */
 const DEBOUNCE_MS = 1000;
 
 function isPlantumlLang(lang: string | undefined): boolean {
@@ -71,17 +70,12 @@ interface FenceState {
 const fenceState = new Map<number, FenceState>();
 
 /** The view currently hosting this plugin, so a debounce timer that fires
- * later can ask it to repaint — set by the plugin's `view()` constructor,
- * mirroring client.ts's `refreshMermaidDecorations` for the same reason
- * (mermaid's render is async; here it's the debounce timer that resolves
- * after the fact instead of synchronously inside a transaction). */
+ * later can ask it to repaint — set by the plugin's `view()` constructor. */
 let activeView: EditorView | null = null;
 
-/** Cheap content identity for the decoration key. Keying on `src.length`
- * (the pre-fix behavior) missed same-length edits and fetched on every
- * length-changing keystroke; a hash of the actual (debounced) content is
- * both more correct and, since it only ever changes when `committedSrc`
- * does, exactly as stable as that source is. */
+/** Cheap content identity for the decoration key: a hash of the (debounced)
+ * content rather than `src.length`, which misses same-length edits. It only
+ * changes when `committedSrc` does. */
 function hashSrc(src: string): string {
   let h = 0;
   for (let i = 0; i < src.length; i++) h = (Math.imul(h, 31) + src.charCodeAt(i)) | 0;

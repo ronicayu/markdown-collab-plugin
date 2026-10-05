@@ -1,10 +1,5 @@
-// The comment sidebar (10x-plan-6 P4, sidebar parity).
-//
-// Everything the review view's threads pane does — the filter segments, the
-// Send / suggest-mode / "…" toolbar, the unread banner, thread cards with
-// Reply / Resolve / a "…" menu, n/p/r/e/o, the empty state — written against
-// `SidebarState` instead of the review view's own DOM and message plumbing, so
-// the live editor shows the same sidebar when it becomes the only view.
+// The comment sidebar, shared with the live editor and written against
+// `SidebarState` instead of the review view's own DOM and message plumbing.
 //
 // Copied from src/inlineComments/webview/client.ts, which keeps its own copy
 // until the review view is removed. The ids and class names are the same on
@@ -189,24 +184,19 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   };
   const persist = (patch: Record<string, unknown>): void => host.setState({ ...saved(), ...patch });
 
-  // --- "…" overflow menus ----------------------------------------------------
   // One trigger/panel pair at a time is open — the toolbar's or a single
   // thread card's — via the shared controller (webviewShared/menu.ts), which
-  // also the PR review sidebar uses, so the two can never drift apart.
+  // the PR review sidebar also uses, so the two can never drift apart.
   const menu = createMenuController();
 
   dom.overflowMenuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     menu.toggleMenuAt(dom.overflowMenuBtn, dom.overflowMenu);
   });
-  // Bottom-anchored (opens upward) but the same trigger/panel pair and the
-  // same one-open-at-a-time tracking as the "…" menu above.
   dom.sendOptionsBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     menu.toggleMenuAt(dom.sendOptionsBtn, dom.sendOptionsMenu);
   });
-
-  // --- State -------------------------------------------------------------------
 
   let currentState: SidebarState | null = null;
   let filter: ThreadFilter = ((): ThreadFilter => {
@@ -221,9 +211,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   let agentName: string | undefined;
   /** First click on "Accept all" arms it; the second applies. */
   let acceptAllArmed = false;
-  // How many thread cards the list is currently allowed to build. Grows by a
-  // chunk each time the user clicks "Show more"; resets when the filter changes,
-  // since that is a new list.
   let renderedThreadLimit = THREAD_RENDER_CHUNK;
   let editingCommentId: string | null = null; // composite "threadId:commentId" when editing
   let highlightedThreadId: string | null = null;
@@ -234,11 +221,11 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   let stepChanges: ((delta: 1 | -1) => void) | null = null;
 
   // Manual collapse/expand overrides, keyed by `collapseKey` (thread or
-  // suggestion id, namespaced by kind) — round-8 P1. A card with no entry
-  // here falls back to its default (`initialCollapsed`): resolved threads
-  // start collapsed, everything else starts expanded. Persisted so a manual
-  // toggle wins for the rest of the session, across both a host `update` and
-  // a Reading/Editing re-init.
+  // suggestion id, namespaced by kind). A card with no entry here falls back to
+  // its default (`initialCollapsed`): resolved threads start collapsed,
+  // everything else starts expanded. Persisted so a manual toggle wins for the
+  // rest of the session, across both a host `update` and a Reading/Editing
+  // re-init.
   const manualCollapse = new Map<string, boolean>(collapseOverridesOf(saved().collapseOverrides));
   const saveManualCollapse = (): void => persist({ collapseOverrides: Array.from(manualCollapse.entries()) });
   const isCollapsedCard = (card: CollapsibleCard): boolean => initialCollapsed(card, manualCollapse);
@@ -278,8 +265,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   })();
   const savePendingReviewSnapshot = (): void =>
     persist({ pendingReviewIds: pendingReviewSnapshot ? Array.from(pendingReviewSnapshot) : null });
-
-  // --- Toolbar -------------------------------------------------------------------
 
   dom.sendToClaude.addEventListener("click", () => host.post({ type: "send-to-claude" }));
   // An open menu closes on this click like on any other outside click (the
@@ -324,10 +309,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     if (nextId) focusThread(nextId);
   });
 
-  // `#edit-mode-toggle` itself lives in the document toolbar now (client.ts) —
-  // the sidebar no longer builds or repaints it. `state.readOnly` still
-  // arrives on every `render()` (SidebarState is unchanged), simply unused
-  // here.
   function updateSwitches(state: SidebarState): void {
     dom.suggestModeToggle.setAttribute("aria-checked", String(state.suggestMode));
     // With the menu closed the only trace of suggest mode is the Send label
@@ -376,8 +357,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     dom.skillInstall.textContent = status === "missing" ? "Install skill" : "Update skill";
   }
 
-  // --- Filters -------------------------------------------------------------------
-
   /**
    * The segmented look is driven off which radio is `:checked`, but a couple of
    * call sites set `.checked` directly (not through a click, which fires
@@ -394,7 +373,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     filter = next;
     persist({ threadFilter: filter });
     updateFilterSegments();
-    // A different filter is a different list — start its render budget over.
     renderedThreadLimit = THREAD_RENDER_CHUNK;
     if (currentState) renderThreads(currentState);
   }
@@ -402,7 +380,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   dom.filterRadios.forEach((r) => r.addEventListener("change", () => setFilter(r.value as ThreadFilter)));
   updateFilterSegments();
 
-  // --- Keyboard hint -------------------------------------------------------------
   // Shown until n/p/r/e/o is first used, then hidden; "?" brings it back (and
   // hides it again) — a manual override on top of the first-use dismissal.
   let hintDismissed = saved().hintDismissed === true;
@@ -430,14 +407,12 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     applyHintVisibility();
     menu.closeOpenMenu(false);
   });
-  // The inline "×" on the hint itself: same dismissal, no menu to close.
   dom.keysHintDismiss.addEventListener("click", () => {
     hintDismissed = true;
     persist({ hintDismissed });
     applyHintVisibility();
   });
 
-  /** The hint names what n/p will actually do: step changes while stripes show, walk threads otherwise. */
   function updateKeysHint(): void {
     const target = stepChanges ? "changes" : "threads";
     dom.keysHintText.textContent = `n / p to move between ${target} · r reply · e resolve · o open in editor`;
@@ -468,8 +443,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     dismissHintOnFirstUse();
   });
 
-  // --- Thread navigation ---------------------------------------------------------
-
   /**
    * Move the "current card" state (`.highlighted` + roving `tabindex`) to `id`
    * without re-rendering, so an in-progress reply elsewhere survives.
@@ -485,7 +458,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   const cardFor = (id: string): HTMLElement | null =>
     dom.threadsList.querySelector<HTMLElement>(`.thread-card[data-thread="${cssEscape(id)}"]`);
 
-  /** Show the document position of a thread — only anchored threads have one. */
   function revealThreadInDocument(t: SidebarThread): void {
     if (t.anchor) host.revealInDocument(t.id);
   }
@@ -517,7 +489,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     if (targetIndex >= renderedThreadLimit) {
       renderedThreadLimit = Math.ceil((targetIndex + 1) / THREAD_RENDER_CHUNK) * THREAD_RENDER_CHUNK;
       renderThreads(currentState);
-      // Defer one frame so the freshly-rendered card is in the DOM.
       requestAnimationFrame(revealAndScroll);
     } else {
       revealAndScroll();
@@ -530,7 +501,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     if (nextId) focusThread(nextId);
   }
 
-  /** Focus the highlighted thread's reply box, expanding a collapsed card first. */
   function focusReplyOnHighlighted(): void {
     if (!highlightedThreadId) return;
     const thread = currentState?.threads.find((t) => t.id === highlightedThreadId);
@@ -557,10 +527,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     focusThread(fresh[0].id);
   }
 
-  // --- Collapse --------------------------------------------------------------------
-  // `setCardCollapsed`, `isCollapsedCard`, and `collapsibleCards` are defined
-  // with the other persisted state above, next to `manualCollapse` itself.
-
   function updateCollapseAllLabel(): void {
     const cards = currentState ? collapsibleCards(currentState) : [];
     const allCollapsed = cards.length > 0 && cards.every(isCollapsedCard);
@@ -568,7 +534,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     dom.collapseAll.disabled = cards.length === 0;
   }
 
-  // --- Reply composers ---------------------------------------------------------------
   // In-progress reply text by thread id, kept across re-renders (every external
   // update rebuilds the list), plus which reply box had focus so it gets it back.
   const pendingReplyText = new Map<string, string>();
@@ -604,8 +569,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
       if (document.activeElement === ta) focusedReplyThreadId = id;
     }
   }
-
-  // --- Rendering -----------------------------------------------------------------------
 
   function render(state: SidebarState): void {
     currentState = state;
@@ -826,9 +789,9 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
       quote.appendChild(badge);
     }
     if (t.status === "resolved") {
-      // Shown regardless of collapse state, the same as broken/stale above —
-      // it's the one status badge that matters once "All" mixes open and
-      // resolved threads and a resolved one is folded to just this line.
+      // Shown regardless of collapse state: it's the one status badge that
+      // matters once "All" mixes open and resolved threads and a resolved one is
+      // folded to just this line.
       const badge = document.createElement("span");
       badge.className = "badge resolved";
       badge.textContent = "resolved";
@@ -856,12 +819,11 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
       },
     });
     headRow.appendChild(chevron);
-    // While collapsed, clicking anywhere in the header expands it — a bigger
-    // target than the chevron alone, since the header is effectively the
-    // whole card at that point. Expanded, a click here is left to bubble to
-    // the card's own click handler above (highlight + reveal in the
-    // document) instead: collapsing a card the human is reading out from
-    // under a stray click on its quote would be a bad surprise.
+    // While collapsed, a click anywhere in the header expands it (the header is
+    // effectively the whole card). Expanded, the click bubbles to the card's own
+    // handler above (highlight + reveal in the document): collapsing a card the
+    // human is reading out from under a stray click on its quote would be a bad
+    // surprise.
     headRow.addEventListener("click", (e) => {
       if (!card.classList.contains("collapsed")) return;
       e.stopPropagation();
@@ -869,8 +831,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     });
     head.appendChild(headRow);
 
-    // Visible per-card actions are Reply, Resolve/Reopen and Send; every other
-    // per-thread action lives in the "…" menu.
     const actions = document.createElement("div");
     actions.className = "thread-actions";
 

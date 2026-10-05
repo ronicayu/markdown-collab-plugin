@@ -1,4 +1,4 @@
-// The comment sidebar's wire contract (10x-plan-6 P4, sidebar parity).
+// The comment sidebar's wire contract.
 //
 // The live editor's sidebar (`threadSidebar.ts`) renders from `SidebarState`
 // and posts `SidebarMessage`s; the host half (`collab/sidebarHost.ts`) builds
@@ -42,7 +42,6 @@ export interface SidebarThread {
   stale?: boolean;
 }
 
-/** A pending suggestion, as its card needs it. */
 export interface SidebarSuggestion {
   anchorId: string;
   author: string;

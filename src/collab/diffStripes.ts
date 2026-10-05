@@ -1,40 +1,25 @@
-// Range→node mapping for the live editor's uncommitted-diff overlay
-// (10x-plan-6 P4 phase B, docs/one-view-design.md). Pure and DOM-free —
-// like `sourcePositions.ts` next to it — so it unit-tests directly and so
-// `src/webview/plugins/diffStripesPlugin.ts` (the Milkdown/DOM glue) can stay
-// thin. Reuses the exact `mcSrc` source positions phase A already stamps onto
-// paragraph, heading, table_cell and table_header nodes
-// (`sourcePositions.ts`, `src/webview/sourcePositionPlugin.ts`) instead of a
+// Range->node mapping for the live editor's uncommitted-diff overlay. DOM-free,
+// so it unit-tests directly and `src/webview/plugins/diffStripesPlugin.ts` (the
+// Milkdown/DOM glue) stays thin. Reuses the `mcSrc` source positions stamped
+// onto paragraph, heading, table_cell and table_header nodes instead of a
 // second locate-by-text pass.
 //
-// Two mapping problems, both mirroring the review view's DOM-side algorithm
-// (src/inlineComments/webview/client.ts, paintDiffStripes/paintDiffDeletions)
-// but over ProseMirror nodes instead of rendered `[data-mc-src]` spans, and
-// at different granularities because the review view's is too:
+// Two mappings, at different granularities (mirroring the review view's
+// DOM-side algorithm in src/inlineComments/webview/client.ts):
 //
-//   - STRIPES (`stripedBlockRanges`): mark every block whose own prose lines
-//     the diff touched. A paragraph or heading node IS the block — its own
-//     `mcSrc` is both the range to test and the position to decorate. A
-//     table_cell/table_header is finer than the review view's stripe unit:
-//     a changed cell stripes its whole ROW, matching the review view's
-//     `nearestDiffBlock` walk, which stops at the `<tr>` because `<td>`/`<th>`
-//     aren't in its block-tag set. A paragraph nested in a blockquote or list
-//     item stripes itself, not its container — same reason: `<p>` is always
-//     the nearer ancestor.
-//   - REMOVED WIDGETS (`removedWidgetPosition`): one per `RemovedRun`,
-//     inserted after the TOP-LEVEL block that contains (or last precedes)
-//     the prose line it's anchored to — coarser than stripes, matching the
-//     review view's `topLevelBlock` (a table's removed-text widget goes
-//     after the whole table, not a row).
+//   - stripes (`stripedBlockRanges`): every block whose own prose lines the
+//     diff touched. A paragraph or heading is the block; a changed table cell
+//     stripes its whole row; a paragraph nested in a blockquote or list item
+//     stripes itself, not its container.
+//   - removed widgets (`removedWidgetPosition`): one per `RemovedRun`, after
+//     the top-level block that contains (or last precedes) the prose line it's
+//     anchored to — a table's widget goes after the whole table, not a row.
 //
-// A block whose `mcSrc` is null (source position missing — the
-// one-view-design.md "block failing verification" case, or a leaf mdast node
-// whose position was never set) contributes nothing to either pass: it can't
-// be tested for overlap and can't anchor a widget, so it's silently skipped
-// rather than guessed at — same rule the source-position highlight plugin
-// already follows. A table row where every cell is like this gets no stripe
-// even if the diff touched its prose lines, and a document with no mapped
-// block at all pushes every removed-run widget to the top.
+// A block whose `mcSrc` is null contributes nothing to either pass: it can't be
+// tested for overlap or anchor a widget, so it's skipped rather than guessed
+// at. A table row where every cell is like this gets no stripe even if the diff
+// touched its prose lines, and a document with no mapped block at all pushes
+// every removed-run widget to the top.
 
 import { SOURCE_ATTR, type BlockSource } from "./sourcePositions";
 
@@ -51,12 +36,9 @@ export interface DiffRemovedRun {
 }
 
 /**
- * Uncommitted-vs-HEAD overlay. Mirrors the host's `DiffState`
- * (src/inlineComments/inlineCommentsPanel.ts) field-for-field — the webview
- * bundle can't import that vscode-touching module, so this is the webview's
- * own copy of the same wire shape, the way the review view's client.ts keeps
- * its own `DiffState`/`DiffLineRange`/`DiffRemovedRun` too. Not a second
- * shape: the host sends exactly this.
+ * Uncommitted-vs-HEAD overlay. The webview bundle can't import the host's
+ * vscode-touching `DiffState` (src/inlineComments/inlineCommentsPanel.ts), so
+ * this is its own copy of the same wire shape.
  */
 export interface DiffState {
   addedRanges: DiffLineRange[];
@@ -65,10 +47,8 @@ export interface DiffState {
 }
 
 /**
- * The slice of a ProseMirror node this module reads. A real `Node` is cast
- * to it at the call site (`doc as unknown as DiffPmNode`) — same idiom as
- * `sourcePositions.ts`'s `PmNodeLike` — narrow enough that a unit test can
- * build plain objects instead of a real Milkdown schema.
+ * The slice of a ProseMirror node this module reads, narrow enough that a unit
+ * test can build plain objects instead of a real Milkdown schema.
  */
 export interface DiffPmNode {
   type: { name: string };
@@ -93,7 +73,7 @@ function lineStartsOf(prose: string): number[] {
   return starts;
 }
 
-/** 1-based prose line containing `offset`, via a sorted line-start table — same approach the review view's `paintDiffStripes` uses. */
+/** 1-based prose line containing `offset`, via a sorted line-start table. */
 function lineFor(lineStarts: number[], offset: number): number {
   let lo = 0;
   let hi = lineStarts.length - 1;
@@ -161,7 +141,7 @@ export function stripedBlockRanges(
     }
     // Any other container (the doc itself, blockquote, list, list item, …):
     // recurse to find nested paragraphs/headings/tables. Their own position
-    // is what gets striped, not this container's — see the file header.
+    // is what gets striped, not this container's.
     let childPos = pos + 1;
     node.forEach((child) => {
       visit(child, childPos);
@@ -184,9 +164,8 @@ interface SourceSpan {
 /**
  * Every mcSrc-bearing node in the document, tagged with the top-level block
  * it lives under (itself, if it is one) and sorted by source position. Used
- * only to anchor removed-text widgets, which — like the review view's
- * `topLevelBlock` — only care about the top-level block, never a row or a
- * list item.
+ * only to anchor removed-text widgets, which only care about the top-level
+ * block, never a row or a list item.
  */
 function collectSourceSpans(doc: DiffPmNode): SourceSpan[] {
   const spans: SourceSpan[] = [];
@@ -211,7 +190,7 @@ function collectSourceSpans(doc: DiffPmNode): SourceSpan[] {
  * Where to insert the widget for a `RemovedRun` anchored after prose line
  * `afterLine`: right after the top-level block containing (or last
  * preceding) that line, or the very start of the document when nothing
- * precedes it — mirroring the review view's `paintDiffDeletions` anchoring.
+ * precedes it.
  */
 export function removedWidgetPosition(doc: DiffPmNode, prose: string, afterLine: number): number {
   if (afterLine === 0) return 0;

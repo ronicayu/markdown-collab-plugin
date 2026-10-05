@@ -85,7 +85,7 @@ test.describe("inline comments view", () => {
 });
 
 test.describe("live editor", () => {
-  // The same sidebar as the review view now (10x-plan-6 P4): the button lives
+  // The same sidebar as the review view now: the button lives
   // in the "…" menu and posts the review view's message. Updates re-render the
   // list, and the button has to follow them — the old live sidebar once kept a
   // stale "Remove N resolved" after the removal had already happened.

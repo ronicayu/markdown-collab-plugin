@@ -1,4 +1,4 @@
-// Tests for the `mdc` CLI (10x-plan P0.1).
+// Tests for the `mdc` CLI.
 //
 // Two layers:
 //   1. Staleness — the committed src/skillCli/generated.ts must match a fresh
@@ -440,7 +440,7 @@ describe("mdc CLI: check and repair", () => {
   });
 });
 
-// 10x-plan-4 P2.2 integrating-session note: `mc_check` has always stamped a
+// Integrating-session note: `mc_check` has always stamped a
 // review checkpoint on a healthy document; `mdc check` (no `--repair`) didn't,
 // even though the README's "changes since last pass" section always claimed
 // either front end does it. `opCheckAndCheckpoint` (docOps.ts) is now the one
@@ -534,7 +534,7 @@ describe("mdc CLI: check --hook", () => {
   });
 });
 
-// ux-review-2026-09 0.1: `--occurrence banana` became NaN, NaN slipped past
+// `--occurrence banana` became NaN, NaN slipped past
 // every range check, and the file got an empty thread at byte 0 that `check`
 // then called clean.
 describe("mdc CLI: --occurrence is validated", () => {
@@ -590,7 +590,7 @@ describe("mdc CLI: --occurrence is validated", () => {
   });
 });
 
-// ux-review-2026-09 0.5: a value starting with `--` used to be read as the
+// A value starting with `--` used to be read as the
 // next flag, and the error blamed a missing --body.
 describe("mdc CLI: flag values are taken as given", () => {
   it("--body may start with dashes", () => {
@@ -624,7 +624,7 @@ describe("mdc CLI: flag values are taken as given", () => {
   });
 });
 
-// ux-review-2026-09 0.7: failures used to be prose on stderr only, while the
+// Failures used to be prose on stderr only, while the
 // help promised JSON on stdout.
 describe("mdc CLI: failures print JSON too", () => {
   function failure(r: RunResult): { ok: boolean; code: string; message: string } {
@@ -684,7 +684,6 @@ describe("mdc CLI: --help anywhere", () => {
   });
 });
 
-// ux-review-2026-09 0.6.
 describe("mdc CLI: reply reopens a resolved thread", () => {
   it("reports reopened: true and leaves the thread open", () => {
     const doc = writeDoc("a.md", DOC);
@@ -698,7 +697,7 @@ describe("mdc CLI: reply reopens a resolved thread", () => {
   });
 });
 
-// 10x-plan-6 P1.4: a write `mdc` makes to the file itself says so.
+// A write `mdc` makes to the file itself says so.
 describe("mdc CLI: a direct write records via: cli", () => {
   it("open, reply and suggest stamp it, and list reports it", () => {
     const doc = writeDoc("a.md", DOC);
@@ -716,7 +715,7 @@ describe("mdc CLI: a direct write records via: cli", () => {
   });
 });
 
-// --- forwarding to the extension (ux-review-2026-09 0.2) -------------------
+// --- forwarding to the extension -------------------
 
 /** `run`, but asynchronous — a server in this process has to be able to answer. */
 function runAsync(args: string[], env: NodeJS.ProcessEnv, cwd?: string): Promise<RunResult> {
@@ -1036,7 +1035,7 @@ describe("mdc CLI: writes go through the running extension", () => {
       const thread = parse(fs.readFileSync(doc, "utf8")).threads[0]!;
       expect(thread.status).toBe("open");
       expect(thread.comments.at(-1)).toMatchObject({ author: "codex", agent: true, body: "answered" });
-      // 10x-plan-6 P1.4: the forwarded reply landed through the server, so it
+      // The forwarded reply landed through the server, so it
       // says "tools" — beside the thread's first comment, written directly.
       expect(thread.comments.map((c) => c.via)).toEqual(["cli", "tools"]);
     } finally {

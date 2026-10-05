@@ -1,4 +1,4 @@
-// Finding and identifying `claude` (10x-plan-4 P0.1). The search order is the
+// Finding and identifying `claude`. The search order is the
 // product decision here — an explicit setting beats PATH, and PATH beats the
 // installer locations VS Code's own PATH often lacks — so it is tested against
 // an injected machine rather than whatever this one has installed.

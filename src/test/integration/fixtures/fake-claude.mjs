@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// A stand-in `claude` binary for the headless-run tests (10x-plan-4 P0.1).
+// A stand-in `claude` binary for the headless-run tests.
 //
 // It behaves like `claude -p --output-format stream-json` closely enough for
 // the extension not to know the difference: it reads the prompt from stdin,
@@ -93,7 +93,7 @@ if (process.env.FAKE_CLAUDE_TRACE) {
 
 let rpcId = 0;
 // The streamable-HTTP transport issues an `Mcp-Session-Id` on `initialize`
-// (10x-plan-4 P1.2) and a compliant client echoes it on every request after —
+// and a compliant client echoes it on every request after —
 // that's how the real Claude Code CLI's author slug reaches the document
 // (`initialize`'s `clientInfo.name` → the session → every `tools/call`). This
 // stub models that faithfully rather than being a special case the extension

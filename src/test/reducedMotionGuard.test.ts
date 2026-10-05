@@ -1,4 +1,4 @@
-// Guard for 10x-plan-4 P2.4's reduced-motion pass: every `scrollIntoView`
+// Guard for the reduced-motion pass: every `scrollIntoView`
 // call across the three review surfaces must respect
 // `prefers-reduced-motion`, which only happens if it goes through the shared
 // `smoothScrollIntoView` helper. A literal `behavior: "smooth"` anywhere else

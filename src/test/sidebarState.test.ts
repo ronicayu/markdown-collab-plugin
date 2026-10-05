@@ -3,7 +3,7 @@ import { addThread, appendReply, parse, replaceThread } from "../inlineComments/
 import { serialize } from "../inlineComments/serializeState";
 import { mostRecentAgentName, sidebarDocumentFields, skillBannerStatus } from "../collab/sidebarState";
 
-// 10x-plan-6 P4: the live editor's sidebar renders from the same thread list
+// The live editor's sidebar renders from the same thread list
 // the review view's panel serializes, plus the agent name for its toolbar.
 describe("sidebarDocumentFields", () => {
   const DOC = "# Doc\n\nAlpha sentence.\n\nBeta sentence.\n";

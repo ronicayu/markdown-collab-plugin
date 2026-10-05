@@ -1,63 +1,32 @@
-// Source positions for the live editor's read-only mode (10x-plan-6 P4, phase
-// A; design in docs/one-view-design.md).
+// Source positions for the live editor's read-only mode. Every visible character
+// of a text block knows the exact source bytes it came from, so a highlight is
+// "the characters whose bytes lie inside the anchor" and a new comment is "the
+// bytes under the selected characters". Nothing is searched.
 //
-// The live editor used to place a comment highlight by searching the rendered
-// text for the quote and counting occurrences — and it counted occurrences in
-// the Markdown source, where image alt text and link targets also contain
-// words. That put 12 of the spike's 164 probe highlights on the wrong
-// occurrence. This module replaces the search with a map: every visible
-// character of a text block knows the exact source bytes it came from, so a
-// highlight is "the characters whose bytes lie inside the anchor" and a new
-// comment is "the bytes under the selected characters". Nothing is searched.
-//
-// Three pieces, all pure so they can be tested without a browser:
-//
-//   - `annotateSourceRuns`: an mdast transform that runs inside the parser,
-//     before anything rewrites text nodes, and records each text container's
-//     text runs (`text` and `inlineCode` leaves) with their source offsets;
-//   - `alignRun`: maps each visible character of one run to its source span,
-//     understanding escapes, character references, code-span fences, and the
-//     line prefixes a paragraph's continuation lines carry;
-//   - `buildSourceIndex` and the two lookups, which walk a ProseMirror-like
-//     document whose text containers carry the annotation as an attr.
-//
-// Offsets are into the string the editor parsed (the live editor's "prose":
-// the file with frontmatter, markers and the threads region removed). The
-// host translates prose ↔ file offsets; this module never sees the file.
-//
-// Edit mode (phase B) adds a fourth piece at the end: `markdownBlocks`, the
-// host's table of top-level blocks that a keystroke's write is confined to.
+// Offsets are into the string the editor parsed (the file with frontmatter,
+// markers and the threads region removed). The host translates prose <-> file
+// offsets; this module never sees the file.
 
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown } from "mdast-util-gfm";
 import { gfm } from "micromark-extension-gfm";
 
-/** A run's kind: ordinary text, or the content of an inline code span. */
 export type RunKind = 0 | 1;
 
-/**
- * One text-producing leaf of a block: its source range, how many characters
- * it contributes to the editor's text, and its kind.
- */
 export type SourceRun = [start: number, end: number, visibleLength: number, kind: RunKind];
 
-/** What a text container carries: its own source range and its runs (null: unmappable). */
 export interface BlockSource {
   start: number;
   end: number;
   runs: SourceRun[] | null;
 }
 
-/** The mdast `data` key and ProseMirror attr name the annotation travels under. */
 export const SOURCE_ATTR = "mcSrc";
-
-// --- mdast side --------------------------------------------------------------
 
 interface MdPoint {
   offset?: number;
 }
 
-/** The slice of an mdast node this module reads — no dependency on `mdast` types. */
 export interface MdNode {
   type: string;
   value?: unknown;
@@ -77,7 +46,6 @@ const TEXT_CONTAINERS = new Set(["paragraph", "heading", "tableCell"]);
 // block's text and the block is (correctly, but needlessly) left unmapped.
 const LINE_BREAK = /[\t ]*(?:\r?\n|\r)/g;
 
-/** The characters a text or code leaf contributes to the editor's text. */
 export function visibleTextOf(value: string, kind: RunKind): string {
   return kind === 1 ? value : value.replace(LINE_BREAK, "");
 }
@@ -130,8 +98,6 @@ function stamp(node: MdNode): void {
   const src: BlockSource = { start, end, runs: complete ? runs : null };
   node.data = { ...(node.data ?? {}), [SOURCE_ATTR]: src };
 }
-
-// --- aligning one run --------------------------------------------------------
 
 /** Decode a named character reference (`amp` → `&`); undefined when it isn't one. */
 export type DecodeNamed = (name: string) => string | undefined;
@@ -233,7 +199,6 @@ function alignText(
               ? decodeNumeric(m[1], 10)
               : decodeNumeric(m[2]!, 16);
         if (decoded && vis.startsWith(decoded, i)) {
-          // Every character the reference decodes to spans the whole reference.
           for (let k = 0; k < decoded.length; k++) {
             starts[at + i + k] = j;
             ends[at + i + k] = j + m[0].length;
@@ -270,7 +235,6 @@ function alignCode(
   ends: Int32Array,
   at: number,
 ): boolean {
-  // The fences: the opening backtick run and the matching closing one.
   let cs = s;
   while (cs < e && md.charCodeAt(cs) === BACKTICK) cs++;
   const fence = cs - s;
@@ -315,8 +279,6 @@ function alignCode(
   return j === ce;
 }
 
-// --- the document index ------------------------------------------------------
-
 /** The slice of a ProseMirror node the index reads (so tests can pass plain objects). */
 export interface PmNodeLike {
   isText: boolean;
@@ -327,20 +289,16 @@ export interface PmNodeLike {
   descendants: (cb: (node: PmNodeLike, pos: number, parent: PmNodeLike | null) => boolean | void) => void;
 }
 
-/** One text container: its characters' editor positions and source spans. */
 interface IndexedBlock {
-  /** Source range of the whole container (prose offsets). */
   start: number;
   end: number;
   /** Every run aligned and the lengths agreed — only then are spans trusted. */
   mapped: boolean;
   text: string;
-  /** Editor position of each character. */
   pos: Int32Array;
   /** Source span of each character; -1 when the block is unmapped. */
   srcStart: Int32Array;
   srcEnd: Int32Array;
-  /** 1 where the character is inline code. */
   code: Uint8Array;
 }
 
@@ -358,7 +316,6 @@ export interface SourceIndex {
   foreign: ForeignText[];
 }
 
-/** Index every text container of `doc` against `markdown`, the string it was parsed from. */
 export function buildSourceIndex(doc: PmNodeLike, markdown: string, decodeNamed: DecodeNamed): SourceIndex {
   const blocks: IndexedBlock[] = [];
   const foreign: ForeignText[] = [];
@@ -515,18 +472,13 @@ export function editorSelectionToSource(index: SourceIndex, from: number, to: nu
   return { ok: true, start: first.srcStart, end: last.srcEnd, text };
 }
 
-// --- top-level blocks (edit mode) --------------------------------------------
-//
-// Edit mode writes back one top-level block at a time (docs/one-view-design.md,
-// "Phase B"). The webview names blocks by their index among the editor's
-// top-level nodes; the host finds their bytes in this table. The index only
+// Edit mode writes back one top-level block at a time. The webview names
+// blocks by their index among the editor's top-level nodes; the host finds their bytes in this table. The index only
 // means the same thing on both sides because the table is built with the
 // parser milkdown runs and lists exactly the root children milkdown turns into
 // top-level nodes — `editorTypeOf` is that correspondence.
 
-/** One top-level block of the prose, as the editor sees it. */
 export interface MarkdownBlock {
-  /** Source range (prose offsets), from mdast. */
   start: number;
   end: number;
   /** The top-level ProseMirror node milkdown makes of it (`paragraph`, `bullet_list`, …). */
@@ -599,14 +551,11 @@ export function editorBlockCount(blocks: readonly MarkdownBlock[]): number {
   return count;
 }
 
-/** One replacement in `spliceMarkdownBlocks`: blocks `[from, to)` became `types`. */
 export interface BlockSplice {
   from: number;
   to: number;
-  /** The replaced prose range, in the old prose. */
   start: number;
   end: number;
-  /** Length of the text that replaced it. */
   length: number;
   types: readonly string[];
 }
@@ -667,8 +616,6 @@ export function spliceMarkdownBlocks(
   return out;
 }
 
-// --- edit mode: a selection, named for the host -------------------------------
-//
 // Edit mode's document can't carry source positions (a split or join copies a
 // block's attrs onto both halves), and after an edit the file's bytes for that
 // block are the serializer's, not what the editor first parsed. So a comment's
@@ -678,17 +625,13 @@ export function spliceMarkdownBlocks(
 // read-only mode uses. The container's text travels with it: if the file's
 // bytes there don't explain it, the file changed, and the comment is refused.
 
-/** One character of the editor's document, named so the host can find it in the file. */
 export interface EditorPoint {
-  /** Index among the top-level blocks (`markdownBlocks`, `markdownBlockNodes`). */
   block: number;
   /** That block's node type, checked against the file's. */
   type: string;
   /** Index among the block's text containers (paragraph, heading, table cell) that have text, in document order. */
   container: number;
-  /** The character's offset in the container's text. */
   offset: number;
-  /** The container's text in the editor. */
   text: string;
 }
 
@@ -705,7 +648,6 @@ function visibleTextOfNode(node: MdNode): string {
   return out;
 }
 
-/** Named character references, decoded by the parser the editor's own parse uses. */
 function decodeNamedByParser(name: string): string | undefined {
   const reference = `&${name};`;
   const tree = fromMarkdown(reference) as unknown as MdNode;
@@ -749,17 +691,14 @@ export function editorRangeToSource(markdown: string, first: EditorPoint, last: 
   return start >= 0 && end > start ? { start, end } : null;
 }
 
-/** An edit-mode selection's first and last characters, or why it can't be named. */
 export type EditorSelection =
   | { ok: true; first: EditorPoint; last: EditorPoint; text: string }
   | { ok: false; reason: "empty" | "code" | "unmapped" };
 
-/** A ProseMirror node as `editorSelectionPoints` walks it (so tests can pass plain objects). */
 export interface PmBlockLike extends PmNodeLike {
   marks?: ReadonlyArray<{ type: { name: string } }>;
 }
 
-// The editor's text containers — the nodes milkdown makes of mdast's.
 const PM_TEXT_CONTAINERS = new Set(["paragraph", "heading", "table_cell", "table_header"]);
 
 /**

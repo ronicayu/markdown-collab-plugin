@@ -1,5 +1,4 @@
-// The fallback for any MCP-capable agent we haven't verified against —
-// 10x-plan-4 P1.1.
+// The fallback for any MCP-capable agent we haven't verified against.
 //
 // Every other writer in this folder puts something on disk that a client
 // reads unattended. This one writes nothing: we don't know how the unnamed

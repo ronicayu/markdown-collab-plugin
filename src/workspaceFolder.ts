@@ -1,10 +1,5 @@
 // The folder a document belongs to, for features that need one.
 //
-// A `.md` opened on its own — `code notes.md`, a file dragged onto the editor,
-// a doc outside every open folder — has no `vscode.WorkspaceFolder`. Several
-// features asked for one and refused outright when it was missing, which is how
-// a loose file ended up unable to take a comment at all.
-//
 // Almost nothing here actually needs a *workspace*; what the callers need is a
 // base directory: somewhere to look for review conventions, somewhere to put
 // the event log, and something to make the document's path relative to. The
@@ -48,7 +43,6 @@ export function setAgentFolder(context: vscode.ExtensionContext, folder: vscode.
   return context.workspaceState.update(AGENT_FOLDER_KEY, folder.uri.toString());
 }
 
-/** True when the document sits outside every open workspace folder. */
 export function isLooseDocument(uri: vscode.Uri): boolean {
   return vscode.workspace.getWorkspaceFolder(uri) === undefined;
 }

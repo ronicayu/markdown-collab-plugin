@@ -1,37 +1,20 @@
-// `mdc` — the CLI Claude uses to mutate inline-comment documents.
+// `mdc` — the CLI Claude uses to mutate inline-comment documents. Bundled (esbuild,
+// ESM, zero deps) into `mdc.mjs` and installed next to the skill. It imports the real
+// format engine and must never grow its own copy of the parser.
 //
-// WHY THIS EXISTS (10x-plan P0.1): the skill used to ask Claude to hand-edit
-// `<!--mc:a:ID-->` markers and `<!--mc:t {JSON}-->` lines with string surgery.
-// A single dropped `-->` orphans a reviewer's comment, and the skill warned
-// about it three separate times — a tell that prose instructions were not
-// enough. Every marker-level mutation now goes through the same engine the
-// extension uses, so the integrity risk stops living in the model's diligence.
-//
-// This file is bundled (esbuild, ESM, zero deps) into `mdc.mjs` and installed
-// next to the skill. It imports the real format engine — it must never grow
-// its own copy of the parser.
-//
-// Since 10x-plan-2 P0.1 the verbs themselves live in `inlineComments/docOps.ts`,
-// shared with the extension-hosted MCP server: this file is argv parsing, file
-// I/O, and exit codes over those ops. Fixing a rule in one front end fixes it in
-// both, which is the point — a CLI that accepted an edit the MCP tools refused
-// would be a second, quieter definition of the format.
-//
-// Since ux-review-2026-09 0.2 the mutating verbs prefer not to do that file
-// I/O at all: when the extension's server address is in the environment (every
-// VS Code terminal has it), the verb is sent there and lands as a WorkspaceEdit
-// — undoable, and ordered against unsaved edits — instead of a raw write. See
-// `forward` for when it falls back.
+// The verbs live in `inlineComments/docOps.ts`, shared with the extension-hosted MCP
+// server, so a fix in one front end fixes both; this file is argv parsing, file I/O,
+// and exit codes. When the extension's server address is in the environment (every
+// VS Code terminal has it), mutating verbs are sent there and land as a WorkspaceEdit
+// (undoable, ordered against unsaved edits) instead of a raw write; see `forward` for
+// when it falls back.
 //
 // Contract with the caller:
 //   - stdout is always a single JSON document, written with writeSync(1) so
 //     it survives a POSIX pipe without buffering loss; a failure is
-//     `{"ok":false,"code":…,"message":…}` on one line (ux-review-2026-09 0.7)
+//     `{"ok":false,"code":…,"message":…}` on one line
 //   - stderr carries the same failure as a human-readable line
 //   - exit 0 = success, 1 = command/usage error, 2 = integrity violation
-//
-// Mutations are validated before the write, and refuse to leave the file worse
-// than they found it.
 
 import { writeSync } from "node:fs";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
@@ -85,7 +68,7 @@ const USAGE = `mdc — Markdown Collab inline-comment CLI
                                               exit 2 + report on stderr if the edited .md has broken markers
 
   --author SLUG applies to reply/open/resolve/suggest — the agent writing the
-  comment (10x-plan-4 P1.2). Defaults to "claude"; every headless Claude Code
+  comment. Defaults to "claude"; every headless Claude Code
   run is that default, so nothing changes for it. Sets the comment's JSON
   "agent" flag alongside "author".
 
@@ -100,10 +83,9 @@ function out(obj: unknown): void {
 }
 
 /**
- * Report a failure and exit. `code` is the machine-readable reason — a
- * DocOpCode, the extension's refusal code, or `usage` for argv mistakes — so
- * a caller parsing stdout gets the same shape an MCP refusal has. `detail`
- * goes to stderr only (the usage text after an unknown command).
+ * `code` is the machine-readable reason (a DocOpCode, the extension's refusal code,
+ * or `usage`), so stdout has the same shape an MCP refusal has. `detail` goes to
+ * stderr only.
  */
 function fail(message: string, opts: { code?: string; exit?: number; detail?: string } = {}): never {
   writeSync(1, `${JSON.stringify({ ok: false, code: opts.code ?? "usage", message })}\n`);
@@ -112,10 +94,8 @@ function fail(message: string, opts: { code?: string; exit?: number; detail?: st
 }
 
 /**
- * Which exit status each refusal reason maps to. Integrity-class refusals
- * (a broken anchor, a change that would corrupt the file) are exit 2 so a
- * caller can tell "you asked for the wrong thing" from "the document is
- * damaged"; everything else is a usage error.
+ * Integrity-class refusals are exit 2 so a caller can tell "you asked for the wrong
+ * thing" from "the document is damaged"; everything else is a usage error.
  */
 const EXIT_FOR_CODE: Record<DocOpCode, number> = {
   thread_not_found: EXIT_USAGE,
@@ -135,12 +115,7 @@ const EXIT_FOR_CODE: Record<DocOpCode, number> = {
   integrity: EXIT_INTEGRITY,
 };
 
-/**
- * Report a refused operation — a DocOpError from the local ops, or the same
- * refusal as the extension's tools answered it. `unanchored` on some verbs is
- * reported as an integrity problem, matching what a `check` would say about
- * the same document.
- */
+/** `unanchored` on some verbs is reported as an integrity problem, matching what `check` says about the same document. */
 function refuse(
   code: string,
   message: string,
@@ -166,9 +141,8 @@ interface Args {
 }
 
 /**
- * The flags that take no value. Every other flag takes the next token as its
- * value whatever it looks like (ux-review-2026-09 0.5): `--body "--x"` is a
- * body that starts with dashes, not a missing body followed by a flag.
+ * The flags that take no value. Every other flag takes the next token as its value
+ * whatever it looks like: `--body "--x"` is a body that starts with dashes.
  */
 const BOOLEAN_FLAGS = new Set(["repair", "actionable", "hook", "direct", "help"]);
 
@@ -201,20 +175,13 @@ function str(flags: Args["flags"], name: string): string {
   return v;
 }
 
-/**
- * Like `str`, but accepts "" — `--new` on `mdc edit` is legitimately empty
- * (a deletion). `parseArgs` already gives us a string for `--new ""` (the
- * empty string is not itself "missing"); this only rejects the flag being
- * absent entirely, where it'd otherwise be `true` (a bare `--new` with no
- * value) or `undefined`.
- */
+/** Like `str`, but accepts "" — `--new` on `mdc edit` is legitimately empty (a deletion). */
 function strAllowEmpty(flags: Args["flags"], name: string): string {
   const v = flags[name];
   if (typeof v !== "string") fail(`missing required --${name}`);
   return v;
 }
 
-/** `--occurrence`, validated by the same rule the ops and the MCP tools use. */
 function occurrenceFlag(flags: Args["flags"]): number {
   const v = flags.occurrence;
   if (v === undefined) return 0;
@@ -238,20 +205,16 @@ function readDoc(file: string): string {
   }
 }
 
-// --- forwarding to the running extension (ux-review-2026-09 0.2) -----------
-
-/** Where the extension's tool server is, from the environment VS Code gives its terminals. */
 interface Extension {
   url: string;
   token: string;
 }
 
-/** How long the extension gets to show it is there at all. */
 const REACH_TIMEOUT_MS = 3000;
 /**
- * How long a call it has accepted gets to finish. Longer than the probe: the
- * write includes a save (format-on-save can be slow), and giving up on a call
- * that went out is not free — see `forward`.
+ * How long a call it has accepted gets to finish. Longer than the probe: the write
+ * includes a save (format-on-save can be slow), and giving up on a call that went
+ * out is not free — see `forward`.
  */
 const CALL_TIMEOUT_MS = 10000;
 
@@ -344,8 +307,6 @@ type Forwarded =
   | { kind: "unknown"; reason: string };
 
 /**
- * Send one mutating verb to the extension as an MCP `tools/call`.
- *
  * Falls back (the caller writes directly) whenever the extension provably
  * didn't run the call: nothing listening, no answer to `initialize` in time,
  * a rejected token, a non-2xx, a reply that isn't JSON-RPC, a JSON-RPC error
@@ -408,24 +369,22 @@ async function forward(
   return { kind: "applied", result: isObject(payload) ? payload : {} };
 }
 
-/** Hosts that can ever be "the running extension" (L3). The port varies; the
- *  loopback address doesn't. */
+/** Hosts that can ever be "the running extension". The port varies; the loopback address doesn't. */
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
-/** The one path the extension's tool server answers on (httpServer.ts's
- *  `serveMcp` default `path`, which `startMcpServer` never overrides). */
+/** The one path the extension's tool server answers on (httpServer.ts's `serveMcp`
+ *  default `path`, which `startMcpServer` never overrides). */
 const MCP_PATH = "/mcp";
 
 /**
- * Both env vars, or null — null under `--direct`, and null when the URL
- * doesn't point at the local tool server (L3). `MARKDOWN_COLLAB_MCP_URL` is
- * meant to come only from a VS Code terminal's environment, but anything that
- * can set an env var (a poisoned shell rc file, a compromised `.env`, a
- * misconfigured devcontainer) can set it to any `http://` URL — and every
- * mutating verb otherwise POSTs the document's own text there, with the
- * bearer token in the header. Forwarding only to `127.0.0.1`/`::1`/
- * `localhost` on the server's own path keeps a document (and the token) from
- * ever leaving the machine through this path; anything else falls back to a
- * direct local write, exactly like an unreachable server does.
+ * Both env vars, or null — null under `--direct`, and null when the URL doesn't point
+ * at the local tool server. `MARKDOWN_COLLAB_MCP_URL` is meant to come only from a
+ * VS Code terminal's environment, but anything that can set an env var (a poisoned
+ * shell rc file, a compromised `.env`, a misconfigured devcontainer) can set it to any
+ * `http://` URL — and every mutating verb otherwise POSTs the document's own text
+ * there, with the bearer token in the header. Forwarding only to `127.0.0.1`/`::1`/
+ * `localhost` on the server's own path keeps a document (and the token) from ever
+ * leaving the machine through this path; anything else falls back to a direct local
+ * write, exactly like an unreachable server does.
  */
 function extensionFromEnv(flags: Args["flags"]): Extension | null {
   if (flags.direct === true) return null;
@@ -458,7 +417,6 @@ function integrityOkOnDisk(absPath: string): boolean | undefined {
   }
 }
 
-/** One mutating verb: the local op, and the MCP tool call that runs the same op in the extension. */
 interface Mutation<T> {
   action: string;
   tool: string;
@@ -468,12 +426,6 @@ interface Mutation<T> {
   integrityCodes?: DocOpCode[];
 }
 
-/**
- * Run a mutating op and write the result — through the extension when it is
- * there, directly otherwise. Refusals from the shared ops arrive as
- * DocOpError (or the extension's refusal of the same op) and become the CLI's
- * own exit codes.
- */
 async function apply<T>(file: string, m: Mutation<T>, ext: Extension | null, author: string): Promise<void> {
   if (ext) {
     // A missing file is the same error either way; say so before a round trip.
@@ -530,11 +482,9 @@ function cmdList(file: string, actionableOnly: boolean): void {
 function cmdCheck(file: string, repair: boolean): void {
   const source = readDoc(file);
   if (!repair) {
-    // Shares `opCheckAndCheckpoint` with `mc_check` (10x-plan-4 P2.2
-    // integrating-session note): a healthy document gets a review checkpoint
-    // here too, so "Review Changes Since Last Pass" becomes incremental for a
-    // terminal Claude using this CLI, not just one going through the MCP
-    // tools. A broken document is reported and left untouched, as before.
+    // Shares `opCheckAndCheckpoint` with `mc_check`: a healthy document gets a review
+    // checkpoint here too, so "Review Changes Since Last Pass" is incremental for a
+    // terminal Claude. A broken document is reported and left untouched.
     const { report, next, checkpoint } = opCheckAndCheckpoint(source);
     if (next !== undefined) writeFileSync(file, next, "utf8");
     out(checkpoint ? { file, ...report, checkpointed: checkpoint.ts } : { file, ...report });
@@ -568,11 +518,7 @@ function cmdCheck(file: string, repair: boolean): void {
   process.exit(result.remaining.length === 0 ? EXIT_OK : EXIT_INTEGRITY);
 }
 
-/**
- * Real filesystem I/O for `runCheckHook`. A directory must read as "missing"
- * rather than throw or return its listing — `statSync` guards that before
- * `readFileSync` ever runs.
- */
+/** A directory must read as "missing" rather than throw or return its listing — `statSync` guards that before `readFileSync`. */
 const realHookIo: HookIo = {
   readFile(absPath: string): string | null {
     try {
@@ -586,11 +532,9 @@ const realHookIo: HookIo = {
 };
 
 /**
- * `mdc check --hook` — no positional file, no JSON on stdout. Claude Code
- * gives us the edited path on stdin; everything else is `runCheckHook`'s
- * call. Reading stdin can itself fail (no stdin attached, a closed pipe) —
- * that is exactly the kind of thing this guard must survive silently rather
- * than crash the hook over.
+ * `mdc check --hook` — no positional file, no JSON on stdout; Claude Code gives the
+ * edited path on stdin. Reading stdin can fail (no stdin attached, a closed pipe);
+ * that must be survived silently rather than crash the hook.
  */
 function cmdCheckHook(): void {
   let stdinText: string;
@@ -616,9 +560,8 @@ async function main(): Promise<void> {
   }
   const [command, ...rest] = _;
   if (command === undefined) fail("no command given", { detail: USAGE });
-  // The agent writing the comment (10x-plan-4 P1.2). "claude" is the default
-  // for compatibility — every existing caller, including every headless
-  // Claude Code run, never passes `--author` and keeps behaving as before.
+  // "claude" is the default: every existing caller, including headless Claude Code
+  // runs, never passes `--author`.
   const author = typeof flags.author === "string" && flags.author !== "" ? flags.author : "claude";
   const ext = extensionFromEnv(flags);
   const mutate = <T>(file: string, m: Mutation<T>): Promise<void> => apply(file, m, ext, author);
@@ -636,7 +579,7 @@ async function main(): Promise<void> {
         tool: "mc_reply",
         args: { threadId, body },
         // `run` is only the direct write — the forwarded one runs `mc_reply`,
-        // which stamps "tools" itself (10x-plan-6 P1.4).
+        // which stamps "tools" itself.
         run: (s) => opReply(s, threadId, body, undefined, author, true, "cli"),
       });
     }

@@ -51,7 +51,7 @@ describe("formatDiagnostics", () => {
     expect(out).not.toContain("http://");
   });
 
-  // 10x-plan-4 P0.2: "is the skill installed?" now has two answers.
+  // "is the skill installed?" now has two answers.
   it("names the Claude Code plugin and its version when installed, and says so when not", () => {
     const withPlugin = formatDiagnostics(
       snapshot({ claudePlugin: { id: "markdown-collab@markdown-collab-local", version: "0.35.4" } }),
@@ -111,7 +111,7 @@ describe("formatDiagnostics", () => {
     expect(formatDiagnostics(snapshot())).toContain("output channel");
   });
 
-  // 10x-plan-4 P3.4: the new paths — claude binary, headless, agent
+  // The new paths — claude binary, headless, agent
   // connections — each render as an explicit "unknown" section rather than
   // silently vanishing when a snapshot doesn't carry them.
   it("reports every new P3.4 field as unknown when the snapshot doesn't carry it", () => {

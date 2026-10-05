@@ -1,4 +1,4 @@
-// The mapping from tool calls to lifecycle signals (10x-plan-2 P0.2).
+// The mapping from tool calls to lifecycle signals.
 //
 // `pendingSignalsFromToolCalls` lives in a vscode-importing module, so this
 // tests the rule it encodes against the tracker directly — the same three
@@ -95,7 +95,7 @@ describe("the host wires the same rule", () => {
   });
 
   it("every dispatch marks inferred — a tool call is what earns protocol", () => {
-    // 10x-plan-4 P0.3 deleted the `mcp` mode that used to mark "protocol" up
+    // The deleted `mcp` mode used to mark "protocol" up
     // front. dispatchReviewPayload lives in src/commands/send.ts since the
     // earlier P3.2 split out of extension.ts; markPayloadPending there no
     // longer takes an evidence argument at all — noteActivity is the only

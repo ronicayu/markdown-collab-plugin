@@ -1,23 +1,17 @@
-// Change-navigation toolbar for the live editor's uncommitted-diff overlay
-// (10x-plan-6 P4 phase B) — the same "N changes" / "i / N" counter and
-// prev/next arrows as the review view's #diff-nav
-// (src/inlineComments/webview/client.ts), built as its own DOM island
-// because client.ts assembles the live editor's layout at runtime rather
-// than serving a fixed HTML skeleton the way the review view's
-// webviewShell.ts does.
+// Change-navigation toolbar for the live editor's uncommitted-diff overlay —
+// the same "N changes" / "i / N" counter and prev/next arrows as the review
+// view's #diff-nav (src/inlineComments/webview/client.ts), built as its own DOM
+// island because client.ts assembles the live editor's layout at runtime rather
+// than serving a fixed HTML skeleton the way the review view's webviewShell.ts
+// does.
 //
 // Reuses `createDiffNav` (src/webviewShared/diffNav.ts) for the actual
-// stepping/counting/wrap-around — that piece is already shared with the
-// review view, so there's nothing diff-specific left to reimplement here
-// beyond the DOM and the small "uncommitted changes" badge.
+// stepping/counting/wrap-around.
 //
-// Keyboard is NOT wired here. The review view's n/p handler now lives in the
-// shared sidebar module (src/webviewShared/threadSidebar.ts), whose
-// `ThreadSidebarHandle.setChangeNavigation(step)` hook exists for exactly
-// this — it steps changes instead of threads while a diff is showing.
-// `step` below has the matching `(delta: 1 | -1) => void` shape, ready to
-// hand to that hook once client.ts wires the live editor up to it (that
-// wiring isn't in yet as of this file — see the round-6 P4 report).
+// Keyboard is NOT wired here: the n/p handler lives in the shared sidebar
+// (src/webviewShared/threadSidebar.ts), whose
+// `ThreadSidebarHandle.setChangeNavigation(step)` hook steps changes instead of
+// threads while a diff is showing.
 
 import { createDiffNav } from "../../webviewShared/diffNav";
 

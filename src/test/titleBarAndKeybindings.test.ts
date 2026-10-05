@@ -1,4 +1,4 @@
-// Guard for the title-bar icon and contributed keybindings (10x-plan-4 P2.1).
+// Guard for the title-bar icon and contributed keybindings.
 //
 // Round 3 proposed `cmd+k cmd+m` / `cmd+k cmd+c` / `cmd+k cmd+n`; all three
 // turned out to collide with VS Code defaults (Toggle Maximize Editor Group,
@@ -49,7 +49,7 @@ describe("the title-bar icon", () => {
   });
 });
 
-// docs/editor-undo-and-keys.md: these shadow the workbench's own single-key
+// These shadow the workbench's own single-key
 // bindings (Cmd+Z, Cmd+B, …) on purpose, but only while the caret is in the
 // live editor in Editing mode — the `when` context key is the scoping
 // mechanism here, not a cmd+k prefix. A chord command would miss every one

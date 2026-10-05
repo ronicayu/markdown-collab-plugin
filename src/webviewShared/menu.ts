@@ -1,5 +1,4 @@
-// Shared "…" / options menu controller (sidebar-chrome-redesign phase 2,
-// pr-review-redesign).
+// Shared "…" / options menu controller.
 //
 // One trigger/panel pair open at a time — the header's "…", the footer's
 // send-options, or a single card's own menu — tracked centrally rather than
@@ -8,12 +7,10 @@
 // outside click closes without stealing focus back from wherever the user
 // clicked next.
 //
-// Extracted out of threadSidebar.ts (the live sidebar) so the PR review
-// sidebar can reuse the exact same behaviour instead of a second copy that
-// could drift from it (docs/pr-review-redesign.md). Each caller gets its own
-// controller instance — and its own pair of document listeners, installed
-// once per instance — so the live editor and the PR webview (different pages
-// entirely) never share state.
+// Shared with the PR review sidebar so it can't drift from a second copy. Each
+// caller gets its own controller instance — and its own pair of document
+// listeners, installed once per instance — so the live editor and the PR
+// webview (different pages entirely) never share state.
 
 export interface MenuController {
   /** Open `panel` if it isn't already, close it if it is. */

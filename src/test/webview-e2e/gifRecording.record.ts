@@ -1,4 +1,4 @@
-// Scripted scenes for the README GIFs (10x-plan-4 P3.3, re-recorded from the
+// Scripted scenes for the README GIFs (re-recorded from the
 // live editor), driven through the same stubbed host the webview e2e harness
 // uses (harness.ts) — the shipped live-editor bundle (out/webview/client.js,
 // the default view since 0.35.16) in real Chromium, `acquireVsCodeApi`

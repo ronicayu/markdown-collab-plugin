@@ -1,6 +1,3 @@
-// "Send to Claude" — mode picking, dispatch, and the commands that trigger it
-// (10x-plan-4 P3.2 split of extension.ts).
-
 import * as path from "path";
 import * as vscode from "vscode";
 import type { Logger } from "../logging";
@@ -42,7 +39,6 @@ import { unavailableReasonText } from "../transports/headless";
 import type { DispatchOutcome } from "../webviewShared/sidebarProtocol";
 import type { CommandDeps } from "./deps";
 
-/** The workspace's standing review conventions, or null when there are none. */
 async function readConventions(folder: vscode.WorkspaceFolder): Promise<string | null> {
   if (!vscode.workspace.isTrusted) return null;
   const uri = vscode.Uri.joinPath(folder.uri, ...CONVENTIONS_REL.split("/"));
@@ -78,12 +74,11 @@ function isConcreteSendMode(v: unknown): v is Exclude<SendMode, "ask"> {
 }
 
 /**
- * `mcp`, `channel`, `mcp-channel` (and the ancient `ipc`, renamed to `channel`
- * back in 0.11.0) all delivered to a terminal already — the ceremony around
- * them is what 10x-plan-4 P0.3 deleted. A value in this set, whether it came
- * from the setting or from a remembered workspace choice, now behaves exactly
+ * `mcp`, `channel`, `mcp-channel` and `ipc` all delivered to a terminal already.
+ * A value in this set, whether it came
+ * from the setting or from a remembered workspace choice, behaves exactly
  * like `terminal`; anything else that isn't a real mode is unrecognized
- * garbage and keeps the older "fall back to ask" behavior.
+ * garbage and falls back to "ask".
  */
 const LEGACY_SEND_MODES = new Set(["mcp", "channel", "mcp-channel", "ipc"]);
 
@@ -94,7 +89,6 @@ export type SendModeNormalization =
   /** Never a valid value — falls back to `ask` with a warning. */
   | { kind: "unknown"; mode: "ask" };
 
-/** Pure so the legacy-normalization rules are unit-testable without vscode. */
 export function normalizeSendModeValue(v: unknown): SendModeNormalization {
   if (v === "ask" || isConcreteSendMode(v)) return { kind: "ok", mode: v };
   if (LEGACY_SEND_MODES.has(v as string)) return { kind: "legacy", mode: "terminal" };
@@ -103,10 +97,6 @@ export function normalizeSendModeValue(v: unknown): SendModeNormalization {
 
 const LEGACY_SEND_MODE_TOAST_KEY = "markdownCollab.legacySendModeToastShown";
 
-/**
- * The retirement notice fires once per workspace, not once per send — nobody
- * needs to be told twice that the mode they had picked no longer exists.
- */
 export async function maybeShowLegacySendModeToast(workspaceState: vscode.Memento): Promise<void> {
   if (workspaceState.get<boolean>(LEGACY_SEND_MODE_TOAST_KEY)) return;
   await workspaceState.update(LEGACY_SEND_MODE_TOAST_KEY, true);
@@ -123,8 +113,6 @@ async function invokeSendAllToClaude(
   workspaceState: vscode.Memento,
 ): Promise<DispatchOutcome> {
   const folder = folderForDocument(doc.uri);
-  // Comments live inline in the `.md` itself (in the `<!--mc:threads:begin-->`
-  // block). Build the payload from the open inline threads.
   const inlinePayload = buildInlinePayload(doc, { suggestMode: isSuggestMode() });
   if (!inlinePayload) {
     void vscode.window.showInformationMessage(
@@ -136,15 +124,12 @@ async function invokeSendAllToClaude(
 }
 
 /**
- * Record that Claude owes a reply on the threads this payload carries, so
- * every open view can show "Claude is working…" on them (10x-plan P1.2).
- *
  * Called from the delivery branches of `dispatchReviewPayload` rather than
  * from each command, so a new send path cannot forget it. Review-mode payloads
  * carry no comments and therefore mark nothing — they create threads instead
  * of addressing existing ones, so there is no card to annotate.
  *
- * Always "inferred": since 10x-plan-4 P0.3 no send path can claim protocol
+ * Always "inferred": no send path can claim protocol
  * evidence up front — a tool call is what earns that (see
  * `inlineComments/claudePending.ts`'s `noteActivity`), not the mode picked.
  */
@@ -168,7 +153,6 @@ async function markPayloadPending(
   }
 }
 
-/** Whether "Send to Claude" should ask Claude to propose edits as suggestions. */
 function isSuggestMode(): boolean {
   return vscode.workspace
     .getConfiguration("markdownCollab")
@@ -180,10 +164,6 @@ type DispatchIntent =
   | { kind: "review-request"; hasFocus: boolean };
 
 /**
- * Route a ReviewPayload through the user-configured sendMode (or prompt
- * if unset). Shared by the "send unresolved comments" and "ask Claude to
- * review" commands so both use the same delivery logic.
- *
  * `intent` shapes the UI strings (placeholder, toast) without forking the
  * transport logic — review-request payloads carry `unresolvedCount: 0`
  * and so the default "send N unresolved comments" wording would read
@@ -198,8 +178,7 @@ export async function dispatchReviewPayload(
   intent: DispatchIntent = { kind: "address" },
   /**
    * Skip mode resolution (config / remembered / detect / ask) entirely and
-   * deliver through this mode for this one dispatch (10x-plan-4 P2.4's
-   * former headless-only empty-state button). Never persisted — the next
+   * deliver through this mode for this one dispatch. Never persisted — the next
    * ordinary send still resolves the mode the normal way.
    */
   opts?: { forceMode?: SendMode },
@@ -214,14 +193,14 @@ export async function dispatchReviewPayload(
     threads: payload.comments.length,
   });
 
-  // Kept for the review-pass tracker (10x-plan-4 P2.2): "Resend" re-dispatches
+  // Kept for the review-pass tracker: "Resend" re-dispatches
   // through this same function from scratch, which redoes the conventions
   // merge and the mcp-tools-directive append below — storing either of those
   // already applied would double them up on a resend.
   const originalPayload = payload;
 
   // Standing conventions ride along on every dispatch, whatever the mode
-  // (10x-plan-2 P1.2). Done here rather than in each payload builder so no send
+  // Done here rather than in each payload builder so no send
   // path can be the one that forgets them.
   const conventions = await readConventions(folder);
   payload = {
@@ -239,7 +218,6 @@ export async function dispatchReviewPayload(
   const restricted = !vscode.workspace.isTrusted;
   let mode: SendMode;
   let remembering = false;
-  /** Set when this send's mode was auto-detected rather than chosen. */
   let detected: SendModeDetection | null = null;
   if (restricted) {
     mode = "clipboard";
@@ -317,7 +295,7 @@ export async function dispatchReviewPayload(
   // Appended unconditionally: it's harmless when the tools aren't in Claude's
   // tool list (the skill's own CLI fallback covers that case), and folding
   // `mcp` into `terminal` only works because this line no longer needs a mode
-  // of its own to gate it (10x-plan-4 P0.3). Not for headless: there the tools
+  // of its own to gate it. Not for headless: there the tools
   // are the only way to act, and the system prompt already says so.
   const delivered: ReviewPayload = {
     ...payload,
@@ -344,7 +322,7 @@ export async function dispatchReviewPayload(
     });
     await markPayloadPending(payload, folder);
     if (intent.kind === "review-request") {
-      // The pulse this whole module exists for (10x-plan-4 P2.2): a review
+      // The pulse this whole module exists for: a review
       // request carries no comments, so `markPayloadPending` above is a no-op
       // for it — this is the only tracker that ever engages for this send.
       void startReviewPassWatch(folder, originalPayload, intent, log);
@@ -409,7 +387,7 @@ export async function dispatchReviewPayload(
     log.info("prompt copied to the clipboard", { chars: delivered.prompt.length });
     if (intent.kind === "review-request") {
       // Clipboard delivery is exactly as "did it actually get read?" blind as
-      // terminal delivery — same pulse, same reason (10x-plan-4 P2.2).
+      // terminal delivery — same pulse, same reason.
       void startReviewPassWatch(folder, originalPayload, intent, log);
     }
     const msg =
@@ -435,7 +413,7 @@ async function pickSendMode(
   const items: Array<vscode.QuickPickItem & { mode: SendMode }> = buildSendModeItems(opts);
   // The picker's own items already say "Claude" where a mode really is
   // Claude-specific (headless) — this placeholder covers
-  // every mode at once, so it stays agent-neutral (1.3).
+  // every mode at once, so it stays agent-neutral.
   const placeHolder =
     intent.kind === "review-request"
       ? `How to ask your agent to review${intent.hasFocus ? " (with focus)" : ""}? (Set markdownCollab.sendMode to skip this prompt.)`
@@ -446,7 +424,6 @@ async function pickSendMode(
   return pick?.mode ?? null;
 }
 
-/** Register the "Send to Claude" family of commands. */
 export function registerSendCommands(deps: CommandDeps): void {
   const { context, sendLog, terminalTracker } = deps;
   context.subscriptions.push(
@@ -588,7 +565,7 @@ export function registerSendCommands(deps: CommandDeps): void {
       headlessStatusSnapshot(context.workspaceState, sendLog.scope("headless")),
     ),
     // Internal: a plain-data view of the review-pass tracker for the status
-    // bar's own tests and the integration suite (10x-plan-4 P2.2) — same
+    // bar's own tests and the integration suite — same
     // reason `headlessStatus` exists above: the suite loads its own module
     // copies and can't see bundle-internal state any other way. With a uri,
     // the pass tracked for that document's folder; with none, whichever pass

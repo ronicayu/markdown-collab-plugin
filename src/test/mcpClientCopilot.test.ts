@@ -1,4 +1,4 @@
-// GitHub Copilot's MCP server definition provider (10x-plan-4 P1.1). Runs
+// GitHub Copilot's MCP server definition provider. Runs
 // against the vscode stub (`src/test/vscode-stub.ts`, extended with a minimal
 // `McpHttpServerDefinition`) rather than a real extension host, since the
 // class only touches `EventEmitter`, `Uri.parse`, and that one constructor.

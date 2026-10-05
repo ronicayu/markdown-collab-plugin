@@ -1,21 +1,7 @@
-// Bridge between the live (collab) editor and the inline-comment storage
-// format (`src/inlineComments/format.ts`). The collab editor keeps the
-// Milkdown document as *prose only* — the invisible `<!--mc:...-->` markers
-// and the `<!--mc:threads:begin-->` JSON block never reach the webview.
-// This module is the seam that:
-//
-//   - strips the markers + threads region out of the .md source to produce
-//     the prose the editor shows (`proseOf`), with an offset map so we can
-//     translate back and forth;
-//   - projects the parsed threads into the flat comment shape the webview
-//     sidebar already consumes (`commentsOf`);
-//   - applies comment CRUD by rewriting the inline source (`addThreadFromAnchor`,
-//     `replyToThread`, `setThreadResolved`, `deleteThread`); and
-//   - re-materializes the markers after a prose edit (`mergeProseEdit`), so
-//     anchors keep tracking the text they were attached to.
-//
-// It is intentionally free of any `vscode` dependency so it can be unit
-// tested directly, mirroring how format.ts is tested.
+// Bridge between the live editor and the inline-comment storage format
+// (`src/inlineComments/format.ts`). The editor sees prose only: the markers and the
+// threads region are stripped, with an offset map back to the source.
+// Free of `vscode` so it unit-tests directly.
 
 import {
   addThread,
@@ -51,17 +37,14 @@ import {
   type MarkdownBlock,
 } from "./sourcePositions";
 
-/** Anchor shape exchanged with the webview (markdown-source space). */
 export interface CollabCommentAnchor {
   text: string;
   contextBefore: string;
   contextAfter: string;
 }
 
-/** Flat per-thread comment the webview sidebar renders. `id` is the thread id. */
 export interface CollabComment {
   id: string;
-  /** Id of the thread's root comment (distinct from the thread/anchor id). */
   rootCommentId: string;
   body: string;
   author: string;
@@ -73,16 +56,15 @@ export interface CollabComment {
   /**
    * The anchored span in prose offsets (`proseOf(source)`, the string the
    * editor parses); -1 when unanchored. The read-only editor highlights by
-   * these instead of searching for `anchor.text` (docs/one-view-design.md).
+   * these instead of searching for `anchor.text`.
    */
   proseStart: number;
   proseEnd: number;
-  /** The anchored text changed after this thread's last comment (P1.3). */
+  /** The anchored text changed after this thread's last comment. */
   stale: boolean;
   replies: Array<{ id: string; author: string; body: string; createdAt: string }>;
 }
 
-/** How many chars of surrounding prose to capture as anchor context. */
 const CONTEXT_CHARS = 24;
 
 // `locateAnchorInLiveText` runs the anchor's context through `stripInlineMarkup`
@@ -122,7 +104,6 @@ function locate(
 const openMarker = (id: string): string => `<!--mc:a:${id}-->`;
 const closeMarker = (id: string): string => `<!--mc:/a:${id}-->`;
 
-/** Remove any embedded anchor markers from a string (e.g. a quote that captured another thread's markers). */
 const stripMarkerComments = (s: string): string =>
   s.replace(/<!--mc:a:[a-z0-9]{1,12}-->/g, "").replace(/<!--mc:\/a:[a-z0-9]{1,12}-->/g, "");
 
@@ -135,11 +116,6 @@ interface Bridge {
   anchorsInProse: Map<string, { proseStart: number; proseEnd: number }>;
 }
 
-/**
- * Strip the mc markers + threads region from `source`, keeping frontmatter
- * (the collab editor shows and edits frontmatter as ordinary content).
- * Produces the prose plus the offset map needed to translate back.
- */
 // The last bridge built. A push to the webview runs `proseOf`, `commentsOf`
 // and `suggestionsOf` on the same source in a row, and edit mode splices
 // against it once per keystroke; nothing mutates a bridge once built.
@@ -224,7 +200,6 @@ export function frontmatterOf(source: string): string {
   return fm ? source.slice(fm.start, fm.end) : "";
 }
 
-/** Project the parsed inline threads into the flat comment list the sidebar renders. */
 // 0-based index of `needle`'s occurrence that starts at/just-before `beforePos`,
 // i.e. how many occurrences precede it. Lets the live highlight pick the exact
 // anchored occurrence by ordinal — the marker already says which one it is — so
@@ -265,7 +240,6 @@ export function commentsOf(source: string): CollabComment[] {
       createdAt: root.ts,
       resolved: thread.status === "resolved",
       anchor,
-      // Which occurrence of `anchor.text` the marker wraps (-1 when unanchored).
       anchorOrdinal: span ? occurrenceIndex(prose, anchor.text, span.proseStart) : -1,
       proseStart: span ? span.proseStart : -1,
       proseEnd: span ? span.proseEnd : -1,
@@ -276,7 +250,6 @@ export function commentsOf(source: string): CollabComment[] {
   return out;
 }
 
-/** A pending suggestion the live-editor sidebar renders (suggest mode). */
 export interface CollabSuggestion {
   anchorId: string;
   threadId?: string;
@@ -285,11 +258,8 @@ export interface CollabSuggestion {
   original: string;
   proposed: string;
   note?: string;
-  /** Locator for the original text in the live editor (same scheme as comments). */
   anchor: CollabCommentAnchor;
-  /** Which occurrence of `anchor.text` the marker wraps, 0-based; -1 if unanchored. */
   anchorOrdinal: number;
-  /** The anchored span in prose offsets, as on `CollabComment`; -1 when unanchored. */
   proseStart: number;
   proseEnd: number;
 }
@@ -323,12 +293,6 @@ export function suggestionsOf(source: string): CollabSuggestion[] {
   return out;
 }
 
-/**
- * Add a thread anchored at `anchor` (markdown-source-space text + context,
- * as the webview computes it). Locates the span in the prose, maps back to
- * source offsets, and wraps it with markers. Returns the rewritten source,
- * or an error when the anchor can't be located.
- */
 export function addThreadFromAnchor(
   source: string,
   anchor: CollabCommentAnchor,
@@ -360,7 +324,6 @@ export function addThreadFromAnchor(
         const { source: next } = addThread(source, srcStart, srcEnd, comment);
         return { ok: true, source: next };
       } catch {
-        // Fall through to a loosely-anchored save below.
       }
     }
   }
@@ -489,11 +452,10 @@ export function addThreadAtOffsets(
 
 /**
  * Add a thread on a prose range the read-only editor mapped from a selection
- * (docs/one-view-design.md). Unlike `addThreadAtOffsets`, nothing the editor
+ * Unlike `addThreadAtOffsets`, nothing the editor
  * serialized is adopted: the range is translated to the file's own offsets
- * through the table `proseOf` builds (the review view's add does the same,
- * `mutations.ts`), and `opOpenAt` inserts the two markers and the thread
- * record. Every other byte — prose, other markers, suggestions, the
+ * through the table `proseOf` builds, and `opOpenAt` inserts the two markers
+ * and the thread record. Every other byte — prose, other markers, suggestions, the
  * checkpoint — stays as it was.
  *
  * `range.text` is the prose the editor saw under the selection, and
@@ -666,14 +628,6 @@ export function deleteComment(
   return replaceThread(source, thread.id, { ...thread, comments: nextComments });
 }
 
-/**
- * Reconcile a prose-only edit from the editor back into the inline source.
- * Re-locates each anchored thread's text (with its surrounding context, both
- * taken from the pre-edit prose) inside the new prose and re-wraps it with
- * markers; threads whose text vanished or became ambiguous fall back to
- * unanchored (kept in the threads region with no markers). The threads
- * region is then re-appended.
- */
 /**
  * The envelope of a single contiguous edit between two strings: the length of
  * the unchanged common prefix (`prefix`), the offset in `old` where the
@@ -857,6 +811,13 @@ function recoverUnanchoredByQuote(
   return r && r.end > r.start ? r : null;
 }
 
+/**
+ * Reconcile a prose-only edit from the editor back into the inline source.
+ * Re-locates each anchored thread's text (with its surrounding context, both
+ * taken from the pre-edit prose) inside the new prose and re-wraps it with
+ * markers; threads whose text vanished or became ambiguous fall back to
+ * unanchored (kept in the threads region with no markers).
+ */
 export function mergeProseEdit(oldSource: string, newProse: string): string {
   const { prose: oldProse, parsed, anchorsInProse } = buildBridge(oldSource);
   const threads = parsed.threads;
@@ -879,10 +840,9 @@ export function mergeProseEdit(oldSource: string, newProse: string): string {
       : recoverUnanchoredByQuote(newProse, thread.quote);
     if (loc) placements.push({ id: thread.id, start: loc.start, end: loc.end });
   }
-  // Pending suggestions re-anchor the same way threads do — a suggestion's
-  // anchor markers get stripped out of the prose the editor sees (buildBridge
-  // treats them the same as thread markers), so without this every prose edit
-  // would silently unanchor every suggestion in the document.
+  // Pending suggestions re-anchor the same way threads do: their markers are
+  // stripped from the editor's prose too, so without this every prose edit
+  // would silently unanchor every suggestion.
   for (const s of suggestions) {
     const span = anchorsInProse.get(s.anchorId);
     const loc = span
@@ -1002,13 +962,10 @@ export function placeAnchorsInProse(
   return assembleMarkedSource(oldSource, newProse, parsed.threads, parsed.suggestions, parsed.checkpoint, placements);
 }
 
-// --- edit mode: block-splice write-back --------------------------------------
-//
-// docs/one-view-design.md, "Phase B: edit mode". The webview reports which
-// top-level blocks an edit changed and their new Markdown (`BlockEdit`); this
-// splices each into the file's own bytes at that block's range. Every other
-// byte — frontmatter, the threads region, every other block and its markers —
-// stays as it was. Nothing here ever adopts a whole-document serialization.
+// Edit mode writes back by splicing the blocks an edit changed into the file's
+// own bytes at each block's range. Every other byte — frontmatter, the threads
+// region, every other block and its markers — stays as it was. Nothing here
+// ever adopts a whole-document serialization.
 
 export type BlockEditResult =
   | {
@@ -1311,7 +1268,6 @@ export function applyBlockEdits(
     while (j > 0 && isBlank(prose[j - 1])) j--;
     return j > 0 ? j : -1;
   };
-  /** The first non-blank character from `at`, or -1. */
   const contentStartFrom = (at: number): number => {
     let j = at;
     while (j < prose.length && isBlank(prose[j])) j++;

@@ -1,4 +1,4 @@
-// The live editor's sidebar toolbar (10x-plan-6 P4, sidebar parity): the
+// The live editor's sidebar toolbar: the
 // review view's toolbar.spec.ts — filter segments, Send named after the agent,
 // the suggest-mode switch, the "…" menu, the keyboard hint — plus the one
 // control only the live editor has, the Reading/Editing mode control.

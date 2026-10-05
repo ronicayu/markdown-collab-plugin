@@ -40,7 +40,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
   setCliGate(() => vscode.workspace.isTrusted);
 
-  // Every `gh` / `glab` invocation lands in the log from here on.
   setCliLogger(rootLog.scope("pr"));
   context.subscriptions.push({ dispose: () => setCliLogger(null) });
 
@@ -78,17 +77,17 @@ export function activate(context: vscode.ExtensionContext): void {
   terminalTracker.activate(context.subscriptions);
   context.subscriptions.push(terminalTracker);
 
-  // Decorations, folding, and hovers in the raw text editor (10x-plan-3 P0.1):
+  // Decorations, folding, and hovers in the raw text editor:
   // the markers stop reading as corruption and a thread can be read without
   // leaving the source view.
   context.subscriptions.push(activateEditorPresence(rootLog.scope("format")));
 
   // Visible from anywhere while Claude works through the tools — the panels
   // own the per-thread row, this is for when the human has gone back to the
-  // editor (10x-plan-2 P0.2).
+  // editor.
   context.subscriptions.push(activateClaudeStatusBar());
 
-  // The review view (10x-plan-6 P4): the rendered document with the threads
+  // The review view: the rendered document with the threads
   // sidebar, read-only until its Edit switch is on, for a single human +
   // Claude on the same machine. There is no multi-human relay: the human
   // edits here, Claude edits the .md on disk, and the two converge through the
@@ -100,7 +99,7 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
   );
 
-  // The previous review view (the markdown-it panel), kept for one release
+  // The previous review view (the markdown-it panel),
   // behind `markdownCollab.classicReviewView`. Only the router below opens it.
   // `opts` carries an optional scroll target (the line of a thread's anchor).
   const openInlineView = async (
@@ -127,7 +126,7 @@ export function activate(context: vscode.ExtensionContext): void {
     );
   };
 
-  // The one way into the review view (10x-plan-6 P4): the live editor, or the
+  // The one way into the review view: the live editor, or the
   // previous panel while `markdownCollab.classicReviewView` is on. The
   // commands, menus, key, hover link, tree rows, unread walk and status bar
   // all come through here — see src/commands/reviewViewRouter.ts.
@@ -177,14 +176,14 @@ export function activate(context: vscode.ExtensionContext): void {
   registerReviewCommands(deps);
 
   const startTrustedFeatures = (): void => {
-    // The MCP tool server (10x-plan-2 P0.1). Started in trusted workspaces so the
+    // The MCP tool server. Started in trusted workspaces so the
     // tools are there when Claude reaches for them, but nothing depends on it:
     // it is never the default send mode, and a failure to bind is logged and
     // ignored. Registration in `.mcp.json` is a separate, asked-once step.
     void startMcpServer(context, {
       log: rootLog.scope("mcp"),
       // Tool calls are the lifecycle signal: they say Claude is working, which
-      // file, and — via mc_check — when it's done (10x-plan-2 P0.2).
+      // file, and — via mc_check — when it's done.
       onToolCall: pendingSignalsFromToolCalls,
     }).then(async (handle) => {
       if (!handle) return;
@@ -192,7 +191,7 @@ export function activate(context: vscode.ExtensionContext): void {
       // Re-establish every client whose connection can go stale across a
       // restart — Cursor's in-app agent and Copilot's provider are told the
       // token fresh every session, and Codex's config carries a literal port —
-      // now that there's a handle to hand them (10x-plan-4 P1.1). Ahead of the
+      // now that there's a handle to hand them. Ahead of the
       // `.mcp.json` prompt, which can sit unanswered.
       await reconnectAgents(context, handle, rootLog.scope("mcp"));
       await ensureMcpJsonRegistration(context, handle, rootLog.scope("mcp"), () =>

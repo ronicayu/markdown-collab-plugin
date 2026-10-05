@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Generates the Claude Code plugin (10x-plan-4 P0.2) from the sources the
+// Generates the Claude Code plugin from the sources the
 // extension already builds from — one source of truth, two shipping forms:
 //
 //   plugin/

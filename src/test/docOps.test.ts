@@ -1,4 +1,4 @@
-// 10x-plan-4 P1.2: docOps' agent-writing ops (opReply/opOpen/opResolve/
+// docOps' agent-writing ops (opReply/opOpen/opResolve/
 // opSuggest) take an `author` parameter, default `"claude"` for every caller
 // that predates this change, and stamp `agent: true` regardless of which
 // slug `author` is — a mdc/MCP call is agent-authored by construction.
@@ -73,7 +73,7 @@ describe("docOps: a non-default author sets author + agent: true", () => {
   });
 });
 
-// ux-review-2026-09 0.1: `mdc open --occurrence banana` passed NaN through,
+// `mdc open --occurrence banana` passed NaN through,
 // and NaN slips past every range check — the op wrapped nothing at byte 0,
 // recorded an empty quote, and reported success. The ops refuse it now,
 // whichever front end forgot to validate.
@@ -128,7 +128,7 @@ describe("parseOccurrence", () => {
   });
 });
 
-// ux-review-2026-09 0.6: a reply used to land on a resolved thread and stay
+// A reply used to land on a resolved thread and stay
 // there, filtered out of the human's default Open view.
 describe("docOps: an agent reply reopens a resolved thread", () => {
   function resolvedThread(): { source: string; threadId: string } {
@@ -182,7 +182,7 @@ describe("docOps: an agent reply reopens a resolved thread", () => {
   });
 });
 
-// 10x-plan-6 P1.4: every comment an agent writes records which path it took —
+// Every comment an agent writes records which path it took —
 // "tools" through the MCP server, "cli" for `mdc` writing the file itself — and
 // a comment written any other way carries no field at all.
 describe("docOps: via records how a write arrived", () => {

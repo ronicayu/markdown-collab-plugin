@@ -1,4 +1,4 @@
-// Connect an Agent (10x-plan-4 P1.1) against a real Extension Host.
+// Connect an Agent against a real Extension Host.
 //
 // The unit suite covers every writer's pure logic and the Copilot provider's
 // state machine against the vscode stub. What only the real host can show:
@@ -8,7 +8,7 @@
 // leans on are visible on `process.env` — not just the terminal
 // `EnvironmentVariableCollection` — for the lifetime of the running server.
 //
-// NOTE: written as part of 10x-plan-4 P1.1 but not run from this worktree —
+// NOTE: written but not run from this worktree —
 // `npm run test:integration` shares a VS Code user-data dir with the parallel
 // "headless mode" work; the integrating session runs the full suite after
 // merging both branches.

@@ -1,23 +1,5 @@
-/**
- * PR review preview webview client.
- *
- * Renders the source markdown to HTML using the same source-offset
- * plugin the inline-comments view uses, then walks every element
- * carrying a `data-mc-src="START.END"` attribute and adds a left side
- * stripe to those whose source byte range overlaps any added-line
- * range from the PR diff.
- *
- * Selection inside the preview pops a "+ Comment on selection" button.
- * Clicking it opens a composer in the right pane; submit dispatches an
- * `add-draft` message with the selection's source line range. Drafts
- * are rendered as cards in the right pane; each card jumps to its line
- * in the editor when clicked.
- *
- * The sidebar (`#drafts-pane`) uses the same ids, class names, and
- * stylesheets (threadSidebar.css, controls.css, comments.css) as the live
- * editor's comment sidebar (docs/pr-review-redesign.md) — the two can't
- * drift apart again.
- */
+// `#drafts-pane` shares ids, class names and stylesheets (threadSidebar.css, controls.css,
+// comments.css) with the live editor's comment sidebar; keep them in sync.
 
 import "../../webviewShared/threadSidebar.css";
 import "../../webviewShared/controls.css";
@@ -150,19 +132,14 @@ const dom = {
   reviewBody: document.getElementById("review-body") as HTMLTextAreaElement,
 };
 
-/** One trigger/panel pair at a time — here, just the header's "…" menu. */
 const menu = createMenuController();
 
 let totalDraftCount = 0;
 let existingComments: ExistingPrComment[] | null = null;
 
 /**
- * `vscode.getState()`'s blob round-trips through `history.state` across
- * reloads — a stale extension version, a corrupted profile, or a future
- * field this build doesn't know about can hand back something that isn't an
- * object at all (or throw outright). Every reader goes through here so a bad
- * blob degrades to "nothing was saved" instead of throwing at module load
- * and blanking the whole webview before a single message is handled.
+ * `vscode.getState()` can return a non-object (stale extension version, corrupted
+ * profile) or throw; degrade to "nothing saved" so module load never blanks the webview.
  */
 function safeGetState(): Record<string, unknown> {
   try {
@@ -174,24 +151,16 @@ function safeGetState(): Record<string, unknown> {
 }
 
 type ExistingFilter = "open" | "all" | "resolved";
-/** Restored from webview state so the choice survives tab switches/reloads. Default "open" (round-4). */
+/** Restored from webview state so the choice survives tab switches/reloads. */
 let existingFilter: ExistingFilter = (() => {
   const saved = safeGetState().existingFilter;
   return saved === "open" || saved === "all" || saved === "resolved" ? saved : "open";
 })();
 
-// --- collapse / expand state -----------------------------------------------
-//
-// One Set covers every collapsible card — a user's own draft and an existing
-// platform thread alike (resolvable or not, GitHub or GitLab) — keyed by a
-// prefixed id so the two card kinds can never collide. Absence from the set
-// means expanded, which is already the right default for a draft and for an
-// open thread; a resolved thread needs to start collapsed instead, which
-// `applyThreadCollapseDefault` below handles by adding it to the set the
-// first time it's seen. Persisted via vscode state so a toggle survives a
-// re-render within the session (tab switch, a draft added elsewhere, a
-// refreshed fetch) — but not across a full reload, same lifetime as
-// `existingFilter` above.
+// One Set covers every collapsible card (drafts and existing threads), keyed by a
+// prefixed id so the two kinds can't collide. Absence means expanded; resolved
+// threads are added on first sight by `applyThreadCollapseDefault`. Persisted via
+// vscode state: survives re-renders and tab switches, not a full reload.
 
 const collapsedCards: Set<string> = (() => {
   const saved = safeGetState().collapsedCardIds;
@@ -214,14 +183,10 @@ function rawThreadId(c: ExistingPrComment): string {
 }
 
 /**
- * The resolved value each thread had the last time it was rendered, so a
- * fresh render can tell three cases apart: a thread never seen before
- * (apply the resolved → collapsed / open → expanded default), a resolved
- * ↔ open transition (re-apply that same default — collapsing on resolve,
- * expanding on unresolve — regardless of any earlier manual toggle, because
- * the (un)resolve action itself is the more recent explicit choice), and no
- * change at all (leave the set exactly as the user last left it, which is
- * what makes a manual toggle survive an unrelated re-render).
+ * Last-rendered resolved value per thread. A new thread or a resolved <-> open
+ * transition re-applies the default collapse state (the (un)resolve is the most
+ * recent explicit choice, overriding any manual toggle); no change leaves the
+ * user's toggle alone.
  */
 const lastResolvedByThread = new Map<string, boolean>();
 function applyThreadCollapseDefault(key: string, resolved: boolean): void {
@@ -233,12 +198,6 @@ function applyThreadCollapseDefault(key: string, resolved: boolean): void {
   lastResolvedByThread.set(key, resolved);
 }
 
-/**
- * A short one-line summary of a comment body, markdown stripped down to a
- * rough plain-text read and whitespace collapsed — used for a draft/thread
- * card's `aria-label` gist and the empty-state hint. No gist helper is
- * shared in webviewShared yet, so this is local to the PR view.
- */
 function gistOf(body: string, max = 60): string {
   const plain = body
     .replace(/```[\s\S]*?```/g, " ")
@@ -251,7 +210,6 @@ function gistOf(body: string, max = 60): string {
   return `${plain.slice(0, max - 1).trimEnd()}…`;
 }
 
-/** Existing comments grouped into threads, sorted the way the list displays them. */
 function threadsFrom(comments: ExistingPrComment[]): ExistingPrComment[][] {
   const byThread = new Map<string, ExistingPrComment[]>();
   for (const c of comments) {
@@ -264,14 +222,12 @@ function threadsFrom(comments: ExistingPrComment[]): ExistingPrComment[][] {
     .sort((a, b) => a[0].line - b[0].line);
 }
 
-/** Every collapsible card's key currently on screen: drafts and existing threads alike. */
 function allCardKeys(): string[] {
   const keys = drafts.map((d) => draftKey(d.id));
   if (existingComments) keys.push(...threadsFrom(existingComments).map((t) => threadKey(t[0])));
   return keys;
 }
 
-/** Sync the "…" menu's Collapse all / Expand all item to the current state. */
 function updateCollapseAllButton(): void {
   const keys = allCardKeys();
   dom.collapseAllBtn.disabled = keys.length === 0;
@@ -300,9 +256,8 @@ dom.collapseAllBtn.addEventListener("click", () => {
 
 let state: InitMessage | null = null;
 let editingDraftId: string | null = null;
-/** Source line-start offsets for the loaded file. lineStarts[i] = byte offset of line i+1 start. */
+/** lineStarts[i] = offset where line i+1 starts. */
 let lineStarts: number[] = [];
-/** Cached drafts (rendered from `state` or from `drafts` updates). */
 let drafts: PrDraft[] = [];
 
 interface PendingSelection { startLine: number; endLine: number; quote: string; }
@@ -326,9 +281,8 @@ window.addEventListener("message", (ev) => {
     drafts = msg.drafts;
     totalDraftCount = msg.totalDraftCount;
     renderDrafts();
-    // A draft appearing/disappearing can flip the big empty-state card and
-    // the collapse-all availability, both of which the existing-comments
-    // render also owns — cheap to recompute from the cached comments.
+    // A draft appearing/disappearing can flip the empty-state card and collapse-all
+    // availability, which renderExisting also owns.
     renderExisting();
     refreshSubmitButton();
     renderCommentMarkers();
@@ -342,8 +296,6 @@ window.addEventListener("message", (ev) => {
     failPendingResolve(msg.resolveId, msg.error);
   }
 });
-
-// --- submit footer ----------------------------------------------------------
 
 function currentVerdict(): ReviewVerdict {
   for (const r of dom.verdictRadios) if (r.checked) return r.value as ReviewVerdict;
@@ -383,9 +335,7 @@ dom.submitButton.addEventListener("click", () => {
   vscode.postMessage({ type: "submit", verdict: currentVerdict(), body: dom.reviewBody.value.trim() || undefined });
 });
 
-// "Add summary" reveals and focuses the textarea and hides itself; emptying
-// and blurring the textarea collapses it back — so a non-empty summary is
-// never hidden out from under the reviewer.
+// A non-empty summary is never hidden: blur collapses the textarea only when it is empty.
 dom.summaryToggle.addEventListener("click", () => {
   dom.summaryToggle.hidden = true;
   dom.reviewBody.hidden = false;
@@ -435,10 +385,9 @@ function renderPreview(source: string, addedRanges: LineRange[]): void {
 }
 
 /**
- * Tag each top-level rendered block with the 1-based source line it starts
- * on (`data-src-line`), shown as a gutter number by CSS. The line comes
- * from the first `[data-mc-src]` span inside the block, so blocks with no
- * annotated text (mermaid diagrams, bare images, hr) get no number.
+ * Tags each top-level block with the 1-based source line it starts on
+ * (`data-src-line`), taken from its first `[data-mc-src]` span; blocks with no
+ * annotated text (mermaid, bare images, hr) get no number.
  */
 function annotateLineNumbers(): void {
   for (const block of Array.from(dom.preview.children)) {
@@ -468,22 +417,12 @@ function rewriteImageSrcs(): void {
   for (const img of dom.preview.querySelectorAll<HTMLImageElement>("img")) {
     const src = img.getAttribute("src") || "";
     if (src.startsWith("#")) continue;
-    // Same resolver as the inline view and the live editor. This used to be a
-    // hand-rolled string join here, which is the code the `..`-climbing fix in
-    // 0.34.31 replaced everywhere else — so `../diagrams/x.png` resolved to
-    // `<docDir>/diagrams/x.png` and 404'd in the PR view only.
+    // Same resolver as the inline view and live editor, so `..` paths resolve identically.
     const resolved = resolveImageSrc(src, base);
     if (resolved !== src) img.src = resolved;
   }
 }
 
-/**
- * Walk every `[data-mc-src]` span in the preview. For each, decode its
- * source-byte range, map to source lines, and add the diff stripe class
- * to the nearest "block-ish" ancestor if any of those lines is part of
- * an added-line range. We also stripe block-level images, links whose
- * URL changed even when text didn't, etc — anything markdown-it tagged.
- */
 function paintDiffStripes(addedRanges: LineRange[]): void {
   if (addedRanges.length === 0) {
     diffNav.setStops([]);
@@ -515,8 +454,6 @@ const diffNav = createDiffNav({
   currentClass: "pr-diff-current",
 });
 
-// n/p step through the PR's changed blocks, GitHub-style — never while the
-// user is typing in the composer or review-summary box.
 document.addEventListener("keydown", (e) => {
   if (dom.diffNav.hidden || e.metaKey || e.ctrlKey || e.altKey) return;
   if (!isNavKeyContext(e.target)) return;
@@ -535,11 +472,6 @@ function nearestBlock(start: Element): HTMLElement | null {
   return null;
 }
 
-/**
- * Rendered block covering a 1-based source line. Prefers the most specific
- * block that contains the line; falls back to the nearest block starting at
- * or before it.
- */
 function blockForLine(line: number): HTMLElement | null {
   let containing: HTMLElement | null = null;
   let containingStart = -1;
@@ -566,12 +498,6 @@ function blockForLine(line: number): HTMLElement | null {
   return containing ?? before;
 }
 
-/**
- * Scroll the preview pane to the rendered block covering a 1-based source
- * line and flash it. Used by the draft / existing-comment quote buttons so a
- * click lands inside the review preview rather than popping the raw text
- * editor.
- */
 function scrollPreviewToLine(line: number): void {
   const target = blockForLine(line);
   if (!target) return;
@@ -593,12 +519,9 @@ function flashBlock(el: HTMLElement): void {
 }
 
 /**
- * The text a card's `.thread-quote` button shows: the rendered preview
- * block's own text (what the reader actually sees, marker chip stripped),
- * falling back to the raw source line when the block can't be found (e.g. a
- * line inside a table row markdown-it didn't tag), falling back to a bare
- * "Line N" when even the source line is gone (a draft/thread anchored to a
- * line number the file no longer has).
+ * Prefers the rendered block's own text (marker chip stripped), then the raw
+ * source line (e.g. a table row markdown-it didn't tag), then "Line N" for a
+ * line the file no longer has.
  */
 function quoteTextFor(line: number): string {
   const block = blockForLine(line);
@@ -613,23 +536,13 @@ function quoteTextFor(line: number): string {
   return `Line ${line}`;
 }
 
-/** `L3`, or `L3–5` for a range. */
 function lineRangeLabel(startLine: number | undefined, endLine: number): string {
   return startLine !== undefined && startLine !== endLine ? `L${startLine}–${endLine}` : `L${endLine}`;
 }
 
-// --- comment line markers -------------------------------------------------
-
-/** One thing a preview marker points at: a draft card or an existing thread. */
 interface MarkerTarget { kind: "draft" | "existing"; key: string; resolved: boolean; }
 
-/**
- * Hang a clickable 💬 chip on every rendered block whose source lines carry
- * a draft or an existing PR thread. Clicking scrolls the right pane to the
- * matching card(s) — the reverse of a card's own quote/jump button.
- * Idempotent: clears previous markers, so it re-runs on every drafts /
- * existing-comments update.
- */
+/** Idempotent: clears previous markers, so it re-runs on every drafts / existing-comments update. */
 function renderCommentMarkers(): void {
   for (const m of dom.preview.querySelectorAll(".pr-comment-marker")) m.remove();
   for (const el of dom.preview.querySelectorAll(".has-comment-marker")) el.classList.remove("has-comment-marker");
@@ -687,7 +600,6 @@ function markerTitle(targets: MarkerTarget[]): string {
   return `${parts.join(" · ")} — click to show`;
 }
 
-/** Scroll the right pane to a marker's card(s) and flash them. */
 function revealComments(targets: MarkerTarget[]): void {
   // A marker clicked while the sidebar is hidden would scroll and flash a
   // card nobody can see — bring the sidebar back first.
@@ -741,14 +653,9 @@ async function runMermaid(): Promise<void> {
   try { await m.run({ querySelector: "pre.mermaid" }); } catch { /* ignore */ }
 }
 
-// --- comments toggle / collapsed sidebar ------------------------------------
-//
-// Collapsing hides `#drafts-pane` (grid column 0) and puts the open-thread
-// count on the toggle's badge, so the number is never lost just because the
-// sidebar (and its own counts) hid — same contract as the live editor's
-// comments toggle (src/webview/client.ts, syncCollapsedClass). Not persisted:
-// the live editor doesn't persist its own collapsed flag either, so this
-// mirrors that (both reset to expanded on reload).
+// Collapsing hides `#drafts-pane` and puts the open-thread count on the toggle's
+// badge so the number isn't lost. Not persisted, matching the live editor's
+// comments toggle (src/webview/client.ts, syncCollapsedClass).
 
 let sidebarCollapsed = false;
 
@@ -777,14 +684,10 @@ dom.commentsToggle.addEventListener("click", () => {
   syncSidebarCollapsedUi();
 });
 
-// --- selection / composer -------------------------------------------------
-
 document.addEventListener("selectionchange", () => positionFloatingButton());
 dom.preview.addEventListener("scroll", () => positionFloatingButton());
 window.addEventListener("resize", () => positionFloatingButton());
 
-// In-doc fragment links (e.g. `[Setup](#setup)`) scroll the preview to the
-// matching heading. Non-fragment links keep their default behavior.
 dom.preview.addEventListener("click", (e) => {
   const anchor = e.target instanceof Element ? e.target.closest("a") : null;
   const href = anchor?.getAttribute("href");
@@ -793,9 +696,7 @@ dom.preview.addEventListener("click", (e) => {
   scrollPreviewToFragment(href.slice(1));
 });
 
-// Links inside comment cards. Nothing routed these before, because comment
-// bodies were plain text and had no links to route; now that they render as
-// markdown, a bare `<a>` in a webview would simply do nothing when clicked.
+// Comment bodies render as markdown, and a bare `<a>` in a webview does nothing when clicked.
 document.addEventListener("click", (e) => {
   const anchor = e.target instanceof Element ? e.target.closest("a[href]") : null;
   if (!anchor || dom.preview.contains(anchor)) return;
@@ -805,7 +706,6 @@ document.addEventListener("click", (e) => {
   window.open(href, "_blank");
 });
 
-/** Scroll the preview to a heading matching `fragment` (by id, else by slug). */
 function scrollPreviewToFragment(fragment: string): void {
   if (!fragment) return;
   let decoded = fragment;
@@ -866,8 +766,6 @@ function positionFloatingButton(): void {
 }
 
 function endpointToSourceOffset(node: Node, offset: number): number | null {
-  // Walk up until we find a [data-mc-src] ancestor. Use its start offset
-  // plus a rough count of preceding text chars within that ancestor.
   let cur: Node | null = node;
   while (cur && cur !== dom.preview) {
     if (cur.nodeType === 1) {
@@ -909,11 +807,9 @@ dom.floating.addEventListener("click", () => {
   openComposer(pendingSelection);
 });
 
-// The sidebar's own "+" — same action as the floating button. `mousedown`
-// must preventDefault so the click doesn't collapse the preview's native
-// text selection before the click handler runs (Chromium clears a selection
-// on mousedown into any other element unless the default is prevented — the
-// same reason the live editor's own "+" does this, src/webview/client.ts).
+// The sidebar's own "+" does the same as the floating button. `mousedown` must
+// preventDefault or Chromium clears the preview's text selection before the click
+// handler runs.
 dom.addCommentBtn.addEventListener("mousedown", (e) => e.preventDefault());
 dom.addCommentBtn.addEventListener("click", () => {
   if (pendingSelection) {
@@ -924,8 +820,6 @@ dom.addCommentBtn.addEventListener("click", () => {
 });
 
 let toastTimer: number | undefined;
-/** Minimal toast for the "+" with no usable selection — this view's own take
- * on what the live editor's `showToast` does (src/webview/client.ts). */
 function showToast(text: string): void {
   let toast = document.querySelector<HTMLElement>(".pr-toast");
   if (!toast) {
@@ -964,16 +858,10 @@ function openComposer(sel: PendingSelection): void {
   dom.composer.appendChild(composer.el);
 }
 
-// --- shared card head (draft + existing thread) ----------------------------
-
 /**
- * The `.thread-head-row` every card kind shares: the quote/jump button, an
- * optional badge, the comment count (shown only collapsed —
- * threadSidebar.css), the `L3` / `L3–5` line label, and the collapse chevron
- * at the row's right edge.
- * Collapsed, a click anywhere in the row expands it (live sidebar
- * behaviour); the chevron and the quote button stop that bubbling so their
- * own click does only their own thing.
+ * The `.thread-head-row` every card kind shares. Collapsed, a click anywhere in
+ * the row expands it; the chevron and quote button stop propagation so their own
+ * click does only their own thing.
  */
 function buildCardHead(opts: {
   quoteLine: number;
@@ -1040,11 +928,8 @@ function buildCardHead(opts: {
   return head;
 }
 
-// --- drafts sidebar -------------------------------------------------------
-
 function renderDrafts(): void {
   dom.draftsList.innerHTML = "";
-  // Sort by line ascending.
   const sorted = [...drafts].sort((a, b) => (a.startLine ?? a.line) - (b.startLine ?? b.line));
   for (const d of sorted) {
     dom.draftsList.appendChild(renderDraftCard(d));
@@ -1053,11 +938,9 @@ function renderDrafts(): void {
 }
 
 /**
- * A draft has no resolved state, so it needs none of `applyThreadCollapseDefault`'s
- * transition tracking — absence from `collapsedCards` already means expanded,
- * which is the only default a draft ever wants. A draft being edited keeps
- * its frame and head (the quote says which line the text is about) and is
- * always shown in full, so an in-progress edit is never hidden.
+ * Drafts have no resolved state, so absence from `collapsedCards` (expanded) is
+ * the only default. A draft being edited is always shown in full so an
+ * in-progress edit is never hidden.
  */
 function renderDraftCard(d: PrDraft): HTMLElement {
   const lineLabel = lineRangeLabel(d.startLine, d.line);
@@ -1116,8 +999,6 @@ function renderDraftCard(d: PrDraft): HTMLElement {
   return card;
 }
 
-// --- existing comments (read-only, plus Reply / Resolve) -------------------
-
 /** Open reply composers, keyed by threadId, so a reply-error can re-enable them. */
 const pendingReplies = new Map<string, ComposerHandle>();
 /** In-flight resolve/unresolve buttons, keyed by resolveId, so a
@@ -1145,18 +1026,16 @@ function renderExisting(): void {
   }
 
   const threads = threadsFrom(existingComments);
-  // Resolved threads start collapsed, open ones expanded; a resolve ↔
-  // unresolve transition re-applies that same rule. Runs over every thread
-  // (not just what the filter shows), so a thread hidden by the filter today
-  // still has the right collapse state if the filter changes later.
+  // Resolved threads start collapsed, open ones expanded, and a resolve <-> unresolve
+  // transition re-applies that rule. Runs over every thread, not just the filtered
+  // ones, so the collapse state is right if the filter changes later.
   for (const t of threads) applyThreadCollapseDefault(threadKey(t[0]), t[0].resolved === true);
   persistCollapsedCards();
 
   renderExistingFilterChips(threads);
 
   if (threads.length === 0) {
-    // Nothing at all yet — the big first-run card, but only once drafts are
-    // also empty; a reviewer already mid-draft doesn't need it repeated.
+    // First-run card only when drafts are also empty; a reviewer mid-draft doesn't need it.
     if (drafts.length === 0) dom.existingList.appendChild(buildEmptyState());
     setExistingStatus(null);
     updateCollapseAllButton();
@@ -1181,7 +1060,6 @@ function renderExisting(): void {
   syncSidebarCollapsedUi();
 }
 
-/** First-run empty state — no drafts, no existing comments at all. No button: the sidebar's own "+" already covers the call to action. */
 function buildEmptyState(): HTMLElement {
   const card = document.createElement("div");
   card.className = "mc-empty-state";
@@ -1211,7 +1089,6 @@ for (const r of dom.existingFilterRadios) {
   });
 }
 
-/** Tab counts — existing threads only, never drafts. Hidden with no existing threads at all. */
 function renderExistingFilterChips(threads: ExistingPrComment[][]): void {
   dom.existingFilterRow.hidden = threads.length === 0;
   if (threads.length === 0) return;
@@ -1258,8 +1135,6 @@ function renderExistingThread(thread: ExistingPrComment[]): HTMLElement {
     },
   }));
 
-  // Visible per-card actions are Reply and Resolve/Reopen; the "↗ open" that
-  // used to sit on every comment is now one button per thread, at the row's end.
   const actions = document.createElement("div");
   actions.className = "thread-actions";
 
@@ -1275,9 +1150,6 @@ function renderExistingThread(thread: ExistingPrComment[]): HTMLElement {
   });
   actions.appendChild(replyToggleBtn);
 
-  // Only when the platform actually lets this thread be resolved — every
-  // GitHub review thread, a GitLab discussion whose `resolvable` came back
-  // true. Never for a plain, non-resolvable note.
   if (head.resolvable && head.resolveId) {
     actions.appendChild(buildResolveButton(head));
   }
@@ -1300,8 +1172,6 @@ function renderExistingThread(thread: ExistingPrComment[]): HTMLElement {
 
   card.appendChild(actions);
 
-  // Comments render flat — no reply indent, no per-comment actions (the
-  // per-comment "↗ Open" is gone; the thread has one now, above).
   for (const c of thread) card.appendChild(renderExistingComment(c));
 
   const replyBox = document.createElement("div");
@@ -1327,14 +1197,11 @@ function renderExistingThread(thread: ExistingPrComment[]): HTMLElement {
 }
 
 /**
- * The Resolve/Unresolve button for a thread's action row. Click posts a
- * `resolve-thread` message and goes busy immediately (the "optimistic" part
- * of the flow — the button itself, not the thread's resolved state); the
- * actual resolved flag, badge, and collapse only change once the host
- * confirms with a fresh `existing-comments` push, which is also what a
- * concurrent resolve from someone else on the platform would produce. A
- * `resolve-thread-error` re-enables the button in place via `pendingResolves`.
- * "Unresolve" — the platform's own word — is kept on purpose.
+ * Goes busy on click, but the thread's resolved state, badge and collapse only
+ * change when the host confirms with a fresh `existing-comments` push (which a
+ * concurrent resolve from someone else also produces). `resolve-thread-error`
+ * re-enables the button via `pendingResolves`. "Unresolve" is the platform's own
+ * word, kept on purpose.
  */
 function buildResolveButton(head: ExistingPrComment): HTMLButtonElement {
   const resolveId = head.resolveId!;
@@ -1354,12 +1221,10 @@ function buildResolveButton(head: ExistingPrComment): HTMLButtonElement {
   return btn;
 }
 
-/** A reply POST failed — re-enable the composer and show the error inline. */
 function failPendingReply(threadId: string, error: string): void {
   pendingReplies.get(threadId)?.setError(error);
 }
 
-/** A resolve/unresolve POST failed — revert the button to its clickable label. */
 function failPendingResolve(resolveId: string, error: string): void {
   const pending = pendingResolves.get(resolveId);
   if (!pending) return;

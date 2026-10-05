@@ -1,4 +1,4 @@
-// `opOpenAt` — opening a thread on an exact range (10x-plan-3 P0.2).
+// `opOpenAt` — opening a thread on an exact range.
 //
 // The verb behind "Comment on Selection". It exists separately from `opOpen`
 // because the two have genuinely different contracts: Claude names a quote and
@@ -179,9 +179,9 @@ describe("safeHoverTargetUri (M1)", () => {
 });
 
 describe("the editor's comment path uses the shared verb", () => {
-  // The same rule 10x-plan-2 P0.1 set for the CLI and the MCP tools, now that
+  // The same rule set for the CLI and the MCP tools, now that
   // there is a third front end: the human's. A hand-rolled `addThread` call in
-  // extension.ts (now: any host source — 10x-plan-4 P3.2 split it into
+  // extension.ts (now: any host source — split into
   // src/commands/*.ts) would compile fine and skip the integrity gate.
   const extension = readHostSources();
 

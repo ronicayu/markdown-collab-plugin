@@ -1,4 +1,4 @@
-// The pure half of headless runs (10x-plan-4 P0.1): the argv, the temp-file
+// The pure half of headless runs: the argv, the temp-file
 // contents, the stream parser, and the availability decision.
 //
 // The parser is tested against a REAL recorded stream (a `claude -p` call on

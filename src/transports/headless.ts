@@ -1,22 +1,9 @@
-// Headless runs: the extension starts Claude Code itself (10x-plan-4 P0.1).
-//
-// WHY THIS EXISTS. Every other send mode hands the prompt to a Claude session
-// the human had to start, find, and keep visible — and a human who doesn't run
-// Claude Code in a VS Code terminal stalls at "start Claude where?". The
-// extension already hosts the tool server the agent needs; this starts the
-// agent.
+// Headless runs: the extension starts Claude Code itself.
 //
 // The run is `claude -p` with a closed tool set: Read, Glob, Grep, and the
-// markdown-collab MCP tools. No Edit, no Write, no Bash. That makes round 2's
-// guarantee total rather than advisory: nothing reaches the document except a
+// markdown-collab MCP tools. No Edit, no Write, no Bash. So nothing reaches the document except a
 // tool call, and every tool call lands as a `WorkspaceEdit` the human can undo
 // and the integrity gate checked first.
-//
-// Progress is read off the process, not inferred. `--output-format
-// stream-json` is the lifecycle: `system/init` says whether our server
-// actually connected (if not, the run is stopped and the caller falls back to
-// the terminal), each `tool_use` block says what Claude is doing, and the final
-// `result` says done, what it cost, and what Claude wants to tell the human.
 //
 // The token never touches argv — `ps` shows every argument to every user on the
 // machine — and never touches disk either: the `--mcp-config` file references
@@ -29,10 +16,7 @@
 // and because no quoting rule survives arbitrary Markdown through a Windows
 // `.cmd` shim.
 //
-// Split: the argument builder, the stream parser, and the availability
-// decision are pure; `HeadlessRun` owns one process and its temp files; the
-// registry at the bottom enforces one run per workspace folder. vscode-free —
-// the VS Code glue is `headlessHost.ts`.
+// vscode-free — the VS Code glue is `headlessHost.ts`.
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { promises as fsp } from "node:fs";
@@ -47,7 +31,6 @@ import {
   type ClaudeVersion,
 } from "./claudeBinary";
 
-/** What Claude Code prefixes our tool names with. */
 export const TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`;
 
 /**
@@ -67,14 +50,9 @@ export const CANCEL_GRACE_MS = 5000;
 
 const STDERR_TAIL_LINES = 50;
 
-// ---------------------------------------------------------------------------
-// Arguments and temp-file contents (pure)
-// ---------------------------------------------------------------------------
-
 export interface HeadlessArgsInput {
   mcpConfigPath: string;
   systemPromptPath: string;
-  /** Extra settings for this run only — see `HEADLESS_SETTINGS`. */
   settingsPath: string;
   /** `markdownCollab.headlessModel`; empty means Claude Code's own default. */
   model?: string;
@@ -93,7 +71,6 @@ export function buildHeadlessArgs(input: HeadlessArgsInput): string[] {
     "stream-json",
     // stream-json in print mode requires --verbose; without it the CLI refuses.
     "--verbose",
-    // Exactly these built-ins, no others — see HEADLESS_BUILTIN_TOOLS.
     "--tools",
     HEADLESS_BUILTIN_TOOLS,
     "--mcp-config",
@@ -160,7 +137,6 @@ export function mcpConfigJson(): string {
   )}\n`;
 }
 
-/** Prefix of every run's temp directory, under the OS temp root. */
 export const TEMP_DIR_PREFIX = "mc-headless-";
 
 /**
@@ -202,10 +178,6 @@ export async function sweepStaleHeadlessDirs(opts: {
 // The system prompt a run carries — the tools-only rendering of the skill plus
 // a preamble naming this session's tools — is built in `skillText.ts`, next to
 // every other rendering of the same text (`headlessSystemPrompt`).
-
-// ---------------------------------------------------------------------------
-// The stream (pure)
-// ---------------------------------------------------------------------------
 
 export interface McpServerStatus {
   name: string;
@@ -337,14 +309,9 @@ export function isAuthResultText(text: string): boolean {
   return /\b(log(ged)? ?in|sign(ed)? ?in|api[ _-]?key)\b|\/login/i.test(text);
 }
 
-/** `mcp__markdown-collab__mc_open` → `mc_open`; built-ins pass through. */
 export function shortToolName(name: string): string {
   return name.startsWith(TOOL_PREFIX) ? name.slice(TOOL_PREFIX.length) : name;
 }
-
-// ---------------------------------------------------------------------------
-// Availability (pure)
-// ---------------------------------------------------------------------------
 
 export type HeadlessUnavailableReason = "untrusted" | "not-installed" | "no-server" | "mcp-disabled";
 
@@ -371,7 +338,6 @@ export function decideHeadlessAvailability(
   return { ok: true };
 }
 
-/** Plain words for a toast: "couldn't run Claude for you — <this>". */
 export function unavailableReasonText(reason: HeadlessUnavailableReason): string {
   switch (reason) {
     case "untrusted":
@@ -384,10 +350,6 @@ export function unavailableReasonText(reason: HeadlessUnavailableReason): string
       return "Claude Code couldn't use the review tools here last time (MCP may be disabled for Claude)";
   }
 }
-
-// ---------------------------------------------------------------------------
-// One run (impure: a process and two temp files)
-// ---------------------------------------------------------------------------
 
 export type HeadlessFailureReason =
   /** The process never started (missing binary, temp files unwritable). */
@@ -436,7 +398,6 @@ export interface HeadlessRunOptions {
   systemPrompt: string;
   server: { url: string; token: string };
   model?: string;
-  /** The payload's file label, for log lines. */
   fileLabel: string;
   log?: Logger;
   budgetMs?: number;
@@ -450,8 +411,6 @@ export interface HeadlessRunOptions {
 type Listener = (state: HeadlessState) => void;
 
 /**
- * One `claude -p` process, from temp files to exit.
- *
  * `start()` resolves once the process is gone and the temp directory deleted,
  * with the final state. Listeners see every transition in between:
  * `starting → working (lastTool, toolCount) → done | failed | cancelled`.
@@ -485,7 +444,6 @@ export class HeadlessRun {
     return this.current;
   }
 
-  /** The temp directory holding the config and system prompt, while it exists. */
   get tempDir(): string | null {
     return this.dir;
   }
@@ -494,12 +452,10 @@ export class HeadlessRun {
     return this.child?.pid;
   }
 
-  /** The last lines Claude Code wrote to stderr — what a failure report shows. */
   get stderrTail(): string[] {
     return this.stderrPartial ? [...this.stderrLines, this.stderrPartial] : [...this.stderrLines];
   }
 
-  /** MCP server statuses from `system/init`, once it has arrived. */
   get initServers(): McpServerStatus[] | null {
     return this.servers;
   }
@@ -855,10 +811,6 @@ export class HeadlessRun {
   }
 }
 
-// ---------------------------------------------------------------------------
-// One run per workspace folder
-// ---------------------------------------------------------------------------
-
 export interface HeadlessRunRecord {
   /** The workspace folder's fsPath — the one-run-per-folder key. */
   key: string;
@@ -907,7 +859,6 @@ export function activeHeadlessRun(key: string): HeadlessRunRecord | undefined {
   return active.get(key);
 }
 
-/** Active runs, newest first. */
 export function activeHeadlessRuns(): HeadlessRunRecord[] {
   return [...active.values()].sort((a, b) => b.run.state.startedAt - a.run.state.startedAt);
 }
@@ -917,7 +868,6 @@ export function lastHeadlessRun(): HeadlessRunRecord | null {
   return last;
 }
 
-/** Fires on every state change of every tracked run. */
 export function onHeadlessRunsChanged(listener: () => void): { dispose(): void } {
   registryListeners.add(listener);
   return { dispose: () => registryListeners.delete(listener) };

@@ -1,4 +1,4 @@
-// Set Up Claude Code's plugin path (10x-plan-4 P0.2): the local marketplace
+// Set Up Claude Code's plugin path: the local marketplace
 // the extension writes, and the `claude plugin …` sequence that installs from
 // it. Every process is a scripted fake runner, so each branch — unsupported
 // CLI, already registered, registered elsewhere, stale or disabled install,

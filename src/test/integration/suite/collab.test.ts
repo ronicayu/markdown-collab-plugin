@@ -198,7 +198,7 @@ suite.skip("Live editor anchor highlight (real Milkdown, needs display)", () => 
   });
 });
 
-// docs/editor-undo-and-keys.md: Editing mode has no undo history of its own.
+// Editing mode has no undo history of its own.
 // Cmd+Z posts `undo`, and the host runs the workbench's `undo` command, on the
 // assumption that with this custom editor active it undoes the text document.
 // That assumption is the workbench's to keep, so it is checked here, in one.

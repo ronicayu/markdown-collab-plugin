@@ -1,4 +1,4 @@
-// Guards for Connect an Agent (10x-plan-4 P1.1):
+// Guards for Connect an Agent:
 //   - which quick-pick entries show up for a given host's capabilities;
 //   - `engines.vscode` stays low so Cursor/Windsurf/VSCodium users aren't
 //     locked out by a feature only some hosts have (feature-detected instead,
@@ -94,7 +94,7 @@ describe("buildDisconnectAgentItems", () => {
   });
 });
 
-// 10x-plan-6 P1.1: for every agent but Claude Code the file format is the
+// For every agent but Claude Code the file format is the
 // API — Connect writes AGENTS.md first and offers the MCP registration second,
 // and Disconnect only ever undoes the second step.
 const FORMAT_FIRST: FormatFirstAgentId[] = ["cursor-inapp", "cursor-cli", "windsurf", "codex", "copilot", "other"];

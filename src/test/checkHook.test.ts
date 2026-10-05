@@ -190,8 +190,8 @@ describe("runCheckHook: healthy and warning-only documents stay silent", () => {
   });
 
   it("an empty-quote thread is a warning too — `mdc check` reports it, the hook doesn't", () => {
-    // What `mdc open --occurrence banana` used to write (ux-review-2026-09
-    // 0.1). The markers are paired and the JSON is valid — no structural
+    // What `mdc open --occurrence banana` used to write. The markers are paired
+    // and the JSON is valid — no structural
     // damage, so it stays below the hook's error-only bar.
     const { source, id } = healthyDoc();
     const damaged = source
@@ -264,7 +264,7 @@ describe("runCheckHook: relative path resolution", () => {
   });
 });
 
-// 10x-plan-6 P2.1: `mc_edit`/`mc_rewrite` refuse suggest-mode direct edits at
+// `mc_edit`/`mc_rewrite` refuse suggest-mode direct edits at
 // the tool layer (mcpTools.test.ts), but Claude Code's own Edit tool bypasses
 // the tools entirely — this hook is the only backstop for that path. The
 // setting is workspace configuration, always written with

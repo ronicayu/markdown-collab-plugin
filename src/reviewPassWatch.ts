@@ -1,5 +1,5 @@
-// Feeds `reviewPassPending.noteDocument` from the extension host (10x-plan-4
-// P2.2). The pure tracker only knows how to compare a thread list against a
+// Feeds `reviewPassPending.noteDocument` from the extension host. The pure
+// tracker only knows how to compare a thread list against a
 // snapshot; this is what hands it one, from two independent sources, because
 // either can be the only one that fires:
 //

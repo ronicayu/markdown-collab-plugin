@@ -473,7 +473,7 @@ describe("ReviewPassTracker — dismiss, current, get", () => {
   });
 });
 
-// Every status-text state, verbatim (10x-plan-4 P2.2's design spells these out
+// Every status-text state, verbatim (the design spells these out
 // literally — pinned here so a rewording is a deliberate edit, not a drift).
 describe("reviewPassStatusText", () => {
   function record(overrides: Partial<ReviewPassRecord> = {}): ReviewPassRecord {

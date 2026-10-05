@@ -1,7 +1,5 @@
-// The extension's presence in the raw text editor (10x-plan-3 P0.1).
-//
-// Thin by design: everything worth testing is in `presence.ts`. This file owns
-// the decoration types, the providers, and the "when do we recompute" rules.
+// The extension's presence in the raw text editor. Thin by design: everything
+// worth testing is in `presence.ts`.
 //
 // Cost discipline, because this runs on every keystroke in every open Markdown
 // file: the parse is skipped entirely for documents with no `mc:` markers (a
@@ -162,9 +160,7 @@ export function activateEditorPresence(log: Logger): vscode.Disposable {
       },
     ),
 
-    // One lens at the top of a reviewed file: the counts, and a way in. The
-    // review view was previously reachable only by a palette command whose
-    // name you had to already know.
+    // One lens at the top of a reviewed file: the counts, and a way in.
     vscode.languages.registerCodeLensProvider(
       { language: "markdown" },
       {
@@ -186,7 +182,6 @@ export function activateEditorPresence(log: Logger): vscode.Disposable {
       },
     ),
 
-    // Hover: what the thread says, without leaving the source view.
     vscode.languages.registerHoverProvider(
       { language: "markdown" },
       {

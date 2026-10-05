@@ -92,7 +92,7 @@ test.describe("inline comments view", () => {
 });
 
 test.describe("live editor", () => {
-  // The review view's "…" menu item, in the shared sidebar (10x-plan-6 P4).
+  // The review view's "…" menu item, in the shared sidebar.
   test("asks the host to run the command", async ({ page }) => {
     const src = fixture(1, 1);
     await bootLiveEditor(page, {

@@ -1,6 +1,6 @@
 /**
  * Coverage for the Uncommitted Markdown tree controller — the local
- * counterpart of the PR review view (10x-plan-6 P4/P5.1). Previously
+ * counterpart of the PR review view. Previously
  * untested end to end.
  *
  * Git is faked at the CLI chokepoint (`setCliRunner`, same seam

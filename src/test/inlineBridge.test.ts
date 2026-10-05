@@ -774,7 +774,7 @@ describe("live-edit write paths preserve suggestions + review checkpoint", () =>
   });
 });
 
-// Edit mode's add (docs/one-view-design.md, "Phase B"): the selection arrives
+// Edit mode's add: the selection arrives
 // named by structure, is found in the file's own bytes, and adds two markers
 // and a record — never a re-serialized body.
 describe("addThreadAtEditorRange", () => {

@@ -1,4 +1,4 @@
-// Codex's `.codex/config.toml` upsert (10x-plan-4 P1.1) — a tiny, pure,
+// Codex's `.codex/config.toml` upsert — a tiny, pure,
 // line-based TOML table writer, not a TOML library. See
 // `src/mcpServer/clients/codex.ts` for why: Codex doesn't expand `${VAR}` in
 // `url`, so the literal port has to live in the file, which is also the one

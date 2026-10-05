@@ -10,7 +10,6 @@ import type { InlineComment, ParsedDocument } from "./format";
 import { mapProseToSource, sourceLineForProseLine } from "./proseMapping";
 import { staleThreadIds } from "./staleness";
 
-/** Serializable view of `ParsedDocument` for the webview. */
 export interface SerializedState {
   /** Markdown source with anchor markers AND threads region stripped — what the preview renders. */
   prose: string;
@@ -27,7 +26,7 @@ export interface SerializedState {
     comments: InlineComment[];
     /** Position in `prose` (offset-into-stripped-source). Null when unanchored. */
     anchor: { proseStart: number; proseEnd: number } | null;
-    /** The anchored text changed after this thread's last comment (P1.3). */
+    /** The anchored text changed after this thread's last comment. */
     stale: boolean;
   }>;
   /**

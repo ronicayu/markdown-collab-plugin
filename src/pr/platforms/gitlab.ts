@@ -36,12 +36,10 @@ function glabEnvForHost(host: string): Record<string, string | undefined> | unde
 }
 
 /**
- * GitLab rejects a `position` whose SHAs it doesn't recognize, and the raw
- * error ("400 Bad Request") says nothing a user can act on. By far the most
- * common cause is reviewing a branch with unpushed commits: the line being
- * commented on exists locally but not in the MR's diff. Say that.
- *
- * Exported for tests — the wording is the whole point of it.
+ * GitLab rejects a `position` whose SHAs it doesn't recognize, and the raw error
+ * ("400 Bad Request") says nothing a user can act on. By far the most common cause is
+ * reviewing a branch with unpushed commits: the line being commented on exists locally
+ * but not in the MR's diff. Say that.
  */
 export function positionFailureMessage(
   ctx: PrContext,
@@ -126,12 +124,10 @@ export const gitlabPlatform: PrPlatform = {
     if (!ctx.projectId) throw new Error("GitLab context missing projectId");
     const baseEndpoint = `projects/${ctx.projectId}/merge_requests/${ctx.prNumber}`;
 
-    // POST JSON with an explicit `Content-Type: application/json` header.
-    // We tried form-encoding with `glab -f position[new_line]=...` in
-    // 0.31.1 — that fixed the 415, but glab silently treats the bracket
-    // keys as literal flat fields, so the `position` object never lands
-    // and the comment posts as a general MR note with no anchor. JSON +
-    // explicit Content-Type avoids both problems.
+    // POST JSON with an explicit `Content-Type: application/json` header: glab's
+    // form-encoding (`-f position[new_line]=...`) treats the bracket keys as literal
+    // flat fields, so the `position` object never lands and the comment posts as a
+    // general MR note with no anchor.
     for (const c of input.comments) {
       const position: Record<string, unknown> = {
         base_sha: ctx.baseSha,
@@ -160,14 +156,10 @@ export const gitlabPlatform: PrPlatform = {
       if (res.code !== 0) {
         throw new Error(positionFailureMessage(ctx, c.path, c.line, res.stderr.trim() || res.stdout.trim()));
       }
-      // Verify the server actually anchored the note. GitLab returns the
-      // discussion JSON; if `notes[0].position` is null the comment posted
-      // as an unanchored MR note instead of a diff thread.
-      //
-      // The parse and the check are kept apart on purpose: they used to share
-      // a try block, so the "not anchored" error was caught by its own catch
-      // and rewritten into the generic parse failure unless its wording
-      // happened to match a string test.
+      // Verify the server actually anchored the note: if `notes[0].position` is null the
+      // comment posted as an unanchored MR note instead of a diff thread. The parse and
+      // the check are kept apart so the "not anchored" error isn't caught by its own
+      // catch and rewritten into the generic parse failure.
       let anchored: boolean;
       try {
         const body = JSON.parse(res.stdout) as { notes?: Array<{ position?: unknown }> };
@@ -251,7 +243,6 @@ export const gitlabPlatform: PrPlatform = {
     const runner = getCliRunner();
     const env = glabEnvForHost(ctx.host);
     if (!ctx.projectId) throw new Error("GitLab context missing projectId");
-    // `threadId` is the discussion id; POST a note to add a reply to it.
     assertDiscussionId(threadId, "a discussion id");
     const res = await runner(
       GLAB,
@@ -303,10 +294,8 @@ export const gitlabPlatform: PrPlatform = {
       throw new Error(`glab api discussion resolve failed: ${res.stderr.trim() || res.stdout.trim()}`);
     }
     // Exit 0 isn't proof — GitLab returns the updated Discussion object
-    // (`{ id, notes: [{ ..., resolved }, ...] }`), and a malformed or
-    // unexpected body (e.g. `{}`) used to read as success just because the
-    // process exited clean. Require the response to actually confirm the
-    // state we asked for before calling this a success.
+    // (`{ id, notes: [{ ..., resolved }, ...] }`), and a malformed body (e.g. `{}`) must
+    // not read as success. Require the response to confirm the state we asked for.
     let body: { notes?: Array<{ resolved?: boolean }>; resolved?: boolean };
     try {
       body = JSON.parse(res.stdout) as typeof body;
@@ -349,9 +338,7 @@ export const gitlabPlatform: PrPlatform = {
       body: string;
       created_at: string;
       resolved?: boolean;
-      /** False (or absent) for a discussion GitLab won't let anyone resolve
-       * — a plain, non-diff note landing here would be one, though today's
-       * `position` filter below already excludes those. */
+      /** False (or absent) for a discussion GitLab won't let anyone resolve. */
       resolvable?: boolean;
       position?: {
         new_path?: string;

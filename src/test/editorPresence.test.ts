@@ -1,4 +1,4 @@
-// The raw-text-editor presence model (10x-plan-3 P0.1 / P0.3).
+// The raw-text-editor presence model.
 //
 // Everything here is computed from a document the real format engine built, so
 // the offsets are the ones the editor will actually decorate — a hand-written

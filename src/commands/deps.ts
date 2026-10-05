@@ -1,4 +1,4 @@
-// Shared wiring every command family needs (10x-plan-4 P3.2).
+// Shared wiring every command family needs.
 //
 // `extension.ts` builds one `CommandDeps` in `activate()` and hands it to each
 // family's `registerXCommands`. The alternative — each family reaching back

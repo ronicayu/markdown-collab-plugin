@@ -1,5 +1,4 @@
-// The regressions that actually happened, replayed in a real Extension Host
-// (10x-plan P2.4, move 3).
+// The regressions that actually happened, replayed in a real Extension Host.
 //
 // Each scenario below maps to a CHANGELOG entry from the anchoring and
 // live-editor failure classes. Unit tests cover the same transforms on

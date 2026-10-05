@@ -1,4 +1,4 @@
-// Gate 2 of docs/one-view-design.md, end to end: in the read-only live editor,
+// Gate 2, end to end: in the read-only live editor,
 // select text, add a comment, and the file changes by exactly two markers (and
 // the thread's record) — on every document the one-view spike used.
 //

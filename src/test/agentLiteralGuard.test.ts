@@ -1,4 +1,4 @@
-// Guard for 10x-plan-4 P1.2: every "is this the agent?" check must go
+// Guard: every "is this the agent?" check must go
 // through `isAgentComment` (or read an `agentSlugFromClientName`-derived
 // slug), never compare an author string to the literal `"claude"` directly.
 // `agentIdentity.ts` is the one place allowed to mention that literal — it's
@@ -47,9 +47,4 @@ describe('no literal === "claude" / !== "claude" author comparison outside agent
       expect(text).not.toMatch(LITERAL_RE);
     });
   }
-
-  it("agentIdentity.ts is exempt and still mentions the pattern it replaces", () => {
-    const text = readFileSync(resolve(SRC_ROOT, EXEMPT), "utf8");
-    expect(text).toMatch(LITERAL_RE);
-  });
 });

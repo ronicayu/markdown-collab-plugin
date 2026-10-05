@@ -3,7 +3,7 @@
 // `.mcp.json` is a project file people check in, so it must never contain the
 // token — and it can't contain a literal port either, because the port moves
 // when it's taken. Claude Code expands `${VAR}` and `${VAR:-default}` in an
-// http server's `url` and `headers` (verified against the MCP docs, 2026-07),
+// http server's `url` and `headers`,
 // so the entry references two environment variables and the extension supplies
 // them through VS Code's `EnvironmentVariableCollection` — which every terminal
 // VS Code spawns inherits, including the one the default send mode starts
@@ -14,7 +14,7 @@
 //     back to the last known port and the Authorization header stays literal,
 //     so the server answers 401 and Claude Code reports the server as needing
 //     auth. The CLI and terminal paths keep working — that is the whole reason
-//     they stay (10x-plan-2: MCP is never the default).
+//     they stay.
 //   - Someone clones the repo without the extension: same, plus nothing secret
 //     leaked, because nothing secret was ever written here.
 
@@ -62,9 +62,8 @@ export interface MergeResult {
  *
  * Shared by every client whose config file uses this shape — today that's
  * Claude Code's `.mcp.json` (`mergeMcpJson` below) and Cursor CLI's
- * `.cursor/mcp.json` (`clients/cursor.ts`, 10x-plan-4 P1.1). Codex's
- * `.codex/config.toml` is TOML, not JSON, so it gets its own upsert in
- * `clients/codex.ts` rather than reusing this.
+ * `.cursor/mcp.json` (`clients/cursor.ts`). Codex's `.codex/config.toml` is TOML, not
+ * JSON, so it gets its own upsert in `clients/codex.ts` rather than reusing this.
  */
 export function mergeMcpServersJson(
   existing: string | null,
@@ -110,7 +109,7 @@ export interface RemovalResult {
 }
 
 /**
- * The inverse of `mergeMcpServersJson` (4.4: Disconnect Agent) — drop
+ * The inverse of `mergeMcpServersJson` — drop
  * `serverName`'s entry from an existing `{"mcpServers": {...}}`-shaped file,
  * leaving every other server and the file's own formatting alone. Idempotent:
  * `text: null` when the entry was never there, so running Disconnect on a
@@ -153,7 +152,7 @@ export function mergeMcpJson(existing: string | null, port: number): MergeResult
   return mergeMcpServersJson(existing, MCP_SERVER_NAME, mcpJsonEntry(port));
 }
 
-/** The inverse of `mergeMcpJson` (4.4: Disconnect Agent → Claude Code). */
+/** The inverse of `mergeMcpJson`. */
 export function removeMcpJsonEntry(existing: string | null): RemovalResult {
   return removeMcpServersJsonEntry(existing, MCP_SERVER_NAME);
 }

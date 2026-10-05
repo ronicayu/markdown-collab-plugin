@@ -1,11 +1,6 @@
-// Shared comment-panel UI builders.
-//
-// Plain-DOM, framework-agnostic builders for the pieces every comment panel
-// needs — a composer (textarea + submit/cancel + status) and a comment card
-// (author / time / body / actions). Imported by the inline-comments, PR/MR
-// review, and live-collab webviews so the three surfaces render the same
-// markup and pick up the shared `comments.css` styles. No view-specific data
-// models leak in here: callers pass strings + callbacks.
+// Plain-DOM builders shared by every comment panel, so the surfaces render the
+// same markup and pick up the shared `comments.css` styles. No view-specific
+// data models leak in here: callers pass strings + callbacks.
 
 import type MarkdownIt from "markdown-it";
 import { createCommentRenderer } from "./markdownPipeline";
@@ -14,26 +9,19 @@ import { agentDisplayName, isAgentComment, WAITING_FOR_AGENT } from "../agentIde
 import { diffWords, exceedsTokenCap, isBulkRewrite, MAX_DIFF_TOKENS, suggestionGist } from "./wordDiff";
 
 /**
- * What the card shows for an author: the agent's display name for an agent
- * comment (10x-plan-4 P1.2 — a raw `"codex"` author string used to render
- * literally, same as a human's name would), unchanged for a human's own name.
- * `isAgentComment` here only has the author string to go on (the card option
+ * The agent's display name for an agent comment, the author unchanged for a
+ * human. `isAgentComment` only has the author string here (the card option
  * doesn't carry the JSON `agent` flag), so it falls back to the known-slug
- * check — which is every slug this extension has ever written, so it's
- * accurate for every comment that reaches a card.
+ * check — every slug this extension has ever written.
  */
 function authorLabel(author: string): string {
   return isAgentComment({ author }) ? agentDisplayName(author).noun : author;
 }
 
 export interface ComposerHandle {
-  /** The composer root element to mount. */
   el: HTMLElement;
-  /** The textarea, for callers that need focus / value access. */
   textarea: HTMLTextAreaElement;
-  /** Put the composer into a "submitting" state (disables input + shows status). */
   setBusy(message: string): void;
-  /** Re-enable after a failed submit and surface an error inline. */
   setError(message: string): void;
 }
 
@@ -43,7 +31,6 @@ export interface ComposerOptions {
   cancelLabel?: string;
   initialValue?: string;
   rows?: number;
-  /** Optional one-line note shown above the textarea (e.g. "Comment on lines 3–7"). */
   meta?: string;
   /** Focus the textarea on mount (default true). */
   autofocus?: boolean;
@@ -51,7 +38,6 @@ export interface ComposerOptions {
   onCancel?(): void;
 }
 
-/** Build a shared comment composer. Returns the element plus busy/error helpers. */
 export function buildComposer(opts: ComposerOptions): ComposerHandle {
   const el = document.createElement("div");
   el.className = "mc-composer";
@@ -142,8 +128,7 @@ export interface CardAction {
   /**
    * Two-step confirm. The first click swaps the button label to
    * `confirmLabel` for `timeoutMs`; a second click within that window fires
-   * `onClick` and shows `busyLabel`. Used for destructive actions (delete)
-   * so the confirmation stays on the button itself instead of a dialog.
+   * `onClick` and shows `busyLabel`.
    */
   confirm?: { confirmLabel?: string; busyLabel?: string; timeoutMs?: number };
 }
@@ -152,13 +137,12 @@ export interface CommentCardOptions {
   author: string;
   /** ISO-8601 (or epoch ms) — rendered as relative time. Omit to hide. */
   timestamp?: string | number;
-  /** Extra muted note in the meta row after the time (e.g. "edited"). */
   note?: string;
   /**
-   * How this comment reached the file — "via tools" / "via cli" / "via file"
-   * (round-6 P1.4). Agent comments only; the caller gates this on its own
-   * `isAgentComment` check and omits it for a human's comment. `title` is the
-   * one-sentence explanation shown as a tooltip.
+   * How this comment reached the file — "via tools" / "via cli" / "via file".
+   * Agent comments only; the caller gates this on its own `isAgentComment`
+   * check and omits it for a human's comment. `title` is the one-sentence
+   * explanation shown as a tooltip.
    */
   via?: { label: string; title: string };
   /** Plain-text body. Rendered as text (callers that want markdown set `bodyEl`). */
@@ -175,37 +159,24 @@ export interface CommentCardOptions {
   pending?: boolean;
   /**
    * What that row says. The host decides the wording from how much it actually
-   * knows: a phase Claude reported over MCP, or the vaguer inferred default
-   * (10x-plan-2 P0.2). Omitted means the default.
+   * knows: a phase Claude reported over MCP, or the vaguer inferred default.
+   * Omitted means the default.
    */
   pendingLabel?: string;
   /**
-   * Announce the pending row to screen readers as it changes (10x-plan-4
-   * P2.4). Off by default: the pending row is shared by all three review
-   * surfaces, but only the inline view's a11y pass asked for the live
-   * announcement — turning it on everywhere would be a feature the live
-   * editor and the PR view never asked for.
+   * Announce the pending row to screen readers as it changes. Off by default:
+   * the pending row is shared by all three review surfaces, but only the inline
+   * view asked for the live announcement.
    */
   pendingAriaLive?: boolean;
-  /** Render as a nested reply (indented, lighter chrome). */
   reply?: boolean;
   actions?: CardAction[];
-  /** Card-level click handler (e.g. reveal the anchored text). */
   onClick?(): void;
 }
 
 /**
- * Render a comment body as markdown.
- *
- * Comment bodies have always *been* markdown — Claude writes lists and fenced
- * code into them constantly, and every platform whose comments land here treats
- * them as markdown — but the surfaces showed them three different ways: inline
- * markdown only in the comments view, autolinked plain text in the live editor,
- * and flat text in the PR view. So a reply containing a bulleted list read as
- * a run-on line with stray hyphens in one place and correctly in none.
- *
- * Raw HTML is escaped (`html: false`), so a comment cannot inject markup into
- * the surface displaying it.
+ * Render a comment body as markdown. Raw HTML is escaped (`html: false`), so a
+ * comment cannot inject markup into the surface displaying it.
  */
 export function buildCommentBody(body: string): HTMLElement {
   const el = document.createElement("div");
@@ -220,7 +191,6 @@ function commentRenderer(): MarkdownIt {
   return sharedCommentRenderer;
 }
 
-/** Build a shared comment card (author + relative time + body + actions). */
 export function buildCommentCard(opts: CommentCardOptions): HTMLElement {
   const card = document.createElement("div");
   card.className = opts.reply ? "mc-card mc-card--reply" : "mc-card";
@@ -312,7 +282,6 @@ export function buildCommentCard(opts: CommentCardOptions): HTMLElement {
 export interface SuggestionCardOptions {
   author: string;
   timestamp?: string | number;
-  /** Claude's rationale for the change. */
   note?: string;
   /** Current text (shown struck through). */
   original: string;
@@ -325,24 +294,18 @@ export interface SuggestionCardOptions {
   anchored?: boolean;
   onAccept(): void;
   onReject(): void;
-  /** Card-level click, e.g. scroll to the anchored text. */
   onClick?(): void;
   /**
-   * Collapse support (round-8 P1, every card kind folds). Omitted — as the
-   * classic panel always omits it — the card has no collapse chrome at all
-   * and renders exactly as it always has. Given, `collapsed` is the card's
-   * current state and `onToggleCollapse` fires from the chevron or (while
-   * collapsed) the header; the caller owns the actual state, the same way
+   * Collapse support. Omitted (as the classic panel always omits it), the card
+   * has no collapse chrome at all. Given, `collapsed` is the card's current
+   * state and `onToggleCollapse` fires from the chevron or (while collapsed)
+   * the header; the caller owns the actual state, the same way
    * `onAccept`/`onReject` don't mutate anything themselves.
    */
   collapsed?: boolean;
   onToggleCollapse?(): void;
 }
 
-/**
- * A pending suggestion with its diff (see `buildSuggestionDiff`) and
- * Accept / Reject.
- */
 export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
   const card = document.createElement("div");
   card.className = "mc-card mc-suggestion";
@@ -373,8 +336,7 @@ export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
   if (collapsible) {
     // A one-line gist stands in for the meta row while collapsed
     // (threadSidebar.css swaps the two on `.mc-suggestion.collapsed`), with the
-    // chevron at the row's right edge — same fold the thread card does, so the
-    // two read as one system.
+    // chevron at the row's right edge.
     const headRow = document.createElement("div");
     headRow.className = "mc-suggestion__head";
     headRow.appendChild(meta);
@@ -394,11 +356,10 @@ export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
     });
     headRow.appendChild(chevron);
     // While collapsed the header is effectively the whole card, so clicking
-    // anywhere in it (the chevron handles its own click) expands — a bigger
-    // target than the chevron alone. Expanded, a click here is left to bubble
-    // to the card's own `onClick` (reveal in the document) instead: folding
-    // the card back up from under someone reading it would be a bad surprise
-    // for a plain click.
+    // anywhere in it (the chevron handles its own click) expands. Expanded, a
+    // click here is left to bubble to the card's own `onClick` (reveal in the
+    // document) instead: folding the card back up from under someone reading it
+    // would be a bad surprise for a plain click.
     headRow.addEventListener("click", (e) => {
       if (!card.classList.contains("collapsed")) return;
       e.stopPropagation();
@@ -449,20 +410,16 @@ export function buildSuggestionCard(opts: SuggestionCardOptions): HTMLElement {
 }
 
 /**
- * The suggestion's diff, in whichever form fits it (round-6 P2.2). A small
- * edit — the common case, one sentence or one list item — renders as one
- * paragraph with the changed words struck through / inserted in place, which
- * reads at a glance the way a real edit does. `isBulkRewrite` decides which
- * form is the default; either way a toggle lets the human switch to the
- * other one, because the ratio guess is exactly that, a guess.
+ * The suggestion's diff, in whichever form fits it. A small edit renders as one
+ * paragraph with the changed words struck through / inserted in place.
+ * `isBulkRewrite` decides which form is the default; either way a toggle lets
+ * the human switch, because the ratio guess is exactly that, a guess.
  *
- * The inline view is never built until it's actually shown (round-9 P1.1,
- * security review): `buildInlineDiff` walks `diffWords`' O(n·m) LCS table,
- * and building it unconditionally — even while the block view was the one
- * on screen — is what let a huge pasted-in suggestion freeze the webview on
- * every render, toggle or not. Past `exceedsTokenCap`, it's never built at
- * all; the toggle itself is disabled so there's no click that can trigger
- * it either.
+ * The inline view is never built until it's actually shown: `buildInlineDiff`
+ * walks `diffWords`' O(n·m) LCS table, and building it unconditionally — even
+ * while the block view was the one on screen — let a huge pasted-in suggestion
+ * freeze the webview on every render. Past `exceedsTokenCap`, it's never built
+ * at all; the toggle itself is disabled so no click can trigger it either.
  */
 function buildSuggestionDiff(original: string, proposed: string): HTMLElement {
   const wrap = document.createElement("div");
@@ -526,7 +483,6 @@ function buildInlineDiff(original: string, proposed: string): HTMLElement {
   return p;
 }
 
-/** Build the two-row original→proposed diff with the changed middle emphasized. */
 function buildDiff(original: string, proposed: string): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "mc-suggestion__diff";
@@ -568,19 +524,16 @@ function diffRow(kind: "del" | "ins", text: string, pre: number, suf: number): H
 /**
  * Chevron markup for every card's collapse toggle — points down; CSS
  * (comments.css) turns it to point left when the button's `aria-expanded` is
- * false, so the caller only has to keep that attribute current, the same
- * contract the old ▾/▸ text glyph had.
+ * false, so the caller only has to keep that attribute current.
  */
 const COLLAPSE_CHEVRON_SVG =
   '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" ' +
   'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5l4 4 4-4"/></svg>';
 
 /**
- * Build the collapse-toggle button used by a thread card (threadSidebar.ts)
- * and this module's own suggestion card — one shared icon and
- * `.mc-icon-btn`/`.mc-icon-btn--sm` styling (comments.css), so every card's
- * fold control reads as the same control regardless of which webview mounts
- * it (round-8 P1 → phase 2 of the chrome redesign).
+ * The collapse-toggle button used by a thread card (threadSidebar.ts) and this
+ * module's own suggestion card: one shared icon and styling, so every card's
+ * fold control reads as the same control regardless of which webview mounts it.
  */
 export function buildCollapseToggle(opts: {
   /** Extra class(es) the caller still keys its own CSS/selectors off (e.g. "thread-collapse"). */
@@ -604,8 +557,7 @@ export function buildCollapseToggle(opts: {
 /**
  * Two-step confirm on a button, in place: first click arms it (swaps the
  * label, auto-disarms after a timeout); a second click while armed fires the
- * action and shows a busy label. Shared so every view's destructive actions
- * confirm the same way.
+ * action and shows a busy label.
  */
 function armConfirm(
   btn: HTMLButtonElement,

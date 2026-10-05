@@ -1,4 +1,4 @@
-// One skill source, four renderings (10x-plan-4 P0.2 + P1.3).
+// One skill source, four renderings.
 //
 // The legacy rendering is what every standalone install already has on disk,
 // so the refactor into sections had to reproduce it byte for byte. The fixture
@@ -62,7 +62,7 @@ const INTENTIONAL_CHANGES: Array<[string, string]> = [
     "add them with **Markdown Collab: Register Review Tools with Claude Code**, then restart.",
     "add them with **Markdown Collab: Connect an Agent…** → Claude Code, then restart.",
   ],
-  // 10x-plan-6 P1.3: stop implying other agents have `mdc` — only a Claude
+  // Stop implying other agents have `mdc` — only a Claude
   // Code session (this plugin, or the standalone skill) ever does.
   [
     "or the server not running).\n\nHand-editing markers with the Edit tool is a distant third",
@@ -71,7 +71,7 @@ const INTENTIONAL_CHANGES: Array<[string, string]> = [
       "`docs/format.md`, asking you to run **Markdown Collab: Repair Comment Anchors** when it can't run a " +
       "check itself.\n\nHand-editing markers with the Edit tool is a distant third",
   ],
-  // 10x-plan-6 P2.3: one suggestion, one change — split a paragraph rewrite,
+  // One suggestion, one change — split a paragraph rewrite,
   // or leave a comment when it can't be; the tool refuses a `with` that reads
   // like a whole paragraph rather than accepting it as one "suggestion".
   [
@@ -92,7 +92,7 @@ const INTENTIONAL_CHANGES: Array<[string, string]> = [
       "accept or reject your own suggestions** — that's the human's call in the review UI, only on explicit " +
       "instruction. Verify with `mc_check` and `mc_list` (reports each suggestion's `original` and `proposed`).",
   ],
-  // 10x-plan-6 P3: rank by severity, cap the top five, summarize the rest —
+  // Rank by severity, cap the top five, summarize the rest —
   // "no upper bound" produced too many comments even though most were sound.
   [
     "#### No upper bound on thread count\n\nThere is **no maximum number of threads** per review pass. Leave a " +

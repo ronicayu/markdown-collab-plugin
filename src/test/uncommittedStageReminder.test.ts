@@ -1,4 +1,4 @@
-// The stage-time reminder's once-per-file-per-session gate (10x-plan-6 P5.1).
+// The stage-time reminder's once-per-file-per-session gate.
 
 import { describe, expect, it } from "vitest";
 import { SessionThreadReminderGate } from "../uncommitted/stageReminder";

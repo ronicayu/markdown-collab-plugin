@@ -1,12 +1,8 @@
-// Which top-level blocks an edit in the live editor changed (10x-plan-6 P4,
-// phase B; design in docs/one-view-design.md, "Phase B: edit mode").
-//
-// Edit mode used to post the editor's whole serialization on every edit, and
-// the host adopted it as the file — so one keystroke rewrote every block the
-// serializer formats differently from how it was written (3–624 lines on the
-// spike's documents). Now the webview reports only the top-level blocks the
-// edit touched, each with its serialized Markdown, and the host splices those
-// into the file's own bytes (`applyBlockEdits` in inlineBridge.ts).
+// Which top-level blocks an edit in the live editor changed. The webview
+// reports only the blocks the edit touched, each with its serialized Markdown,
+// and the host splices those into the file's own bytes (`applyBlockEdits` in
+// inlineBridge.ts) — never the whole serialization, which would rewrite every
+// block the serializer formats differently from how it was written.
 //
 // Which blocks were touched is read off node identity. ProseMirror documents
 // are immutable and share structure: a step rebuilds exactly the top-level
@@ -16,9 +12,8 @@
 // however many there were, including undo (which puts back the old objects)
 // and a block dragged elsewhere (the same object at a new index).
 //
-// Pure and generic over the node type, so it's tested without a browser.
+// Generic over the node type, so it's tested without a browser.
 
-/** One change to the file's top-level blocks, as the webview posts it. */
 export interface BlockEdit {
   /** Base block indices `[from, to)` it replaces; `from === to` inserts before `from`. */
   from: number;
@@ -29,7 +24,6 @@ export interface BlockEdit {
   types: string[];
 }
 
-/** The `edit-blocks` message (webview → host). */
 export interface BlockEditsMessage {
   type: "edit-blocks";
   /** The host's document epoch the edit is based on (bumped on every re-render it sends). */
@@ -39,7 +33,6 @@ export interface BlockEditsMessage {
   edits: BlockEdit[];
 }
 
-/** The slice of a ProseMirror node the diff reads. */
 export interface BlockNodeLike {
   type: { name: string };
   content: { size: number };
@@ -64,7 +57,6 @@ export function markdownBlockNodes<N extends BlockNodeLike>(doc: { childCount: n
   return nodes;
 }
 
-/** One changed run: base blocks `[from, to)` became `nodes`. */
 export interface BlockChange<N> {
   from: number;
   to: number;
@@ -104,7 +96,6 @@ export function diffBlocks<N>(base: readonly N[], next: readonly N[], same: (a: 
   return changes;
 }
 
-/** The longest run of nodes shared by reference, in increasing order on both sides. */
 function sharedRun<N>(
   base: readonly N[],
   next: readonly N[],

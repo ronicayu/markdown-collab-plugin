@@ -1,10 +1,9 @@
-// The "how should this reach Claude?" quick-pick, as data (10x-plan-4 P0.3).
+// The "how should this reach Claude?" quick-pick, as data.
 //
 // Pulled out of `commands/send.ts` and kept vscode-free so the item list is
 // unit-testable directly, and so the guard that every settings-enum value
 // has a picker entry (and vice versa) can import this instead of parsing a
-// live QuickPick. P0.1's fourth mode (`headless`) was one more entry here, not
-// a second list to keep in sync — which is the point of this file.
+// live QuickPick.
 
 import type { SendMode } from "../sendToClaude";
 
@@ -29,17 +28,15 @@ export interface SendModePickerOptions {
 }
 
 /**
- * Build the picker's items.
- *
- * Terminal leads and always carries "recommended" (10x-plan-6 P0.1: the grill
- * established it's the mode actually used, not headless — headless was built
+ * Terminal leads and always carries "recommended": it's the mode actually
+ * used, not headless — headless was built
  * for "people who can't use a terminal", who can't sign in to Claude Code
- * either). It is *offered*, never chosen — this list only appears when
- * nothing was auto-detected, and picking stays the human's call (10x-plan-4's
- * open question 1). Headless, when available, is listed second: a way to not
+ * either. It is *offered*, never chosen — this list only appears when
+ * nothing was auto-detected, and picking stays the human's call. Headless, when
+ * available, is listed second: a way to not
  * keep a terminal open, not the default path. Clipboard is last either way.
  *
- * The terminal item stays agent-neutral (1.4): the mode types into the
+ * The terminal item stays agent-neutral: the mode types into the
  * terminal the user is using, not necessarily Claude — "Connect an Agent" can
  * leave Cursor CLI or Codex running there instead.
  */

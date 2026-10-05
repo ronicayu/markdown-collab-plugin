@@ -37,7 +37,6 @@ export const RPC_METHOD_NOT_FOUND = -32601;
 export const RPC_INVALID_PARAMS = -32602;
 export const RPC_INTERNAL_ERROR = -32603;
 
-/** One tool as advertised by `tools/list`. */
 export interface McpTool {
   name: string;
   title?: string;
@@ -49,7 +48,6 @@ export interface McpTool {
   };
 }
 
-/** What a tool handler returns — MCP's content-block result. */
 export interface ToolResult {
   content: Array<{ type: "text"; text: string }>;
   /**
@@ -66,10 +64,9 @@ export interface ProtocolHandlers {
   instructions?: string;
   tools: readonly McpTool[];
   /**
-   * `author` is the calling session's agent slug (10x-plan-4 P1.2) —
-   * resolved via `resolveAuthor` below before the handler ever sees the
-   * call, so every tool implementation just takes it as a parameter rather
-   * than re-deriving it.
+   * `author` is the calling session's agent slug, resolved via `resolveAuthor` below
+   * before the handler sees the call, so every tool implementation just takes it as a
+   * parameter rather than re-deriving it.
    */
   callTool(name: string, args: Record<string, unknown>, author: string): Promise<ToolResult>;
   /**
@@ -81,9 +78,8 @@ export interface ProtocolHandlers {
    */
   recordSession?(sessionId: string, clientName: string | undefined): void;
   /**
-   * The agent slug a session id resolves to. Absent entirely means "no
-   * session tracking at all" — `handleRpc` then defaults every call to
-   * `claude`, which is what every caller before this change effectively was.
+   * The agent slug a session id resolves to. Absent entirely means "no session
+   * tracking at all" — `handleRpc` then defaults every call to `claude`.
    */
   resolveAuthor?(sessionId: string | undefined): string;
 }
@@ -101,7 +97,6 @@ function err(
   return { jsonrpc: "2.0", id, error: { code, message, data } };
 }
 
-/** Pick the newest protocol revision both sides know. */
 export function negotiateVersion(requested: unknown): string {
   if (typeof requested === "string" && SUPPORTED_VERSIONS.includes(requested)) return requested;
   return PROTOCOL_VERSION;
@@ -116,10 +111,9 @@ export async function handleRpc(
   msg: unknown,
   h: ProtocolHandlers,
   /**
-   * The transport's session id for this request — from the `Mcp-Session-Id`
-   * header, minted fresh by the transport on an `initialize` that arrived
-   * without one (10x-plan-4 P1.2). `undefined` when the transport does no
-   * session tracking at all.
+   * The transport's session id for this request — from the `Mcp-Session-Id` header,
+   * minted fresh by the transport on an `initialize` that arrived without one.
+   * `undefined` when the transport does no session tracking at all.
    */
   sessionId?: string,
 ): Promise<JsonRpcResponse | null> {
@@ -130,7 +124,6 @@ export async function handleRpc(
   if (typeof req.method !== "string") {
     return err(req.id ?? null, RPC_INVALID_REQUEST, "missing method");
   }
-  // Notifications carry no id and get no response.
   const isNotification = req.id === undefined || req.id === null;
   const id = req.id ?? null;
 

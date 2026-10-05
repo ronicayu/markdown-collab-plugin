@@ -145,7 +145,7 @@ describe("logging invariants", () => {
     const offenders: string[] = [];
     for (const rel of [
       "src/extension.ts",
-      // 10x-plan-4 P3.2 split the command registrations out of extension.ts
+      // The command registrations were split out of extension.ts
       // into these — the guard has to follow them or it stops meaning anything.
       "src/commands/deps.ts",
       "src/commands/send.ts",

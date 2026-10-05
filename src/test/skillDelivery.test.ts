@@ -1,4 +1,4 @@
-// The prompt a headless run sends (10x-plan-4 P0.1). The skill isn't installed
+// The prompt a headless run sends. The skill isn't installed
 // there — it rides along as the system prompt — so every builder can open with
 // a pointer to "the workflow in your instructions" instead of naming a skill,
 // and the rest of each prompt is the same text either way.

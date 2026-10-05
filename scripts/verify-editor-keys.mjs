@@ -1,4 +1,4 @@
-// Proves, in a REAL VS Code with real key presses, what docs/editor-undo-and-keys.md
+// Proves, in a REAL VS Code with real key presses, what the editor's key handling
 // rests on and no other suite can reach:
 //
 //   - Cmd/Ctrl+B in the Markdown Collab editor (Editing mode) makes text bold

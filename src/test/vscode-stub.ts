@@ -66,8 +66,8 @@ class ThemeIcon {
   constructor(public id: string) {}
 }
 
-// Minimal stand-in for `vscode.McpHttpServerDefinition` (mcpServer/clients/copilot.ts,
-// 10x-plan-4 P1.1) — just enough shape for the Copilot provider's unit tests
+// Minimal stand-in for `vscode.McpHttpServerDefinition` (mcpServer/clients/copilot.ts)
+// — just enough shape for the Copilot provider's unit tests
 // to assert on `.uri` / `.headers` / `.label` without a real extension host.
 class McpHttpServerDefinition {
   constructor(

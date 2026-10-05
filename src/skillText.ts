@@ -1,24 +1,21 @@
-// The review workflow, as named sections rendered for every place it is read
-// (10x-plan-4 P0.2 and P1.3).
+// The review workflow, as named sections rendered for every place it is read.
 //
-// WHY THIS EXISTS. The same workflow reaches an agent four ways: the
+// The same workflow reaches an agent four ways: the
 // standalone skill older installs keep in `~/.claude/skills/`, the Claude Code
 // plugin's skill (where `mdc` is on PATH), the system prompt of a headless run
 // (tools only — no CLI, no Edit tool), and the MCP server's `instructions` for
-// any client that connects without either. Four hand-kept copies would drift
-// the way the old per-transport sections did — one of them eventually telling
+// any client that connects without either. Four hand-kept copies would drift:
+// one of them would eventually tell
 // an agent to do something another forbids. So there is one text, cut into
 // sections, and each target is a rendering of it: a rule changes in one place
 // and lands everywhere.
 //
-// The legacy rendering is byte-for-byte the skill this file replaced, apart
-// from deliberate edits; `src/test/skillText.test.ts` pins that against a
+// The legacy rendering is pinned by `src/test/skillText.test.ts` against a
 // snapshot so a refactor here can't quietly rewrite what installed users read.
 //
 // Pure — no fs, no vscode. Imported by the skill installer, the headless
 // runner, the MCP server, and (through esbuild) scripts/build-plugin.mjs.
 
-/** Where a rendering of the skill is read. */
 export type SkillTarget = "legacy" | "plugin" | "headless";
 
 /** The standalone skill's name, and its directory under `~/.claude/skills/`. */
@@ -33,7 +30,6 @@ function cliOnly(t: SkillTarget, text: string): string {
   return t === "headless" ? "" : text;
 }
 
-/** How the rendering tells the agent to invoke the CLI. */
 function cliInvocation(t: SkillTarget): string {
   // Only the plugin can say plain `mdc`: its `bin/` is on PATH while it is
   // enabled. The standalone skill has no PATH entry, so it spells the file out.
@@ -42,7 +38,6 @@ function cliInvocation(t: SkillTarget): string {
     : "`node ~/.claude/skills/vs-markdown-collab/mdc.mjs <command> <file> [args]`,";
 }
 
-/** One row of the tools table: the MCP tool, its `mdc` verb, what it does. */
 interface ToolRow {
   tool: string;
   cli: string;
@@ -531,7 +526,6 @@ export const HEADLESS_PREAMBLE =
   "Your final message is shown to the human as your report — keep it to the per-file summary the " +
   "Reporting section describes.";
 
-/** The system prompt for a headless run: the preamble, then the tools-only skill. */
 export function headlessSystemPrompt(): string {
   return `${HEADLESS_PREAMBLE}\n\n${renderSkill("headless")}`;
 }

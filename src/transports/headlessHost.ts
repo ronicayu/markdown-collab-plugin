@@ -1,5 +1,5 @@
-// The VS Code side of headless runs (10x-plan-4 P0.1): is it available here,
-// start one, and tell the human how it went.
+// The VS Code side of headless runs: is it available here, start one, and
+// tell the human how it went.
 //
 // `headless.ts` owns the process and knows nothing about VS Code; this owns
 // the settings, the workspace flag, the toasts, and the fallbacks. The send
@@ -43,7 +43,6 @@ import {
   type HeadlessUnavailableReason,
 } from "./headless";
 
-/** Set when a run found Claude Code unable to load our server in this workspace. */
 export const MCP_UNAVAILABLE_KEY = "markdownCollab.headlessMcpUnavailable";
 
 export interface ResolvedClaude {
@@ -103,7 +102,6 @@ export type HeadlessAvailability =
   | { ok: true; claude: ResolvedClaude; server: { url: string; token: string } }
   | { ok: false; reason: HeadlessUnavailableReason; detail?: string };
 
-/** Everything that has to be true before a headless run may start. */
 export async function headlessAvailability(
   workspaceState: vscode.Memento,
   log?: Logger,
@@ -135,7 +133,6 @@ export async function resetHeadlessFailures(workspaceState: vscode.Memento): Pro
   lookupCache = null;
 }
 
-/** The most recent fallback to the terminal, for diagnostics and tests. */
 let lastFallback: { reason: string; at: string } | null = null;
 
 export interface HeadlessDelivery {
@@ -146,9 +143,7 @@ export interface HeadlessDelivery {
   log: Logger;
   workspaceState: vscode.Memento;
   ready: Extract<HeadlessAvailability, { ok: true }>;
-  /** Send this same payload through the terminal path instead. */
   fallbackToTerminal(): Promise<unknown>;
-  /** Open a terminal running `claude`, for signing in. */
   startTerminal(): void;
 }
 

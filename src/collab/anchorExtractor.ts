@@ -1,24 +1,14 @@
-// Build an Anchor (text + contextBefore + contextAfter) for a selection
-// made in the WYSIWYG editor.
+// Build an Anchor (text + contextBefore + contextAfter) for a selection made in
+// the WYSIWYG editor.
 //
-// The challenge: ProseMirror's selection is in *rendered* coordinates
-// (no markup chars), but anchors must resolve against the *markdown
-// source*. The bug we're guarding against: an earlier extractor used
-// `markdownSource.indexOf(selectedText)` which always picks the first
-// occurrence — selecting the link label inside `[here](url)` in a doc
-// that ALSO has a bare "here" earlier silently mis-anchored on the bare
-// one. Worse, when the selection itself crossed a link, the literal
-// rendered text doesn't appear at all in the markdown source.
-//
-// Strategy: strip inline markdown markup from the source while
-// recording a position map back into the original. The stripped string
-// equals (or is a close approximation of) what ProseMirror renders; we
-// can find the rendered selection in the stripped string and translate
-// the resulting [start, end) pair back into markdown positions.
-// Anchor.text is then the literal markdown slice between those
-// positions — including any markup chars the selection crossed — and
-// `anchor.resolve` will round-trip cleanly because that exact text now
-// lives in the source.
+// ProseMirror's selection is in rendered coordinates (no markup chars) but
+// anchors must resolve against the markdown source, and
+// `markdownSource.indexOf(selectedText)` would pick the first occurrence (and
+// find nothing when the selection crosses a link). So inline markup is stripped
+// from the source with a position map back into the original; the rendered
+// selection is found in the stripped string and its [start, end) translated
+// back. Anchor.text is the literal markdown slice between those positions, so
+// `anchor.resolve` round-trips.
 
 import type { Anchor } from "../types";
 
@@ -41,11 +31,7 @@ export interface StripResult {
 
 /**
  * Strip inline markdown markup from `md` while recording a
- * stripped-position → original-position map. Inline markup understood:
- *   - link text:   `[label](url)` → `label`
- *   - autolink:    `<https://x>` → `https://x`
- *   - bold/em/strike/code wrappers: `**X**`, `__X__`, `*X*`, `_X_`,
- *     `~~X~~`, `` `X` ``  → `X`
+ * stripped-position → original-position map.
  *
  * Block-level markup (headers, blockquotes, lists) is left in place
  * because it sits at line start and the selection rarely starts on
@@ -129,14 +115,11 @@ export function stripInlineMarkup(md: string): StripResult {
     if (lineStart) {
       const fence = readFenceAt(md, i);
       if (fence) {
-        // Skip the opening fence line entirely.
         let j = i;
         while (j < len && md[j] !== "\n" && md[j] !== "\r") j++;
         i = j;
         if (md[i] === "\n" || md[i] === "\r") i++;
-        // Emit body lines verbatim until the closing fence.
         while (i < len) {
-          // Detect closing fence: 3+ of the same char on a line, optionally indented.
           let k = i;
           while (k < len && (md[k] === " " || md[k] === "\t")) k++;
           let runChar: string | null = null;
@@ -146,7 +129,6 @@ export function stripInlineMarkup(md: string): StripResult {
             runLen++;
             k++;
           }
-          // After the fence run only whitespace + newline are allowed.
           let onlyWsAfter = true;
           let lineEnd = k;
           while (lineEnd < len && md[lineEnd] !== "\n" && md[lineEnd] !== "\r") {
@@ -157,14 +139,11 @@ export function stripInlineMarkup(md: string): StripResult {
             lineEnd++;
           }
           if (runChar === fence.char && runLen >= fence.len && onlyWsAfter) {
-            // Closing fence — skip to end of line.
             i = lineEnd;
             if (md[i] === "\n" || md[i] === "\r") i++;
             lineStart = true;
             break;
           }
-          // Body line — emit chars until end of line (push through map),
-          // skip the newline.
           while (i < len && md[i] !== "\n" && md[i] !== "\r") {
             push(md[i]!, i);
             i++;
@@ -199,14 +178,12 @@ export function stripInlineMarkup(md: string): StripResult {
       let advanced = true;
       while (advanced) {
         advanced = false;
-        // Leading horizontal whitespace (indentation).
         while (i < len && (md[i] === " " || md[i] === "\t")) {
           i++;
           advanced = true;
         }
         if (i >= len) break;
         const c = md[i]!;
-        // ATX heading: `#`, `##`, `###` … `######` followed by space.
         if (c === "#") {
           let j = i;
           let hashes = 0;
@@ -220,14 +197,12 @@ export function stripInlineMarkup(md: string): StripResult {
             continue;
           }
         }
-        // Blockquote prefix: `>` optionally followed by space.
         if (c === ">") {
           i++;
           if (md[i] === " ") i++;
           advanced = true;
           continue;
         }
-        // Unordered list marker: `- `, `* `, `+ `.
         if ((c === "-" || c === "*" || c === "+") && md[i + 1] === " ") {
           i += 2;
           advanced = true;
@@ -244,7 +219,6 @@ export function stripInlineMarkup(md: string): StripResult {
           }
           continue;
         }
-        // Ordered list marker: digits followed by `.` or `)` and space.
         if (c >= "0" && c <= "9") {
           let j = i;
           while (j < len && md[j]! >= "0" && md[j]! <= "9") j++;
@@ -287,7 +261,6 @@ export function stripInlineMarkup(md: string): StripResult {
     // the wrapper. Image variant `![alt](url)` is treated similarly:
     // we drop the `!`, emit the alt text.
     if (ch === "!" && md[i + 1] === "[") {
-      // image — try to find matching closing `)` of the URL
       const close = matchLinkBrackets(md, i + 1);
       if (close) {
         emitLabelStripped(md, i + 2, close.labelEnd, push);
@@ -302,8 +275,6 @@ export function stripInlineMarkup(md: string): StripResult {
         i = close.parenEnd + 1;
         continue;
       }
-      // Reference-style link: `[label][ref]` or `[label][]`. Emit the
-      // label (between the first `[` and `]`) and skip the rest.
       const refClose = matchReferenceLinkBrackets(md, i);
       if (refClose) {
         emitLabelStripped(md, i + 1, refClose.labelEnd, push);
@@ -312,7 +283,6 @@ export function stripInlineMarkup(md: string): StripResult {
       }
     }
 
-    // Autolink: `<http://x>` or `<a@b.com>`.
     if (ch === "<") {
       const close = md.indexOf(">", i + 1);
       if (close > 0) {
@@ -328,7 +298,6 @@ export function stripInlineMarkup(md: string): StripResult {
     // Inline emphasis / code wrappers — best-effort: pairs of identical
     // marker chars that wrap text. Skip the markers, keep the inside.
     if (ch === "*" || ch === "_" || ch === "~" || ch === "`") {
-      // Detect doubled marker (**, __, ~~) first.
       if (md[i + 1] === ch) {
         const close = md.indexOf(ch + ch, i + 2);
         if (close > 0 && close - (i + 2) < 200) {
@@ -345,7 +314,6 @@ export function stripInlineMarkup(md: string): StripResult {
         i += 2;
         continue;
       }
-      // Single marker.
       const close = md.indexOf(ch, i + 1);
       if (close > 0 && close - (i + 1) < 200) {
         for (let j = i + 1; j < close; j++) push(md[j]!, j);
@@ -357,15 +325,10 @@ export function stripInlineMarkup(md: string): StripResult {
     push(ch, i);
     i++;
   }
-  // sentinel
   map.push(len);
   return { stripped: stripped.join(""), map };
 }
 
-// Find the matching `]` and `[refid]` brackets for a reference-style
-// link starting at `[label][ref]` or `[label][]`. Returns the position
-// of the inner `]` (label end) and the position of the closing `]` of
-// the ref bracket.
 function matchReferenceLinkBrackets(
   md: string,
   openIdx: number,
@@ -393,24 +356,17 @@ function matchReferenceLinkBrackets(
   return { labelEnd, refCloseEnd: k };
 }
 
-// Detect a reference-link definition line at md[i]: `[label]: url ...`
-// where url is a URL-like token.
 function isReferenceDefAt(md: string, i: number): boolean {
   if (md[i] !== "[") return false;
-  // Find closing `]`.
   let j = i + 1;
   while (j < md.length && md[j] !== "]" && md[j] !== "\n") j++;
   if (md[j] !== "]" || md[j + 1] !== ":") return false;
-  // Skip whitespace, expect a non-empty URL token.
   let k = j + 2;
   while (k < md.length && (md[k] === " " || md[k] === "\t")) k++;
   if (k >= md.length || md[k] === "\n") return false;
   return true;
 }
 
-// Detect a fenced-code-block opener at md[i]: line begins with 3+
-// backticks or 3+ tildes, optionally indented. Returns the fence char
-// and length so the caller can find the matching close.
 function readFenceAt(md: string, i: number): { char: string; len: number } | null {
   // Allow up to 3 leading spaces.
   let j = i;
@@ -430,13 +386,10 @@ function readFenceAt(md: string, i: number): { char: string; len: number } | nul
   return { char: ch, len: n };
 }
 
-// Detect a Setext-style heading underline at md[i]: a line of only `=`
-// or `-` (length >= 3), optionally with trailing whitespace.
 function isSetextUnderlineAt(md: string, i: number): boolean {
   let end = i;
   while (end < md.length && md[end] !== "\n" && md[end] !== "\r") end++;
   if (end - i < 3) return false;
-  // Skip leading spaces.
   let j = i;
   while (j < end && md[j] === " ") j++;
   const c = md[j];
@@ -447,7 +400,6 @@ function isSetextUnderlineAt(md: string, i: number): boolean {
     n++;
   }
   if (n < 3) return false;
-  // Trailing whitespace only.
   while (j < end) {
     if (md[j] !== " " && md[j] !== "\t") return false;
     j++;
@@ -455,16 +407,10 @@ function isSetextUnderlineAt(md: string, i: number): boolean {
   return true;
 }
 
-// Detect a horizontal-rule line at md[i]: 3+ of `-`, `*`, or `_`
-// (all the same char), optionally interleaved with spaces. Examples:
-//   ---
-//   * * *
-//   _____
 function isHorizontalRuleAt(md: string, i: number): boolean {
   let end = i;
   while (end < md.length && md[end] !== "\n" && md[end] !== "\r") end++;
   if (end - i < 3) return false;
-  // Find the first non-whitespace char to determine the marker.
   let j = i;
   while (j < end && md[j] === " ") j++;
   const marker = md[j];
@@ -478,14 +424,7 @@ function isHorizontalRuleAt(md: string, i: number): boolean {
   return count >= 3;
 }
 
-// Detect whether the line starting at md[i] is a GFM table separator
-// row: contents are only `|`, `-`, `:`, and whitespace, with at least
-// three consecutive `-` somewhere. Examples:
-//   |---|---|---|
-//   | --- | :---: | ---: |
-//   |:--:|:---|---:|
 function isTableSeparatorRowAt(md: string, i: number): boolean {
-  // Find the line's end.
   let end = i;
   while (end < md.length && md[end] !== "\n" && md[end] !== "\r") end++;
   if (end - i < 3) return false;
@@ -503,19 +442,17 @@ function isTableSeparatorRowAt(md: string, i: number): boolean {
       if (c === "|" || c === ":" || c === " " || c === "\t") {
         sawAnyContent = sawAnyContent || c === "|" || c === ":";
       } else {
-        return false; // any other char rules it out
+        return false;
       }
     }
   }
   return sawAnyContent && maxDashRun >= 3;
 }
 
-// Emit the chars of a link label (the part between `[` and `]`) into the
-// stripped output, also stripping inline-code wrappers and emphasis
-// markers WITHIN the label. Without this, link labels styled as inline
-// code — e.g. `` [`X.md`](url) `` — would push the literal backticks
-// into the stripped string, which the rendered editor text does not
-// contain. The mismatch makes the user's selection un-locatable.
+// Link labels styled as inline code — e.g. `` [`X.md`](url) `` — would push the
+// literal backticks into the stripped string, which the rendered editor text
+// does not contain, making the user's selection un-locatable. So wrapper chars
+// within the label are dropped.
 function emitLabelStripped(
   md: string,
   labelStart: number,
@@ -536,7 +473,6 @@ function matchLinkBrackets(
   md: string,
   openIdx: number,
 ): { labelEnd: number; parenEnd: number } | null {
-  // openIdx points at `[`. Find the matching `]` then `(...)`.
   let depth = 1;
   let j = openIdx + 1;
   while (j < md.length && depth > 0) {
@@ -546,14 +482,13 @@ function matchLinkBrackets(
       depth--;
       if (depth === 0) break;
     } else if (c === "\\") {
-      j++; // skip escaped char
+      j++;
     }
     j++;
   }
   if (depth !== 0) return null;
-  const labelEnd = j; // points at `]`
+  const labelEnd = j;
   if (md[labelEnd + 1] !== "(") return null;
-  // Find matching `)` allowing one nesting level (rare).
   let pdepth = 1;
   let k = labelEnd + 2;
   while (k < md.length && pdepth > 0) {
@@ -623,8 +558,6 @@ export function buildAnchorWithDebug(
     return { anchor: null, debug };
   }
 
-  // Strategy 1 — strip markdown markup with a position map and locate
-  // the rendered selection in the stripped string.
   {
     const { stripped, map } = stripInlineMarkup(markdownSource);
     const occurrencesInStripped = findAll(stripped, selected);

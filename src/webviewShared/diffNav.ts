@@ -1,10 +1,7 @@
 // Prev/next-change navigation for the diff-striped views — the uncommitted
-// review panel and the PR/MR review panel. GitHub and GitLab put arrows on
-// their diffs because scrolling a long document hunting for the next stripe
-// is the reviewer's tax on every file; these are the same arrows.
+// review panel and the PR/MR review panel.
 //
-// The wrap-around stepping is `stepIndex` from findState — the find bar
-// already solved "cycle through N things in both directions".
+// The wrap-around stepping is `stepIndex` from findState.
 
 import { stepIndex } from "./findState";
 import { smoothScrollIntoView } from "./scrollIntoView";
@@ -64,10 +61,7 @@ export function createDiffNav(opts: {
   };
 }
 
-/**
- * True when a keydown should be treated as a navigation shortcut — i.e. the
- * user isn't typing. GitHub uses n/p on diffs; same here.
- */
+/** True when a keydown should be treated as a navigation shortcut — i.e. the user isn't typing. */
 export function isNavKeyContext(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return true;
   if (target.isContentEditable) return false;

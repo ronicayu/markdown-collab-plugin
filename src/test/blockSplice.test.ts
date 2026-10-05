@@ -1,4 +1,4 @@
-// Edit mode's block-splice write-back (docs/one-view-design.md, "Phase B"),
+// Edit mode's block-splice write-back,
 // host half and the pure diff. The whole path — a keystroke in the shipped
 // bundle, its `edit-blocks` message, this splice — is gated on every block of
 // the spike's 17 documents in webview-e2e/blockSplice.spec.ts; these pin the

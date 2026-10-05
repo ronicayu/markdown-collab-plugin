@@ -1,11 +1,5 @@
 // The environment report a bug starts with.
 //
-// Nearly every "it didn't work" needs the same six facts before anything else
-// can be said: which version, which send mode, is the skill installed and
-// current, is the tool server up, is a Claude terminal visible, and what does
-// the document actually contain. Asking for them one message at a time is how
-// a diagnosis takes three days.
-//
 // The report builder is pure — it takes a plain snapshot and returns text — so
 // its wording is testable and it can't itself throw inside a failure path.
 // Collecting the snapshot from the live VS Code host is `collectDiagnostics`.
@@ -17,7 +11,6 @@ export interface DiagnosticsSnapshot {
   vscodeVersion: string;
   platform: string;
   nodeVersion: string;
-  /** Configured send mode, plus what was actually remembered for this workspace. */
   sendMode: string;
   rememberedSendMode: string | null;
   suggestMode: boolean;
@@ -29,14 +22,14 @@ export interface DiagnosticsSnapshot {
   claudePlugin?: { id: string; version: string } | null;
   /**
    * The `claude` binary, resolved through transports/claudeBinary.ts via
-   * headlessHost's cached lookup (10x-plan-4 P3.4) — the diagnostics command
+   * headlessHost's cached lookup — the diagnostics command
    * reads whatever activation already found, it never spawns its own probe.
    * Optional so a snapshot built without collecting it renders as "unknown"
    * rather than a false negative.
    */
   claudeBinary?: { path: string; version: string } | { error: string };
   /**
-   * Headless availability and the last run's summary (10x-plan-4 P3.4), from
+   * Headless availability and the last run's summary, from
    * `markdownCollab.headlessStatus` — state, file label, turn count, and
    * estimated cost only. Never the prompt or the report text: those are the
    * one thing a user pastes into a public issue that must never carry what
@@ -54,7 +47,7 @@ export interface DiagnosticsSnapshot {
     } | null;
   };
   /**
-   * Which agent clients are wired up (10x-plan-4 P1.1): the in-process
+   * Which agent clients are wired up: the in-process
    * connections from `markdownCollab.agentConnectionStatus`, plus a yes/no
    * read of each client's config file — never its contents.
    */
@@ -70,7 +63,6 @@ export interface DiagnosticsSnapshot {
   claudeTerminalVisible: boolean;
   terminalNames: string[];
   workspaceFolders: string[];
-  /** Per-document review state for the open markdown files. */
   documents: Array<{
     path: string;
     threads: number;
@@ -108,12 +100,8 @@ export function formatDiagnostics(s: DiagnosticsSnapshot): string {
   lines.push("");
   lines.push("## Claude wiring");
   lines.push(`- Skill: ${s.skillStatus}`);
-  // `installedClaudePlugin` is a cached file read, collected unconditionally
-  // alongside the legacy skill status above (`collectDiagnostics` always sets
-  // this field) — so in practice this is never "not checked". `undefined` is
-  // left as a silent omission, matching how a snapshot built without any
-  // other new-in-P3.4 field below also renders as absent rather than a false
-  // "not installed".
+  // `undefined` is left as a silent omission, so a snapshot built without the
+  // field renders as absent rather than a false "not installed".
   if (s.claudePlugin !== undefined) {
     lines.push(
       `- Claude Code plugin: ${s.claudePlugin ? `${s.claudePlugin.id} ${s.claudePlugin.version}` : "not installed"}`,

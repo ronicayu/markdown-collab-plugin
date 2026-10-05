@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Records the two README GIFs (10x-plan-4 P3.3) from the SHIPPED live-editor
+// Records the two README GIFs from the SHIPPED live-editor
 // bundle (out/webview/client.js — the default view since 0.35.16, not the
 // classic review view), driven through the same stubbed host the webview e2e
 // harness uses (src/test/webview-e2e/harness.ts) — real Chromium,

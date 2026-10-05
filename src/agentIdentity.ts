@@ -1,20 +1,9 @@
-// Naming the agent (10x-plan-4 P1.2).
+// Naming the agent.
 //
-// WHY THIS EXISTS. Every agent-written comment used to be stamped
-// `author: "claude"` and every "is this from the agent?" check compared to
-// that literal — accurate when Claude Code was the only thing that could
-// call the tools, wrong the moment P1.1 let Cursor, Codex, Copilot and
-// anything else speaking MCP connect too. A Codex reply showed up as
-// Claude's, and — the more damaging half — a thread another agent had just
-// answered still read as "waiting on you" wherever the check happened to be
-// `!== "claude"` instead of "did *an* agent already reply".
-//
-// THE WORDING RULE. If the code knows which agent (an author slug on a
+// The wording rule: if the code knows which agent (an author slug on a
 // comment or suggestion, or the agent recorded by a protocol/tool call), copy
 // names it through `agentDisplayName`. If it doesn't, copy is generic: "the
-// agent", "your agent", "an agent", "Agent". (An earlier version of this rule
-// kept "Claude" wherever the agent was unknown; users mostly run other agents,
-// so that guess read as wrong more often than right.) Copy about features that
+// agent", "your agent", "an agent", "Agent" — never "Claude" for an unknown agent. Copy about features that
 // genuinely ARE Claude Code — "Run Claude for me", the Claude skill/plugin —
 // stays as it is.
 //
@@ -26,12 +15,11 @@
 
 /** The slugs this module recognizes by construction — an author string equal
  * to one of these (case-insensitively) reads as an agent comment even on a
- * file written before this change, when no comment carries the explicit
+ * file whose comments carry no explicit
  * `agent: true` flag at all. Removing a name from this list would silently
  * turn every old file's agent comments back into "someone named codex". */
 const KNOWN_AGENT_SLUGS = new Set(["claude", "codex", "cursor", "copilot", "gemini", "agent"]);
 
-/** A slug's fallback has nowhere left to go — the generic label. */
 const UNKNOWN_SLUG = "agent";
 
 /** `agentSlugFromClientName`'s fallback-token cap — long enough for any real
@@ -40,8 +28,6 @@ const UNKNOWN_SLUG = "agent";
 const MAX_SLUG_LEN = 24;
 
 /**
- * Map an MCP `initialize` `clientInfo.name` to a short author slug.
- *
  * Order matters: `cursor-vscode` must read as `cursor`, not `copilot`, so the
  * specific agent names are checked before the generic "this is VS Code
  * itself" pattern. Everything is matched case-insensitively — clients are not
@@ -59,7 +45,6 @@ export function agentSlugFromClientName(name?: string): string {
   return m[0].slice(0, MAX_SLUG_LEN);
 }
 
-/** The two shapes a display name is needed in. */
 export interface AgentDisplayName {
   /** Capitalized, for a label or the start of a sentence: "Claude", "Codex", "Agent". */
   noun: string;
@@ -90,15 +75,13 @@ export function agentDisplayName(slug: string): AgentDisplayName {
  */
 export const WAITING_FOR_AGENT = "Waiting for the agent…";
 
-/** `sentence`, capitalized — for the start of a line ("The agent is working…", "Codex is working…"). */
 export function sentenceLead(name: AgentDisplayName): string {
   return name.sentence.length > 0 ? name.sentence[0]!.toUpperCase() + name.sentence.slice(1) : name.sentence;
 }
 
 /**
  * Name the agent(s) behind a group of author slugs — the "N new from X" /
- * "X is working…" family (the wording rule: name the agent when the code
- * knows it, otherwise say "the agent"). Say the one agent's name when every
+ * "X is working…" family. Say the one agent's name when every
  * slug in the group is the same; fall back to the generic plural when more
  * than one distinct agent contributed, because naming just one of several
  * would imply the others didn't participate. An empty group has no agent to
@@ -111,7 +94,6 @@ export function agentGroupLabel(slugs: Iterable<string>): AgentDisplayName {
   return { noun: "Agents", sentence: "agents" };
 }
 
-/** The shape `isAgentComment` needs — satisfied by both `InlineComment` and `InlineSuggestion`. */
 export interface AuthoredEntity {
   author: string;
   /** Set explicitly by the tools/CLI on every comment or suggestion an agent writes. */
@@ -119,16 +101,13 @@ export interface AuthoredEntity {
 }
 
 /**
- * Is this comment (or suggestion) an agent's?
- *
  * Two ways to qualify, either sufficient on its own: the explicit `agent:
  * true` flag every NEW agent-written comment carries, or — for a file
  * written before this change, which has no such flag at all — an author
  * string that is one of the slugs this module has always recognized. The
  * known-slug fallback is what keeps every comment ever written by this
  * extension reading correctly without a migration; it does mean a human who
- * happens to be named "codex" reads as the agent, which is the same
- * trade-off the literal `=== "claude"` check it replaces always made.
+ * happens to be named "codex" reads as the agent.
  */
 export function isAgentComment(c: AuthoredEntity): boolean {
   if (c.agent === true) return true;

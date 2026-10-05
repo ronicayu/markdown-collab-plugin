@@ -2,8 +2,8 @@
 // Shared by the inline-comments webview and unit tests. Pure functions —
 // no DOM, no vscode API dependency — so they work in both contexts.
 //
-// Despite the name (kept — renaming every file that imports this one is
-// churn for nothing, 10x-plan-4 P1.2), these read through `isAgentComment`
+// Despite the name (kept: renaming every file that imports this one is
+// churn for nothing), these read through `isAgentComment`
 // rather than a literal `"claude"` check, so a thread Cursor or Codex opened
 // is "unread" and "reviewed" on exactly the same terms Claude's always were:
 // what matters is whether a HUMAN has engaged with it yet, not which agent

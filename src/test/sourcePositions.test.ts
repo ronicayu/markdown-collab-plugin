@@ -1,4 +1,4 @@
-// The read-only editor's character ↔ source map (docs/one-view-design.md).
+// The read-only editor's character ↔ source map.
 // The full pipeline — milkdown's parser, the schema attrs, the real bundle —
 // is exercised by the webview-e2e gates (readOnlyAlignment/readOnlyComment);
 // these pin the pure pieces on inputs small enough to reason about.

@@ -1,6 +1,3 @@
-// Output channel and diagnostics report commands (10x-plan-4 P3.2 split of
-// extension.ts).
-
 import * as vscode from "vscode";
 import type { Logger } from "../logging";
 import { collectDiagnostics } from "../diagnosticsHost";
@@ -9,8 +6,7 @@ import type { CommandDeps } from "./deps";
 
 /**
  * Build the diagnostics report, open it, and mirror it into the log so the
- * channel a user copies already carries the environment it was produced in
- * (10x-plan-3 support work).
+ * channel a user copies already carries the environment it was produced in.
  */
 async function invokeReportDiagnostics(
   context: vscode.ExtensionContext,
@@ -38,7 +34,6 @@ async function invokeReportDiagnostics(
   if (choice === "Show output channel") log.show();
 }
 
-/** Register the output-channel and diagnostics-report commands. */
 export function registerDiagnosticsCommands(deps: CommandDeps): void {
   const { context, rootLog, diagnosticsLog } = deps;
   context.subscriptions.push(

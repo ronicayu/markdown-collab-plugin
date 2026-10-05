@@ -1,4 +1,4 @@
-// Webview e2e suite (10x-plan-2 P2.1): the shipped webview bundles driven by a
+// Webview e2e suite: the shipped webview bundles driven by a
 // real pointer in real Chromium, asserting the exact messages they post to the
 // extension host.
 //

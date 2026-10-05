@@ -1,4 +1,4 @@
-// Click-level coverage for the inline-comments webview (10x-plan-2 P2.1).
+// Click-level coverage for the inline-comments webview.
 //
 // Every spec drives the shipped bundle with a real pointer and asserts the
 // exact message posted to the extension host — the flows that used to be
@@ -215,7 +215,7 @@ test("deleting a thread needs a second click to confirm, inside the card menu", 
 });
 
 test("the waiting row shows the phase Claude reported over MCP", async ({ page }) => {
-  // 10x-plan-2 P0.2: with protocol evidence the host sends specific wording
+  // With protocol evidence the host sends specific wording
   // instead of the inferred default, and the card renders whatever it is given.
   await pushToWebview(page, {
     type: "update",
@@ -250,7 +250,7 @@ test("a pending thread shows 'Claude is working…' and drops it when the reply 
 });
 
 test("a thread whose passage was rewritten shows a 'text changed' badge", async ({ page }) => {
-  // 10x-plan-2 P1.3: the comment may be answering text that is no longer there,
+  // The comment may be answering text that is no longer there,
   // and nothing in the card said so before.
   const stale = editAnchoredText(fixture.source, fixture.openThreadId, "behind a different setting");
   await pushToWebview(page, {
@@ -291,7 +291,7 @@ test("replying to a stale thread clears the badge", async ({ page }) => {
   await expect(card.locator(".badge.stale")).toHaveCount(0);
 });
 
-// 10x-plan-4 P2.1: n/p/r/e unified keyboard map for the thread list (outside
+// n/p/r/e unified keyboard map for the thread list (outside
 // the diff overlay, which uncommittedDiff.spec.ts already covers for n/p).
 
 test("n moves the highlight to the next thread card, p to the previous, wrapping at both ends", async ({ page }) => {
@@ -369,7 +369,7 @@ test("n/p/r/e are inert while a reply textarea has focus", async ({ page }) => {
 });
 
 test("Accept all needs a second click, and only appears for more than one suggestion", async ({ page }) => {
-  // 10x-plan-2 P3.3. One suggestion is the fixture's default: the bulk action
+  // One suggestion is the fixture's default: the bulk action
   // would be a second button doing what Accept already does.
   await expect(page.locator(".accept-all-row")).toHaveCount(0);
 
@@ -393,7 +393,7 @@ test("Accept all needs a second click, and only appears for more than one sugges
   });
 });
 
-// 10x-plan-4 P2.4: reverse navigation, a11y. (The empty-state variants live in
+// Reverse navigation, a11y. (The empty-state variants live in
 // inlineViewEmptyState.spec.ts — each of those needs its own `init` payload,
 // and this file's `beforeEach` already booted the page once with the shared
 // fixture; a second `init`-time script injection into the same page throws.)

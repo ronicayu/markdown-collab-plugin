@@ -111,7 +111,7 @@ export function inlineInit(
   };
 }
 
-/** The host-side settings the live editor's sidebar shows (10x-plan-6 P4). */
+/** The host-side settings the live editor's sidebar shows. */
 export interface LiveSidebarOpts {
   pendingThreadIds?: string[];
   pendingLabel?: string;

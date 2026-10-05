@@ -1,15 +1,13 @@
-// Prose ↔ source offset mapping for the inline-comments view (10x-plan P2.4).
+// Prose ↔ source offset mapping for the inline-comments view.
 //
 // The webview renders the document with all `mc:` markup, the threads region,
 // and frontmatter stripped, so every offset it reports is in "prose space" and
 // every offset the format engine wants is in "source space". Getting that
 // translation wrong is how a comment ends up anchored to the wrong words, or
-// swallowing a marker — the failure class the CHANGELOG has the most entries
-// for.
+// swallowing a marker.
 //
-// Pure and vscode-free (it moved out of `inlineCommentsPanel.ts`, which is not)
-// so both the panel and the mutation handlers can use it and it can be tested
-// directly.
+// Pure and vscode-free so both the panel and the mutation handlers can use it
+// and it can be tested directly.
 
 import type { ParsedDocument } from "./format";
 
@@ -31,14 +29,8 @@ export interface ProseMapping {
   anchorsInProse: Map<string, { proseStart: number; proseEnd: number }>;
 }
 
-/**
- * Build a map from prose offsets (the source with all `mc:` markup stripped)
- * back to source offsets, plus each thread's anchor position in prose space.
- */
 export function mapProseToSource(parsed: ParsedDocument): ProseMapping {
   const src = parsed.source;
-  // Build a list of "skip" intervals (every mc marker + the entire threads
-  // region + frontmatter block). We then walk src and emit a position map.
   const skips: Array<[number, number]> = [];
   for (const a of parsed.anchors.values()) {
     skips.push([a.openStart, a.openEnd]);
@@ -111,9 +103,8 @@ export function mapProseToSource(parsed: ParsedDocument): ProseMapping {
  * to the next surviving character. Null when the offset is past the end.
  *
  * `proseToSrc` is strictly increasing by construction, so this is a binary
- * search. It used to be a linear scan, which made every call O(document) —
- * and `mapProseToSource` calls it twice per thread, so a doc with 200 threads
- * scanned the file 400 times to build one preview.
+ * search; `mapProseToSource` calls it twice per thread, so a linear scan would
+ * cost O(document) each time.
  */
 export function findProseIndex(proseToSrc: number[], srcOffset: number): number | null {
   let lo = 0;
@@ -134,8 +125,7 @@ export function findProseIndex(proseToSrc: number[], srcOffset: number): number 
 /**
  * Source line number (1-based) for each line of the prose, so a surface that
  * renders the prose can label a block with the line it occupies in the actual
- * file (10x-plan-3 follow-on: "show line numbers").
- *
+ * file.
  * The two line spaces genuinely differ. Frontmatter and the threads region are
  * whole blocks the prose never sees, so a naive count is wrong by however many
  * lines those take — which for a document with frontmatter is every number on
@@ -162,7 +152,6 @@ export function sourceLineForProseLine(parsed: ParsedDocument): number[] {
   return out;
 }
 
-/** Offsets at which each line of `text` begins. */
 function computeLineStarts(text: string): number[] {
   const starts = [0];
   for (let i = 0; i < text.length; i++) {
@@ -171,7 +160,6 @@ function computeLineStarts(text: string): number[] {
   return starts;
 }
 
-/** 1-based line containing `offset`. Binary search over line starts. */
 function lineOf(lineStarts: number[], offset: number): number {
   let lo = 0;
   let hi = lineStarts.length - 1;

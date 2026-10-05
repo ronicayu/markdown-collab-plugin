@@ -1,7 +1,6 @@
-// Installing the Claude Code plugin from a marketplace the extension owns
-// (10x-plan-4 P0.2).
+// Installing the Claude Code plugin from a marketplace the extension owns.
 //
-// WHY A LOCAL MARKETPLACE. The extension ships `plugin/` inside the .vsix and
+// The extension ships `plugin/` inside the .vsix and
 // installs it from a marketplace directory it writes under its own global
 // storage, instead of pointing Claude Code at the GitHub marketplace. That way
 // the Claude side is always exactly the extension's version: no fingerprint to
@@ -22,11 +21,9 @@ import { promises as fsp, realpathSync } from "node:fs";
 import * as path from "node:path";
 import { PLUGIN_NAME } from "./skillText";
 
-/** The marketplace the extension writes and registers. */
 export const LOCAL_MARKETPLACE_NAME = "markdown-collab-local";
 /** What `claude plugin install` / `list` call our plugin. */
 export const LOCAL_PLUGIN_ID = `${PLUGIN_NAME}@${LOCAL_MARKETPLACE_NAME}`;
-/** The marketplace's directory under the extension's global storage. */
 export const LOCAL_MARKETPLACE_DIRNAME = "claude-marketplace";
 
 export interface RunResult {
@@ -38,7 +35,6 @@ export interface RunResult {
   error?: string;
 }
 
-/** Run `claude <args…>`. */
 export type ClaudeRunner = (args: string[]) => Promise<RunResult>;
 
 export interface PluginManifest {
@@ -47,7 +43,6 @@ export interface PluginManifest {
   description?: string;
 }
 
-/** Read the manifest of the plugin the extension ships. */
 export async function readPluginManifest(pluginDir: string): Promise<PluginManifest> {
   const raw = JSON.parse(
     await fsp.readFile(path.join(pluginDir, ".claude-plugin", "plugin.json"), "utf8"),
@@ -58,7 +53,6 @@ export async function readPluginManifest(pluginDir: string): Promise<PluginManif
   return { name: raw.name, version: raw.version, description: raw.description };
 }
 
-/** The local marketplace's manifest, listing the one plugin. */
 export function localMarketplaceJson(m: PluginManifest): string {
   return `${JSON.stringify(
     {
@@ -105,7 +99,6 @@ export async function writeLocalMarketplace(
   return manifest;
 }
 
-/** A marketplace as `claude plugin marketplace list --json` reports it. */
 export interface ListedMarketplace {
   name: string;
   path?: string;
@@ -135,7 +128,6 @@ export function parseMarketplaceList(stdout: string): ListedMarketplace[] | null
   }
 }
 
-/** A plugin as `claude plugin list --json` reports it. */
 export interface ListedPlugin {
   id: string;
   version: string;
@@ -165,7 +157,6 @@ export function parsePluginList(stdout: string): ListedPlugin[] | null {
   }
 }
 
-/** Whether this Claude Code has plugin commands at all. */
 export async function pluginsSupported(run: ClaudeRunner): Promise<boolean> {
   return (await run(["plugin", "--help"])).code === 0;
 }
@@ -181,7 +172,6 @@ export type PluginSetupOutcome =
   | { ok: true; version: string }
   | {
       ok: false;
-      /** Human-readable, for the fallback toast. */
       reason: string;
       /** True when the CLI has no plugin support — not a failure worth logging loudly. */
       unsupported?: boolean;
@@ -210,15 +200,10 @@ function describeFailure(step: string, r: RunResult): string {
  * refresh the marketplace files, make sure Claude Code knows the marketplace,
  * refresh its view of it, install, and update if what's installed is another
  * version. Safe to re-run: every step is idempotent on its own.
- *
- * Also the "Update" path of the out-of-date nudge — an update is the same
- * sequence with the install step already satisfied.
  */
 export async function setUpClaudePlugin(opts: {
   run: ClaudeRunner;
-  /** The plugin the extension ships (`<extension>/plugin`). */
   sourcePluginDir: string;
-  /** `<globalStorage>/claude-marketplace`. */
   marketplaceDir: string;
 }): Promise<PluginSetupOutcome> {
   const { run, sourcePluginDir, marketplaceDir } = opts;

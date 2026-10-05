@@ -1,9 +1,6 @@
-// What the live editor's sidebar needs from the document (10x-plan-6 P4,
-// sidebar parity) — the same thread list the review view's panel serializes,
-// plus the agent name its toolbar shows.
-//
-// Kept free of `vscode` so the webview e2e fixtures build real payloads from
-// it, the way they already do with `serialize` and `commentsOf`.
+// What the live editor's sidebar needs from the document — the same thread list
+// the review view's panel serializes, plus the agent name its toolbar shows.
+// Free of `vscode` so the webview e2e fixtures build real payloads from it.
 
 import { agentDisplayName, isAgentComment } from "../agentIdentity";
 import { parse, type ParsedDocument } from "../inlineComments/format";
@@ -11,7 +8,6 @@ import { serialize } from "../inlineComments/serializeState";
 import type { SidebarThread, SkillStatus } from "../webviewShared/sidebarProtocol";
 
 export interface SidebarDocumentFields {
-  /** Every thread with its full comment list — the review view's `state.threads`. */
   threads: SidebarThread[];
   /**
    * Who the Send button and the waiting row name. Absent when no agent has
@@ -21,7 +17,6 @@ export interface SidebarDocumentFields {
   agentName?: string;
 }
 
-/** The document-derived half of a sidebar push. */
 export function sidebarDocumentFields(source: string): SidebarDocumentFields {
   const parsed = parse(source);
   const agentName = mostRecentAgentName(parsed);
@@ -38,8 +33,7 @@ export function sidebarDocumentFields(source: string): SidebarDocumentFields {
  * The display name of the agent that most recently wrote to this file —
  * across every comment and suggestion, whichever has the latest timestamp —
  * or `undefined` when no agent has written here yet (the wording rule: name
- * the agent only when the code knows it). The review view's panel has its own
- * copy (inlineCommentsPanel.ts), removed with that view.
+ * the agent only when the code knows it).
  */
 export function mostRecentAgentName(parsed: ParsedDocument): string | undefined {
   let latestTs: string | undefined;

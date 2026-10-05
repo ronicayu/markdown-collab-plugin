@@ -1,13 +1,3 @@
-/**
- * Owns the PR-review `CommentController`, the in-progress draft store,
- * and the workflow commands (`startPrReview`, `submitPrReview`).
- *
- * Distinct from the legacy `markdown-collab` controller — different
- * controller id, different storage model (workspaceState, not sidecar
- * JSON), different commenting-range provider (only the head-side added
- * lines from the diff).
- */
-
 import * as crypto from "crypto";
 import * as path from "path";
 import * as vscode from "vscode";
@@ -59,31 +49,24 @@ interface ActiveSession {
   platform: PrPlatform;
   /** Branch the review was started on, so a checkout elsewhere restarts it. */
   branch: string;
-  /** Per-file added-line ranges, lazily populated as files open. */
   rangesByPath: Map<string, LineRange[]>;
-  /** Live `CommentThread`s keyed by draft id so we can update on edit. */
   threadsByDraft: Map<string, vscode.CommentThread>;
   /** Existing PR comments fetched from the platform, populated lazily. null until first fetch resolves. */
   existingComments: ExistingPrComment[] | null;
   /** In-flight fetch promise; subsequent callers await this instead of double-fetching. */
   existingCommentsLoading: Promise<ExistingPrComment[]> | null;
   /**
-   * Has the "some existing comments couldn't be loaded" notice already fired
-   * for this session? Shown once, not on every fetch that still has stale
-   * pages — a refresh that fixes itself just stops re-triggering it.
+   * Whether the "some existing comments couldn't be loaded" notice has fired this
+   * session; shown once even if later fetches still have stale pages.
    */
   warnedPartialLoad: boolean;
 }
 
 /**
- * Hash of `(remoteUrl, baseSha, headSha)`. Keys are scoped per PR + per
- * head, so a force-push moves the user onto a fresh draft slot rather
- * than mixing old + new comments.
- *
- * `headSha` here is the *platform's* head, not the local checkout's. Keying
- * on the local HEAD (which is what happened while `ctx.headSha` was being
- * overwritten) discarded the draft slot on every local commit — drafts
- * vanished mid-review for anyone who kept editing the branch.
+ * Hash of `(remoteUrl, baseSha, headSha)`: scoped per PR and per head, so a
+ * force-push moves the user onto a fresh draft slot. `headSha` must be the
+ * platform's head, not the local checkout's — keying on local HEAD discarded
+ * the draft slot on every local commit.
  */
 function makeKey(ctx: PrContext): string {
   const h = crypto.createHash("sha1");
@@ -118,10 +101,8 @@ export class PrReviewController implements vscode.Disposable {
   constructor(context: vscode.ExtensionContext, log: Logger) {
     this.context = context;
     this.log = log;
-    // The controller is retained for the legacy native-gutter surface
-    // (kept dormant in the preview-mode flow but still registered so
-    // existing menu contributions resolve cleanly). Drafts are
-    // managed entirely through the webview panel now.
+    // Retained for the dormant native-gutter surface so existing menu
+    // contributions resolve; drafts are managed through the webview panel.
     this.controller = vscode.comments.createCommentController(CONTROLLER_ID, CONTROLLER_LABEL);
     this.controller.commentingRangeProvider = {
       provideCommentingRanges: (doc) => this.commentingRangesFor(doc),
@@ -171,8 +152,6 @@ export class PrReviewController implements vscode.Disposable {
     );
   }
 
-  // --- entry point --------------------------------------------------------
-
   private async startPrReview(): Promise<void> {
     if (!requireTrust("PR review")) return;
     try {
@@ -209,13 +188,10 @@ export class PrReviewController implements vscode.Disposable {
         { location: vscode.ProgressLocation.Notification, title: "Markdown Collab: loading PR…" },
         () => platform.loadContext(repoRoot, remoteUrl, parsed.host),
       );
-      // The local checkout can sit ahead of what the platform has (unpushed
-      // commits, a mid-load `pull --rebase`). Record it separately — it keys
-      // the draft store and drives the local diff — but leave `ctx.headSha`
-      // as the platform's own head. Posting a SHA the server has never seen
-      // is how GitLab submits used to fail: `position[head_sha]` went out as
-      // a local-only commit, so GitLab rejected the position outright or
-      // accepted the note without anchoring it to the diff.
+      // The local checkout can sit ahead of the platform (unpushed commits). Record it
+      // separately — it keys the draft store and drives the local diff — but leave
+      // `ctx.headSha` as the platform's head: GitLab rejects, or fails to anchor, a
+      // `position[head_sha]` it has never seen.
       const localHead = await readHeadSha(repoRoot).catch(() => ctx.headSha);
       ctx.localHeadSha = localHead;
       if (localHead !== ctx.headSha) {
@@ -250,14 +226,11 @@ export class PrReviewController implements vscode.Disposable {
       await this.rehydrateDrafts();
       this.treeProvider.setFiles(changed);
       this.updateEmptyMessage();
-      // Reveal the tree view in the sidebar — focus brings it into view.
       try {
         await vscode.commands.executeCommand("markdownCollab.prReviewFiles.focus");
       } catch {
         /* view may not be ready yet on first activation; ignore */
       }
-      // If there's exactly one file, open it straight away so single-file
-      // PRs don't make the user click again.
       if (changed.length === 1) this.openFile(changed[0].path);
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
@@ -267,12 +240,6 @@ export class PrReviewController implements vscode.Disposable {
     }
   }
 
-  /**
-   * Set (or clear) the tree's empty-state message — same pattern as
-   * `UncommittedChangesController.setTreeState`. Shown whenever there's no
-   * active PR/MR session to display, with a distinct hint for "no folder
-   * open" vs. "nothing loaded yet".
-   */
   private updateEmptyMessage(): void {
     if (!this.treeView) return;
     if (this.session) {
@@ -291,11 +258,9 @@ export class PrReviewController implements vscode.Disposable {
   }
 
   /**
-   * Refresh-button handler. Doubles as a start affordance: with no active
-   * review — or after checking out a different branch — it starts a fresh
-   * review for the current branch. On the base/default branch (or a detached
-   * HEAD) there's nothing to review, so it retires any stale session and
-   * hints instead. Otherwise it refreshes the active review in place.
+   * Doubles as a start affordance: with no active review, or after a branch
+   * switch, it starts a fresh one; on the base/default branch or a detached HEAD
+   * it retires any stale session and hints instead.
    */
   private async refreshReview(): Promise<void> {
     if (!requireTrust("PR review")) return;
@@ -311,7 +276,6 @@ export class PrReviewController implements vscode.Disposable {
     const onSessionBranch = !!this.session && branch !== "" && this.session.branch === branch;
     if (!onSessionBranch) {
       if (await this.onBaseBranch(repoRoot, branch)) {
-        // Switched onto the base branch (or detached) — drop the stale review.
         if (this.session) {
           this.disposeSession();
           this.treeProvider.clear();
@@ -323,7 +287,6 @@ export class PrReviewController implements vscode.Disposable {
         );
         return;
       }
-      // No session, or the working copy moved to a different branch → (re)start.
       return this.startPrReview();
     }
 
@@ -331,11 +294,7 @@ export class PrReviewController implements vscode.Disposable {
     this.updateEmptyMessage();
   }
 
-  /**
-   * Is `branch` the one we should never auto-start a review on? True for the
-   * active session's base ref, the repo default branch (`origin/HEAD`, falling
-   * back to a main/master name match), and a detached HEAD.
-   */
+  /** True for the session's base ref, the repo default branch (`origin/HEAD`, else main/master), and a detached HEAD. */
   private async onBaseBranch(repoRoot: string, branch: string): Promise<boolean> {
     if (branch === "" || branch === "HEAD") return true;
     if (this.session && branch === this.session.ctx.baseRef) return true;
@@ -344,7 +303,6 @@ export class PrReviewController implements vscode.Disposable {
     return branch === "main" || branch === "master";
   }
 
-  /** Tear down the active session: dispose its draft threads and open panels. */
   private disposeSession(): void {
     if (!this.session) return;
     for (const t of this.session.threadsByDraft.values()) {
@@ -358,13 +316,6 @@ export class PrReviewController implements vscode.Disposable {
     this.session = null;
   }
 
-  /**
-   * Re-pull the review from git + the platform without restarting the
-   * session: recompute the changed-file list and per-file diff ranges
-   * (picks up new local commits), drop the cached platform comments so the
-   * next read re-fetches them, rebuild the draft threads against the fresh
-   * diff, and re-render any open file panels.
-   */
   private async refreshActiveSession(session: ActiveSession): Promise<void> {
     try {
       const changed = await vscode.window.withProgress(
@@ -374,12 +325,9 @@ export class PrReviewController implements vscode.Disposable {
             session.ctx.repoRoot,
             `origin/${session.ctx.baseRef}`,
           );
-          // Diff may have moved (new commits); drop the cached ranges.
           session.rangesByPath.clear();
-          // Force the next existing-comment read to re-hit the platform.
           session.existingComments = null;
           session.existingCommentsLoading = null;
-          // Rebuild draft threads against the fresh diff.
           for (const t of session.threadsByDraft.values()) t.dispose();
           session.threadsByDraft.clear();
           await this.rehydrateDrafts();
@@ -387,8 +335,6 @@ export class PrReviewController implements vscode.Disposable {
         },
       );
       this.treeProvider.setFiles(changed);
-      // Re-render open panels: fresh source, ranges, drafts, and a
-      // re-fetch of the (now-uncached) platform comments.
       PrReviewPanel.refreshAll(session.ctx);
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
@@ -397,7 +343,6 @@ export class PrReviewController implements vscode.Disposable {
     }
   }
 
-  /** Fetch (and cache) the platform-side existing comments for this session. */
   private async getExistingComments(): Promise<ExistingPrComment[]> {
     if (!this.session) return [];
     const session = this.session;
@@ -431,7 +376,6 @@ export class PrReviewController implements vscode.Disposable {
     return promise;
   }
 
-  /** API surface the preview panel uses to read + mutate drafts. */
   private draftHostApi(): {
     ctx: PrContext;
     getDraftsFor: (rel: string) => PrDraft[];
@@ -474,12 +418,10 @@ export class PrReviewController implements vscode.Disposable {
         return all.filter((c) => c.path === rel);
       },
       replyToExisting: async (rel, threadId, body) => {
-        // Only ever send back an id this session itself handed the webview,
-        // for this exact file, in the most recent existing-comments fetch —
-        // never whatever string a (possibly compromised or buggy) webview
-        // message happens to name. Independent of, and in addition to, the
-        // format checks each platform adapter runs before it ever shells
-        // out; this one is about provenance, not shape.
+        // Only send back an id this session handed the webview for this exact file in
+        // the latest existing-comments fetch, never an arbitrary string from a possibly
+        // compromised webview. This is provenance, separate from the shape checks each
+        // platform adapter runs.
         const existing = await this.getExistingComments();
         const known = existing.some((c) => c.path === rel && (c.threadId ?? c.id) === threadId);
         if (!known) {
@@ -488,16 +430,13 @@ export class PrReviewController implements vscode.Disposable {
           );
         }
         const result = await session.platform.replyToComment(session.ctx, threadId, body);
-        // Drop the cache so the next existing-comments read includes the
-        // reply we just posted (the panel re-fetches right after).
+        // Drop the cache so the re-fetch right after includes the reply.
         session.existingComments = null;
         session.existingCommentsLoading = null;
         return result;
       },
       resolveThread: async (rel, resolveId, resolved) => {
-        // Same provenance check as replyToExisting above, gated additionally
-        // on `resolvable` — a comment whose thread can't be resolved never
-        // offered a `resolveId` to the webview in the first place.
+        // Same provenance check as replyToExisting, also gated on `resolvable`.
         const existing = await this.getExistingComments();
         const known = existing.some((c) => c.path === rel && c.resolvable && c.resolveId === resolveId);
         if (!known) {
@@ -506,15 +445,11 @@ export class PrReviewController implements vscode.Disposable {
           );
         }
         await session.platform.resolveThread(session.ctx, resolveId, resolved);
-        // Same cache-drop as replyToExisting — the panel re-fetches right
-        // after so the webview sees the confirmed resolved state.
         session.existingComments = null;
         session.existingCommentsLoading = null;
       },
     };
   }
-
-  // --- commenting-range provider -----------------------------------------
 
   private async commentingRangesFor(doc: vscode.TextDocument): Promise<vscode.Range[]> {
     if (!this.session) return [];
@@ -544,8 +479,6 @@ export class PrReviewController implements vscode.Disposable {
     if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
     return rel.split(path.sep).join("/");
   }
-
-  // --- comment lifecycle --------------------------------------------------
 
   private async addComment(reply: vscode.CommentReply): Promise<void> {
     if (!this.session) return;
@@ -657,8 +590,6 @@ export class PrReviewController implements vscode.Disposable {
     return this.session?.threadsByDraft.get(c.draftId);
   }
 
-  // --- draft persistence --------------------------------------------------
-
   private loadDrafts(): PrDraft[] {
     if (!this.session) return [];
     const env = this.context.workspaceState.get<DraftEnvelope>(
@@ -721,8 +652,6 @@ export class PrReviewController implements vscode.Disposable {
     }
   }
 
-  // --- submit -------------------------------------------------------------
-
   private async submitPrReview(
     verdict: ReviewVerdict,
     reviewBody: string | undefined,
@@ -738,9 +667,6 @@ export class PrReviewController implements vscode.Disposable {
       void vscode.window.showInformationMessage("No drafts to submit.");
       return;
     }
-    // Re-validate every draft against the current diff. Drafts whose
-    // lines have moved out of the head-side diff get dropped — the user
-    // sees the count up front and can cancel.
     const stale: PrDraft[] = [];
     const live: PrDraft[] = [];
     for (const d of drafts) {
@@ -754,9 +680,7 @@ export class PrReviewController implements vscode.Disposable {
       );
       return;
     }
-    // Stale drafts (lines no longer in the diff) are dropped silently
-    // here — the post-submit toast surfaces the count so the user can
-    // rework them. No modal interruption.
+    // Stale drafts are left out of the submit; the post-submit toast reports how many were kept.
     const submitted: { url: string } = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: "Markdown Collab: submitting review…" },
       async () => {
@@ -773,8 +697,6 @@ export class PrReviewController implements vscode.Disposable {
         });
       },
     );
-    // Clear only the live drafts that were submitted; keep stale ones
-    // around so the user can rework them.
     const submittedIds = new Set(live.map((d) => d.id));
     await this.persistDrafts((arr) => arr.filter((d) => !submittedIds.has(d.id)));
     for (const id of submittedIds) {

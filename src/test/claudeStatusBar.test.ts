@@ -112,7 +112,7 @@ describe("peek", () => {
   });
 });
 
-// 10x-plan-4 P2.2: with a live review pass and a headless run both able to
+// With a live review pass and a headless run both able to
 // want this one status bar item, the order they're offered in is the whole
 // module header's second half — pinned here as a pure function so the
 // ordering itself is tested without a real status bar item or any of the

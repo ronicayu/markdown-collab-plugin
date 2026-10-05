@@ -1,4 +1,4 @@
-// Gate 2 of docs/one-view-design.md, host half: a comment added through the
+// Gate 2, host half: a comment added through the
 // read-only path writes into the file's own bytes and nothing else. The edit
 // path this replaces (`addThreadAtOffsets`) rebuilt the file from the editor's
 // serialization and rewrote 9–62 prose lines per comment in the one-view

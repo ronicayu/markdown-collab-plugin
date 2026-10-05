@@ -1,7 +1,6 @@
-// Milkdown glue for source positions in the live editor's read-only mode
-// (docs/one-view-design.md). The mapping itself is pure and lives in
-// `src/collab/sourcePositions.ts`; this file only gets its annotation from
-// the parser into the ProseMirror document.
+// Milkdown glue for source positions in the live editor's read-only mode. The
+// mapping itself is pure and lives in `src/collab/sourcePositions.ts`; this
+// file only gets its annotation from the parser into the ProseMirror document.
 //
 // Installed only when the editor is read-only. In edit mode a split or join
 // copies a block's attrs onto both halves, so the positions would be wrong
@@ -60,7 +59,6 @@ function withSourceAttr(schema: NodeSchema): NodeSchema {
   };
 }
 
-/** Call from an editor `.config` callback, before the schema is built. */
 export function installSourcePositions(ctx: Ctx): void {
   // Prepended: the config runs before any `$remark` plugin registers, so this
   // is first in the chain and its transform is first inside the parser.

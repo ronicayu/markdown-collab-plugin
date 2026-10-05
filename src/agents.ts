@@ -8,10 +8,8 @@ export const AGENTS_SENTINEL = "## Markdown review comments";
  *  the link goes to the repository rather than to a path in the workspace. */
 export const FORMAT_SPEC_URL = "https://github.com/ronicayu/markdown-collab-plugin/blob/main/docs/format.md";
 
-// 10x-plan-6 P1.3: the file format is the API for every agent that isn't
-// Claude Code. The only non-Claude loop ever run was Copilot hand-editing the
-// markers from a pasted prompt, and they survived — while `mdc`, which the old
-// snippet ranked second, is only ever on PATH inside a Claude Code session. So
+// The file format is the API for every agent that isn't Claude Code, and `mdc`
+// is only ever on PATH inside a Claude Code session. So
 // this leads with the contract (docs/format.md), names the tools as the better
 // path when an agent happens to have them, and says plainly who has `mdc` and
 // what to do without it: ask the human to run Repair.
@@ -87,7 +85,7 @@ export type AgentsSnippetOutcome =
   | "customized";
 
 /**
- * Refuse to write through a symlink (L5): `lstat` the target itself (if it
+ * Refuse to write through a symlink: `lstat` the target itself (if it
  * exists) and its parent directory, following neither. A symlinked
  * workspace folder or a symlinked AGENTS.md could otherwise send this write
  * somewhere the human never agreed to. Duplicated (rather than shared) in
@@ -109,8 +107,8 @@ export async function refuseSymlink(targetPath: string): Promise<string | null> 
 
 /**
  * Write the snippet into the workspace's AGENTS.md, or bring an earlier
- * version of it up to date (10x-plan-6 P1.1 runs this first for every agent
- * that isn't Claude Code). Never overwrites a section someone edited: that is
+ * version of it up to date.
+ * Never overwrites a section someone edited: that is
  * reported as `customized` and left for the human.
  */
 export async function ensureAgentsSnippet(workspaceRoot: string): Promise<AgentsSnippetOutcome> {

@@ -11,15 +11,12 @@ export type ReviewNode =
   | { kind: "comment"; docPath: string; thread: InlineThread };
 
 interface CacheEntry {
-  /** Open (unresolved) inline threads in document order. */
   openThreads: InlineThread[];
 }
 
 /** Dependency-injected hooks — the defaults talk to the real filesystem/vscode. */
 export interface ReviewViewDeps {
-  /** Return every `.md` URI under a workspace folder. */
   findFiles?: (folder: vscode.WorkspaceFolder) => Promise<vscode.Uri[]>;
-  /** Read a file's text, or null when it can't be read. */
   readFile?: (fsPath: string) => Promise<string | null>;
   /**
    * Install change/delete listeners and return a disposable. The default wires
@@ -102,7 +99,6 @@ export class ReviewView
       }),
     );
 
-    // Workspace folder changes invalidate the entire cache and re-scan.
     this.subs.push(
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         this.cache.clear();
@@ -114,7 +110,6 @@ export class ReviewView
       }),
     );
 
-    // Seed context key to false on construction.
     this.syncHasReviewContext();
   }
 
@@ -130,7 +125,6 @@ export class ReviewView
       item.contextValue = "markdownCollab.reviewFile";
       return item;
     }
-    // kind === "comment"
     const head = headComment(element.thread);
     const snippet = truncate(element.thread.quote || "(unanchored)", 40);
     const item = new vscode.TreeItem(snippet, vscode.TreeItemCollapsibleState.None);
@@ -219,10 +213,6 @@ export class ReviewView
       false,
     );
   }
-
-  // -------------------------------------------------------------------------
-  // Internal: scan & cache management
-  // -------------------------------------------------------------------------
 
   private buildFileNodes(): ReviewNode[] {
     const nodes: ReviewNode[] = [];
@@ -318,7 +308,6 @@ export class ReviewView
     this.changeTimers.set(mdPath, timer);
   }
 
-  /** Re-read a single `.md` (keyed by path) and update the cache. */
   private async invalidateOne(mdPath: string): Promise<void> {
     if (this.disposed) return;
     if (!this.folderForPath(mdPath)) return;
@@ -481,7 +470,6 @@ function defaultIntegrityNotifier(decision: GuardDecision): void {
     });
 }
 
-/** Default watcher: a `**​/*.md` filesystem watcher plus markdown save events. */
 function defaultWatch(handlers: {
   onChange: (fsPath: string) => void;
   onDelete: (fsPath: string) => void;
@@ -519,10 +507,6 @@ function truncate(s: string, n: number): string {
   return s.slice(0, n - 1) + "…";
 }
 
-/**
- * Tiny concurrency-limited map. Runs `tasks` with at most `limit` in flight,
- * preserving order of results. Kept inline to avoid adding a dependency.
- */
 async function pMap<T, R>(
   tasks: T[],
   limit: number,

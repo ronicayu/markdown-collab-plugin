@@ -1,23 +1,3 @@
-// Webview client for the Markdown Collab editor.
-//
-// Major UX rework (v0.19.0). Architecture:
-//   - Milkdown WYSIWYG editor on the left.
-//   - Comments sidebar on the right with: connection-status banner,
-//     "+ Add comment" as the prominent primary button, an overflow menu
-//     for Claude integrations, a clickable filter chip ("3 open · 5 total"
-//     toggles "hide resolved"), the comment list, and an inline
-//     composer / reply / delete-confirm slot.
-//   - Single human + Claude: the human edits here; Claude edits the .md on
-//     disk; the two converge through the file (an "externalChange" push
-//     re-parses the document into the editor). No network relay, no Yjs.
-//   - Bidirectional comment navigation: every comment's anchor is
-//     highlighted in the editor; clicking the highlight scrolls the
-//     sidebar to the matching card and flashes it; clicking a card
-//     scrolls the editor to its anchor and flashes it.
-//   - Responsive: below 720px, the sidebar collapses to a drawer with a
-//     toggle in the editor area.
-//   - Editor follows the user's VSCode theme (no more forced Nord).
-
 import {
   Editor,
   defaultValueCtx,
@@ -64,8 +44,6 @@ import { resolveImageSrc, type ImageBaseUris } from "../webviewShared/imageSrc";
 import { parseHtmlImage } from "../webviewShared/htmlImage";
 import { displayLine, topLevelBlockLines } from "../webviewShared/lineNumbers";
 import { smoothScrollIntoView } from "../webviewShared/scrollIntoView";
-// Navigation reuses scrollEditorToFragment, which slugifies headings itself
-// with the same function the outline uses.
 import { buildOutline } from "../webviewShared/outline";
 import { buildOutlinePanel, type OutlinePanelHandle } from "../webviewShared/outlinePanel";
 import { inlineBreakPlugin } from "./plugins/inlineBreakPlugin";
@@ -94,7 +72,7 @@ interface CommentSummary {
   /** The anchored span in the prose this editor parsed; -1 when unanchored. Read-only mode places by these. */
   proseStart?: number;
   proseEnd?: number;
-  /** The anchored text changed after this thread's last comment (P1.3). */
+  /** The anchored text changed after this thread's last comment. */
   stale?: boolean;
   replies: Array<{ id: string; author: string; body: string; createdAt: string }>;
 }
@@ -115,10 +93,7 @@ interface SuggestionSummary {
   proseEnd?: number;
 }
 
-/**
- * The sidebar's fields on `init` and `sidecar-changed` (10x-plan-6 P4) — what
- * the review view's panel sends; see collab/sidebarHost.ts.
- */
+/** The sidebar's fields on `init` and `sidecar-changed`; see collab/sidebarHost.ts. */
 interface SidebarPush {
   /** Every thread with its full comment list; absent, the cards are built from `comments`. */
   threads?: SidebarThread[];
@@ -136,24 +111,21 @@ interface InitMessage extends SidebarPush {
   pendingLabel?: string;
   frontmatter?: string;
   imageBaseUris?: ImageBaseUris;
-  /** PlantUML server URL + image format, mirroring the review view's own config. */
   plantuml?: PlantumlConfig;
   /** Source line per prose line; present only when line numbers are on. */
   lineMap?: number[];
-  /** Read-only mode: no editing; comments anchor by source position (docs/one-view-design.md). */
+  /** Read-only mode: no editing; comments anchor by source position. */
   readOnly?: boolean;
   /**
-   * Uncommitted-vs-HEAD diff overlay (10x-plan-6 P4 phase B) — the host's
-   * `DiffState` (src/inlineComments/inlineCommentsPanel.ts), copied here the
-   * same way the review view's client.ts copies it: the webview bundle can't
-   * import a vscode-touching module. Absent/null = plain live editor.
+   * The host's `DiffState` (src/inlineComments/inlineCommentsPanel.ts), copied
+   * because the webview bundle can't import a vscode-touching module.
+   * Absent/null = plain live editor.
    */
   diff?: DiffState | null;
-  /** The host's document epoch; edit mode's reports carry it (docs/one-view-design.md, "Phase B"). */
+  /** The host's document epoch; edit mode's reports carry it. */
   epoch?: number;
 }
 
-/** Pushed when the line-number setting or the document's line map changes. */
 interface LineMapMessage {
   type: "line-map";
   lineMap?: number[];
@@ -194,7 +166,7 @@ interface SidecarChangedMessage extends SidebarPush {
   comments: CommentSummary[];
   suggestions?: SuggestionSummary[];
   pendingThreadIds?: string[];
-  /** Host-decided wording for the waiting row (10x-plan-2 P0.2). */
+  /** Host-decided wording for the waiting row. */
   pendingLabel?: string;
   /** Same contract as `InitMessage.diff`. */
   diff?: DiffState | null;
@@ -244,7 +216,6 @@ interface DrawioReadResultMessage {
   error?: string;
 }
 
-/** The skill banner's state, posted after `init` and after an install. */
 interface SkillStatusMessage {
   type: "skill-status";
   status: SkillStatus;
@@ -303,10 +274,10 @@ let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 // an incoming external (Claude) change can cancel a still-pending stale post —
 // otherwise that post would fire after the external change and overwrite it.
 let editDebounce: ReturnType<typeof setTimeout> | null = null;
-// Edit mode (docs/one-view-design.md, "Phase B"): the document as last parsed
-// from the host or last posted to it, and the host epoch it belongs to. An
-// edit is reported as the top-level blocks the current document doesn't
-// share with this one; the host drops a report from an epoch it has left.
+// Edit mode: the document as last parsed from the host or last posted to it,
+// and the host epoch it belongs to. An edit is reported as the top-level blocks
+// the current document doesn't share with this one; the host drops a report
+// from an epoch it has left.
 let editBaseDoc: PmDocNode | null = null;
 let editEpoch = 0;
 /** The open add-comment composer, so a failed add can re-enable it. */
@@ -316,8 +287,6 @@ const sidebarState: {
   comments: CommentSummary[];
   suggestions: SuggestionSummary[];
   collapsed: boolean;
-  // Transient one-line status (e.g. "Updated from disk" when Claude edits the
-  // file). null when nothing to show.
   notice: string | null;
 } = {
   comments: [],
@@ -326,10 +295,10 @@ const sidebarState: {
   notice: null,
 };
 
-// The thread sidebar (10x-plan-6 P4): the review view's threads pane, shared
-// with it through webviewShared/threadSidebar.ts. It renders the latest push
-// (`sidebarPush`) with this editor's own mode, and everything it asks of the
-// document comes back through these callbacks.
+// The thread sidebar renders the latest push (`sidebarPush`) with this editor's
+// own mode; it is shared with the review view's threads pane
+// (webviewShared/threadSidebar.ts), and everything it asks of the document
+// comes back through these callbacks.
 const sidebarPush: Omit<SidebarState, "readOnly"> = {
   threads: [],
   suggestions: [],
@@ -339,9 +308,7 @@ const sidebarPush: Omit<SidebarState, "readOnly"> = {
 
 /**
  * The one path every sidebar-protocol message goes out through, whether it
- * comes from the sidebar itself or from the document toolbar's mode switch
- * (client.ts owns `#edit-mode-toggle` now, but posts `set-read-only` the same
- * way the sidebar always did).
+ * comes from the sidebar itself or from the document toolbar's mode switch.
  */
 function postSidebarMessage(msg: SidebarMessage): void {
   // Edits still in the debounce go first, whatever the message: the host
@@ -377,20 +344,17 @@ let composerEl: HTMLElement | null = null;
 let editorContainer: HTMLElement | null = null;
 let frontmatterEl: HTMLElement | null = null;
 let layoutEl: HTMLElement | null = null;
-// The padded, `overflow: auto` wrapper inside `.mdc-editor-pane` — the pane
-// itself is a plain flex column now, so the document toolbar above this can
-// span its full width and never scroll (docs/sidebar-chrome-redesign.md).
+// The padded, `overflow: auto` wrapper inside `.mdc-editor-pane`; the pane is a
+// plain flex column so the document toolbar above can span its full width and
+// never scroll.
 let editorScrollEl: HTMLElement | null = null;
-// The document toolbar's own controls: built once in `buildLayout`, repainted
-// from `readOnly` (the mode switch) and from `sidebarState`/`sidebarPush` (the
-// comments toggle's pressed state and open-count badge) on every render.
 let commentsToggleBtn: HTMLButtonElement | null = null;
 let modeToggleGroupEl: HTMLElement | null = null;
 let modeToggleRadios: NodeListOf<HTMLInputElement> | null = null;
 
 let cachedMarkdown = "";
 
-// Read-only mode (docs/one-view-design.md): set once from `init`. The editor
+// Read-only mode: set once from `init`. The editor
 // never changes its document except by re-parsing a string from the host, so
 // `sourceMarkdown` is always exactly the string the document was parsed from
 // — the string every source position in it indexes. (`cachedMarkdown` is the
@@ -399,7 +363,6 @@ let readOnly = false;
 let sourceMarkdown = "";
 let sourceIndexCache: { doc: unknown; index: SourceIndex } | null = null;
 
-/** The character ↔ source map for `doc`, built once per document. */
 function sourceIndexFor(doc: unknown): SourceIndex {
   if (!sourceIndexCache || sourceIndexCache.doc !== doc || sourceIndexCache.index.markdown !== sourceMarkdown) {
     sourceIndexCache = {
@@ -410,22 +373,12 @@ function sourceIndexFor(doc: unknown): SourceIndex {
   return sourceIndexCache.index;
 }
 
-// Selection-tracking for the Add-Comment buttons. The composer reads
-// from `live → pendingSelection → lastNonEmptySelection` in that order.
-//
-// Why three layers:
-//   - `live`: the editor's current selection at composer-open time. The
-//     happy path.
-//   - `pendingSelection`: snapshot taken on the button's `mousedown`
-//     so `preventDefault` failure (some Milkdown plugin paths) doesn't
-//     lose the user's intent.
-//   - `lastNonEmptySelection`: continuously kept in sync with the PM
-//     state via `updateLastNonEmptySelection` below. Required because
-//     the FLOATING button (position: fixed, outside the editor's DOM
-//     subtree) can blur the editor *before* its own mousedown fires —
-//     so even `pendingSelection` ends up empty. The lastNonEmpty
-//     cache holds whatever the user last meaningfully selected and is
-//     the final fallback that fixes the "double-click required" bug.
+// The composer reads `live → pendingSelection → lastNonEmptySelection`, in that
+// order. `pendingSelection` is snapshotted on the button's `mousedown` in case
+// `preventDefault` fails (some Milkdown plugin paths). `lastNonEmptySelection`
+// is kept in sync with the PM state because the floating button (position:
+// fixed, outside the editor's DOM subtree) can blur the editor *before* its own
+// mousedown fires, leaving `pendingSelection` empty; it is the final fallback.
 let pendingSelection: { from: number; to: number } | null = null;
 let lastNonEmptySelection: { from: number; to: number } | null = null;
 
@@ -479,11 +432,10 @@ function makeClaudeEditPlugin(): Plugin {
 let claudeEditTimer: ReturnType<typeof setTimeout> | undefined;
 
 /**
- * Highlight the just-edited text `changedText` (located in the editor's
- * rendered content) and fade it after a few seconds. Returns true when the
- * text was found and decorated. Best-effort: a change whose text carries
- * markdown syntax (so it isn't a substring of the rendered content) simply
- * isn't flashed — the notice still fires.
+ * Highlight the just-edited text `changedText` and fade it after a few
+ * seconds. Returns true when the text was found and decorated. Best-effort: a
+ * change whose text carries markdown syntax isn't a substring of the rendered
+ * content, so it isn't flashed — the notice still fires.
  */
 function flashOutsideEdit(changedText: string): boolean {
   const needle = changedText.trim();
@@ -510,20 +462,13 @@ function flashOutsideEdit(changedText: string): boolean {
   return true;
 }
 
-// Webview URIs for resolving relative image src; set from the init payload.
 let imageBaseUris: ImageBaseUris = { docDir: "", workspaceFolder: null };
 
-// Source line per prose line, when the user has line numbers on. Null switches
-// the gutter off entirely.
 let lineMap: number[] | null = null;
 
-// Uncommitted-diff overlay (10x-plan-6 P4 phase B): the latest `diff` a
-// push carried, and the toolbar (badge + prev/next arrows) that shows it.
-// `changeNav` is built once, in `buildLayout()`.
 let currentDiff: DiffState | null = null;
 let changeNav: ChangeNavHandle | null = null;
 
-// --- Document outline -----------------------------------------------------
 let outlinePaneEl: HTMLElement | null = null;
 let outlineVisible = false;
 const collapsedOutline = new Set<string>();
@@ -534,9 +479,7 @@ const outlinePanel: OutlinePanelHandle = buildOutlinePanel({
 });
 
 /**
- * Scroll the editor to the Nth heading, counting in document order.
- *
- * Positional, not by name. `scrollEditorToFragment` matches a slug against the
+ * Positional, not by name: `scrollEditorToFragment` matches a slug against the
  * rendered heading text, which cannot distinguish two sections with the same
  * name — the outline disambiguates the second to `what-changed-1`, no rendered
  * heading spells that, and the entry did nothing when clicked.
@@ -549,7 +492,6 @@ function scrollEditorToHeadingIndex(index: number): void {
   });
 }
 
-/** Rebuild the outline from the markdown the editor currently holds. */
 function refreshOutline(): void {
   outlinePanel.update(buildOutline(cachedMarkdown));
 }
@@ -585,10 +527,6 @@ async function init(msg: InitMessage): Promise<void> {
   editor = await createEditor(msg.text);
   resetEditBase(msg.epoch);
 
-  // The editor seeds its document from `defaultValueCtx` (set to msg.text
-  // above) — there is no Yjs doc and no collab plugin. The human edits here;
-  // Claude edits the .md on disk; the two converge through the file, applied
-  // via `applyExternalChange`. Undo is prosemirror-history (`.use(history)`).
   forceHighlightRefresh();
   forceSuggestionHighlightRefresh();
   forceDiffRefresh();
@@ -598,9 +536,8 @@ async function init(msg: InitMessage): Promise<void> {
 }
 
 /**
- * Build the milkdown editor on `text`, in the current mode, into the editor
- * pane. Read-only installs the source-position schema and never edits; edit
- * mode reports each edit as the blocks it changed (`flushBlockEdits`).
+ * Read-only installs the source-position schema and never edits; edit mode
+ * reports each edit as the blocks it changed (`flushBlockEdits`).
  */
 async function createEditor(text: string): Promise<Editor> {
   // Test seam: a spec stretches the build across a turn of the event loop.
@@ -666,13 +603,12 @@ async function createEditor(text: string): Promise<Editor> {
 const UNDO_REDO_KEY = new PluginKey("mdc-undo-redo");
 
 /**
- * The file's undo history is the only one (docs/editor-undo-and-keys.md):
- * there is no local ProseMirror history to run (`@milkdown/plugin-history`
- * is gone). Mod-z / Mod-Shift-z / Mod-y flush any edit still in the debounce
- * — so a keystroke reaches the file before the undo does, over the same
- * message channel — then ask the host to undo or redo the document. They
- * never touch the document themselves; the file's answer comes back as an
- * `externalChange` with `reveal`.
+ * The file's undo history is the only one: there is no local ProseMirror
+ * history. Mod-z / Mod-Shift-z / Mod-y flush any edit still in the debounce —
+ * so a keystroke reaches the file before the undo does, over the same message
+ * channel — then ask the host to undo or redo the document. They never touch
+ * the document themselves; the file's answer comes back as an `externalChange`
+ * with `reveal`.
  *
  * The same plugin cancels the browser's own historyUndo/historyRedo
  * `beforeinput`, so contenteditable's built-in undo can never rewrite
@@ -824,7 +760,6 @@ async function reinitEditor(msg: InitMessage): Promise<void> {
   reportReady(true);
 }
 
-/** The top-level nodes the host's block table counts, each with its position. */
 function topLevelBlocks(doc: PmDocNode): Array<{ node: PmDocNode; pos: number }> {
   const out: Array<{ node: PmDocNode; pos: number }> = [];
   let pos = 0;
@@ -879,7 +814,6 @@ function flushBlockEdits(): void {
   if (message) vscode.postMessage(message);
 }
 
-/** The `edit-blocks` message that takes `base` to `doc`, or null when no block's Markdown changed. */
 function blockEditsBetween(
   base: PmDocNode,
   doc: PmDocNode,
@@ -913,8 +847,6 @@ function buildLayout(): void {
   layoutEl.className = "mdc-layout";
   document.body.appendChild(layoutEl);
 
-  // Outline first in the DOM so it sits to the left of the editor, matching
-  // where every editor puts a file outline.
   outlinePaneEl = document.createElement("div");
   outlinePaneEl.className = "mdc-outline-pane";
   outlinePaneEl.hidden = !outlineVisible;
@@ -929,7 +861,7 @@ function buildLayout(): void {
   // Document toolbar: outline, the Reading/Editing switch, the comments
   // toggle. A fixed-height sibling of the scrolling content below (not a
   // child of it), so it spans the pane's full width and never scrolls with
-  // the document (docs/sidebar-chrome-redesign.md).
+  // the document.
   editorPane.appendChild(buildDocToolbar());
 
   const editorScroll = document.createElement("div");
@@ -937,9 +869,9 @@ function buildLayout(): void {
   editorPane.appendChild(editorScroll);
   editorScrollEl = editorScroll;
 
-  // Uncommitted-diff toolbar (10x-plan-6 P4 phase B): badge + prev/next
-  // arrows, sticky above everything else in the scrolling content. Hidden by
-  // `buildChangeNav` until a diff actually shows something.
+  // Uncommitted-diff toolbar: badge + prev/next arrows, sticky above everything
+  // else in the scrolling content. Hidden by `buildChangeNav` until a diff
+  // actually shows something.
   changeNav = buildChangeNav();
   editorScroll.appendChild(changeNav.el);
 
@@ -963,11 +895,6 @@ function buildLayout(): void {
   syncCollapsedClass();
 }
 
-/**
- * Outline toggle, the Reading/Editing switch, and the comments toggle — see
- * `buildLayout`. Built once; `updateDocToolbarMode` and `syncCollapsedClass`
- * repaint the pieces that follow `readOnly` / `sidebarState.collapsed`.
- */
 function buildDocToolbar(): HTMLElement {
   const bar = document.createElement("div");
   bar.className = "mdc-doc-toolbar";
@@ -981,7 +908,6 @@ function buildDocToolbar(): HTMLElement {
   return bar;
 }
 
-/** The Reading/Editing radiogroup — moved here from the sidebar, DOM and ids unchanged. */
 function buildModeToggle(): HTMLElement {
   const group = document.createElement("div");
   group.id = "edit-mode-toggle";
@@ -996,7 +922,7 @@ function buildModeToggle(): HTMLElement {
   modeToggleGroupEl = group;
   modeToggleRadios = group.querySelectorAll<HTMLInputElement>('input[name="edit-mode"]');
   // The mode is the host's to change (it rebuilds the editor); `updateDocToolbarMode`
-  // repaints this from `readOnly` on every render, same as the sidebar always did.
+  // repaints this from `readOnly` on every render.
   modeToggleRadios.forEach((r) =>
     r.addEventListener("change", () => {
       if (r.checked) postSidebarMessage({ type: "set-read-only", readOnly: r.value === "read" });
@@ -1005,7 +931,6 @@ function buildModeToggle(): HTMLElement {
   return group;
 }
 
-/** Repaint `#edit-mode-toggle` from `readOnly` — called on every `renderSidebar()`. */
 function updateDocToolbarMode(readOnlyNow: boolean): void {
   if (!modeToggleGroupEl || !modeToggleRadios) return;
   modeToggleGroupEl.dataset.mode = readOnlyNow ? "read" : "edit";
@@ -1015,7 +940,7 @@ function updateDocToolbarMode(readOnlyNow: boolean): void {
   }
 }
 
-/** Replaces the old floating `.mdc-sidebar-toggle`: reachable with the sidebar collapsed. */
+/** Reachable with the sidebar collapsed. */
 function buildCommentsToggle(): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.type = "button";
@@ -1056,12 +981,6 @@ function syncCollapsedClass(): void {
   }
 }
 
-/**
- * Render the thread sidebar from the latest push. The first call mounts it:
- * the notice banner above it, the add-comment composer under its header, and
- * this editor's own "+ Add comment" button in its title row (the toolbar's
- * own controls — outline, mode, comments — are built once in `buildLayout`).
- */
 function renderSidebar(): void {
   if (!sidebarEl) return;
   syncCollapsedClass();
@@ -1077,7 +996,7 @@ function mountSidebar(host: HTMLElement): void {
   composerSlot.className = "mdc-composer-slot";
   threadSidebar.headerEl.after(composerSlot);
   // The sidebar's own "…" menu already lives in `.mc-title-actions` (its
-  // SHELL); prepend so the order reads "+ Add comment" then "…", as specced.
+  // SHELL); prepend so the order reads "+ Add comment" then "…".
   threadSidebar.titleActionsEl.prepend(buildAddCommentButton());
   host.replaceChildren(banner, threadSidebar.el);
   composerEl = composerSlot;
@@ -1103,7 +1022,6 @@ function buildOutlineToggle(): HTMLButtonElement {
   return btn;
 }
 
-/** A comment on the current selection — the same composer as Cmd/Ctrl+Shift+M. */
 function buildAddCommentButton(): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.type = "button";
@@ -1124,7 +1042,6 @@ function buildAddCommentButton(): HTMLButtonElement {
   return btn;
 }
 
-/** Keep what a push says for the sidebar; the next `renderSidebar` shows it. */
 function takeSidebarPush(
   msg: SidebarPush & {
     comments?: CommentSummary[];
@@ -1192,14 +1109,6 @@ function renderNotice(): void {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Bidirectional navigation: anchor highlights in editor + jump from sidebar
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Source line numbers in the live editor
-// ---------------------------------------------------------------------------
-//
 // ProseMirror documents carry no source positions, so the line a block came
 // from has to be recovered. CommonMark's top-level block sequence and the
 // editor's top-level node sequence are the same list, so the Nth block line
@@ -1263,7 +1172,6 @@ function applyLineNumberLayout(): void {
     ?.classList.toggle("with-line-numbers", lineMap !== null);
 }
 
-/** Repaint the gutter after the setting or the map changes. */
 function refreshLineNumbers(): void {
   editor?.action((ctx) => {
     const view = ctx.get(editorViewCtx);
@@ -1282,11 +1190,10 @@ function makeAnchorHighlightPlugin(): Plugin {
           return buildAnchorDecorations(tr.doc, sidebarState.comments, cachedMarkdown);
         }
         // Map existing highlights through the edit instead of rebuilding from the
-        // stored anchor text. Rebuilding here lost a highlight the moment you
-        // edited *inside* it (the old quote no longer matched), so it only came
-        // back on reopen. Mapping makes the highlight grow/shift with the edit; a
-        // fresh rebuild with re-anchored comments follows via forceHighlightRefresh
-        // once the host writes the moved markers and re-sends the comments.
+        // stored anchor text: a rebuild loses a highlight the moment you edit
+        // *inside* it (the old quote no longer matches). A fresh rebuild with
+        // re-anchored comments follows via forceHighlightRefresh once the host
+        // writes the moved markers and re-sends the comments.
         return oldDecos.map(tr.mapping, tr.doc);
       },
     },
@@ -1302,7 +1209,6 @@ function makeAnchorHighlightPlugin(): Plugin {
         const commentId = target.getAttribute("data-comment-id");
         if (!commentId) return false;
         revealCommentInSidebar(commentId);
-        // Also flash the highlight to confirm the click landed.
         target.classList.remove("mdc-anchor-highlight--pulse");
         // eslint-disable-next-line @typescript-eslint/no-unused-expressions
         void target.offsetWidth; // restart CSS animation
@@ -1330,13 +1236,10 @@ function buildAnchorDecorations(
   if (comments.length === 0) return DecorationSet.empty;
   if (readOnly) return buildSourceAnchorDecorations(doc, comments);
   const decos: Decoration[] = [];
-  // Resolve every anchor against the LIVE PM doc's textContent (the
-  // text the user actually sees). No more mapping through a
-  // hand-rolled markdown stripper — that whole layer is the source of
-  // the persistent alignment-bug class. anchor.text may contain
-  // markup chars (it was authored against the markdown source); we
-  // strip those off the small anchor strings, not off the full
-  // document, before searching. The haystack is the mapper's own
+  // Resolve every anchor against the LIVE PM doc's rendered text (what the user
+  // sees), not a markdown stripper. anchor.text was authored against the
+  // markdown source, so strip markup chars off the small anchor strings, not
+  // off the full document, before searching. The haystack is the mapper's own
   // text-node walk, not `doc.textContent` — see `renderedTextOf`.
   const haystack = renderedTextOf(doc);
   const decoratedIds: string[] = [];
@@ -1367,10 +1270,10 @@ function buildAnchorDecorations(
 }
 
 /**
- * Read-only placement (docs/one-view-design.md): the editor ranges holding
- * exactly the characters whose source bytes lie inside an anchored span. No
- * text search, so no wrong occurrence. An anchor without markers has no span
- * and gets no range — guessing it from its quote is what misplaced them.
+ * Read-only placement: the editor ranges holding exactly the characters whose
+ * source bytes lie inside an anchored span. No text search, so no wrong
+ * occurrence. An anchor without markers has no span and gets no range —
+ * guessing it from its quote is what misplaced them.
  */
 function sourceRangesFor(
   doc: unknown,
@@ -1439,9 +1342,6 @@ function reportHighlights(ids: string[]): void {
   vscode.postMessage({ type: "highlight-report", ids });
 }
 
-// locateAnchorInLiveText now lives in ../collab/liveAnchorLocator for
-// testability — re-exported via the top-of-file import.
-
 function forceHighlightRefresh(): void {
   if (!editor) return;
   editor.action((ctx) => {
@@ -1450,7 +1350,6 @@ function forceHighlightRefresh(): void {
   });
 }
 
-/** Same idea as forceHighlightRefresh, for the suggestion-highlight plugin's own decoration set. */
 function forceSuggestionHighlightRefresh(): void {
   if (!editor) return;
   editor.action((ctx) => {
@@ -1460,13 +1359,11 @@ function forceSuggestionHighlightRefresh(): void {
 }
 
 /**
- * Rebuild the diff-stripes decoration set from `currentDiff`, then refresh
- * everything downstream of it: the toolbar's badge text, its navigable
- * stops (queried back off the editor's own DOM — same technique the review
- * view uses to collect `.mc-diff-changed`/`.mc-diff-removed`, since
- * ProseMirror updates the DOM synchronously inside `dispatch`), and the
- * sidebar's n/p dispatch (steps changes while a diff is showing, threads
- * otherwise — `ThreadSidebarHandle.setChangeNavigation`).
+ * Rebuild the diff-stripes decorations from `currentDiff`, then refresh what
+ * hangs off them: the toolbar's badge, its navigable stops (read back off the
+ * editor's own DOM, which ProseMirror updates synchronously inside `dispatch`),
+ * and the sidebar's n/p dispatch (steps changes while a diff is showing,
+ * threads otherwise — `ThreadSidebarHandle.setChangeNavigation`).
  */
 function forceDiffRefresh(): void {
   if (!editor || !changeNav) return;
@@ -1554,7 +1451,6 @@ function jumpToAnchor(comment: CommentSummary): void {
     } catch {
       /* ignore */
     }
-    // Briefly flash the highlight at this comment.
     setTimeout(() => {
       const highlight = document.querySelector<HTMLElement>(
         `.mdc-anchor-highlight[data-comment-id="${cssEscape(comment.id)}"]`,
@@ -1567,10 +1463,6 @@ function jumpToAnchor(comment: CommentSummary): void {
     }, 150);
   });
 }
-
-// ---------------------------------------------------------------------------
-// Mermaid (unchanged from prior version, slightly tightened)
-// ---------------------------------------------------------------------------
 
 interface MermaidApi {
   initialize: (cfg: Record<string, unknown>) => void;
@@ -1634,22 +1526,14 @@ function refreshMermaidDecorations(): void {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Drawio inline viewer
-// ---------------------------------------------------------------------------
+// A paragraph whose only inline content is a single link whose href ends in
+// `.drawio` / `.drawio.xml` / `.xml` becomes an inline diagram; links mixed
+// with other text keep their regular click behavior.
 //
-// Detection: a paragraph whose only inline content is a single link
-// whose href ends in `.drawio` / `.drawio.xml` / `.xml`. That mirrors
-// the "image-only paragraph promotes to block" convention markdown
-// renderers already follow. Links mixed with other text keep their
-// regular click behavior; only the dedicated diagram link gets the
-// inline-render treatment.
-//
-// Loading: file content is owned by the extension. The widget posts
-// `drawio-read` with a request id, then completes when the matching
-// `drawio-read-result` arrives. A per-href cache avoids re-requesting
-// on every PM transaction (every keystroke triggers a re-render of
-// decorations).
+// File content is owned by the extension: the widget posts `drawio-read` with a
+// request id and completes on the matching `drawio-read-result`. A per-href
+// cache avoids re-requesting on every PM transaction (every keystroke
+// re-renders decorations).
 
 const drawioPluginKey = new PluginKey("mdc-drawio");
 
@@ -1694,9 +1578,8 @@ interface DrawioParagraphMatch {
   href: string;
   /**
    * Set only for the `![alt](x.drawio)` form: the image node's size, so
-   * `buildDrawioDecorations` can hide the (otherwise broken) `<img>` the
-   * image nodeView would render for a non-image src. The `[text](x.drawio)`
-   * link form has nothing to hide — the link text stays, same as before.
+   * `buildDrawioDecorations` can hide the (otherwise broken) `<img>` the image
+   * nodeView would render for a non-image src.
    */
   hideChildSize?: number;
 }
@@ -1894,8 +1777,7 @@ function makeImageResolvePlugin(): Plugin {
   };
   // Markdown can't centre an image or set its width, so documents write those
   // as raw HTML. Milkdown keeps raw HTML as an opaque `html` node and renders
-  // its source as escaped text — so `<img src="x.png" width="400">` showed up
-  // as literal angle brackets. `parseHtmlImage` recognizes the image case only
+  // its source as escaped text. `parseHtmlImage` recognizes the image case only
   // (strict attribute whitelist, safe schemes, refuses anything with another
   // element or an `on*` handler); everything else keeps the escaped rendering.
   const applyHtml = (dom: HTMLElement, node: PmHtmlNode): boolean => {
@@ -1985,12 +1867,9 @@ function buildMermaidDecorations(doc: DocLike): DecorationSet {
     const lang = ((node as unknown as { attrs?: { language?: string } }).attrs ?? {}).language;
     if (lang !== "mermaid") return true;
     const src = (node as unknown as { textContent: string }).textContent;
-    // Hide the fence source once its diagram has rendered — both showing at
-    // once was the bug. Left visible while pending (so there isn't a blank
-    // gap before the first render) and on error (so the source is there to
-    // fix), same as the review view shows nothing but keeps the option to
-    // fall back to source-on-error implicit in "both show" being the bug,
-    // not "source is unreachable".
+    // Hide the fence source once its diagram has rendered. Left visible while
+    // pending (so there isn't a blank gap before the first render) and on error
+    // (so the source is there to fix).
     if (mermaidCache.get(src)?.status === "ready") {
       decos.push(Decoration.node(pos, pos + node.nodeSize, { class: "mdc-mermaid-source-hidden" }));
     }
@@ -2050,10 +1929,6 @@ function makeMermaidWidget(src: string): HTMLElement {
   return wrap;
 }
 
-// ---------------------------------------------------------------------------
-// Composer + selection-driven add comment
-// ---------------------------------------------------------------------------
-
 function installAddCommentAffordance(): void {
   const button = document.createElement("button");
   button.type = "button";
@@ -2067,8 +1942,8 @@ function installAddCommentAffordance(): void {
   // view nothing clamps the native selection to the editor (there is no
   // contenteditable host), so dragging over the button extended the selection
   // to the button's place in the DOM, after the sidebar; ProseMirror ignores a
-  // selection that leaves the editor and kept the prefix it last saw ("Su" for
-  // "Suggest"). So the button waits for the release.
+  // selection that leaves the editor and keeps the prefix it last saw. So the
+  // button waits for the release.
   let dragging = false;
   document.addEventListener(
     "mousedown",
@@ -2114,11 +1989,8 @@ function installAddCommentAffordance(): void {
     }
   };
 
-  // Refresh the floating button's position AND keep
-  // lastNonEmptySelection in lock-step with PM's state. Both run on
-  // every selection-affecting event so the composer can always reach
-  // for "the last non-empty selection the user made", regardless of
-  // any focus/blur weirdness between PM and the floating button.
+  // Refresh the floating button's position and keep lastNonEmptySelection in
+  // lock-step with PM's state, on every selection-affecting event.
   const refresh = (): void => {
     updateLastNonEmptySelection();
     updateButton();
@@ -2130,10 +2002,10 @@ function installAddCommentAffordance(): void {
       setTimeout(refresh, 0);
     }
   });
-  // Belt-and-suspenders for the floating button: capture-phase pointerdown
-  // anywhere snapshots PM's selection BEFORE any focus shift or
-  // setTimeout-0 refresh can run. Closes the race where a fast click on
-  // the button beats the prior selectionchange's deferred refresh.
+  // Belt-and-suspenders for the floating button: a capture-phase pointerdown
+  // anywhere snapshots PM's selection before any focus shift or setTimeout-0
+  // refresh can run, closing the race where a fast click on the button beats
+  // the prior selectionchange's deferred refresh.
   window.addEventListener("pointerdown", () => {
     updateLastNonEmptySelection();
   }, true);
@@ -2168,14 +2040,8 @@ function openComposerForCurrentSelection(): void {
   let editRange: { first: EditorPoint; last: EditorPoint } | null = null;
   let displayText = "";
   let failureReason = "";
-  // Three-layer selection lookup — see the comment block on
-  // pendingSelection / lastNonEmptySelection for why. Order:
-  //   1. live (PM's current selection at composer-open time)
-  //   2. pendingSelection (mousedown snapshot — close to live)
-  //   3. lastNonEmptySelection (the most recent non-empty user
-  //      selection, kept in sync via updateLastNonEmptySelection)
-  // The third layer is what fixes the "had to double-click the
-  // floating button" bug.
+  // Order: live selection, then pendingSelection, then lastNonEmptySelection —
+  // see the comment on those.
   const captured = pendingSelection;
   pendingSelection = null;
   const recent = lastNonEmptySelection;
@@ -2288,10 +2154,6 @@ function openComposerForCurrentSelection(): void {
   });
   composerEl.appendChild(composer.el);
 }
-
-// ---------------------------------------------------------------------------
-// Misc helpers
-// ---------------------------------------------------------------------------
 
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
 function showToast(text: string, durationMs = 4500): void {
@@ -2429,9 +2291,7 @@ function applyExternalChange(
       revealTo = next.content.size;
     }
 
-    // Marked external so prosemirror-history — gone now, but the metas still
-    // matter for every other plugin that watches them — never treats the
-    // agent's disk-side edit as ours.
+    // Marked external so no plugin treats the agent's disk-side edit as ours.
     tr.setMeta("addToHistory", false);
     tr.setMeta("external", true);
     if (reveal) {
@@ -2485,14 +2345,12 @@ function applyExternalChange(
   showNotice(where, flashed);
 }
 
-// Whether the current notice should offer a "jump to the change" click.
 let noticeJump = false;
 
-// Flash a transient one-line notice in the sidebar header, then clear it. Used
-// when an edit arrives from outside the editor (Claude editing the .md, a save
-// from another window, git) so the change isn't silent. When `jumpToChange` is
-// set, the notice is clickable and scrolls the editor to the just-edited span,
-// and lingers long enough to click.
+// Flash a transient one-line notice in the sidebar header, then clear it, so an
+// edit arriving from outside the editor (Claude, another window, git) isn't
+// silent. With `jumpToChange` the notice is clickable (scrolls to the
+// just-edited span) and lingers long enough to click.
 function showNotice(text: string, jumpToChange = false): void {
   sidebarState.notice = text;
   noticeJump = jumpToChange;
@@ -2558,7 +2416,6 @@ function postError(stage: string, err: unknown): void {
 window.addEventListener("error", (e) => postError("uncaught", e.error ?? e.message));
 window.addEventListener("unhandledrejection", (e) => postError("unhandled-rejection", e.reason));
 
-// Cmd/Ctrl+Shift+M = open the composer for the current selection.
 document.addEventListener("keydown", (e) => {
   const isCmdOrCtrl = e.metaKey || e.ctrlKey;
   if (isCmdOrCtrl && e.shiftKey && (e.key === "m" || e.key === "M")) {
@@ -2576,7 +2433,6 @@ document.addEventListener("click", (e) => {
   if (anchorId) threadSidebar.revealSuggestion(anchorId);
 });
 
-// Link click interceptor — route to extension's openExternal/vscode.open.
 document.addEventListener("click", (e) => {
   const target = (e.target as HTMLElement | null)?.closest("a[href]");
   if (!target) return;
@@ -2587,8 +2443,6 @@ document.addEventListener("click", (e) => {
   if (!href) return;
   e.preventDefault();
   e.stopPropagation();
-  // In-doc fragment links scroll the editor to the heading; everything else
-  // is routed to the host for opening.
   if (href.startsWith("#")) {
     scrollEditorToFragment(href.slice(1));
     return;
@@ -2596,7 +2450,6 @@ document.addEventListener("click", (e) => {
   vscode.postMessage({ type: "open-link", href });
 });
 
-/** Scroll the editor to a heading matching `fragment` (by id, else by slug). */
 function scrollEditorToFragment(fragment: string): void {
   if (!fragment || !editor) return;
   let decoded = fragment;

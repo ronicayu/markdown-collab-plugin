@@ -1,4 +1,4 @@
-// Pure builder for the send-mode quick-pick (10x-plan-4 P0.3), plus the guard
+// Pure builder for the send-mode quick-pick, plus the guard
 // that keeps it in lockstep with package.json's `markdownCollab.sendMode`
 // enum — a mode listed in one place and not the other is either an option
 // nobody can reach or a setting nobody is offered.
@@ -45,7 +45,7 @@ describe("buildSendModeItems", () => {
     expect(items.some((i) => i.mode === "clipboard")).toBe(true);
   });
 
-  // 10x-plan-6 P0.1: headless is listed only when it would actually run —
+  // Headless is listed only when it would actually run —
   // the grill established terminal is what's actually used, so it leads and
   // keeps "recommended" whether or not headless is on offer.
   it("leaves headless out when it isn't available", () => {
@@ -91,7 +91,7 @@ describe("picker/settings parity", () => {
   // Every concrete mode the picker can hand back must be a value someone can
   // actually set in `markdownCollab.sendMode`, and vice versa (minus `ask`,
   // which isn't a delivery — it's what leads to the picker in the first
-  // place). `headless` (10x-plan-4 P0.1) is only listed when available, so the
+  // place). `headless` is only listed when available, so the
   // builder is asked both ways.
   const packageJson = JSON.parse(
     fs.readFileSync(path.join(__dirname, "..", "..", "package.json"), "utf8"),

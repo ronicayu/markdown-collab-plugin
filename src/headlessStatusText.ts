@@ -1,5 +1,4 @@
-// What a headless run looks like in the status bar and its toasts
-// (10x-plan-4 P0.1).
+// What a headless run looks like in the status bar and its toasts.
 //
 // A headless run is the one send mode where the extension knows — rather than
 // guesses — that Claude is working: it owns the process and reads its event
@@ -7,8 +6,6 @@
 // reviewing" in so many words, with a clock on it. The module-header rule in
 // claudeStatusBar.ts still holds for every other mode: a terminal send never
 // earns this text, because nothing there is observed.
-//
-// Pure: the status bar module feeds it a state and a clock.
 
 import type { HeadlessState } from "./transports/headless";
 
@@ -74,13 +71,11 @@ export function headlessStatusBar(
   }
 }
 
-/** First non-empty line of `text`, capped at `max` characters. */
 export function firstLine(text: string, max: number): string {
   const line = text.split(/\r?\n/).find((l) => l.trim() !== "")?.trim() ?? "";
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
-/** The done toast: Claude's own first line, short enough for a notification. */
 export function headlessDoneToast(fileLabel: string, text: string): string {
   const head = firstLine(text, 160);
   return head ? head : `Claude finished ${fileLabel}.`;
@@ -97,7 +92,6 @@ export function headlessReportFooter(numTurns?: number, costUsd?: number): strin
   return parts.join(" · ");
 }
 
-/** The "Show report" document: Claude's final message plus the footer. */
 export function headlessReportDocument(text: string, numTurns?: number, costUsd?: number): string {
   const footer = headlessReportFooter(numTurns, costUsd);
   const body = text.trim() || "_Claude finished without a written report._";

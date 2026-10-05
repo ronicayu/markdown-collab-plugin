@@ -1,8 +1,5 @@
-// The document outline behind the table-of-contents panel.
-//
-// Pure: headings in, a tree out. The surfaces differ in how they render and
-// how they scroll, but "what are this document's headings, and which contains
-// which" is one question with one answer, and it is the part worth testing.
+// The document outline behind the table-of-contents panel: headings in, a tree
+// out.
 //
 // Headings come from the markdown source rather than the rendered DOM. Reading
 // the DOM would mean the outline disagrees with the document whenever a
@@ -22,12 +19,11 @@ export interface OutlineNode {
    * 0-based position among ALL headings in document order — the Nth heading in
    * the source is the Nth heading a renderer emits.
    *
-   * This is what navigation uses, not `slug`. Matching by slug meant
-   * re-slugifying the rendered heading text and comparing, which fails the
-   * moment two headings share a name: the outline disambiguates the second one
-   * to `what-changed-1`, no rendered heading ever produces that, and clicking
-   * it scrolled nowhere at all. It would also break on any divergence between
-   * how the source and the renderer spell a heading.
+   * This is what navigation uses, not `slug`: re-slugifying the rendered
+   * heading text fails the moment two headings share a name (the outline
+   * disambiguates the second one to `what-changed-1`, which no rendered heading
+   * ever produces), and on any divergence between how the source and the
+   * renderer spell a heading.
    */
   index: number;
   /** GitHub-style slug. Kept for `#fragment` links, which address by name. */
@@ -58,11 +54,9 @@ export function headingLabel(raw: string): string {
     .trim();
 }
 
-// The slug comes from `linkParse`, which is what both surfaces already use to
-// resolve a `#fragment` to a heading. A second definition here would be a
-// second answer to "which heading is this?" — and the weaker version this
-// replaces dropped non-ASCII letters, so clicking "Café" in the outline would
-// have scrolled nowhere.
+// The slug comes from `linkParse`, which both surfaces already use to resolve a
+// `#fragment` to a heading. A second definition here would be a second answer
+// to "which heading is this?".
 export { slugifyHeading as slugify } from "../inlineComments/linkParse";
 
 /**
@@ -138,15 +132,10 @@ export function buildOutline(markdown: string): OutlineNode[] {
   return roots;
 }
 
-/** Total headings in a tree — for the panel's "N headings" label. */
 export function outlineSize(nodes: readonly OutlineNode[]): number {
   return nodes.reduce((n, node) => n + 1 + outlineSize(node.children), 0);
 }
 
-/**
- * The node whose heading most recently precedes `line` — the section the
- * reader is currently in, for highlighting as they scroll.
- */
 export function activeSlug(nodes: readonly OutlineNode[], line: number): string | null {
   // Tracked as two locals rather than an object: assigning an object inside a
   // closure narrows `best` to `never` on read, and the workaround is uglier

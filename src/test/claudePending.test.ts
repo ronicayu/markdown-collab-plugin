@@ -76,7 +76,7 @@ describe("isAnswered", () => {
   });
 
   it("is true once ANY agent adds a comment, not just claude", () => {
-    // 10x-plan-4 P1.2: a Codex reply answers the wait exactly like Claude's
+    // A Codex reply answers the wait exactly like Claude's
     // would — the human isn't the one still owed an answer either way.
     expect(isAnswered(snap1, thread("a1", ["ronica", "codex"]))).toBe(true);
   });
@@ -299,7 +299,7 @@ describe("ClaudePendingTracker", () => {
   });
 });
 
-// 10x-plan-2 P0.2: with the MCP tools in play the tracker stops guessing. Tool
+// With the MCP tools in play the tracker stops guessing. Tool
 // calls say "working", mc_status says what, and the closing mc_check says done.
 describe("ClaudePendingTracker — protocol evidence", () => {
   function makeTracker(timeoutMs = 1000) {
@@ -366,7 +366,7 @@ describe("ClaudePendingTracker — protocol evidence", () => {
   });
 
   it("a tool call upgrades an inferred wait to protocol and extends it", () => {
-    // Every dispatch starts "inferred" since 10x-plan-4 P0.3 deleted the mode
+    // Every dispatch starts "inferred" since the mode was deleted
     // that used to mark "protocol" up front — a real tool call is now the
     // only way a wait ever earns it, and it must earn it retroactively for
     // whatever was already waiting on that document.
@@ -468,7 +468,7 @@ describe("pendingLabel", () => {
     expect(pendingLabel({ evidence: "protocol", active: true, phase: "reading" })).toBe("Agent: reading");
   });
 
-  // 10x-plan-4 P1.2: protocol evidence names whichever agent actually earned
+  // Protocol evidence names whichever agent actually earned
   // it — a Codex-only wait says Codex throughout.
   it("names Codex when the protocol evidence came from Codex", () => {
     expect(pendingLabel({ evidence: "protocol", active: true, phase: "reading", agent: "codex" })).toBe(
@@ -499,7 +499,7 @@ describe("pendingLabel", () => {
   });
 });
 
-// 10x-plan-4 P1.2: the tracker learns which agent a protocol wait belongs to
+// The tracker learns which agent a protocol wait belongs to
 // from the tool calls themselves.
 describe("ClaudePendingTracker — agent attribution", () => {
   function makeTracker() {

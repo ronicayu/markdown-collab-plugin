@@ -1,13 +1,10 @@
-// Render a decoded drawio mxGraphModel XML string into an inline SVG
-// element. We rely on mxgraph's browser-mode rendering: build an
-// offscreen container, instantiate mxGraph against it, decode the
-// model, then lift the resulting SVG out for re-attachment in the
-// webview's editor view.
+// Render a decoded drawio mxGraphModel XML string into an inline SVG element
+// via mxgraph's browser-mode rendering: an offscreen container, an mxGraph
+// instantiated against it, then the resulting SVG lifted out.
 //
-// mxgraph is loaded lazily so that webviews that never see a drawio
-// link don't pay the ~3MB JS evaluation cost on every open. The
-// loader caches the resolved factory so repeated diagrams share one
-// initialization.
+// mxgraph is loaded lazily so webviews that never see a drawio link don't pay
+// the ~3MB JS evaluation cost on every open. The loader caches the resolved
+// factory so repeated diagrams share one initialization.
 
 import { decodeDrawioFile } from "../collab/drawioDecoder";
 
@@ -122,8 +119,8 @@ function loadMx(): Promise<MxFactory> {
 
 /**
  * Lock down mxgraph's decoder before it ever sees untrusted `.drawio` XML
- * (security review — draw.io rendered nothing, and the obvious fix opened a
- * script-injection hole). Two independent layers, in order:
+ * (draw.io rendered nothing, and the obvious fix opened a script-injection
+ * hole). Two independent layers, in order:
  *
  * 1. Every `allowEval` switch mxgraph 4.2.2 ships turned on by default —
  *    `mxStylesheetCodec` and `mxDefaultToolbarCodec`, the only two found by
@@ -245,7 +242,7 @@ export async function renderDrawioToSvg(rawXml: string): Promise<RenderResult> {
   try {
     const graph = new mx.mxGraph(scratch);
     graph.setEnabled(false);
-    // Plain-text labels only (security review): `mxGraph.isHtmlLabel` just
+    // Plain-text labels only: `mxGraph.isHtmlLabel` just
     // returns this flag for every cell regardless of the cell's own
     // `html=1` style, so `false` here blocks HTML labels graph-wide rather
     // than per-cell. A crafted label like `<img src=x onerror=...>` renders

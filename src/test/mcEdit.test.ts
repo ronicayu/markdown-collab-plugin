@@ -1,4 +1,4 @@
-// Tests for `opEdit` (10x-plan-4 P0.1) and its `mc_edit` MCP tool
+// Tests for `opEdit` and its `mc_edit` MCP tool
 // front end.
 //
 // `opEdit` is the marker-safe stand-in for the Edit tool in a headless run:

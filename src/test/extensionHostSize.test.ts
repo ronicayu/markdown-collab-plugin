@@ -1,4 +1,4 @@
-// Guard for 10x-plan-4 P3.2: extension.ts is activation and dependency wiring
+// Guard: extension.ts is activation and dependency wiring
 // only — command families live in src/commands/*.ts. Without this, the next
 // feature that needs "just one more command" grows extension.ts right back
 // into the 1848-line file the split was meant to end.
