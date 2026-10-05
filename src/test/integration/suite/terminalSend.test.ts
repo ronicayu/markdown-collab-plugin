@@ -1,141 +1,197 @@
 import * as assert from "assert";
-import * as fs from "fs/promises";
-import * as os from "os";
-import * as path from "path";
 import * as vscode from "vscode";
-import { addThread } from "../../../inlineComments/format";
+import { terminalActivity } from "../../../transports/terminalTarget";
+import {
+  FIXTURE,
+  IDLE_MESSAGE,
+  NO_TERMINAL_MESSAGE,
+  SENTINEL,
+  activateExtension,
+  hasShellEvents,
+  idleTerminal,
+  occurrences,
+  openTerminal,
+  posixSuite,
+  received,
+  runningCat,
+  sendAll,
+  sendFixture,
+  settled,
+  startsIn,
+  waitFor,
+} from "./sendHarness";
 
-interface ShellExecutionEvent {
-  terminal: vscode.Terminal;
-}
-type ShellExecutionEvents = {
-  onDidStartTerminalShellExecution?: vscode.Event<ShellExecutionEvent>;
-  onDidEndTerminalShellExecution?: vscode.Event<ShellExecutionEvent>;
-};
-
-const events = vscode.window as unknown as ShellExecutionEvents;
-const FIXTURE = "terminal-send-target.md";
-const IDLE_MESSAGE = "Nothing is running in your terminals. Start your agent in one, then Send again.";
-
-async function waitFor(condition: () => boolean | Promise<boolean>, message: string, timeoutMs = 15000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!(await condition())) {
-    if (Date.now() > deadline) assert.fail(message);
-    await new Promise((r) => setTimeout(r, 50));
-  }
-}
-
-function seen(event: vscode.Event<ShellExecutionEvent>, terminal: vscode.Terminal): { count: () => number; dispose: () => void } {
-  let count = 0;
-  const sub = event((e) => {
-    if (e.terminal === terminal) count += 1;
-  });
-  return { count: () => count, dispose: () => sub.dispose() };
-}
-
-async function disposeAllTerminals(): Promise<void> {
-  for (const t of vscode.window.terminals) t.dispose();
-  await waitFor(() => vscode.window.terminals.length === 0, "terminals did not close");
-}
-
-async function activeTerminalWithShellIntegration(): Promise<vscode.Terminal> {
-  const terminal = vscode.window.createTerminal({ name: "send-probe" });
-  terminal.show();
-  await waitFor(() => vscode.window.activeTerminal === terminal, "terminal never became active");
-  await waitFor(
-    () => (terminal as unknown as { shellIntegration?: unknown }).shellIntegration !== undefined,
-    "shell integration never attached",
-  );
-  return terminal;
-}
-
-async function withInformationMessageStub<T>(run: (calls: string[]) => Promise<T>): Promise<T> {
-  const calls: string[] = [];
-  const original = vscode.window.showInformationMessage;
-  const stubbed = vscode.window as unknown as { showInformationMessage: unknown };
-  stubbed.showInformationMessage = (message: string): Promise<undefined> => {
-    calls.push(message);
-    return Promise.resolve(undefined);
-  };
-  try {
-    return await run(calls);
-  } finally {
-    stubbed.showInformationMessage = original;
-  }
-}
-
-(process.platform === "win32" ? suite.skip : suite)("terminal Send into a real terminal", () => {
-  const fixture = path.resolve(__dirname, "..", "fixtures", FIXTURE);
-  let target: string;
-  let previousMode: unknown;
+posixSuite("terminal Send into a real terminal", () => {
+  const f = sendFixture("terminal");
 
   suiteSetup(async function () {
-    const ext = vscode.extensions.getExtension("markdown-collab.markdown-collab-plugin");
-    assert.ok(ext, "extension not loaded");
-    if (!ext.isActive) await ext.activate();
-    if (!events.onDidStartTerminalShellExecution || !events.onDidEndTerminalShellExecution) this.skip();
-  });
-
-  setup(async () => {
-    await disposeAllTerminals();
-    target = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "mc-terminal-send-")), "received.txt");
-    const body = "# Send probe\n\nThe sentence the thread is anchored to.\n";
-    const anchor = "sentence the thread is anchored to";
-    const start = body.indexOf(anchor);
-    await fs.writeFile(fixture, addThread(body, start, start + anchor.length, { author: "user", body: "probe", ts: "2026-05-02T00:00:00.000Z" }).source);
-    const config = vscode.workspace.getConfiguration("markdownCollab");
-    previousMode = config.inspect("sendMode")?.workspaceValue;
-    await config.update("sendMode", "terminal", vscode.ConfigurationTarget.Workspace);
-    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(fixture)));
-  });
-
-  teardown(async () => {
-    await vscode.workspace
-      .getConfiguration("markdownCollab")
-      .update("sendMode", previousMode, vscode.ConfigurationTarget.Workspace);
-    await disposeAllTerminals();
-    await fs.rm(fixture, { force: true });
-    await fs.rm(path.dirname(target), { recursive: true, force: true });
+    await activateExtension();
+    if (!hasShellEvents()) this.skip();
   });
 
   test("the prompt lands in the terminal where a program is running", async () => {
-    const terminal = await activeTerminalWithShellIntegration();
-    const started = seen(events.onDidStartTerminalShellExecution!, terminal);
-    try {
-      terminal.sendText(`cat > '${target}'`);
-      await waitFor(() => started.count() === 1, "the cat command never reported a start");
-    } finally {
-      started.dispose();
-    }
+    await runningCat("send-probe", f.file("a.txt"));
+    f.dialogs();
 
-    await withInformationMessageStub(async () => {
-      await vscode.commands.executeCommand("markdownCollab.sendAllToClaude", vscode.Uri.file(fixture));
-    });
+    assert.strictEqual(await sendAll(f.uri()), "delivered");
 
     await waitFor(
-      async () => (await fs.readFile(target, "utf-8").catch(() => "")).includes(FIXTURE),
+      async () => (await received(f.file("a.txt"))).includes(FIXTURE),
       "the prompt never reached the file cat was writing",
     );
   });
 
   test("an idle shell gets nothing", async () => {
-    const terminal = await activeTerminalWithShellIntegration();
-    const started = seen(events.onDidStartTerminalShellExecution!, terminal);
-    const ended = seen(events.onDidEndTerminalShellExecution!, terminal);
+    const terminal = await idleTerminal("send-probe");
+    const started = startsIn(terminal);
+    const { messages } = f.dialogs();
     try {
-      terminal.sendText("true");
-      await waitFor(() => started.count() === 1 && ended.count() === 1, "true never reported a start and an end");
-
-      await withInformationMessageStub(async (calls) => {
-        await vscode.commands.executeCommand("markdownCollab.sendAllToClaude", vscode.Uri.file(fixture));
-        assert.deepStrictEqual(calls, [IDLE_MESSAGE]);
-      });
+      assert.strictEqual(await sendAll(f.uri()), "cancelled");
+      assert.deepStrictEqual(messages, [IDLE_MESSAGE]);
 
       await new Promise((r) => setTimeout(r, 2000));
-      assert.strictEqual(started.count(), 1, "something was typed into the idle shell");
+      assert.strictEqual(started.count(), 0, "something was typed into the idle shell");
     } finally {
       started.dispose();
-      ended.dispose();
+    }
+  });
+
+  test("an idle active terminal sends to the terminal the previous Send went to", async () => {
+    const a = f.file("a.txt");
+    const catA = await runningCat("cat-a", a);
+    const { picks } = f.dialogs();
+    assert.strictEqual(await sendAll(f.uri()), "delivered");
+    const afterFirst = await settled(catA, a);
+    assert.ok(afterFirst.includes(FIXTURE), "the first Send never reached terminal A");
+
+    const catC = await runningCat("cat-c", f.file("c.txt"));
+    await idleTerminal("idle-b");
+    assert.strictEqual(await sendAll(f.uri()), "delivered");
+
+    assert.strictEqual(picks.length, 0, "a terminal choice was offered although the last target is still running");
+    assert.ok(occurrences(await settled(catA, a), FIXTURE) > occurrences(afterFirst, FIXTURE), "the second prompt never reached terminal A");
+    assert.strictEqual(await settled(catC, f.file("c.txt")), "");
+  });
+
+  test("an idle active terminal sends to the one other terminal running a program", async () => {
+    const a = f.file("a.txt");
+    const catA = await runningCat("cat-a", a);
+    await idleTerminal("idle-b");
+    const { picks } = f.dialogs();
+
+    assert.strictEqual(await sendAll(f.uri()), "delivered");
+
+    assert.strictEqual(picks.length, 0);
+    assert.ok((await settled(catA, a)).includes(FIXTURE));
+  });
+
+  test("with two running terminals the choice decides where the prompt goes", async () => {
+    const [a, b] = [f.file("a.txt"), f.file("b.txt")];
+    const catA = await runningCat("cat-a", a);
+    const catB = await runningCat("cat-b", b);
+    await idleTerminal("idle-c");
+    const { picks } = f.dialogs({ choose: (items) => items.find((item) => item.label === catB.name) });
+
+    assert.strictEqual(await sendAll(f.uri()), "delivered");
+
+    assert.strictEqual(picks.length, 1);
+    assert.deepStrictEqual(picks[0]!.map((item) => item.label).sort(), [catA.name, catB.name]);
+    assert.ok(picks[0]!.find((item) => item.label === catA.name)!.description!.includes(a));
+    assert.ok(picks[0]!.find((item) => item.label === catB.name)!.description!.includes(b));
+    assert.ok((await settled(catB, b)).includes(FIXTURE));
+    assert.strictEqual(await settled(catA, a), "");
+  });
+
+  test("dismissing the terminal choice cancels and writes to neither", async () => {
+    const [a, b] = [f.file("a.txt"), f.file("b.txt")];
+    const catA = await runningCat("cat-a", a);
+    const catB = await runningCat("cat-b", b);
+    await idleTerminal("idle-c");
+    const { picks } = f.dialogs();
+
+    assert.strictEqual(await sendAll(f.uri()), "cancelled");
+
+    assert.strictEqual(picks.length, 1);
+    assert.strictEqual(await settled(catA, a), "");
+    assert.strictEqual(await settled(catB, b), "");
+  });
+
+  test("an unidentified shell asks first, and Copy instead copies the prompt", async function () {
+    const terminal = await openTerminal();
+    if (terminalActivity(undefined, terminal.name) !== "unknown") this.skip();
+    const started = startsIn(terminal);
+    const { messages } = f.dialogs({ reply: "Copy instead" });
+    try {
+      assert.strictEqual(await sendAll(f.uri()), "copied");
+      assert.strictEqual(messages[0], `Send to terminal "${terminal.name}"? Markdown Collab can't tell what's running there.`);
+      assert.ok((await vscode.env.clipboard.readText()).includes(FIXTURE));
+      assert.strictEqual(started.count(), 0, "something was typed into the unidentified shell");
+    } finally {
+      started.dispose();
+    }
+  });
+
+  test("an unidentified shell asks first, and dismissing cancels", async function () {
+    const terminal = await openTerminal();
+    if (terminalActivity(undefined, terminal.name) !== "unknown") this.skip();
+    const started = startsIn(terminal);
+    const { messages } = f.dialogs();
+    try {
+      assert.strictEqual(await sendAll(f.uri()), "cancelled");
+      assert.strictEqual(messages[0], `Send to terminal "${terminal.name}"? Markdown Collab can't tell what's running there.`);
+      assert.strictEqual(await vscode.env.clipboard.readText(), SENTINEL);
+      assert.strictEqual(started.count(), 0, "something was typed into the unidentified shell");
+    } finally {
+      started.dispose();
+    }
+  });
+
+  test("when every terminal is idle, Copy instead copies the prompt", async () => {
+    await idleTerminal("idle-a");
+    const { messages } = f.dialogs({ reply: "Copy instead" });
+
+    assert.strictEqual(await sendAll(f.uri()), "copied");
+
+    assert.strictEqual(messages[0], IDLE_MESSAGE);
+    assert.ok((await vscode.env.clipboard.readText()).includes(FIXTURE));
+  });
+
+  test("with no terminal open the send says so, and dismissing cancels", async () => {
+    const { messages } = f.dialogs();
+
+    assert.strictEqual(await sendAll(f.uri()), "cancelled");
+
+    assert.deepStrictEqual(messages, [NO_TERMINAL_MESSAGE]);
+    assert.strictEqual(await vscode.env.clipboard.readText(), SENTINEL);
+  });
+
+  test("with no terminal open, Copy instead copies the prompt", async () => {
+    const { messages } = f.dialogs({ reply: "Copy instead" });
+
+    assert.strictEqual(await sendAll(f.uri()), "copied");
+
+    assert.strictEqual(messages[0], NO_TERMINAL_MESSAGE);
+    assert.ok((await vscode.env.clipboard.readText()).includes(FIXTURE));
+  });
+
+  test("a closed last target is forgotten", async () => {
+    const a = f.file("a.txt");
+    const catA = await runningCat("cat-a", a);
+    f.dialogs();
+    assert.strictEqual(await sendAll(f.uri()), "delivered");
+    assert.ok((await settled(catA, a)).includes(FIXTURE));
+
+    catA.dispose();
+    await waitFor(() => vscode.window.terminals.length === 0, "terminal A never closed");
+    const idle = await idleTerminal("idle-b");
+    const started = startsIn(idle);
+    const { messages } = f.dialogs();
+    try {
+      assert.strictEqual(await sendAll(f.uri()), "cancelled");
+      assert.deepStrictEqual(messages, [IDLE_MESSAGE]);
+      assert.strictEqual(started.count(), 0, "something was typed into the idle shell");
+    } finally {
+      started.dispose();
     }
   });
 });

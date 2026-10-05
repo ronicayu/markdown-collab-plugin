@@ -333,10 +333,10 @@ suite("All extension commands", () => {
     const fileRel = "cmd-send-target.md";
     const body = "# Send target\n\nThis text is the anchor target for sending.\n";
     const uri = await writeFixtureWithThread(fileRel, body, "anchor target for sending");
+    const config = vscode.workspace.getConfiguration("markdownCollab");
+    const prevMode = config.inspect("sendMode")?.workspaceValue;
     try {
       // Force clipboard mode for this run + clear any stale workspace state.
-      const config = vscode.workspace.getConfiguration("markdownCollab");
-      const prevMode = config.get<string>("sendMode", "ask");
       await config.update("sendMode", "clipboard", vscode.ConfigurationTarget.Workspace);
       await vscode.env.clipboard.writeText("cleared-by-test");
 
@@ -350,9 +350,8 @@ suite("All extension commands", () => {
       }, 5000, "clipboard never updated by sendAllToClaude");
       const clip = await vscode.env.clipboard.readText();
       assert.ok(clip.includes(fileRel), `clipboard prompt missing file ref: ${clip}`);
-
-      await config.update("sendMode", prevMode, vscode.ConfigurationTarget.Workspace);
     } finally {
+      await config.update("sendMode", prevMode, vscode.ConfigurationTarget.Workspace);
       await rmIfExists(uri.fsPath);
     }
   });

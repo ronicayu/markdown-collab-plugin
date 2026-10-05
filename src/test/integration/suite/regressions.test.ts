@@ -302,8 +302,8 @@ suite("Historical regressions (real host)", () => {
     });
     const doc = await openFixture(name, source);
     const config = vscode.workspace.getConfiguration("markdownCollab");
-    const prevMode = config.get<string>("sendMode", "ask");
-    const prevSuggest = config.get<boolean>("proposeEditsAsSuggestions", false);
+    const prevMode = config.inspect("sendMode")?.workspaceValue;
+    const prevSuggest = config.inspect("proposeEditsAsSuggestions")?.workspaceValue;
     try {
       await config.update("sendMode", "clipboard", vscode.ConfigurationTarget.Workspace);
       await config.update("proposeEditsAsSuggestions", false, vscode.ConfigurationTarget.Workspace);

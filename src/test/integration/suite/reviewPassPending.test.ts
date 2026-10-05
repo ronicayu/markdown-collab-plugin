@@ -82,7 +82,7 @@ async function dispatchReviewAndWaitForClipboard(uri: vscode.Uri, marker: string
     assert.ok(ext, "extension not loaded");
     if (!ext.isActive) await ext.activate();
     const config = vscode.workspace.getConfiguration("markdownCollab");
-    previousMode = config.get<string>("sendMode", "ask");
+    previousMode = config.inspect("sendMode")?.workspaceValue;
     // Clipboard avoids needing a real terminal in the test host — the pulse
     // is the same for both non-headless modes (10x-plan-4 P2.2's design).
     await config.update("sendMode", "clipboard", vscode.ConfigurationTarget.Workspace);
