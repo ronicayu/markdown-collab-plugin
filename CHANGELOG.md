@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.35.37 — 2026-10-05 (GitHub only)
+
+### Fixed: control characters in a document's comments could end a terminal paste early
+
+When a prompt is typed into a terminal, control characters (including escape
+sequences) in the document's comments, the conventions file or file paths are
+now removed first, so they can no longer end the paste early. Newlines and tabs
+are kept; the clipboard copy is unchanged.
+
+### Fixed: the tool server wrote its descriptor through a symlink
+
+If `.markdown-collab/.mcp-server.json` or `.markdown-collab/.gitignore` is a
+symlink, the tool server now leaves it alone instead of writing to its target.
+
+### Tests
+
+- A prompt carrying a paste-end sequence reaches the terminal with exactly one,
+  at the end; control characters are removed and ordinary text is untouched.
+- A symlinked descriptor or `.gitignore`, dangling or not, is never written
+  through.
+
 ## 0.35.36 — 2026-10-05 (GitHub only)
 
 ### Added: Markdown Collab now opens in Restricted Mode

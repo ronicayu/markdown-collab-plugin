@@ -7,6 +7,13 @@ import type { TerminalTracker } from "./terminalTracker";
 const BP_START = "\x1b[200~";
 const BP_END = "\x1b[201~";
 
+// Workspace text can carry ESC [201~, which would end the paste early and type what follows as live keystrokes.
+export function sanitizeForTerminal(text: string): string {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, "");
+}
+
 export type SendResult =
   | { ok: true; terminalName: string }
   | { ok: false; reason: "cancelled" | "no-target" | "copied" };
@@ -43,7 +50,7 @@ export async function sendViaTerminal(
 
   const write = (terminal: vscode.Terminal): SendResult => {
     // Bracketed paste, so a multi-line prompt lands as one input.
-    terminal.sendText(BP_START + payload.prompt + BP_END, false);
+    terminal.sendText(BP_START + sanitizeForTerminal(payload.prompt) + BP_END, false);
     terminal.sendText("", true);
     terminal.show(true);
     tracker.setLastTarget(terminal);

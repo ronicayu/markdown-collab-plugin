@@ -658,6 +658,15 @@ describe("ensureMarkdownCollabDir (L2a)", () => {
     expect(await fsp.readFile(path.join(dir, ".gitignore"), "utf8")).toBe("custom\n");
   });
 
+  it.skipIf(process.platform === "win32")("doesn't create a file at the target of a dangling .gitignore symlink", async () => {
+    const outside = path.join(root, "outside.txt");
+    const dir = path.join(root, ".markdown-collab");
+    await fsp.mkdir(dir);
+    await fsp.symlink(outside, path.join(dir, ".gitignore"));
+    await ensureMarkdownCollabDir(dir);
+    await expect(fsp.lstat(outside)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("is a no-op on a second call against an already-set-up directory", async () => {
     const dir = path.join(root, ".markdown-collab");
     await ensureMarkdownCollabDir(dir);
@@ -691,6 +700,32 @@ describe("writeDescriptorFile (L2a: 0600)", () => {
     const stat = await fsp.stat(file);
     expect(stat.mode & 0o777).toBe(0o600);
     expect(await fsp.readFile(file, "utf8")).toBe('{"token":"y"}');
+  });
+
+  it.skipIf(process.platform === "win32")("doesn't write through a symlink to a file outside the directory", async () => {
+    const outside = path.join(root, "outside.txt");
+    await fsp.writeFile(outside, "keep", "utf8");
+    const file = path.join(root, ".mcp-server.json");
+    await fsp.symlink(outside, file);
+    await expect(writeDescriptorFile(file, '{"token":"z"}')).rejects.toThrow(/symlink/);
+    expect(await fsp.readFile(outside, "utf8")).toBe("keep");
+  });
+
+  it.skipIf(process.platform === "win32")("doesn't create a file at the target of a dangling symlink", async () => {
+    const outside = path.join(root, "outside.txt");
+    const file = path.join(root, ".mcp-server.json");
+    await fsp.symlink(outside, file);
+    await expect(writeDescriptorFile(file, '{"token":"z"}')).rejects.toThrow(/symlink/);
+    await expect(fsp.lstat(outside)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("gives a set-up directory a 0600 descriptor", async () => {
+    const dir = path.join(root, ".markdown-collab");
+    await ensureMarkdownCollabDir(dir);
+    const file = path.join(dir, ".mcp-server.json");
+    await writeDescriptorFile(file, '{"token":"w"}');
+    expect((await fsp.stat(file)).mode & 0o777).toBe(0o600);
+    expect(await fsp.readFile(file, "utf8")).toBe('{"token":"w"}');
   });
 });
 

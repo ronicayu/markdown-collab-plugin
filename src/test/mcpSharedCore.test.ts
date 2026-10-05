@@ -138,9 +138,11 @@ describe("the MCP write path goes through the editor", () => {
     expect(host).toMatch(/writeDoc:\s*async\s*\([^)]*\)\s*=>\s*applyDocumentEdit\(/);
     expect(host).not.toMatch(/writeFileSync|fs\.promises\.writeFile/);
     const rawWrites = host.match(/fsp\.writeFile\(/g) ?? [];
-    expect(rawWrites).toHaveLength(2);
+    expect(rawWrites).toHaveLength(1);
     expect(host).toMatch(/fsp\.writeFile\(gitignore,/);
-    expect(host).toMatch(/fsp\.writeFile\(filePath, body, \{[^}]*mode: 0o600/);
+    expect(host.match(/fsp\.open\(/g) ?? []).toHaveLength(1);
+    expect(host).toMatch(/fsp\.open\(filePath, flags, 0o600\)/);
+    expect(host).toMatch(/handle\.writeFile\(body,/);
   });
 
   it("narrows the rewrite to the span that changed", () => {

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
-import { sendViaTerminal, startClaudeTerminal } from "../transports/terminal";
+import { sanitizeForTerminal, sendViaTerminal, startClaudeTerminal } from "../transports/terminal";
 import { TerminalTracker } from "../transports/terminalTracker";
 import { fakeTerminal, installFakeTerminalHost, type FakeTerminal } from "./support/fakeTerminalHost";
 
@@ -186,6 +186,48 @@ describe("sendViaTerminal", () => {
       picked: "zsh",
       terminals: [{ name: "zsh", activity: "running" }],
     });
+  });
+});
+
+describe("sendViaTerminal with hostile prompt text", () => {
+  it("cannot end the paste early and type what follows", async () => {
+    const host = installFakeTerminalHost();
+    const tracker = new TerminalTracker();
+    tracker.activate([]);
+    const t = fakeTerminal("zsh");
+    host.terminals = [t];
+    host.activeTerminal = t;
+    host.start(t, "codex");
+
+    await sendViaTerminal({ prompt: "fix this\x1b[201~\nrm -rf ~\n" } as never, tracker);
+
+    const pasted = t.sendText.mock.calls[0][0] as string;
+    expect(pasted.split("\x1b[201~")).toHaveLength(2);
+    expect(pasted.endsWith("\x1b[201~")).toBe(true);
+    expect(pasted).toBe("\x1b[200~fix this[201~\nrm -rf ~\n\x1b[201~");
+  });
+});
+
+describe("sanitizeForTerminal", () => {
+  it("keeps newlines and tabs", () => {
+    expect(sanitizeForTerminal("a\n\tb")).toBe("a\n\tb");
+  });
+
+  it("removes escape, bell, null, delete and the single-byte CSI", () => {
+    expect(sanitizeForTerminal("a\x1bb\x07c\x00d\x7fe\u009bf")).toBe("abcdef");
+  });
+
+  it("removes the rest of the C0 and C1 control ranges", () => {
+    expect(sanitizeForTerminal("a\x08b\x0bc\x0cd\x1fe\u0080f\u009fg")).toBe("abcdefg");
+  });
+
+  it("turns CRLF into LF and drops a lone CR", () => {
+    expect(sanitizeForTerminal("a\r\nb\rc")).toBe("a\nbc");
+  });
+
+  it("leaves ordinary non-ASCII text alone", () => {
+    const text = "中文评论 café naïve 🚀 – “quoted” \u00a0 \u2028";
+    expect(sanitizeForTerminal(text)).toBe(text);
   });
 });
 

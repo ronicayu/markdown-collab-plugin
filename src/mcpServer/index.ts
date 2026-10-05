@@ -19,6 +19,7 @@
 // unchanged for any Claude session that can't reach it.
 
 import { randomBytes } from "node:crypto";
+import { constants } from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
@@ -407,6 +408,7 @@ export async function ensureMarkdownCollabDir(dir: string): Promise<void> {
     await fsp.mkdir(dir, { recursive: true });
   }
   const gitignore = path.join(dir, ".gitignore");
+  if (await refuseSymlink(gitignore)) return;
   try {
     await fsp.access(gitignore);
   } catch {
@@ -424,8 +426,16 @@ export async function ensureMarkdownCollabDir(dir: string): Promise<void> {
  * from a filesystem/umask that ignored the create-time mode.
  */
 export async function writeDescriptorFile(filePath: string, body: string): Promise<void> {
-  await fsp.writeFile(filePath, body, { encoding: "utf8", mode: 0o600 });
-  await fsp.chmod(filePath, 0o600);
+  const symlink = await refuseSymlink(filePath);
+  if (symlink) throw new Error(`refusing to write through a symlink: ${symlink}`);
+  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0);
+  const handle = await fsp.open(filePath, flags, 0o600);
+  try {
+    await handle.writeFile(body, "utf8");
+    await handle.chmod(0o600);
+  } finally {
+    await handle.close();
+  }
 }
 
 async function writeDescriptor(
