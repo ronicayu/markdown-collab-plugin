@@ -119,8 +119,8 @@ For an agent that can call MCP tools, **Connect an Agent…** hooks the review t
 |---|---|
 | Claude Code | Installs the Claude Code plugin and adds a `markdown-collab` entry to the workspace's `.mcp.json`, in one step. If Claude is already running, `/mcp` reconnects it. |
 | Cursor, in-app agent | Nothing on disk. Registered live for the session, and again after each reload. |
-| Cursor CLI | `.cursor/mcp.json` with environment references. Restart `cursor-agent`. |
-| Codex | A `[mcp_servers.markdown-collab]` table in `.codex/config.toml`, with the loopback address and the name of the token's environment variable. Codex loads it once you trust the project. |
+| Cursor CLI | `.cursor/mcp.json` with environment references. Open a new terminal in this window and start `cursor-agent` there. |
+| Codex | A `[mcp_servers.markdown-collab]` table in `.codex/config.toml`, with the loopback address and the name of the token's environment variable. Codex loads it once you trust the project, so run `codex` in this folder from a new terminal in this window. |
 | GitHub Copilot, agent mode | Nothing on disk. Enable the Markdown Collab tools in Copilot's tool picker. |
 | Anything else | A scratch document with the address, the token, and a snippet to copy. |
 

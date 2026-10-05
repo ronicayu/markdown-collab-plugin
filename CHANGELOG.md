@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.35.31 — 2026-10-05 (GitHub only)
+
+### Fixed: Connect told you to restart an agent in a terminal that can't see the tools
+
+The review tools' address and token reach a command-line agent through the
+terminal's environment, and only terminals opened in this window after Markdown
+Collab started get them. Restarting `cursor-agent` in a terminal that was
+already open kept the old environment. The Cursor CLI and Codex messages (and
+the README and walkthrough) now say to open a new terminal in this window and
+start the agent there. (#10)
+
 ## 0.35.30 — 2026-10-05 (GitHub only)
 
 ### Fixed: adding a comment failed when the system has no name for your user

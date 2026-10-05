@@ -558,8 +558,8 @@ async function registerWithClient(
         const outcome = await writeCursorCliConfig(folder.uri);
         void vscode.window.showInformationMessage(
           outcome === "written"
-            ? "Markdown Collab: wrote .cursor/mcp.json (env references only — no port or token on disk). Restart cursor-agent to pick it up."
-            : "Markdown Collab: .cursor/mcp.json already has this entry. Restart cursor-agent to pick it up.",
+            ? "Markdown Collab: wrote .cursor/mcp.json (env references only — no port or token on disk). Open a new terminal in this window and start cursor-agent there."
+            : "Markdown Collab: .cursor/mcp.json already has this entry. Open a new terminal in this window and start cursor-agent there.",
         );
       } catch (e) {
         void vscode.window.showErrorMessage(
@@ -574,7 +574,7 @@ async function registerWithClient(
         void vscode.window.showInformationMessage(
           `Markdown Collab: ${outcome === "written" ? "wrote" : "confirmed"} the markdown-collab table in ` +
             ".codex/config.toml (no token on disk — only bearer_token_env_var). Codex loads project config only " +
-            "for trusted projects — run codex in this folder and trust it.",
+            "for trusted projects. Open a new terminal in this window, run codex in this folder and trust the project.",
         );
       } catch (e) {
         void vscode.window.showErrorMessage(
