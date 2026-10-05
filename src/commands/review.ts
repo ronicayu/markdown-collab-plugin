@@ -7,7 +7,7 @@ import * as vscode from "vscode";
 import type { Logger } from "../logging";
 import { agentGroupLabel } from "../agentIdentity";
 import { unreadAgentSlug } from "../inlineComments/claudeUnread";
-import { folderForDocument } from "../workspaceFolder";
+import { folderForDocument, promptPathFor } from "../workspaceFolder";
 import { buildReviewRequestPayload, type SendMode } from "../sendToClaude";
 import {
   buildMultiFileReviewPayload,
@@ -263,7 +263,7 @@ async function invokeAskClaudeToReviewMulti(
       // Unreadable size is not a reason to drop the file from the review;
       // it only makes the soft confirm slightly optimistic.
     }
-    files.push({ rel: workspaceRelPosix(folder, uri), bytes });
+    files.push({ rel: workspaceRelPosix(folder, uri), promptPath: promptPathFor(uri), bytes });
   }
 
   const total = totalBytes(files);

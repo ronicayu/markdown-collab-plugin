@@ -142,6 +142,26 @@ describe("dispatchReviewPayload outcome", () => {
       expect(startReviewPassWatch).toHaveBeenCalledTimes(1);
     });
 
+    it("starts on the document in the folder the send came from when another folder holds the same relative path", async () => {
+      settings.sendMode = "clipboard";
+      const opened: string[] = [];
+      (vscode.workspace as unknown as Record<string, unknown>).openTextDocument = async (u: { toString(): string }) => {
+        opened.push(u.toString());
+        return { getText: () => docText };
+      };
+      const second = { uri: vscode.Uri.file("/other"), name: "other", index: 1 } as never;
+      await dispatchReviewPayload(
+        { ...(payload as object), prompt: "on `/other/doc.md`" } as never,
+        log,
+        tracker,
+        memento,
+        second,
+      );
+      const otherKey = vscode.Uri.file("/other/doc.md").toString();
+      expect(opened).toEqual([otherKey]);
+      expect(mark).toHaveBeenCalledWith(otherKey, expect.anything(), ["t1"], "inferred");
+    });
+
     it("does not start after a cancel", async () => {
       info.mockResolvedValueOnce(undefined);
       await dispatch();

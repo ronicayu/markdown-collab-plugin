@@ -21,7 +21,7 @@ import * as vscode from "vscode";
  * The document's workspace folder, or a stand-in rooted at its directory.
  *
  * The stand-in is deliberately a plain object rather than anything registered
- * with VS Code — it is a base path with a name, used for prompt-relative paths
+ * with VS Code — it is a base path with a name, used for the payload's relative path
  * and per-folder state, and it must never be mistaken for an open folder.
  */
 export function folderForDocument(uri: vscode.Uri): vscode.WorkspaceFolder {
@@ -34,4 +34,18 @@ export function folderForDocument(uri: vscode.Uri): vscode.WorkspaceFolder {
 /** True when the document sits outside every open workspace folder. */
 export function isLooseDocument(uri: vscode.Uri): boolean {
   return vscode.workspace.getWorkspaceFolder(uri) === undefined;
+}
+
+/**
+ * The path a prompt names the document by. Workspace-relative is only
+ * unambiguous with a single open folder holding the file; with several folders
+ * the agent's tools would try the same relative path in each of them, and a
+ * loose file has no folder to be relative to — both name the absolute path.
+ */
+export function promptPathFor(uri: vscode.Uri): string {
+  const folder = vscode.workspace.getWorkspaceFolder(uri);
+  if (folder && vscode.workspace.workspaceFolders?.length === 1) {
+    return path.relative(folder.uri.fsPath, uri.fsPath);
+  }
+  return uri.fsPath;
 }

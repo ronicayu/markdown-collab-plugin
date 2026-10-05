@@ -1,6 +1,6 @@
 import * as path from "path";
 import * as vscode from "vscode";
-import { folderForDocument } from "./workspaceFolder";
+import { folderForDocument, promptPathFor } from "./workspaceFolder";
 import type { Comment } from "./types";
 import { parse as parseInline } from "./inlineComments/format";
 import { deltaScope } from "./inlineComments/deltaReview";
@@ -97,6 +97,7 @@ export function buildReviewRequestPayload(
   // made relative to, and its own directory serves for that.
   const folder = folderForDocument(doc.uri);
   const rel = path.relative(folder.uri.fsPath, doc.uri.fsPath);
+  const shown = promptPathFor(doc.uri);
   const trimmedFocus = focus?.trim();
 
   if (opts.delta) {
@@ -105,7 +106,7 @@ export function buildReviewRequestPayload(
     const scope = deltaScope(parseInline(doc.getText()));
     if (scope.kind === "unchanged") return { kind: "unchanged" };
     const deltaFor = (delivery: SkillDelivery): string | null => {
-      const body = buildDeltaPrompt(rel, scope, trimmedFocus, delivery);
+      const body = buildDeltaPrompt(shown, scope, trimmedFocus, delivery);
       return body === null ? null : `${body}\n\n${reviewModeClosing(1)}`;
     };
     const prompt = deltaFor(opts.skillDelivery ?? "installed");
@@ -124,7 +125,7 @@ export function buildReviewRequestPayload(
   }
 
   const promptFor = (delivery: SkillDelivery): string => {
-    const promptLines: string[] = [`${workflowOpener(delivery)} in Review Mode on \`${rel}\`.`];
+    const promptLines: string[] = [`${workflowOpener(delivery)} in Review Mode on \`${shown}\`.`];
     if (trimmedFocus) promptLines.push(`Focus: ${trimmedFocus}`);
     promptLines.push(reviewModeClosing(1));
     return promptLines.join("\n");

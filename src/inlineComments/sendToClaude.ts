@@ -10,7 +10,7 @@
 
 import * as path from "path";
 import * as vscode from "vscode";
-import { folderForDocument } from "../workspaceFolder";
+import { folderForDocument, promptPathFor } from "../workspaceFolder";
 import type { ReviewPayload } from "../sendToClaude";
 import type { Comment } from "../types";
 import { workflowOpener, type SkillDelivery } from "../skillDelivery";
@@ -36,9 +36,10 @@ export function buildSingleThreadPayload(
   const thread = parsed.threads.find((t) => t.id === threadId && t.status === "open");
   if (!thread) return null;
   const rel = path.relative(folder.uri.fsPath, doc.uri.fsPath);
+  const shown = promptPathFor(doc.uri);
   const promptFor = (delivery: SkillDelivery): string => {
     const lines = [
-      `${workflowOpener(delivery)} on \`${rel}\`.`,
+      `${workflowOpener(delivery)} on \`${shown}\`.`,
       `Address only the open thread with id ${thread.id} (anchored on: ${JSON.stringify(thread.quote)}).`,
     ];
     // Suggest mode is a property of the request, not of how many threads it
@@ -74,12 +75,13 @@ export function buildInlinePayload(
   if (open.length === 0) return null;
 
   const rel = path.relative(folder.uri.fsPath, doc.uri.fsPath);
+  const shown = promptPathFor(doc.uri);
   const comments: Comment[] = open.map((t) => threadToComment(t));
   return {
     file: rel,
     unresolvedCount: open.length,
-    prompt: buildPrompt(rel, open, opts?.suggestMode ?? false, opts?.skillDelivery ?? "installed"),
-    inlineSkillPrompt: buildPrompt(rel, open, opts?.suggestMode ?? false, "inline"),
+    prompt: buildPrompt(shown, open, opts?.suggestMode ?? false, opts?.skillDelivery ?? "installed"),
+    inlineSkillPrompt: buildPrompt(shown, open, opts?.suggestMode ?? false, "inline"),
     comments,
     inlineThreads: open,
   };
@@ -129,7 +131,7 @@ function threadToComment(t: InlineThread): Comment {
 }
 
 function buildPrompt(
-  rel: string,
+  shown: string,
   threads: InlineThread[],
   suggestMode = false,
   delivery: SkillDelivery = "installed",
@@ -139,7 +141,7 @@ function buildPrompt(
   // concise thread listing follows for context.
   const n = threads.length;
   const lines: string[] = [
-    `${workflowOpener(delivery)} to address the ${n} unresolved review comment${n === 1 ? "" : "s"} on \`${rel}\`.`,
+    `${workflowOpener(delivery)} to address the ${n} unresolved review comment${n === 1 ? "" : "s"} on \`${shown}\`.`,
   ];
   if (suggestMode) lines.push("", suggestModeDirective(delivery));
   lines.push("", "Open threads:");

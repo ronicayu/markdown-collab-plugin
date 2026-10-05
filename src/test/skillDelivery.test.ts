@@ -37,9 +37,12 @@ function fakeDoc(text: string, rel = "docs/guide.md") {
 const rest = (prompt: string): string => prompt.split("\n").slice(1).join("\n");
 
 beforeEach(() => {
-  (workspace as any).getWorkspaceFolder = () => ({ uri: Uri.file(ROOT), name: "ws", index: 0 });
+  const folder = { uri: Uri.file(ROOT), name: "ws", index: 0 };
+  (workspace as any).workspaceFolders = [folder];
+  (workspace as any).getWorkspaceFolder = () => folder;
 });
 afterEach(() => {
+  (workspace as any).workspaceFolders = undefined;
   (workspace as any).getWorkspaceFolder = () => undefined;
 });
 

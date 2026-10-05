@@ -20,6 +20,17 @@ describe("buildMultiFileReviewPayload", () => {
     expect(order[2]).toBeGreaterThan(order[1]);
   });
 
+  it("names each file by its prompt path while the payload keeps the workspace-relative one", () => {
+    const p = buildMultiFileReviewPayload([
+      { rel: "docs/a.md", promptPath: "/beta/docs/a.md", bytes: 100 },
+      { rel: "docs/b.md", promptPath: "/beta/docs/b.md", bytes: 100 },
+    ]);
+    expect(p.prompt).toContain("- `/beta/docs/a.md`");
+    expect(p.prompt).toContain("- `/beta/docs/b.md`");
+    expect(p.prompt).not.toContain("`docs/a.md`");
+    expect(p.files).toEqual(["docs/a.md", "docs/b.md"]);
+  });
+
   it("invokes the skill in Review Mode", () => {
     const p = buildMultiFileReviewPayload(files("a.md", "b.md"));
     expect(p.prompt).toContain("markdown-collab:review");

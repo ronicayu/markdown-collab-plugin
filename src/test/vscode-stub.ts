@@ -102,6 +102,8 @@ const TreeItemCollapsibleState = { None: 0, Collapsed: 1, Expanded: 2 } as const
 // in tests just omit `reason`, same as a plain programmatic edit's.
 const TextDocumentChangeReason = { Undo: 1, Redo: 2 } as const;
 
+const ConfigurationTarget = { Global: 1, Workspace: 2, WorkspaceFolder: 3 } as const;
+
 const noopDisposable = new Disposable();
 
 // Hook points for tests to install fakes without monkey-patching Uri/window.
@@ -204,6 +206,7 @@ export {
   CommentThreadCollapsibleState,
   CommentThreadState,
   TreeItemCollapsibleState,
+  ConfigurationTarget,
   TextDocumentChangeReason,
   TreeItem,
   TabInputText,

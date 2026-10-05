@@ -14,8 +14,10 @@ import { reviewModeClosing, type ReviewPayload } from "./sendToClaude";
 import { workflowOpener, type SkillDelivery } from "./skillDelivery";
 
 export interface ReviewFile {
-  /** Workspace-relative path, POSIX separators (it goes into a prompt). */
+  /** Workspace-relative path, POSIX separators. */
   rel: string;
+  /** What the prompt names the file by when `rel` would be ambiguous (see `promptPathFor`). */
+  promptPath?: string;
   /** File size in bytes, used for the summed soft-confirm. */
   bytes: number;
 }
@@ -58,7 +60,7 @@ export function buildMultiFileReviewPayload(
     const lines: string[] = [
       `${workflowOpener(delivery)} in Review Mode on these ${rels.length} files:`,
       "",
-      ...rels.map((rel) => `- \`${rel}\``),
+      ...files.map((f) => `- \`${f.promptPath ?? f.rel}\``),
     ];
     if (trimmedFocus) lines.push("", `Focus: ${trimmedFocus}`);
     lines.push("", CROSS_DOCUMENT_DIMENSION, "", reviewModeClosing(rels.length));

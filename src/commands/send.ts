@@ -5,7 +5,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import type { Logger } from "../logging";
 import { activeMarkdownUri } from "../activeMarkdown";
-import { folderForDocument } from "../workspaceFolder";
+import { folderForDocument, promptPathFor } from "../workspaceFolder";
 import { workflowOpener } from "../skillDelivery";
 import {
   buildInlinePayload,
@@ -62,11 +62,9 @@ async function invokeCopyClaudePrompt(): Promise<void> {
     );
     return;
   }
-  const folder = folderForDocument(uri);
-  const rel = path.relative(folder.uri.fsPath, uri.fsPath);
   // The command is "Copy Prompt" (the id keeps its old name): the prompt opens
   // with the skill's workflow line, but whichever agent it is pasted into reads it.
-  const prompt = `${workflowOpener("installed")} to address the unresolved review comments on ${rel}.`;
+  const prompt = `${workflowOpener("installed")} to address the unresolved review comments on ${promptPathFor(uri)}.`;
   await vscode.env.clipboard.writeText(prompt);
   void vscode.window.showInformationMessage(
     "Prompt copied — paste it into your agent.",
@@ -454,10 +452,14 @@ export function registerSendCommands(deps: CommandDeps): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("markdownCollab.toggleSuggestMode", async () => {
       const next = !isSuggestMode();
-      // Workspace target so the choice is remembered per workspace, like sendMode.
+      // Workspace target so the choice is remembered per workspace, like sendMode;
+      // a window with no folder has no workspace settings to write.
+      const target = vscode.workspace.workspaceFolders?.length
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
       await vscode.workspace
         .getConfiguration("markdownCollab")
-        .update("proposeEditsAsSuggestions", next, vscode.ConfigurationTarget.Workspace);
+        .update("proposeEditsAsSuggestions", next, target);
       void vscode.window.showInformationMessage(
         next
           ? "Suggest mode ON — your agent will propose edits for you to accept/reject."

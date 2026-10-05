@@ -86,7 +86,9 @@ function looksEditable(candidate: string): boolean {
 
 /**
  * Resolve a caller-supplied path to a `.md`/`.markdown` file inside one of the
- * workspace folders. Everything else is refused: a tool server reachable from
+ * workspace folders: an absolute path as given, a relative one against each
+ * folder — refused as ambiguous when it exists in more than one. Everything
+ * else is refused: a tool server reachable from
  * a model is not a general filesystem (L1) — `mc_edit` must not be able to
  * reach `.git/config` or `.vscode/tasks.json` just because they sit lexically
  * inside the workspace, and a symlink must not be able to smuggle a call
@@ -108,7 +110,8 @@ export async function resolveWorkspaceFile(file: string): Promise<vscode.Uri> {
     folders.map((f) => fsp.realpath(f.uri.fsPath).catch(() => f.uri.fsPath)),
   );
   let sawWrongKind = false;
-  for (const candidate of candidates) {
+  const matches: { uri: vscode.Uri; index: number }[] = [];
+  for (const [index, candidate] of candidates.entries()) {
     const inside = folders.some((f) => isInsideRoot(candidate, f.uri.fsPath));
     if (!inside) continue; // unchanged: falls through to file_not_found below, same as before L1
     if (!looksEditable(candidate)) {
@@ -143,8 +146,17 @@ export async function resolveWorkspaceFile(file: string): Promise<vscode.Uri> {
         { file },
       );
     }
-    return uri;
+    matches.push({ uri, index });
   }
+  if (matches.length > 1) {
+    const names = matches.map((m) => folders[m.index].name);
+    throw new ToolRefusal(
+      "ambiguous_path",
+      `${file} exists in more than one workspace folder (${names.join(", ")}); pass the absolute path of the one you mean.`,
+      { file, folders: names },
+    );
+  }
+  if (matches.length === 1) return matches[0].uri;
   if (sawWrongKind) {
     throw new ToolRefusal(
       "not_markdown",

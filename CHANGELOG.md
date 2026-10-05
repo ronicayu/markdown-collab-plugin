@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.35.41 — 2026-10-05 (GitHub only)
+
+### Fixed: the agent edited the wrong folder's copy in a multi-root window
+
+With several folders open, the prompt now names the document by its full path,
+and the review tools accept that path. A relative path that exists in more than
+one folder is refused with the folder names, instead of silently using the
+first. A file outside every open folder is named by its full path too. With one
+folder open, prompts are unchanged.
+
+### Fixed: Connect an Agent blamed the wrong thing with no folder open
+
+With no folder open it now says to open one, instead of asking you to reload
+the window. Toggling suggest mode there saves it to your user settings instead
+of failing. (#12)
+
+### Tests
+
+- Two folders holding `docs/README.md`: the prompt for the second names its
+  absolute path, a tool call with that path edits only that copy, and the bare
+  relative path is refused as ambiguous with neither file changed.
+- A relative path in only one folder, an absolute path outside every folder,
+  and the single-folder prompt are covered.
+- A loose file's prompt carries its absolute path.
+- Connect an Agent with and without a folder open, and suggest mode saved to
+  the right place with and without one.
+- A send from the second folder still marks that folder's document as waiting.
+
 ## 0.35.40 — 2026-10-05 (GitHub only)
 
 ### Added: Windsurf is listed as an agent

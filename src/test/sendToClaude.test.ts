@@ -13,6 +13,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await fs.rm(tmpDir, { recursive: true, force: true });
+  (vscode.workspace as unknown as Record<string, unknown>).workspaceFolders = undefined;
   (vscode.workspace as unknown as Record<string, unknown>).getWorkspaceFolder = (
     _u: unknown,
   ) => undefined;
@@ -28,6 +29,7 @@ function setFolder(absPath: string): void {
     name: path.basename(absPath),
     index: 0,
   };
+  (vscode.workspace as unknown as Record<string, unknown>).workspaceFolders = [folder];
   (vscode.workspace as unknown as Record<string, unknown>).getWorkspaceFolder = (
     _u: unknown,
   ) => folder;

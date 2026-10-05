@@ -678,6 +678,12 @@ async function registerWithClient(
   }
 }
 
+export function toolServerDownMessage(): string {
+  return vscode.workspace.workspaceFolders?.length
+    ? "Markdown Collab: the review tool server isn't running — reload the window and try again. See the Markdown Collab output channel."
+    : "Markdown Collab: open a folder first — the review tools need a workspace.";
+}
+
 async function invokeConnectAgent(deps: CommandDeps): Promise<void> {
   if (!requireTrust("Connecting an agent")) return;
   const { context, rootLog, log } = deps;
@@ -711,9 +717,7 @@ async function invokeConnectAgent(deps: CommandDeps): Promise<void> {
   // and `mdc`, so it never needed AGENTS.md, and `.mcp.json` stays part of
   // the one setup.
   if (!handle) {
-    void vscode.window.showWarningMessage(
-      "Markdown Collab: the review tool server isn't running — reload the window and try again. See the Markdown Collab output channel.",
-    );
+    void vscode.window.showWarningMessage(toolServerDownMessage());
     return;
   }
   // 1.1: one setup does both — the plugin install (same code
@@ -981,9 +985,7 @@ export function registerSetupCommands(deps: CommandDeps): void {
       if (!requireTrust("Registering the review tools")) return;
       const handle = currentMcpServer();
       if (!handle) {
-        void vscode.window.showWarningMessage(
-          "Markdown Collab: the review tool server isn't running — reload the window and try again. See the Markdown Collab output channel.",
-        );
+        void vscode.window.showWarningMessage(toolServerDownMessage());
         return;
       }
       // Clear the remembered answer so a previous "Not now" doesn't silently

@@ -34,7 +34,7 @@ import { diffProse } from "../uncommitted/proseDiff";
 import { headFileContent, repoRootFor } from "../uncommitted/gitUncommitted";
 import { classifyLink } from "./linkRouter";
 import { isExternalLinkSafe } from "./urlAllowlist";
-import { folderForDocument } from "../workspaceFolder";
+import { promptPathFor } from "../workspaceFolder";
 import { currentAuthorName } from "../authorName";
 import { workflowOpener } from "../skillDelivery";
 import { imageResourceRootPaths } from "../webviewShared/resourceRoots";
@@ -1530,9 +1530,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         // The existing copyClaudePrompt command operates on the active
         // editor; ours isn't a TextEditor so we can't rely on that path.
         // Mimic its payload directly.
-        const folder = folderForDocument(document.uri);
-        const rel = path.relative(folder.uri.fsPath, document.uri.fsPath);
-        const prompt = `${workflowOpener()} to address the unresolved review comments on ${rel}.`;
+        const prompt = `${workflowOpener()} to address the unresolved review comments on ${promptPathFor(document.uri)}.`;
         await vscode.env.clipboard.writeText(prompt);
         void vscode.window.showInformationMessage(
           "Prompt copied — paste it into your agent.",
