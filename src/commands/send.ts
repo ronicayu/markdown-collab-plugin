@@ -151,15 +151,20 @@ async function invokeSendAllToClaude(
 async function markPayloadPending(
   payload: ReviewPayload,
   folder: vscode.WorkspaceFolder,
-): Promise<void> {
+): Promise<() => void> {
   const threadIds = payload.comments.map((c) => c.id);
-  if (threadIds.length === 0) return;
+  if (threadIds.length === 0) return () => {};
   try {
     const uri = vscode.Uri.joinPath(folder.uri, payload.file);
+    const docKey = uri.toString();
     const doc = await vscode.workspace.openTextDocument(uri);
-    claudePending.mark(uri.toString(), parseInline(doc.getText()).threads, threadIds, "inferred");
+    const alreadyPending = new Set(claudePending.peek(docKey).threadIds);
+    claudePending.mark(docKey, parseInline(doc.getText()).threads, threadIds, "inferred");
+    const added = threadIds.filter((id) => !alreadyPending.has(id));
+    return () => claudePending.unmark(docKey, added);
   } catch {
     // The indicator is a nicety; never fail a successful send over it.
+    return () => {};
   }
 }
 
@@ -359,7 +364,7 @@ export async function dispatchReviewPayload(
     // or configured `headless` outlives the conditions that made it work.
     const headless = await headlessAvailability(workspaceState, headlessLog);
     if (headless.ok) {
-      await markPayloadPending(payload, folder);
+      const unmark = await markPayloadPending(payload, folder);
       const outcome = await runHeadless({
         payload,
         prompt: payload.inlineSkillPrompt ?? payload.prompt,
@@ -380,6 +385,7 @@ export async function dispatchReviewPayload(
           `Claude is working in the background — watch the status bar.${rememberedSuffix}`,
         );
       }
+      if (outcome === "declined") unmark();
       return settle(outcome === "started" ? "delivered" : "cancelled");
     }
     log.info("headless unavailable; sending to the terminal instead", {

@@ -256,6 +256,34 @@ describe("ClaudePendingTracker", () => {
     expect(tracker.pending(DOC, threads)).toEqual([]);
   });
 
+  it("unmark() drops only the named threads", () => {
+    const { tracker, changes } = makeTracker();
+    const threads = [thread("a1", ["ronica"]), thread("b2", ["ronica"])];
+    tracker.mark(DOC, threads, ["a1", "b2"]);
+    changes.length = 0;
+    tracker.unmark(DOC, ["b2"]);
+    expect(tracker.pending(DOC, threads)).toEqual(["a1"]);
+    expect(changes).toEqual([DOC]);
+  });
+
+  it("unmark() of the last waiting thread ends the wait", () => {
+    const { tracker } = makeTracker();
+    const threads = [thread("a1", ["ronica"])];
+    tracker.mark(DOC, threads, ["a1"]);
+    tracker.unmark(DOC, ["a1"]);
+    expect(tracker.peek(DOC).threadIds).toEqual([]);
+  });
+
+  it("unmark() of a thread that is not waiting changes nothing", () => {
+    const { tracker, changes } = makeTracker();
+    const threads = [thread("a1", ["ronica"])];
+    tracker.mark(DOC, threads, ["a1"]);
+    changes.length = 0;
+    tracker.unmark(DOC, ["zz"]);
+    expect(tracker.pending(DOC, threads)).toEqual(["a1"]);
+    expect(changes).toEqual([]);
+  });
+
   it("dispose() cancels outstanding timers", () => {
     const cancel = vi.fn();
     const tracker = new ClaudePendingTracker(

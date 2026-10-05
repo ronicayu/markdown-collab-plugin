@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
 import { dispatchReviewPayload } from "../commands/send";
 import { claudePending } from "../claudePendingService";
+import { parse as parseInline } from "../inlineComments/format";
 import { startReviewPassWatch } from "../reviewPassWatch";
 import { headlessAvailability, runHeadless } from "../transports/headlessHost";
 import { TerminalTracker } from "../transports/terminalTracker";
@@ -20,7 +21,12 @@ vi.mock("../reviewPassWatch", () => ({ startReviewPassWatch: vi.fn() }));
 const REMEMBERED_KEY = "markdownCollab.rememberedSendMode";
 const payload = { prompt: "do the review", file: "doc.md", unresolvedCount: 1, comments: [{ id: "t1" }] } as never;
 const log = { info: vi.fn(), warn: vi.fn(), trace: vi.fn(), scope: () => log } as never;
+const realMark = claudePending.mark.bind(claudePending);
 const spyOnMark = () => vi.spyOn(claudePending, "mark").mockClear().mockImplementation(() => undefined);
+const threadLine = (id: string) =>
+  `<!--mc:t {"id":"${id}","quote":"q","status":"open","comments":[{"id":"c1","author":"ronica","ts":"2026-09-01T00:00:00.000Z","body":"q"}]}-->`;
+const docText = `<!--mc:a:t1-->One<!--mc:/a:t1--> and <!--mc:a:t2-->two<!--mc:/a:t2-->.\n\n<!--mc:threads:begin-->\n${threadLine("t1")}\n${threadLine("t2")}\n<!--mc:threads:end-->\n`;
+const docKey = vscode.Uri.file("/ws/doc.md").toString();
 const folder = { uri: vscode.Uri.file("/ws"), name: "ws", index: 0 } as never;
 
 describe("dispatchReviewPayload outcome", () => {
@@ -140,6 +146,42 @@ describe("dispatchReviewPayload outcome", () => {
       info.mockResolvedValueOnce(undefined);
       await dispatch();
       expect(mark).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("the waiting row after a headless send", () => {
+    const twoThreads = { ...(payload as object), comments: [{ id: "t1" }, { id: "t2" }] } as never;
+    const waiting = () => claudePending.pending(docKey, parseInline(docText).threads);
+
+    beforeEach(() => {
+      mark.mockImplementation(realMark);
+      claudePending.clear(docKey);
+      (vscode.workspace as unknown as Record<string, unknown>).openTextDocument = async () => ({
+        getText: () => docText,
+      });
+      settings.sendMode = "headless";
+      vi.mocked(headlessAvailability).mockResolvedValue({ ok: true } as never);
+    });
+
+    const sendTwo = () => dispatchReviewPayload(twoThreads, log, tracker, memento, folder);
+
+    it("a declined headless send leaves no thread waiting", async () => {
+      vi.mocked(runHeadless).mockResolvedValue("declined");
+      expect(await sendTwo()).toBe("cancelled");
+      expect(waiting()).toEqual([]);
+    });
+
+    it("a declined headless send does not clear a thread that was already waiting", async () => {
+      claudePending.mark(docKey, parseInline(docText).threads, ["t1"], "inferred");
+      vi.mocked(runHeadless).mockResolvedValue("declined");
+      await sendTwo();
+      expect(waiting()).toEqual(["t1"]);
+    });
+
+    it("a started headless send leaves its threads waiting", async () => {
+      vi.mocked(runHeadless).mockResolvedValue("started");
+      await sendTwo();
+      expect(waiting().sort()).toEqual(["t1", "t2"]);
     });
   });
 

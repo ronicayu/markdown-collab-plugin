@@ -318,6 +318,21 @@ export class ClaudePendingTracker {
     };
   }
 
+  /** Drop the waits on exactly these threads, leaving any other thread's wait alone. */
+  public unmark(docKey: string, threadIds: string[]): void {
+    const snapshots = this.byDoc.get(docKey);
+    if (!snapshots) return;
+    const left = snapshots.filter((s) => !threadIds.includes(s.threadId));
+    if (left.length === snapshots.length) return;
+    if (left.length === 0) {
+      this.clear(docKey);
+    } else {
+      this.byDoc.set(docKey, left);
+      this.armTimer(docKey);
+    }
+    this.onChange(docKey);
+  }
+
   public clear(docKey: string): void {
     this.byDoc.delete(docKey);
     this.signals.delete(docKey);

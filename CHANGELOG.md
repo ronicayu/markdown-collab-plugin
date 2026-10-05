@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.35.29 — 2026-10-05 (GitHub only)
+
+### Fixed: a send you didn't go through with left threads "Waiting for the agent…"
+
+When Claude was already working in the folder and you kept that run, the new
+send was dropped, but its threads still showed "Waiting for the agent…" until
+the timeout. They now clear straight away. A thread that was already waiting
+on the run you kept keeps its row. (#20)
+
+### Tests
+
+- `dispatchOutcome`: a declined headless send leaves no thread waiting, leaves
+  an already-waiting one alone, and a started one still waits.
+  `claudePending`: `unmark`.
+
 ## 0.35.28 — 2026-10-05 (GitHub only)
 
 ### Fixed: the sidebar said "Sent" when nothing was sent
