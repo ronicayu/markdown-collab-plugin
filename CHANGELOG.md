@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.34.97 — 2026-10-05 (GitHub only)
 
 ### Changed: the UI no longer assumes the agent is Claude
 
