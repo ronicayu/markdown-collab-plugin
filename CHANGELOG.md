@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.35.38 — 2026-10-05 (GitHub only)
+
+### Fixed: setting up Claude Code on a machine without it said "installed"
+
+With no `claude` command and no `~/.claude` folder, Set Up Claude Code and
+Connect an Agent → Claude Code created a skill folder anyway and reported
+success. They now write nothing and show a warning: install Claude Code, or set
+`markdownCollab.claudePath` if it's installed where your editor can't see it,
+with a button to Connect an Agent for any other agent. If `~/.claude` exists,
+the standalone skill is still installed as before.
+
+### Changed: the Get Started walkthrough asks which agent you use
+
+Step 2 is now "Connect your agent", which lists Claude Code, Cursor, Codex,
+Copilot and others, in place of a Claude Code-only setup step and the "Using
+Cursor, Codex, or Copilot?" step at the end. (#8)
+
+### Tests
+
+- Without `claude` and without `~/.claude`, nothing is written, the warning is
+  shown with a Connect an Agent button, and Connect an Agent registers no
+  `.mcp.json`; with `~/.claude`, the standalone skill is installed.
+- The walkthrough has no Claude Code-only step, step 2 is the connect step, and
+  every step's media file exists.
+
 ## 0.35.37 — 2026-10-05 (GitHub only)
 
 ### Fixed: control characters in a document's comments could end a terminal paste early

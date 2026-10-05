@@ -3,6 +3,7 @@
 // re-registering the MCP server (10x-plan-4 P3.2 split of extension.ts).
 
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
@@ -230,6 +231,8 @@ export interface ClaudeCodeSetupOutcome {
   pluginOk: boolean;
   /** A hard failure (the skill install itself threw), for error-severity toasts. */
   failed: boolean;
+  /** No `claude` binary and no `~/.claude`: Claude Code has never run here, nothing was written, and `summary` is a complete warning to show as is. */
+  notFound: boolean;
   /** One line, or null when there's nothing to report (the user cancelled an overwrite prompt). No restart/reload hint — callers add their own. */
   summary: string | null;
 }
@@ -237,8 +240,10 @@ export interface ClaudeCodeSetupOutcome {
 /**
  * Set Up Claude Code's actual work, minus the toast: the plugin is the way —
  * skill, CLI on PATH, and the marker hook, installed from the extension's own
- * local marketplace — with the standalone skill as the fallback (no `claude`
- * binary, a Claude Code without plugin commands, or any step failing). Split
+ * local marketplace — with the standalone skill as the fallback (a `claude`
+ * binary the editor can't see but a `~/.claude` that exists, a Claude Code
+ * without plugin commands, or any step failing). With neither a binary nor a
+ * `~/.claude` nothing is written and the outcome says `notFound`. Split
  * out from the toast so `invokeSetUpClaudeCode` (still a working alias) and
  * Connect an Agent → Claude Code (1.1, which also registers `.mcp.json`) can
  * share the work and fold the result into whichever toast is theirs.
@@ -246,8 +251,18 @@ export interface ClaudeCodeSetupOutcome {
 async function setUpClaudeCode(context: vscode.ExtensionContext, log: Logger): Promise<ClaudeCodeSetupOutcome> {
   const lookup = await lookupClaude(log);
   if (!lookup.ok) {
+    if (!existsSync(path.join(os.homedir(), ".claude"))) {
+      return {
+        pluginOk: false,
+        failed: false,
+        notFound: true,
+        summary:
+          `Markdown Collab: Claude Code wasn't found (${lookup.error}). Install Claude Code, or set markdownCollab.claudePath ` +
+          `if it's installed where your editor can't see it. Using another agent? Run "Markdown Collab: Connect an Agent".`,
+      };
+    }
     const summary = await installLegacySkillSummary(log, `Claude Code wasn't found (${lookup.error})`);
-    return { pluginOk: false, failed: summary === null ? false : summary.startsWith("Failed"), summary };
+    return { pluginOk: false, failed: summary === null ? false : summary.startsWith("Failed"), notFound: false, summary };
   }
   const run = claudeRunner(lookup.claude.path, log);
   // Read what's there before touching anything, so "already current" can be
@@ -269,12 +284,18 @@ async function setUpClaudeCode(context: vscode.ExtensionContext, log: Logger): P
       before?.version === outcome.version
         ? `Claude Code plugin already up to date (${outcome.version}).`
         : "Claude Code plugin installed.";
-    return { pluginOk: true, failed: false, summary };
+    return { pluginOk: true, failed: false, notFound: false, summary };
   }
   if (outcome.unsupported) log.info("claude plugin unavailable, using the standalone skill", { reason: outcome.reason });
   else log.warn("claude plugin setup failed, using the standalone skill", { reason: outcome.reason });
   const summary = await installLegacySkillSummary(log, outcome.reason);
-  return { pluginOk: false, failed: summary === null ? false : summary.startsWith("Failed"), summary };
+  return { pluginOk: false, failed: summary === null ? false : summary.startsWith("Failed"), notFound: false, summary };
+}
+
+function showClaudeCodeNotFound(summary: string): void {
+  void Promise.resolve(vscode.window.showWarningMessage(summary, "Connect an Agent")).then((pick) => {
+    if (pick === "Connect an Agent") void vscode.commands.executeCommand("markdownCollab.connectAgent");
+  });
 }
 
 /**
@@ -287,6 +308,10 @@ async function invokeSetUpClaudeCode(context: vscode.ExtensionContext, log: Logg
   if (!requireTrust("Setting up Claude Code")) return;
   const outcome = await setUpClaudeCode(context, log);
   if (outcome.summary === null) return;
+  if (outcome.notFound) {
+    showClaudeCodeNotFound(outcome.summary);
+    return;
+  }
   if (outcome.failed) {
     void vscode.window.showErrorMessage(outcome.summary);
     return;
@@ -662,6 +687,10 @@ async function invokeConnectAgent(deps: CommandDeps): Promise<void> {
   // alias) and the `.mcp.json` registration (same code `registerMcpServer`
   // uses, also kept as a hidden alias) — one toast summarizing both outcomes.
   const pluginOutcome = await setUpClaudeCode(context, log);
+  if (pluginOutcome.notFound) {
+    showClaudeCodeNotFound(pluginOutcome.summary!);
+    return;
+  }
   // Reset the remembered answer so a previous "Not now" can't silently
   // swallow this explicit request.
   await resetMcpJsonConsent(context);

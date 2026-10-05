@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with your AI agent — comments anchored in the file itself, suggestions you accept or reject. Works with Claude Code, Cursor, Codex and Copilot.",
-  "version": "0.35.37",
+  "version": "0.35.38",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -757,15 +757,15 @@
             }
           },
           {
-            "id": "install-skill",
+            "id": "connect-agent",
             "when": "isWorkspaceTrusted",
-            "title": "Set up Claude Code",
-            "description": "Claude needs the Markdown Collab plugin to know how to act on your comments. One command, once per machine.\n[Set up Claude Code](command:markdownCollab.installClaudeSkill)",
+            "title": "Connect your agent",
+            "description": "Pick your agent — Claude Code, Cursor, Codex, Copilot or another — and Markdown Collab sets up what it needs. No token is written to any file.\n[Connect an Agent…](command:markdownCollab.connectAgent)",
             "media": {
-              "markdown": "media/walkthrough/skill.md"
+              "markdown": "media/walkthrough/agents.md"
             },
             "completionEvents": [
-              "onCommand:markdownCollab.installClaudeSkill"
+              "onCommand:markdownCollab.connectAgent"
             ]
           },
           {
@@ -799,18 +799,6 @@
             },
             "completionEvents": [
               "onCommand:markdownCollab.askClaudeToReview"
-            ]
-          },
-          {
-            "id": "connect-agent",
-            "when": "isWorkspaceTrusted",
-            "title": "Using Cursor, Codex, or Copilot?",
-            "description": "Hook the review tools up to whichever agent you use. Nothing is written with a token.\n[Connect an Agent…](command:markdownCollab.connectAgent)",
-            "media": {
-              "markdown": "media/walkthrough/agents.md"
-            },
-            "completionEvents": [
-              "onCommand:markdownCollab.connectAgent"
             ]
           }
         ]

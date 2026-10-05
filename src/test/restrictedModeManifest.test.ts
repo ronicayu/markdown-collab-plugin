@@ -52,7 +52,7 @@ describe("the Restricted Mode manifest", () => {
   });
 
   it("hides the walkthrough steps that run setup or write the playground until trusted", () => {
-    for (const id of ["playground", "install-skill", "connect-agent"]) {
+    for (const id of ["playground", "connect-agent"]) {
       expect(steps.find((s) => s.id === id)?.when).toBe("isWorkspaceTrusted");
     }
   });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
 import { buildTutorialDocument, TUTORIAL_REL } from "../tutorial";
 import { parse, stripAllInlineMarkup } from "../inlineComments/format";
@@ -76,6 +76,8 @@ interface WalkthroughStep {
   id: string;
   title: string;
   description: string;
+  media?: { markdown?: string };
+  completionEvents?: string[];
 }
 
 interface Walkthrough {
@@ -130,5 +132,25 @@ describe("the getting-started walkthrough", () => {
     const step = walkthrough!.steps.find((s) => s.id === "comment");
     expect(step, "walkthrough has no \"comment\" step").toBeTruthy();
     expect(commandLinks(step!)).toContain("markdownCollab.openInlineCommentsView");
+  });
+
+  it("has no Claude Code-only setup step", () => {
+    expect(walkthrough!.steps.map((s) => s.id)).not.toContain("install-skill");
+  });
+
+  it("puts the connect step second, completed by running Connect an Agent", () => {
+    const step = walkthrough!.steps[1]!;
+    expect(step.id).toBe("connect-agent");
+    expect(step.title).toBe("Connect your agent");
+    expect(commandLinks(step)).toEqual(["markdownCollab.connectAgent"]);
+    expect(step.completionEvents).toEqual(["onCommand:markdownCollab.connectAgent"]);
+  });
+
+  it("every step's media file exists on disk", () => {
+    for (const step of walkthrough!.steps) {
+      const rel = step.media?.markdown;
+      expect(rel, `step "${step.id}" has no markdown media`).toBeTruthy();
+      expect(existsSync(resolve(__dirname, "../..", rel!)), `${rel} is missing`).toBe(true);
+    }
   });
 });

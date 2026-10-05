@@ -1,14 +1,10 @@
-### Other agents
+### Connect your agent
 
-The default path needs no registration: copy the prompt (clipboard send mode)
-→ the agent edits the file following `AGENTS.md` → **Repair Comment
-Anchors** is the safety net if a marker breaks. `mdc check` does the same
-check, but only from inside a Claude Code session — it isn't on any other
-agent's PATH.
-
-**Connect an Agent…** is the optional second step: it hooks the review tools
-up to whichever client you use, so its edits land as edits you can undo
-instead. The list shows only the entries your editor can support.
+**Connect an Agent…** hooks the review tools up to whichever client you use, so
+its edits land as edits you can undo. The list shows only the entries your
+editor can support. Skip it and any agent still works: copy the prompt
+(clipboard send mode), the agent edits the file following `AGENTS.md`, and
+**Repair Comment Anchors** is the safety net if a marker breaks.
 
 | Client | What it writes |
 |---|---|

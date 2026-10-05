@@ -22,7 +22,7 @@ describe("no stale channel-transport references remain", () => {
     { label: "README.md", content: read("README.md") },
     { label: "SKILL_CONTENT", content: SKILL_CONTENT },
     { label: "media/walkthrough/send.md", content: read("media/walkthrough/send.md") },
-    { label: "media/walkthrough/skill.md", content: read("media/walkthrough/skill.md") },
+    { label: "media/walkthrough/agents.md", content: read("media/walkthrough/agents.md") },
     { label: "package.json", content: read("package.json") },
   ];
 
