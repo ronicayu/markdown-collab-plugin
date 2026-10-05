@@ -4,6 +4,9 @@ import * as os from "os";
 import * as path from "path";
 import { existsSync, readFileSync } from "fs";
 import { AGENTS_SENTINEL, AGENTS_SNIPPET, FORMAT_SPEC_URL, ensureAgentsSnippet, refuseSymlink, sectionHash } from "../agents";
+import { opAccept, opCheck, opList } from "../inlineComments/docOps";
+import { addThread, parse } from "../inlineComments/format";
+import { serialize } from "../inlineComments/serializeState";
 
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"));
 
@@ -61,6 +64,17 @@ describe("AGENTS_SNIPPET: the format is the contract", () => {
     expect(AGENTS_SNIPPET).toContain('"agent":true');
   });
 
+  it("a hand-written new thread's first comment restates agent true", () => {
+    const bullet = AGENTS_SNIPPET.split("\n").find((l) => l.startsWith("- **New thread**"))!;
+    expect(bullet).toContain('"comments":[{"id":"c1","author":"<you>","agent":true,');
+  });
+
+  it("tells an agent how to suggest an edit by hand and where a heading's markers go", () => {
+    expect(AGENTS_SNIPPET).toContain("**Suggesting an edit**");
+    expect(AGENTS_SNIPPET).toContain("<!--mc:s {");
+    expect(AGENTS_SNIPPET).toContain("## <!--mc:a:ID-->Title<!--mc:/a:ID-->");
+  });
+
   it("stays under ~35 lines", () => {
     expect(AGENTS_SNIPPET.split("\n").length).toBeLessThanOrEqual(35);
   });
@@ -70,7 +84,76 @@ describe("AGENTS_SNIPPET: the format is the contract", () => {
   // PRIOR_SNIPPET_HASHES in agents.ts (so workspaces holding it get
   // refreshed), then update the pin to the new value this prints.
   it("is pinned, so a change to it can't skip PRIOR_SNIPPET_HASHES", () => {
-    expect(sectionHash(AGENTS_SNIPPET)).toBe("bdb3734674cf348c");
+    expect(sectionHash(AGENTS_SNIPPET)).toBe("237c35f4b22376b6");
+  });
+});
+
+const RECIPE_TS = "2026-10-05T09:00:00.000Z";
+
+function recipeLine(prefix: "s" | "t", id: string, fill: Record<string, string>): string {
+  const template = new RegExp("`(<!--mc:" + prefix + ' \\{"[^`]*\\}-->)`').exec(AGENTS_SNIPPET)![1];
+  return Object.entries({ '"ID"': `"${id}"`, "<you>": "cursor", "<ISO-8601 UTC>": RECIPE_TS, ...fill }).reduce(
+    (line, [from, to]) => line.split(from).join(to),
+    template,
+  );
+}
+
+describe("AGENTS_SNIPPET: a file edited exactly per its recipes", () => {
+  const block = (record: string) => `\n<!--mc:threads:begin-->\n${record}\n<!--mc:threads:end-->\n`;
+  const wrap = (id: string, text: string) => `<!--mc:a:${id}-->${text}<!--mc:/a:${id}-->`;
+
+  it("a suggestion written by hand parses as a pending suggestion the editor can accept", () => {
+    const record = recipeLine("s", "k3x9q", { "<the wrapped text>": "30 seconds", "<the replacement>": "60 seconds" });
+    const source = `# Retries\n\nWait ${wrap("k3x9q", "30 seconds")} between retries.\n${block(record)}`;
+
+    const parsed = parse(source);
+    expect(parsed.suggestions).toHaveLength(1);
+    expect(parsed.suggestions[0]).toMatchObject({
+      anchorId: "k3x9q",
+      author: "cursor",
+      agent: true,
+      original: "30 seconds",
+      proposed: "60 seconds",
+    });
+    expect(opCheck(source).ok).toBe(true);
+    expect(opList(source).suggestions).toMatchObject([{ anchorId: "k3x9q", anchored: true }]);
+    expect(serialize(parsed).suggestions[0]!.anchor).not.toBeNull();
+
+    const accepted = opAccept(source, "k3x9q").next;
+    expect(accepted).toContain("Wait 60 seconds between retries.");
+    expect(accepted).not.toContain("mc:s");
+    expect(accepted).not.toContain("mc:a:k3x9q");
+  });
+
+  it("the optional threadId and note on a suggestion are kept", () => {
+    const record = recipeLine("s", "k3x9q", { "<the wrapped text>": "30 seconds", "<the replacement>": "60 seconds" }).replace(
+      '"proposed"',
+      '"threadId":"t1111","note":"matches config","proposed"',
+    );
+    const parsed = parse(`Wait ${wrap("k3x9q", "30 seconds")}.\n${block(record)}`);
+    expect(parsed.suggestions[0]).toMatchObject({ threadId: "t1111", note: "matches config" });
+  });
+
+  it("a heading anchored per the heading rule parses with the thread anchored to the heading", () => {
+    const rule = /`(## <!--mc:a:ID-->Title<!--mc:\/a:ID-->)`/.exec(AGENTS_SNIPPET)![1]
+      .replace(/ID/g, "h4d1n")
+      .replace("Title", "Setup");
+    const thread = recipeLine("t", "h4d1n", { "<the passage>": "Setup", "<the comment>": "Which setup?" });
+    const source = `# Guide\n\n${rule}\n\nBody.\n${block(thread)}`;
+
+    const parsed = parse(source);
+    expect(parsed.threads).toMatchObject([{ id: "h4d1n", quote: "Setup" }]);
+    const a = parsed.anchors.get("h4d1n")!;
+    expect(source.slice(a.openEnd, a.closeStart)).toBe("Setup");
+    expect(opCheck(source).ok).toBe(true);
+    expect(serialize(parsed).prose).toContain("## Setup\n");
+  });
+
+  it("the heading rule puts the markers where the tools put them", () => {
+    const rule = /`(## <!--mc:a:ID-->Title<!--mc:\/a:ID-->)`/.exec(AGENTS_SNIPPET)![1];
+    const byTool = addThread("# Guide\n\n## Setup\n\nBody.\n", 9, 17, { author: "cursor", body: "x", ts: RECIPE_TS });
+    const toolLine = byTool.source.split("\n").find((l) => l.startsWith("## "))!;
+    expect(toolLine.split(byTool.thread.id).join("ID")).toBe(rule.replace("Title", "Setup"));
   });
 });
 
@@ -87,6 +170,22 @@ Never hand-edit a marker or a thread line directly — one dropped \`-->\` silen
    - Reply: find the thread's \`<!--mc:t {…}-->\` line and append \`{"id":"c<next>","parent":"<last-comment-id>","author":"<you>","ts":"<ISO-8601 UTC>","body":"<what you did>"}\` to its \`comments\` array. Never change \`status\`; never edit or remove an existing comment.
    - New thread, only on explicit request ("leave a comment on X"): pick a unique id, wrap the passage in \`<!--mc:a:ID-->…<!--mc:/a:ID-->\`, append a fresh \`<!--mc:t {…}-->\` line with a single \`c1\` comment.
    - Rewriting an anchored passage keeps both markers on the new wording; removing the passage deletes both markers and leaves the thread unanchored — the correct outcome, don't re-anchor to nearby text.
+
+`;
+
+/** The 0.35.41 snippet, verbatim — what a workspace set up before the suggestion and heading rules holds. */
+const SNIPPET_0_35_41 = `## Markdown review comments
+
+Markdown Collab stores review feedback inline in the \`.md\` file itself — anchored spans wrapped in paired \`<!--mc:a:ID-->…<!--mc:/a:ID-->\` markers, threads recorded one \`<!--mc:t {JSON}-->\` line per thread between \`<!--mc:threads:begin-->\`/\`<!--mc:threads:end-->\` at the end of the file. Detect a reviewed file by the literal string \`<!--mc:threads:begin-->\`.
+
+**The file format is the contract:** [\`docs/format.md\`](${FORMAT_SPEC_URL}) in the Markdown Collab repository defines every marker and field. If the \`markdown-collab\` MCP tools are in your tool list, use them instead of editing by hand — \`mc_list\`, then \`mc_reply\`/\`mc_open\`/\`mc_rewrite\`/\`mc_edit\`/\`mc_suggest\`, and \`mc_check\` last — they keep the markers intact and the human can undo them. Otherwise edit the file by hand, carefully; one dropped \`-->\` silently orphans a reviewer's comment:
+
+- **Reply:** append \`{"id":"c<next>","parent":"<last-comment-id>","author":"<you>","agent":true,"ts":"<ISO-8601 UTC>","body":"<what you did>"}\` to the \`comments\` array on the thread's \`<!--mc:t {…}-->\` line. Never change \`status\`; never edit or remove an existing comment.
+- **New thread**, only on explicit request ("leave a comment on X"): pick an unused 5-character id from \`0-9a-z\`, wrap the passage in \`<!--mc:a:ID-->…<!--mc:/a:ID-->\`, and add a line \`<!--mc:t {"id":"ID","quote":"<the passage>","status":"open","comments":[<one c1 comment>]}-->\` just before \`<!--mc:threads:end-->\` (no block yet: add both fence lines at the very end of the file, after a blank line).
+- **Rewriting an anchored passage** keeps both markers on the new wording; removing the passage deletes both markers and leaves the thread unanchored — the correct outcome, don't re-anchor to nearby text.
+- Never type inside a marker or put one in a code block or the frontmatter. Inside JSON strings, write \`-->\` as \`--\\u003e\` and \`<!--\` as \`\\u003c!--\`.
+
+**Then check the file.** The \`mdc\` CLI exists only inside Claude Code sessions: if \`mdc\` is on your PATH, run \`mdc check <file>\`; otherwise ask the human to run "Markdown Collab: Repair Comment Anchors" on the file.
 
 `;
 
@@ -164,6 +263,13 @@ describe("ensureAgentsSnippet", () => {
     expect(await ensureAgentsSnippet(tmpDir)).toBe("refreshed");
     expect(await fs.readFile(target, "utf8")).toBe(AGENTS_SNIPPET);
     expect(await ensureAgentsSnippet(tmpDir)).toBe("already-present");
+  });
+
+  it("refreshes the 0.35.41 snippet, the one without the suggestion and heading rules", async () => {
+    const target = path.join(tmpDir, "AGENTS.md");
+    await fs.writeFile(target, SNIPPET_0_35_41, "utf8");
+    expect(await ensureAgentsSnippet(tmpDir)).toBe("refreshed");
+    expect(await fs.readFile(target, "utf8")).toBe(AGENTS_SNIPPET);
   });
 
   it("refreshes only our section, keeping what comes before and after it", async () => {

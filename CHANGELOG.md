@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.35.42 — 2026-10-05 (GitHub only)
+
+### Fixed: the send prompt assumed every agent had the Markdown Collab skill
+
+An agent without the skill, such as Cursor, Copilot, Windsurf or Codex, was told
+to use the skill or the `mdc` CLI, neither of which it has. The prompt now says
+to use the skill if you have it, and otherwise to follow the "Markdown review
+comments" section of AGENTS.md, or the format spec when there is none. Suggest
+mode names `mc_suggest`, `mdc suggest` and writing the suggestion by hand.
+
+### Changed: the AGENTS.md section says how to suggest an edit and anchor a heading
+
+Connect an Agent refreshes an untouched section to the new text. It now shows
+the exact line for a pending suggestion, restates `"agent":true` in a new
+thread's first comment, and says where the markers go on a heading line or the
+document title. (#4)
+
+### Tests
+
+- The comment, single-thread, review and multi-file prompts name the skill,
+  AGENTS.md's section and the format spec, and only offer `mdc` to a reader
+  whose skill provides it.
+- Suggest mode names all three routes; the headless prompt is unchanged.
+- A suggestion and a heading anchor written exactly as the AGENTS.md section
+  says parse, pass the integrity check, and the suggestion can be accepted.
+- The previous AGENTS.md section is refreshed to the new one.
+
 ## 0.35.41 — 2026-10-05 (GitHub only)
 
 ### Fixed: the agent edited the wrong folder's copy in a multi-root window

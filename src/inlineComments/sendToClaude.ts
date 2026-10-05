@@ -88,17 +88,18 @@ export function buildInlinePayload(
 }
 
 /**
- * The suggest-mode directive appended to a send prompt. Kept terse — the skill
- * already documents `mdc suggest`; this just flips the mode for the request.
+ * The suggest-mode directive for a terminal or clipboard send. The reader may
+ * have the MCP tools, the skill's `mdc` CLI, or neither, so it names all three.
  */
 export const SUGGEST_MODE_DIRECTIVE =
-  "Work in SUGGEST MODE: propose every edit as a suggestion via `mdc suggest` " +
-  "instead of editing the prose directly. The reviewer will accept or reject each one.";
+  "Work in SUGGEST MODE: propose every edit as a suggestion instead of editing the prose directly — " +
+  "with `mc_suggest` if you have the `markdown-collab` MCP tools, with `mdc suggest` if you have the `mdc` CLI, " +
+  'otherwise by hand as the "Suggesting an edit" bullet of the "Markdown review comments" section of AGENTS.md describes. ' +
+  "The reviewer will accept or reject each one.";
 
 /**
- * The suggest-mode directive for a delivery. A headless run has no `mdc` CLI —
- * only the tools — so naming the CLI verb there would point Claude at
- * something it can't run.
+ * The suggest-mode directive for a delivery. A headless run has no `mdc` CLI
+ * and no AGENTS.md route — only the tools — so it names only `mc_suggest`.
  */
 export function suggestModeDirective(delivery: SkillDelivery): string {
   if (delivery === "installed") return SUGGEST_MODE_DIRECTIVE;

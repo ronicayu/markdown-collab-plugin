@@ -119,7 +119,7 @@ still reads as the original everywhere. The proposed text lives only in the reco
 A record missing `anchorId`, `original` or `proposed` is skipped silently, and its markers then show up as an
 orphan anchor. **Accept** replaces the whole anchored span, markers included, with `proposed`; **reject**
 removes the markers and keeps the original. Either way the record goes. A suggestion whose markers are lost
-can't be accepted. Without the tools, propose a change as a comment that quotes the new text instead.
+can't be accepted. Without the tools, write the pair and the record by hand (step 3 below).
 
 ## The review checkpoint (`<!--mc:rev {…}-->`)
 
@@ -164,10 +164,14 @@ it never repairs on its own.
    the `#`s on a heading). Add a line just before `<!--mc:threads:end-->` — or, with no block yet, add the
    two fence lines at the very end of the file after a blank line:
    `<!--mc:t {"id":"ID","quote":"<the wrapped text>","status":"open","comments":[<one c1 comment>]}-->`.
-3. **Edit prose** anywhere outside the markers. Never type inside a marker. To change anchored text, keep
+3. **Suggest a change.** Pick an unused ID as in step 2 and wrap the passage in `<!--mc:a:ID-->…<!--mc:/a:ID-->`
+   without changing its text, then add a line in the block:
+   `<!--mc:s {"anchorId":"ID","author":"<you>","agent":true,"ts":"<now, ISO-8601 UTC>","original":"<the wrapped text>","proposed":"<the replacement>"}-->`.
+   Add `threadId` to answer a thread and `note` for a one-line reason. Never add `via`.
+4. **Edit prose** anywhere outside the markers. Never type inside a marker. To change anchored text, keep
    both markers around the new wording. To delete an anchored passage, delete the open marker, the text and
    the close marker together and leave the thread line: it becomes unanchored, which is the correct outcome
    — don't re-anchor it to nearby text.
-4. **Keep every record one line of valid JSON**, with `-->` and `<!--` escaped as above.
-5. **Check.** Run `mdc check <file>` if `mdc` is on your PATH. Otherwise ask the human to run "Markdown
+5. **Keep every record one line of valid JSON**, with `-->` and `<!--` escaped as above.
+6. **Check.** Run `mdc check <file>` if `mdc` is on your PATH. Otherwise ask the human to run "Markdown
    Collab: Repair Comment Anchors" on the file, and fix whatever it reports it couldn't.

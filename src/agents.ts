@@ -22,7 +22,9 @@ Markdown Collab stores review feedback inline in the \`.md\` file itself — anc
 **The file format is the contract:** [\`docs/format.md\`](${FORMAT_SPEC_URL}) in the Markdown Collab repository defines every marker and field. If the \`markdown-collab\` MCP tools are in your tool list, use them instead of editing by hand — \`mc_list\`, then \`mc_reply\`/\`mc_open\`/\`mc_rewrite\`/\`mc_edit\`/\`mc_suggest\`, and \`mc_check\` last — they keep the markers intact and the human can undo them. Otherwise edit the file by hand, carefully; one dropped \`-->\` silently orphans a reviewer's comment:
 
 - **Reply:** append \`{"id":"c<next>","parent":"<last-comment-id>","author":"<you>","agent":true,"ts":"<ISO-8601 UTC>","body":"<what you did>"}\` to the \`comments\` array on the thread's \`<!--mc:t {…}-->\` line. Never change \`status\`; never edit or remove an existing comment.
-- **New thread**, only on explicit request ("leave a comment on X"): pick an unused 5-character id from \`0-9a-z\`, wrap the passage in \`<!--mc:a:ID-->…<!--mc:/a:ID-->\`, and add a line \`<!--mc:t {"id":"ID","quote":"<the passage>","status":"open","comments":[<one c1 comment>]}-->\` just before \`<!--mc:threads:end-->\` (no block yet: add both fence lines at the very end of the file, after a blank line).
+- **New thread**, only on explicit request ("leave a comment on X"): pick an unused 5-character id from \`0-9a-z\`, wrap the passage in \`<!--mc:a:ID-->…<!--mc:/a:ID-->\`, and add a line \`<!--mc:t {"id":"ID","quote":"<the passage>","status":"open","comments":[{"id":"c1","author":"<you>","agent":true,"ts":"<ISO-8601 UTC>","body":"<the comment>"}]}-->\` just before \`<!--mc:threads:end-->\` (no block yet: add both fence lines at the very end of the file, after a blank line).
+- **Suggesting an edit**, when asked to suggest rather than change: leave the passage's text as it is, wrap it in \`<!--mc:a:ID-->…<!--mc:/a:ID-->\` with an unused id as above, and add a line \`<!--mc:s {"anchorId":"ID","author":"<you>","agent":true,"ts":"<ISO-8601 UTC>","original":"<the wrapped text>","proposed":"<the replacement>"}-->\` in the same place. Add \`"threadId":"<id>"\` to answer a thread, \`"note":"<why>"\` for a one-line reason. The reviewer accepts or rejects it in the editor.
+- **On a heading line, or the document title,** the opening marker goes after the \`#\`s and the space and the closing marker at the end of the heading text — \`## <!--mc:a:ID-->Title<!--mc:/a:ID-->\` — and \`quote\` is the heading text alone; a marker before the \`#\`s stops the line being a heading.
 - **Rewriting an anchored passage** keeps both markers on the new wording; removing the passage deletes both markers and leaves the thread unanchored — the correct outcome, don't re-anchor to nearby text.
 - Never type inside a marker or put one in a code block or the frontmatter. Inside JSON strings, write \`-->\` as \`--\\u003e\` and \`<!--\` as \`\\u003c!--\`.
 
@@ -42,6 +44,7 @@ const PRIOR_SNIPPET_HASHES = new Set([
   "44edbc6df78836a3", // 0.27: inline format, sidecar kept as legacy
   "04c086242ea7cfed", // 0.34: inline only, hand-editing instructions
   "5b05cecb60496801", // 0.35.12: MCP tools, then mdc, then hand-editing
+  "bdb3734674cf348c", // 0.35.41: the format contract and hand-editing steps, before suggestions and heading anchors
 ]);
 
 /** Line endings and trailing whitespace don't make a section someone's edit. */

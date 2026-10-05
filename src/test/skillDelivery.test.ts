@@ -5,6 +5,7 @@
 
 import * as path from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { FORMAT_SPEC_URL } from "../agents";
 import { addThread } from "../inlineComments/format";
 import {
   SUGGEST_MODE_DIRECTIVE,
@@ -20,7 +21,9 @@ import { Uri, workspace } from "./vscode-stub";
 
 const ROOT = "/ws";
 const INSTALLED =
-  "Use the Markdown Collab review skill (`markdown-collab:review`, or `vs-markdown-collab` on older installs) — or, if you are not Claude Code, the `markdown-collab` MCP tools or the `mdc` CLI —";
+  "Use the Markdown Collab review skill (`markdown-collab:review`, or `vs-markdown-collab` on older installs) — " +
+  "or, if you don't have it, follow the \"Markdown review comments\" section of this workspace's AGENTS.md " +
+  `(if it has none, the format is defined at ${FORMAT_SPEC_URL}) —`;
 const INLINE = "Follow the Markdown Collab review workflow in your instructions";
 
 const DOC = addThread("The retry uses exponential backoff.", 15, 34, {

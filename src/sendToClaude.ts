@@ -14,19 +14,17 @@ import { workflowOpener, type SkillDelivery } from "./skillDelivery";
 export type SendMode = "headless" | "terminal" | "clipboard" | "ask";
 
 /**
- * The line appended to every terminal and clipboard delivery.
- *
- * There used to be a separate `mcp` mode for this; folding it into `terminal`
- * only works because the line is harmless when the tools aren't there — the
- * skill's own CLI fallback covers that case, so the directive can go out
- * unconditionally instead of being gated on a mode the human had to pick.
+ * The line appended to every terminal and clipboard delivery. The reader may
+ * have the MCP tools, the skill's `mdc` CLI, or neither, so it names each in
+ * turn and ends on hand-editing per AGENTS.md.
  */
 export function mcpToolsDirective(): string {
   return (
     "If the `markdown-collab` MCP tools are in your tool list, use them for this pass — mc_list to read, " +
     "mc_reply / mc_open / mc_rewrite / mc_suggest to act, mc_edit for prose outside anchored spans, " +
     "mc_status to say what you're doing, and mc_check on each file when you're done; if they aren't, " +
-    "use the `mdc` CLI as the skill describes."
+    "use the `mdc` CLI if the skill gave you one, otherwise edit the file by hand as the " +
+    "\"Markdown review comments\" section of AGENTS.md describes."
   );
 }
 
