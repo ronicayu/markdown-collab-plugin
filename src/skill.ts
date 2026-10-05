@@ -17,7 +17,7 @@ const STALE_HELPER_RELS = [
 // format engine. See scripts/build-skill-cli.mjs.
 export { CLI_SCRIPT_CONTENT } from "./skillCli/generated";
 import { CLI_SCRIPT_CONTENT } from "./skillCli/generated";
-import { PLUGIN_NAME, renderSkill } from "./skillText";
+import { LEGACY_SKILL_NAME, PLUGIN_NAME, renderSkill } from "./skillText";
 
 /**
  * The standalone skill — what `~/.claude/skills/vs-markdown-collab/SKILL.md`
@@ -27,10 +27,21 @@ import { PLUGIN_NAME, renderSkill } from "./skillText";
  */
 export const SKILL_CONTENT = renderSkill("legacy");
 
+/**
+ * Every version of this extension wrote a SKILL.md whose frontmatter names the
+ * skill `vs-markdown-collab`, and nothing marks which version — so that name
+ * is how an earlier shipped skill is told apart from a file someone wrote.
+ */
+function isShippedSkill(content: string): boolean {
+  const frontmatter = /^\uFEFF?\s*---[ \t]*\r?\n([\s\S]*?)\r?\n---/.exec(content);
+  const name = frontmatter && /^name:[ \t]*["']?([^"'\r\n]*?)["']?[ \t\r]*$/m.exec(frontmatter[1]);
+  return name?.[1] === LEGACY_SKILL_NAME;
+}
+
 export async function installClaudeSkill(
   homeDir: string,
   options?: { force?: boolean },
-): Promise<{ action: "installed" | "already-present" | "exists-differs"; path: string }> {
+): Promise<{ action: "installed" | "updated" | "already-present" | "exists-differs"; path: string }> {
   const target = path.join(homeDir, SKILL_REL_PATH);
   let existing: string | null = null;
   try {
@@ -51,18 +62,19 @@ export async function installClaudeSkill(
   // clean them up rather than leaving dead scripts behind.
   await deleteStaleHelpers(homeDir);
 
+  const shipped = existing !== null && isShippedSkill(existing);
   if (existing !== null) {
     if (existing === SKILL_CONTENT) {
       return { action: "already-present", path: target };
     }
-    if (!options?.force) {
+    if (!shipped && !options?.force) {
       return { action: "exists-differs", path: target };
     }
   }
 
   await fs.mkdir(path.dirname(target), { recursive: true });
   await fs.writeFile(target, SKILL_CONTENT, "utf8");
-  return { action: "installed", path: target };
+  return { action: shipped ? "updated" : "installed", path: target };
 }
 
 export type SkillStatus = "missing" | "outdated" | "current";

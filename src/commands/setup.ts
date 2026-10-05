@@ -293,18 +293,21 @@ async function invokeSetUpClaudeCode(context: vscode.ExtensionContext, log: Logg
 }
 
 /** Today's standalone install, with why the plugin wasn't used folded in — a summary string instead of its own toast, so `setUpClaudeCode`'s callers control when and how it's shown. Null means nothing to report (the user cancelled an overwrite prompt). */
-async function installLegacySkillSummary(log: Logger, fallbackReason: string): Promise<string | null> {
+export async function installLegacySkillSummary(log: Logger, fallbackReason: string): Promise<string | null> {
   const why = `(the Claude Code plugin wasn't used: ${fallbackReason})`;
   try {
     const result = await installClaudeSkill(os.homedir());
     if (result.action === "installed") {
       return `Markdown Collab skill installed at ${result.path} ${why}.`;
     }
+    if (result.action === "updated") {
+      return `Markdown Collab skill updated at ${result.path} ${why}.`;
+    }
     if (result.action === "already-present") {
       return `Markdown Collab skill is already up to date at ${result.path} ${why}.`;
     }
     const pick = await vscode.window.showWarningMessage(
-      `A different Markdown Collab skill already exists at ${result.path} ${why}.`,
+      `A different Markdown Collab skill already exists at ${result.path}.`,
       "Overwrite",
       "Cancel",
     );

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.35.33 — 2026-10-05 (GitHub only)
+
+### Fixed: updating an older Markdown Collab skill was presented as a conflict
+
+Clicking Update on an older standalone skill in `~/.claude/skills/vs-markdown-collab/`
+asked whether to overwrite "a different Markdown Collab skill". A skill with our
+name is now just updated, and the helper script with it. Only a file that isn't
+ours still asks, and that prompt no longer mentions the Claude Code plugin. (#14)
+
+### Tests
+
+- `installClaudeSkill`: an earlier skill is updated without asking, a file with
+  another name is left alone, and `force` still overwrites it.
+- The conflict warning and the update message in Set up Claude Code.
+
 ## 0.35.32 — 2026-10-05 (GitHub only)
 
 ### Fixed: stale copy that named VS Code, Claude or a first-click behaviour that isn't true

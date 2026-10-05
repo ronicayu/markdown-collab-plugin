@@ -179,6 +179,55 @@ describe("installClaudeSkill", () => {
     expect(contents).toBe(SKILL_CONTENT);
   });
 
+  async function writeExisting(content: string): Promise<string> {
+    const target = path.join(tmpHome, SKILL_REL_PATH);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, content, "utf8");
+    return target;
+  }
+
+  const OLDER_SKILL = "---\nname: vs-markdown-collab\ndescription: an earlier wording\n---\n\n# Older skill\n";
+
+  it("updates an earlier shipped skill without asking and leaves the bundled content", async () => {
+    const target = await writeExisting(OLDER_SKILL);
+    const result = await installClaudeSkill(tmpHome);
+    expect(result).toEqual({ action: "updated", path: target });
+    expect(await fs.readFile(target, "utf8")).toBe(SKILL_CONTENT);
+  });
+
+  it("syncs the helper script when it updates an earlier shipped skill", async () => {
+    await writeExisting(OLDER_SKILL);
+    await fs.writeFile(path.join(tmpHome, CLI_SCRIPT_REL), "#!/usr/bin/env node\n// stale\n", "utf8");
+    await installClaudeSkill(tmpHome);
+    expect(await fs.readFile(path.join(tmpHome, CLI_SCRIPT_REL), "utf8")).toBe(CLI_SCRIPT_CONTENT);
+  });
+
+  it("recognises our frontmatter name with CRLF line endings, quotes and stray whitespace", async () => {
+    for (const older of [
+      "---\r\nname: vs-markdown-collab\r\ndescription: x\r\n---\r\nbody\r\n",
+      '---\nname: "vs-markdown-collab"\n---\nbody\n',
+      "---\nname: 'vs-markdown-collab'  \n---\nbody\n",
+      "\n  ---  \ndescription: x\nname:   vs-markdown-collab\n---\nbody\n",
+    ]) {
+      const target = await writeExisting(older);
+      expect(await installClaudeSkill(tmpHome)).toEqual({ action: "updated", path: target });
+      expect(await fs.readFile(target, "utf8")).toBe(SKILL_CONTENT);
+    }
+  });
+
+  it("leaves a file alone when its frontmatter names a different skill", async () => {
+    for (const other of [
+      "---\nname: my-own-skill\n---\nbody\n",
+      "---\nname: vs-markdown-collab-fork\n---\nbody\n",
+      "---\ndescription: mentions name: vs-markdown-collab later\n---\nbody\n",
+      "# no frontmatter\n\n---\nname: vs-markdown-collab\n---\n",
+    ]) {
+      const target = await writeExisting(other);
+      expect(await installClaudeSkill(tmpHome)).toEqual({ action: "exists-differs", path: target });
+      expect(await fs.readFile(target, "utf8")).toBe(other);
+    }
+  });
+
   it("returns 'exists-differs' without overwriting when content differs and force is not set", async () => {
     const target = path.join(tmpHome, SKILL_REL_PATH);
     await fs.mkdir(path.dirname(target), { recursive: true });
@@ -199,6 +248,12 @@ describe("installClaudeSkill", () => {
     expect(result).toEqual({ action: "installed", path: target });
     const contents = await fs.readFile(target, "utf8");
     expect(contents).toBe(SKILL_CONTENT);
+  });
+
+  it("overwrites a file without our frontmatter name when force: true is passed", async () => {
+    const target = await writeExisting("---\nname: my-own-skill\n---\nbody\n");
+    expect(await installClaudeSkill(tmpHome, { force: true })).toEqual({ action: "installed", path: target });
+    expect(await fs.readFile(target, "utf8")).toBe(SKILL_CONTENT);
   });
 
   it("writes the mdc helper script on a fresh install", async () => {
@@ -296,6 +351,15 @@ describe("checkClaudeSkill", () => {
     await installClaudeSkill(tmpHome);
     await fs.writeFile(path.join(tmpHome, SKILL_REL_PATH), SKILL_CONTENT + "\nstale\n", "utf8");
     expect(await checkClaudeSkill(tmpHome)).toBe("outdated");
+  });
+
+  it("reports 'outdated' for an earlier shipped skill, then 'current' once installing has updated it", async () => {
+    const target = path.join(tmpHome, SKILL_REL_PATH);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, "---\nname: vs-markdown-collab\n---\n\n# Older skill\n", "utf8");
+    expect(await checkClaudeSkill(tmpHome)).toBe("outdated");
+    expect((await installClaudeSkill(tmpHome)).action).toBe("updated");
+    expect(await checkClaudeSkill(tmpHome)).toBe("current");
   });
 
   it("reports 'outdated' when the bundled helper script differs", async () => {
