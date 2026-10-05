@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.35.43 — 2026-10-05 (GitHub only)
+
+### Fixed: a file with broken comment anchors was not flagged when you opened it
+
+Damage that was already in a file when the window opened got no warning and no
+Repair offer until the file picked up a new, different problem. Opening such a
+file in the review view now shows the warning, with Repair, once per problem
+per window. A file the watcher already warned about is not warned about again
+when you open it. (#23)
+
+### Tests
+
+- A file already damaged at startup is announced when opened in the review view,
+  once; a healthy file, and damage the watcher already announced, are not.
+- Damage that returns after a repair, or a different problem, is announced again.
+- Opening a document in the review view passes its path and text to the check,
+  and the activated extension wires that check to the review tree.
+
 ## 0.35.42 — 2026-10-05 (GitHub only)
 
 ### Fixed: the send prompt assumed every agent had the Markdown Collab skill

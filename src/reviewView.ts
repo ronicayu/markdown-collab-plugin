@@ -4,7 +4,7 @@ import type { Logger } from "./logging";
 import { isMarkdownPath } from "./pathUtils";
 import { isClaudeUnread } from "./inlineComments/claudeUnread";
 import { parse, type InlineThread } from "./inlineComments/format";
-import { IntegrityGuard, summarize, type GuardDecision } from "./inlineComments/integrityGuard";
+import { IntegrityGuard, evaluateDocument, summarize, type GuardDecision } from "./inlineComments/integrityGuard";
 
 export type ReviewNode =
   | { kind: "file"; docPath: string; unresolvedCount: number }
@@ -73,6 +73,7 @@ export class ReviewView
   private readonly readFile: NonNullable<ReviewViewDeps["readFile"]>;
   private readonly onIntegrityIssues: NonNullable<ReviewViewDeps["onIntegrityIssues"]>;
   private readonly guard = new IntegrityGuard();
+  private readonly announced = new Map<string, string>();
 
   private readonly subs: vscode.Disposable[] = [];
   /** mdPath -> pending change timer, for per-path coalescing. */
@@ -201,6 +202,7 @@ export class ReviewView
     this.disposed = true;
     for (const timer of this.changeTimers.values()) clearTimeout(timer);
     this.changeTimers.clear();
+    this.announced.clear();
     for (const d of this.subs) {
       try {
         d.dispose();
@@ -349,15 +351,35 @@ export class ReviewView
       for (const issue of decision.issues) {
         this.log.warn("integrity issue", { file: path.basename(mdPath), kind: issue.kind, message: issue.message });
       }
-      if (notify) this.onIntegrityIssues(decision);
+      if (notify) {
+        this.announced.set(mdPath, decision.signature);
+        this.onIntegrityIssues(decision);
+      }
     } catch (e) {
       this.log.error(`integrity check failed for ${mdPath}`, e);
+    }
+  }
+
+  public onDocumentOpened(mdPath: string, text: string): void {
+    if (this.disposed) return;
+    try {
+      const decision = evaluateDocument(mdPath, text);
+      if (!decision) {
+        this.announced.delete(mdPath);
+        return;
+      }
+      if (this.announced.get(mdPath) === decision.signature) return;
+      this.announced.set(mdPath, decision.signature);
+      this.onIntegrityIssues(decision);
+    } catch (e) {
+      this.log.error(`integrity check on open failed for ${mdPath}`, e);
     }
   }
 
   private removeFile(mdPath: string): void {
     if (this.disposed || !this.scan) return;
     this.guard.forget(mdPath);
+    this.announced.delete(mdPath);
     const t = this.changeTimers.get(mdPath);
     if (t) {
       clearTimeout(t);

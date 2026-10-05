@@ -457,13 +457,15 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly log: Logger,
+    private readonly onDocumentOpened: (fsPath: string, text: string) => void,
   ) {}
 
   static register(
     context: vscode.ExtensionContext,
     log: Logger,
+    onDocumentOpened: (fsPath: string, text: string) => void,
   ): vscode.Disposable {
-    const provider = new CollabEditorProvider(context.extensionUri, log);
+    const provider = new CollabEditorProvider(context.extensionUri, log, onDocumentOpened);
     return vscode.Disposable.from(
       vscode.window.registerCustomEditorProvider(VIEW_TYPE, provider, {
         webviewOptions: { retainContextWhenHidden: true, enableFindWidget: true },
@@ -478,6 +480,8 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     panel: vscode.WebviewPanel,
     _token: vscode.CancellationToken,
   ): Promise<void> {
+    this.onDocumentOpened(document.uri.fsPath, document.getText());
+
     // Grant every workspace folder plus the document's directory and its
     // parent, so `![](../diagrams/x.png)` loads whether or not the file is in
     // a workspace. A path outside these roots is refused by the host with no

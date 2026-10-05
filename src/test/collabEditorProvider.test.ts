@@ -90,6 +90,7 @@ interface Harness {
   log: { [K in "trace" | "info" | "warn" | "error" | "show"]: Mock };
   shown: { error: AsyncSpy; warning: AsyncSpy; info: AsyncSpy };
   exec: AsyncSpy;
+  opened: Mock;
   /** The fake webview panel — tests flip `.active`/`.visible` directly, then fire `viewStateChanged`. */
   panel: FakePanel;
   /** Fire `onDidChangeTextDocument` by hand, with an optional `TextDocumentChangeReason`. */
@@ -182,7 +183,8 @@ async function openEditor(source: string, opts: { readOnly?: boolean } = {}): Pr
     show: vi.fn(),
   };
   const logger = { ...log, scope: () => logger, time: <T,>(_l: string, fn: () => Promise<T>) => fn() } as unknown as Logger;
-  const provider = new CollabEditorProvider(vscode.Uri.file("/ext") as vscode.Uri, logger);
+  const opened = vi.fn();
+  const provider = new CollabEditorProvider(vscode.Uri.file("/ext") as vscode.Uri, logger, opened);
   await provider.resolveCustomTextEditor(
     doc as unknown as vscode.TextDocument,
     panel as unknown as vscode.WebviewPanel,
@@ -195,6 +197,7 @@ async function openEditor(source: string, opts: { readOnly?: boolean } = {}): Pr
     log,
     shown,
     exec,
+    opened,
     panel,
     changeDoc: (reason) => {
       for (const l of changeListeners) l({ document: doc, reason });
@@ -250,6 +253,14 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose();
+});
+
+describe("opening a document in the review view", () => {
+  it("hands the document's path and text to the on-open check", async () => {
+    const h = await openEditor(DOC);
+    expect(h.opened).toHaveBeenCalledTimes(1);
+    expect(h.opened).toHaveBeenCalledWith("/w/notes.md", DOC);
+  });
 });
 
 describe("a block edit that throws", () => {

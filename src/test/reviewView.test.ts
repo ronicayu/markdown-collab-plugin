@@ -616,4 +616,73 @@ describe("ReviewView integrity notifications", () => {
     await vi.waitFor(() => expect(onIntegrityIssues).toHaveBeenCalledTimes(1));
     view.dispose();
   });
+
+  it("a file already damaged at startup is announced when it is opened", async () => {
+    const { view, onIntegrityIssues } = viewOver(() => brokenClose);
+    await view.ensureScanned();
+    expect(onIntegrityIssues).not.toHaveBeenCalled();
+    view.onDocumentOpened(MD, brokenClose);
+    expect(onIntegrityIssues).toHaveBeenCalledTimes(1);
+    expect(onIntegrityIssues.mock.calls[0]![0].fsPath).toBe(MD);
+    view.dispose();
+  });
+
+  it("opening the same damaged file again does not announce again", async () => {
+    const { view, onIntegrityIssues } = viewOver(() => brokenClose);
+    await view.ensureScanned();
+    view.onDocumentOpened(MD, brokenClose);
+    view.onDocumentOpened(MD, brokenClose);
+    expect(onIntegrityIssues).toHaveBeenCalledTimes(1);
+    view.dispose();
+  });
+
+  it("opening a healthy file announces nothing", async () => {
+    const { view, onIntegrityIssues } = viewOver(() => healthy);
+    await view.ensureScanned();
+    view.onDocumentOpened(MD, healthy);
+    view.onDocumentOpened(MD, PROSE);
+    expect(onIntegrityIssues).not.toHaveBeenCalled();
+    view.dispose();
+  });
+
+  it("damage the watcher already announced is not announced again on open", async () => {
+    let text = healthy;
+    const { view, w, onIntegrityIssues } = viewOver(() => text);
+    await view.ensureScanned();
+    text = brokenClose;
+    w.change(MD);
+    await vi.waitFor(() => expect(onIntegrityIssues).toHaveBeenCalledTimes(1));
+    view.onDocumentOpened(MD, brokenClose);
+    expect(onIntegrityIssues).toHaveBeenCalledTimes(1);
+    view.dispose();
+  });
+
+  it("a file that was repaired and is damaged again is announced when opened", async () => {
+    const { view, onIntegrityIssues } = viewOver(() => brokenClose);
+    await view.ensureScanned();
+    view.onDocumentOpened(MD, brokenClose);
+    view.onDocumentOpened(MD, healthy);
+    view.onDocumentOpened(MD, brokenClose);
+    expect(onIntegrityIssues).toHaveBeenCalledTimes(2);
+    view.dispose();
+  });
+
+  it("a different problem in an already announced file is announced when opened", async () => {
+    const { view, onIntegrityIssues } = viewOver(() => brokenClose);
+    await view.ensureScanned();
+    view.onDocumentOpened(MD, brokenClose);
+    view.onDocumentOpened(MD, brokenCloseNoThreads);
+    expect(onIntegrityIssues).toHaveBeenCalledTimes(2);
+    view.dispose();
+  });
+
+  it("a deleted file that comes back damaged is announced when opened", async () => {
+    const { view, w, onIntegrityIssues } = viewOver(() => brokenClose);
+    await view.ensureScanned();
+    view.onDocumentOpened(MD, brokenClose);
+    w.del(MD);
+    view.onDocumentOpened(MD, brokenClose);
+    expect(onIntegrityIssues).toHaveBeenCalledTimes(2);
+    view.dispose();
+  });
 });

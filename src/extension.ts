@@ -94,7 +94,11 @@ export function activate(context: vscode.ExtensionContext): void {
   // edits here, Claude edits the .md on disk, and the two converge through the
   // file (the provider pushes external file changes into the editor, and
   // writes the editor's edits back to disk).
-  context.subscriptions.push(CollabEditorProvider.register(context, rootLog.scope("live-editor")));
+  context.subscriptions.push(
+    CollabEditorProvider.register(context, rootLog.scope("live-editor"), (fsPath, text) =>
+      reviewView.onDocumentOpened(fsPath, text),
+    ),
+  );
 
   // The previous review view (the markdown-it panel), kept for one release
   // behind `markdownCollab.classicReviewView`. Only the router below opens it.

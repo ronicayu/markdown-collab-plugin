@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { Uri, commands, window, workspace } from "./vscode-stub";
+import { CollabEditorProvider } from "../collab/collabEditorProvider";
 import { addThread } from "../inlineComments/format";
 
 vi.mock("../editorPresence");
@@ -107,5 +108,17 @@ describe("ReviewView after activation", () => {
     fireChange(Uri.file(MD));
 
     await vi.waitFor(() => expect(showWarningMessage).toHaveBeenCalledTimes(1));
+  });
+
+  it("warns about a file that was already damaged at startup when it is opened in the review view", async () => {
+    text = docWithOpenThread().broken;
+    await activateExtension();
+    await vi.waitFor(() => expect(hasReview()).toBe(true));
+    expect(showWarningMessage).not.toHaveBeenCalled();
+
+    const onDocumentOpened = (CollabEditorProvider.register as Mock<any[], any>).mock.lastCall![2];
+    onDocumentOpened(MD, text);
+
+    expect(showWarningMessage).toHaveBeenCalledTimes(1);
   });
 });
