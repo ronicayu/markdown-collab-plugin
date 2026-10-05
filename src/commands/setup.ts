@@ -587,7 +587,7 @@ async function registerWithClient(
       const provider = currentCopilotProvider();
       if (!provider) {
         void vscode.window.showWarningMessage(
-          "Markdown Collab: this VS Code build doesn't support the Copilot MCP provider API.",
+          "Markdown Collab: this editor build doesn't support the Copilot MCP provider API.",
         );
         return;
       }
@@ -829,7 +829,7 @@ async function invokeDisconnectAgent(deps: CommandDeps): Promise<void> {
       const provider = currentCopilotProvider();
       if (!provider) {
         void vscode.window.showWarningMessage(
-          "Markdown Collab: this VS Code build doesn't support the Copilot MCP provider API.",
+          "Markdown Collab: this editor build doesn't support the Copilot MCP provider API.",
         );
         break;
       }

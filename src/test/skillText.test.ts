@@ -118,6 +118,18 @@ const INTENTIONAL_CHANGES: Array<[string, string]> = [
       "Verify each file with `mc_check` before moving to the next — cheaper to catch a broken marker in file 1 " +
       "before editing files 2 and 3 — and report per file, with cross-document findings called out separately.",
   ],
+  [
+    'the human a "Claude is working…" row on every thread',
+    'the human a "Waiting for the agent…" row on every thread',
+  ],
+  [
+    'clearing the "Claude is working…" row the human is watching',
+    'clearing the "Waiting for the agent…" row the human is watching',
+  ],
+  [
+    'the signal that ends the human\'s "Claude is working…" wait.',
+    'the signal that clears the "Waiting for the agent…" row the human is watching.',
+  ],
 ];
 
 const legacy = renderSkill("legacy");
@@ -212,7 +224,7 @@ describe("headless rendering (tools only)", () => {
     expect(headless).toContain("It is the **primary filter**");
     expect(headless).toContain("Do not fabricate threads to feel productive.");
     expect(headless).toContain("Deletions become orphans by design");
-    expect(headless).toMatch(/mc_check[\s\S]{0,400}Claude is\s+working/);
+    expect(headless).toMatch(/mc_check[\s\S]{0,400}Waiting\s+for\s+the\s+agent/);
   });
 
   it("is the headless system prompt, after the preamble", () => {

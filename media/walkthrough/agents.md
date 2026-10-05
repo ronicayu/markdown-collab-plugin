@@ -19,6 +19,6 @@ instead. The list shows only the entries your editor can support.
 | GitHub Copilot, agent mode | Nothing on disk. Enable the Markdown Collab tools in Copilot's tool picker. |
 | Anything else | A scratch document with the address and a snippet to copy. |
 
-No token is ever written to a file — the address and a per-session token travel through the environment of terminals VS Code opens.
+No token is ever written to a file — the address and a per-session token travel through the environment of terminals your editor opens.
 
 **Disconnect an Agent…** removes an entry you no longer want registered.

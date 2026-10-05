@@ -125,7 +125,7 @@ describe("SKILL_CONTENT — tools-first structure", () => {
   });
 
   it("tells Claude that the closing check is what ends the human's wait", () => {
-    expect(body).toMatch(/mc_check[\s\S]{0,400}Claude is\s+working/);
+    expect(body).toMatch(/mc_check[\s\S]{0,400}Waiting\s+for\s+the\s+agent/);
   });
 
   it("caps Review Mode at five threads, with a summary thread for the rest (10x-plan-6 P3)", () => {

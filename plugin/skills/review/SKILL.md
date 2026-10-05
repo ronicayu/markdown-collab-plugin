@@ -38,7 +38,7 @@ Hand-editing markers with the Edit tool is a distant third and only when neither
 | `mc_check(file)` | `check <file> [--repair]` | Integrity report. **Run this last on every file you touched** — see below. CLI-only `--repair` fixes what it safely can. |
 | `mc_status(note, file?)` | *(no CLI form — interactive only)* | Say what you're doing right now ("reading 2 of 3 files", "opening threads on §Setup"). |
 
-Two of these do more than they look like they do: **`mc_check` ends the pass** — the extension shows the human a "Claude is working…" row on every thread it sent you, and your closing `mc_check` on a file is what clears it; skip it and they're left watching a spinner for work you already finished. **`mc_status` is free and worth it** — a review pass over three files is minutes of silence otherwise, and one short present-tense phrase per phase shows up next to the indicator and in the status bar.
+Two of these do more than they look like they do: **`mc_check` ends the pass** — the extension shows the human a "Waiting for the agent…" row on every thread it sent you, and your closing `mc_check` on a file is what clears it; skip it and they're left watching a spinner for work you already finished. **`mc_status` is free and worth it** — a review pass over three files is minutes of silence otherwise, and one short present-tense phrase per phase shows up next to the indicator and in the status bar.
 
 Ordinary prose edits — text outside an anchored span — may use `mc_edit` (CLI: `mdc edit`), which refuses anything that would break a marker or touch the threads region; the Edit tool remains fine too in interactive sessions. Every `mdc` command prints JSON to stdout — a failure is `{"ok":false,"code":…,"message":…}` — with exit codes `0` ok, `1` usage error or refusal, `2` integrity violation; mutating commands validate before writing and refuse a change that would introduce a new integrity problem, so a failed command leaves the file untouched rather than half-edited.
 
@@ -193,7 +193,7 @@ Read the doc end to end first. Initiate threads one at a time, in document order
 
 Finish every file you touched with `mc_check(file)` (CLI: `check <file>`). `"ok": true` means every marker is paired, every thread is anchored, and every thread line is valid JSON; otherwise you get the list — unpaired markers, orphaned anchors, unanchored threads, empty quotes, malformed thread JSON, duplicate ids — each saying whether it's `repairable` (the CLI also exits `2`).
 
-This call does double duty: it's your correctness check, **and** it's how the extension learns your pass on that file is over — clearing the "Claude is working…" row the human is watching. Skip it and they're left watching a spinner for work you already finished.
+This call does double duty: it's your correctness check, **and** it's how the extension learns your pass on that file is over — clearing the "Waiting for the agent…" row the human is watching. Skip it and they're left watching a spinner for work you already finished.
 
 If the check reports damage you introduced, fix it — the CLI's `check --repair` strips stray markers and re-anchors threads whose quote still matches exactly one place in the prose (never guessing at an ambiguous one); anything it can't repair is yours to fix by hand. One case is not damage: **a thread whose passage you deliberately removed is expected to be unanchored.** Deletions become orphans by design — report it, don't "fix" it by re-anchoring to unrelated text.
 
@@ -282,5 +282,5 @@ paired marker plus a valid single-`c1` thread line with a unique id. Search for
 `<!--mc:a:` and `<!--mc:/a:` — every opener needs a closer with the same id.
 
 Hand-edits skip the two things the other paths give you for free: the pre-write
-integrity check, and the signal that ends the human's "Claude is working…" wait.
+integrity check, and the signal that clears the "Waiting for the agent…" row the human is watching.
 Say in your report that you worked without them.

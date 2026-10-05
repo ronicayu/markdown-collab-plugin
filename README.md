@@ -85,7 +85,7 @@ The **Send** button delivers one of three ways. The first click asks, remembers 
 | `headless` | **Run Claude for me.** The extension runs Claude Code in the background and shows progress in the status bar. | You'd rather not keep a terminal open. Still needs Claude Code installed and signed in. |
 | `clipboard` | Copies the prompt for you to paste. | You'd rather hand it off yourself. |
 
-Headless runs are offered in the picker whenever they can work, but never chosen for you. What they need: Claude Code installed and signed in (run `claude` once in a terminal if you never have), a trusted workspace, and the review tool server, which starts with the extension. If `claude` isn't on the PATH VS Code sees, set `markdownCollab.claudePath`. `markdownCollab.headlessModel` picks the model.
+Headless runs are offered in the picker whenever they can work, but never chosen for you. What they need: Claude Code installed and signed in (run `claude` once in a terminal if you never have), a trusted workspace, and the review tool server, which starts with the extension. If `claude` isn't on the PATH your editor sees, set `markdownCollab.claudePath`. `markdownCollab.headlessModel` picks the model.
 
 In this mode Claude can read files and use this extension's review tools, and nothing else: no shell, no direct file edits, no other MCP servers, and none of your Claude Code hooks. Every change lands through the editor, undoable and checked before it applies. The status bar reads *Claude is reviewing guide.md · 1m 20s* while it works; click it to cancel, and a run stops itself after 30 minutes. When it finishes, a notification carries the first line of Claude's report, with **Show report** for the whole thing and the estimated cost.
 
@@ -177,7 +177,7 @@ A few commands still exist but are hidden from the palette, now that Connect an 
 |---|---|---|
 | `markdownCollab.sendMode` | `ask` | `ask`, `headless`, `terminal`, or `clipboard`. |
 | `markdownCollab.proposeEditsAsSuggestions` | `false` | Suggest mode: the agent proposes edits instead of applying them. |
-| `markdownCollab.claudePath` | `""` | Path to `claude` if it isn't on the PATH VS Code sees. |
+| `markdownCollab.claudePath` | `""` | Path to `claude` if it isn't on the PATH your editor sees. |
 | `markdownCollab.headlessModel` | `""` | Model for headless runs, such as `sonnet` or `opus`. Empty uses Claude Code's default. |
 | `markdownCollab.showLineNumbers` | `false` | Source line numbers beside each block in the Markdown Collab view. They're lines of the `.md` file, frontmatter and threads block included, so they match Go to Line. |
 | `markdownCollab.collab.userName` | your OS username | The name on comments you write. |
@@ -215,7 +215,7 @@ Under `.markdown-collab/`, the extension writes runtime state for the tool serve
 
 **Start with Report a Problem.** It answers the first questions of any diagnosis in one paste, with tokens redacted. Then set **Show Logs** to Trace and reproduce: every send, tool call, refusal, and `gh`/`glab` call is logged with its outcome.
 
-**Run Claude for me isn't offered in the send-mode picker.** Headless needs `claude` on the PATH VS Code sees (or `markdownCollab.claudePath`), a trusted workspace, and the tool server. The diagnostics report says which is missing.
+**Run Claude for me isn't offered in the send-mode picker.** Headless needs `claude` on the PATH your editor sees (or `markdownCollab.claudePath`), a trusted workspace, and the tool server. The diagnostics report says which is missing.
 
 **Claude replied in the terminal, but nothing changed in the file.** Claude may not have the review tools or the plugin. Run **Connect an Agent…** → **Claude Code**, and restart the Claude session.
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.35.32 — 2026-10-05 (GitHub only)
+
+### Fixed: stale copy that named VS Code, Claude or a first-click behaviour that isn't true
+
+- The skill and the Claude Code plugin quoted a "Claude is working…" row; they
+  now quote the "Waiting for the agent…" row the review view actually shows.
+- Walkthrough, README and the Copilot message say "your editor" instead of
+  "VS Code", since most installs are in Cursor, Windsurf or VSCodium.
+- The send walkthrough said the first click works out the mode from what's
+  running. That's only true when Claude Code is in a terminal; otherwise the
+  first Send asks, and remembers your answer. (#19)
+
 ## 0.35.31 — 2026-10-05 (GitHub only)
 
 ### Fixed: Connect told you to restart an agent in a terminal that can't see the tools

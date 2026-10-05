@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with your AI agent — comments anchored in the file itself, suggestions you accept or reject. Works with Claude Code, Cursor, Codex and Copilot.",
-  "version": "0.35.31",
+  "version": "0.35.32",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -711,7 +711,7 @@
       {
         "id": "markdownCollab.gettingStarted",
         "title": "Review Markdown with an AI agent",
-        "description": "Leave review comments anchored in the file itself, send them to your agent, and accept its suggestions — all without leaving VS Code. Claude Code is the most complete setup; any other agent can act on the same file format, with the review tools as an optional upgrade.",
+        "description": "Leave review comments anchored in the file itself, send them to your agent, and accept its suggestions — all without leaving your editor. Claude Code is the most complete setup; any other agent can act on the same file format, with the review tools as an optional upgrade.",
         "steps": [
           {
             "id": "playground",
