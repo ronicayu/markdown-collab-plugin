@@ -22,6 +22,7 @@ import { applyClientMutation } from "../inlineComments/mutations";
 import { buildInlinePayload } from "../inlineComments/sendToClaude";
 import { mcpToolsDirective } from "../sendToClaude";
 import { checkClaudeSkill } from "../skill";
+import { currentAuthorName } from "../authorName";
 import { claudeBinaryFound } from "../transports/headlessHost";
 import { skillBannerStatus } from "./sidebarState";
 import type { DispatchOutcome, SidebarMessage, SidebarMutation } from "../webviewShared/sidebarProtocol";
@@ -222,8 +223,7 @@ export async function openThreadInEditor(doc: vscode.TextDocument, threadId: str
 
 /** Who a reply, an edit, or a resolve is attributed to — the review view's rule. */
 function sidebarAuthor(): string {
-  const cfg = vscode.workspace.getConfiguration("markdownCollab");
-  return cfg.get<string>("collab.userName", "") || os.userInfo().username || "anonymous";
+  return currentAuthorName();
 }
 
 /** Whether Send asks the agent for suggestions instead of edits. */

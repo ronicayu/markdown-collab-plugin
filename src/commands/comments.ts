@@ -2,12 +2,12 @@
 // selection, repair, and the review-view entry points
 // (10x-plan-4 P3.2 split of extension.ts).
 
-import * as os from "os";
 import * as path from "path";
 import { fileURLToPath } from "node:url";
 import * as vscode from "vscode";
 import type { Logger } from "../logging";
 import { isInsideRoot } from "../pathUtils";
+import { currentAuthorName } from "../authorName";
 import { repairIntegrity } from "../inlineComments/integrity";
 import { parse as parseInline } from "../inlineComments/format";
 import {
@@ -229,9 +229,7 @@ async function invokeCommentOnSelection(log: Logger): Promise<void> {
   });
   if (body === undefined) return; // cancelled
 
-  const author = vscode.workspace
-    .getConfiguration("markdownCollab")
-    .get<string>("collab.userName", "") || os.userInfo().username || "anonymous";
+  const author = currentAuthorName();
 
   let next: string;
   let threadId: string;
@@ -401,9 +399,7 @@ async function invokeResolveThread(
   // The resolver's name is the human's, same as the review view records —
   // `opResolve` defaults to "claude" because the agent tools are its usual
   // caller.
-  const author = vscode.workspace
-    .getConfiguration("markdownCollab")
-    .get<string>("collab.userName", "") || os.userInfo().username || "anonymous";
+  const author = currentAuthorName();
 
   let next: string;
   try {
@@ -468,9 +464,7 @@ async function invokeReplyToThread(
   });
   if (body === undefined) return; // cancelled
 
-  const author = vscode.workspace
-    .getConfiguration("markdownCollab")
-    .get<string>("collab.userName", "") || os.userInfo().username || "anonymous";
+  const author = currentAuthorName();
 
   let next: string;
   try {

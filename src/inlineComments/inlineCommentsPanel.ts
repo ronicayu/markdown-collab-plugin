@@ -20,6 +20,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { imageResourceRootPaths } from "../webviewShared/resourceRoots";
 import { isInsideRoot } from "../pathUtils";
+import { currentAuthorName } from "../authorName";
 import { agentDisplayName, isAgentComment } from "../agentIdentity";
 import { checkClaudeSkill, type SkillStatus } from "../skill";
 import { runDrawioRead } from "../collab/drawioService";
@@ -784,8 +785,7 @@ ${inlineCommentsAppBody()}
   }
 
   private resolveAuthor(): string {
-    const cfg = vscode.workspace.getConfiguration("markdownCollab");
-    return cfg.get<string>("collab.userName", "") || os.userInfo().username || "anonymous";
+    return currentAuthorName();
   }
 
   /** Threads still awaiting Claude, pruned against the document's current state. */

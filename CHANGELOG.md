@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.35.30 — 2026-10-05 (GitHub only)
+
+### Fixed: adding a comment failed when the system has no name for your user
+
+In a container started with an arbitrary `--user`, the OS has no username to
+fall back on, and adding a comment or a reply threw. The author is now
+`collab.userName`, then your OS username, then "anonymous". (#16)
+
+### Tests
+
+- `authorName`: the setting wins, the OS username fills in when it's empty, and
+  a missing OS user entry gives "anonymous".
+
 ## 0.35.29 — 2026-10-05 (GitHub only)
 
 ### Fixed: a send you didn't go through with left threads "Waiting for the agent…"

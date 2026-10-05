@@ -1,5 +1,4 @@
 import * as crypto from "crypto";
-import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import {
@@ -36,6 +35,7 @@ import { headFileContent, repoRootFor } from "../uncommitted/gitUncommitted";
 import { classifyLink } from "./linkRouter";
 import { isExternalLinkSafe } from "./urlAllowlist";
 import { folderForDocument } from "../workspaceFolder";
+import { currentAuthorName } from "../authorName";
 import { workflowOpener } from "../skillDelivery";
 import { imageResourceRootPaths } from "../webviewShared/resourceRoots";
 import type { Logger } from "../logging";
@@ -498,8 +498,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
 
     panel.webview.html = this.renderHtml(panel.webview);
 
-    const config = vscode.workspace.getConfiguration("markdownCollab");
-    const userName = config.get<string>("collab.userName", "") || os.userInfo().username;
+    const userName = currentAuthorName();
     const user = { name: userName, color: pickColor(userName) };
 
     // What `open` asked of this panel before it existed, taken as it's created.
@@ -1312,7 +1311,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         error: "Select some text to comment on.",
       };
     }
-    const author = (msg.author && msg.author.trim()) || resolveAuthorFromConfig();
+    const author = (msg.author && msg.author.trim()) || currentAuthorName();
     const newComment = { author, body: msg.body, ts: new Date().toISOString() };
     // The markers go exactly where the editor's selection is in the file's
     // own bytes, or the add is refused: nothing is searched for, and nothing
@@ -1363,7 +1362,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     }
     const next = replyToThread(document.getText(), commentId, {
       body: msg.body,
-      author: (msg.author && msg.author.trim()) || resolveAuthorFromConfig(),
+      author: (msg.author && msg.author.trim()) || currentAuthorName(),
       ts: new Date().toISOString(),
     });
     if (next === null) {
@@ -1390,7 +1389,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
       document.getText(),
       commentId,
       nextResolved,
-      resolveAuthorFromConfig(),
+      currentAuthorName(),
     );
     if (next === null) {
       return { type: "toggle-resolve-result", ok: false, commentId, error: "comment not found" };
@@ -1631,17 +1630,6 @@ ${liveEditorShellBody()}
 </html>`;
   }
 }
-
-// Resolve the author name for new comments / replies when the webview
-// didn't send one (back-compat / programmatic callers). Prefers the
-// user's configured display name; falls back to the OS user.
-function resolveAuthorFromConfig(): string {
-  const config = vscode.workspace.getConfiguration("markdownCollab");
-  const configured = (config.get<string>("collab.userName", "") || "").trim();
-  if (configured) return configured;
-  return os.userInfo().username || "user";
-}
-
 
 function pickColor(name: string): string {
   const palette = [
