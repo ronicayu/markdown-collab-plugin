@@ -27,6 +27,7 @@ import { detectPlatform } from "./platform";
 import { PrReviewPanel } from "./prReviewPanel";
 import { PrReviewTreeProvider } from "./prReviewTreeProvider";
 import type { Logger } from "../logging";
+import { requireTrust } from "../trust";
 import type {
   ExistingPrComment,
   PrComment,
@@ -173,6 +174,7 @@ export class PrReviewController implements vscode.Disposable {
   // --- entry point --------------------------------------------------------
 
   private async startPrReview(): Promise<void> {
+    if (!requireTrust("PR review")) return;
     try {
       const folder = vscode.workspace.workspaceFolders?.[0];
       if (!folder) {
@@ -296,6 +298,7 @@ export class PrReviewController implements vscode.Disposable {
    * hints instead. Otherwise it refreshes the active review in place.
    */
   private async refreshReview(): Promise<void> {
+    if (!requireTrust("PR review")) return;
     const folder = vscode.workspace.workspaceFolders?.[0];
     if (!folder) {
       void vscode.window.showWarningMessage("Open a workspace folder first.");

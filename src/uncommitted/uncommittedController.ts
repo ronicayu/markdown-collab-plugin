@@ -15,6 +15,7 @@ import type { ChangedFile } from "../pr/diff";
 import { InlineCommentsPanel } from "../inlineComments/inlineCommentsPanel";
 import { CollabEditorProvider } from "../collab/collabEditorProvider";
 import type { Logger } from "../logging";
+import { requireTrust } from "../trust";
 import {
   countReviewThreads,
   listUncommittedMarkdownFiles,
@@ -83,6 +84,7 @@ export class UncommittedChangesController implements vscode.Disposable {
     this.disposables.push(
       this.view,
       vscode.commands.registerCommand("markdownCollab.reviewUncommittedChanges", async () => {
+        if (!requireTrust("The uncommitted-changes view")) return;
         await this.refresh();
         await vscode.commands.executeCommand(`${VIEW_ID}.focus`);
       }),
@@ -148,6 +150,10 @@ export class UncommittedChangesController implements vscode.Disposable {
     const folder = vscode.workspace.workspaceFolders?.[0];
     if (!folder) {
       this.setTreeState({ kind: "no-workspace" });
+      return;
+    }
+    if (!vscode.workspace.isTrusted) {
+      this.setTreeState({ kind: "no-repo" });
       return;
     }
     if (!this.repoRoot) {

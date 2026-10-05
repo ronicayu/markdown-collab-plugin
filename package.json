@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with your AI agent — comments anchored in the file itself, suggestions you accept or reject. Works with Claude Code, Cursor, Codex and Copilot.",
-  "version": "0.35.35",
+  "version": "0.35.36",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -76,7 +76,17 @@
   "main": "./out/extension.js",
   "capabilities": {
     "untrustedWorkspaces": {
-      "supported": false
+      "supported": "limited",
+      "description": "In Restricted Mode you can open the review view, read threads, add, reply to and resolve comments, and copy prompts to the clipboard. Sending to a terminal, running Claude, the review tool server, agent setup (AGENTS.md, .mcp.json, Claude Code plugin) and the Git and PR views are off until you trust the workspace.",
+      "restrictedConfigurations": [
+        "markdownCollab.sendMode",
+        "markdownCollab.claudePath",
+        "markdownCollab.headlessModel",
+        "markdownCollab.plantuml.serverUrl",
+        "markdownCollab.classicReviewView",
+        "markdownCollab.collab.userName",
+        "markdownCollab.plantuml.format"
+      ]
     }
   },
   "contributes": {
@@ -522,6 +532,30 @@
         {
           "command": "markdownCollab.liveEditor.keyHandledInEditor",
           "when": "false"
+        },
+        {
+          "command": "markdownCollab.connectAgent",
+          "when": "isWorkspaceTrusted"
+        },
+        {
+          "command": "markdownCollab.disconnectAgent",
+          "when": "isWorkspaceTrusted"
+        },
+        {
+          "command": "markdownCollab.startPrReview",
+          "when": "isWorkspaceTrusted"
+        },
+        {
+          "command": "markdownCollab.reviewUncommittedChanges",
+          "when": "isWorkspaceTrusted"
+        },
+        {
+          "command": "markdownCollab.openTutorial",
+          "when": "isWorkspaceTrusted"
+        },
+        {
+          "command": "markdownCollab.editReviewConventions",
+          "when": "isWorkspaceTrusted"
         }
       ],
       "comments/commentThread/context": [
@@ -685,13 +719,13 @@
           "id": "markdownCollab.prReviewFiles",
           "name": "PR Review",
           "visibility": "collapsed",
-          "when": "markdownCollab.workspaceHasGit"
+          "when": "markdownCollab.workspaceHasGit && isWorkspaceTrusted"
         },
         {
           "id": "markdownCollab.uncommittedFiles",
           "name": "Uncommitted Markdown",
           "visibility": "collapsed",
-          "when": "markdownCollab.workspaceHasGit"
+          "when": "markdownCollab.workspaceHasGit && isWorkspaceTrusted"
         }
       ]
     },
@@ -715,6 +749,7 @@
         "steps": [
           {
             "id": "playground",
+            "when": "isWorkspaceTrusted",
             "title": "Try the loop in a playground",
             "description": "Open a scratch document that arrives mid-review — threads, a reply, and two pending suggestions. Click Accept, reply to a thread, resolve one. Nothing to configure.\n[Open the playground](command:markdownCollab.openTutorial)",
             "media": {
@@ -723,6 +758,7 @@
           },
           {
             "id": "install-skill",
+            "when": "isWorkspaceTrusted",
             "title": "Set up Claude Code",
             "description": "Claude needs the Markdown Collab plugin to know how to act on your comments. One command, once per machine.\n[Set up Claude Code](command:markdownCollab.installClaudeSkill)",
             "media": {
@@ -767,6 +803,7 @@
           },
           {
             "id": "connect-agent",
+            "when": "isWorkspaceTrusted",
             "title": "Using Cursor, Codex, or Copilot?",
             "description": "Hook the review tools up to whichever agent you use. Nothing is written with a token.\n[Connect an Agent…](command:markdownCollab.connectAgent)",
             "media": {

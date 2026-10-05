@@ -31,6 +31,7 @@ export async function sendViaTerminal(
   tracker: TerminalTracker,
   options?: { log?: Logger },
 ): Promise<SendResult> {
+  if (!vscode.workspace.isTrusted) return copyInstead(payload);
   const log = options?.log;
   const terminals: TerminalCandidate<vscode.Terminal>[] = vscode.window.terminals.map((t) => ({
     terminal: t,
@@ -108,7 +109,8 @@ export async function sendViaTerminal(
   return result;
 }
 
-export function startClaudeTerminal(tracker: TerminalTracker, log?: Logger): vscode.Terminal {
+export function startClaudeTerminal(tracker: TerminalTracker, log?: Logger): vscode.Terminal | undefined {
+  if (!vscode.workspace.isTrusted) return undefined;
   const terminal = vscode.window.createTerminal({ name: "Claude Review" });
   log?.info("spawned a Claude terminal");
   tracker.markClaudeStarted(terminal);

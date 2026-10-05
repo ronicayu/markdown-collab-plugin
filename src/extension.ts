@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { createLogger } from "./logging";
-import { setCliLogger } from "./pr/cli";
+import { setCliGate, setCliLogger } from "./pr/cli";
 import { folderForDocument } from "./workspaceFolder";
 import { activateEditorPresence } from "./editorPresence";
 import { CollabEditorProvider } from "./collab/collabEditorProvider";
@@ -37,6 +37,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode: vscode.version,
     folders: vscode.workspace.workspaceFolders?.length ?? 0,
   });
+
+  setCliGate(() => vscode.workspace.isTrusted);
 
   // Every `gh` / `glab` invocation lands in the log from here on.
   setCliLogger(rootLog.scope("pr"));
@@ -85,32 +87,6 @@ export function activate(context: vscode.ExtensionContext): void {
   // own the per-thread row, this is for when the human has gone back to the
   // editor (10x-plan-2 P0.2).
   context.subscriptions.push(activateClaudeStatusBar());
-
-  // The MCP tool server (10x-plan-2 P0.1). Started for every workspace so the
-  // tools are there when Claude reaches for them, but nothing depends on it:
-  // it is never the default send mode, and a failure to bind is logged and
-  // ignored. Registration in `.mcp.json` is a separate, asked-once step.
-  void startMcpServer(context, {
-    log: rootLog.scope("mcp"),
-    // Tool calls are the lifecycle signal: they say Claude is working, which
-    // file, and — via mc_check — when it's done (10x-plan-2 P0.2).
-    onToolCall: pendingSignalsFromToolCalls,
-  }).then(async (handle) => {
-    if (!handle) return;
-    context.subscriptions.push({ dispose: () => handle.dispose() });
-    await ensureMcpJsonRegistration(context, handle, rootLog.scope("mcp"));
-    // Re-establish every client whose connection can go stale across a
-    // restart — Cursor's in-app agent and Copilot's provider are told the
-    // token fresh every session, and Codex's config carries a literal port —
-    // now that there's a handle to hand them (10x-plan-4 P1.1).
-    await reconnectAgents(context, handle, rootLog.scope("mcp"));
-    // Warm the `claude` lookup in the background, so the first send-mode
-    // picker and the review view's empty state don't wait on a
-    // `claude --version` probe. Untrusted workspaces never run headless, so
-    // they never probe.
-    if (vscode.workspace.isTrusted) void lookupClaude(rootLog.scope("headless"));
-    sweepHeadlessTempDirs(rootLog.scope("headless"));
-  });
 
   // The review view (10x-plan-6 P4): the rendered document with the threads
   // sidebar, read-only until its Edit switch is on, for a single human +
@@ -196,10 +172,48 @@ export function activate(context: vscode.ExtensionContext): void {
   registerSendCommands(deps);
   registerReviewCommands(deps);
 
-  // On startup, nudge the user when the Claude side (plugin or standalone
-  // skill) is missing or out of date — otherwise they only find out by opening
-  // the comments panel. Gated so it prompts once per version, not every time.
-  void maybePromptSkillUpdate(context, skillLog);
+  const startTrustedFeatures = (): void => {
+    // The MCP tool server (10x-plan-2 P0.1). Started in trusted workspaces so the
+    // tools are there when Claude reaches for them, but nothing depends on it:
+    // it is never the default send mode, and a failure to bind is logged and
+    // ignored. Registration in `.mcp.json` is a separate, asked-once step.
+    void startMcpServer(context, {
+      log: rootLog.scope("mcp"),
+      // Tool calls are the lifecycle signal: they say Claude is working, which
+      // file, and — via mc_check — when it's done (10x-plan-2 P0.2).
+      onToolCall: pendingSignalsFromToolCalls,
+    }).then(async (handle) => {
+      if (!handle) return;
+      context.subscriptions.push({ dispose: () => handle.dispose() });
+      await ensureMcpJsonRegistration(context, handle, rootLog.scope("mcp"));
+      // Re-establish every client whose connection can go stale across a
+      // restart — Cursor's in-app agent and Copilot's provider are told the
+      // token fresh every session, and Codex's config carries a literal port —
+      // now that there's a handle to hand them (10x-plan-4 P1.1).
+      await reconnectAgents(context, handle, rootLog.scope("mcp"));
+      // Warm the `claude` lookup in the background, so the first send-mode
+      // picker and the review view's empty state don't wait on a
+      // `claude --version` probe.
+      void lookupClaude(rootLog.scope("headless"));
+      sweepHeadlessTempDirs(rootLog.scope("headless"));
+    });
+
+    // On startup, nudge the user when the Claude side (plugin or standalone
+    // skill) is missing or out of date — otherwise they only find out by opening
+    // the comments panel. Gated so it prompts once per version, not every time.
+    void maybePromptSkillUpdate(context, skillLog);
+  };
+
+  if (vscode.workspace.isTrusted) {
+    startTrustedFeatures();
+  } else {
+    const granted = vscode.workspace.onDidGrantWorkspaceTrust(() => {
+      granted.dispose();
+      startTrustedFeatures();
+      void vscode.commands.executeCommand("markdownCollab.uncommittedRefresh");
+    });
+    context.subscriptions.push(granted);
+  }
 }
 
 export function deactivate(): void {

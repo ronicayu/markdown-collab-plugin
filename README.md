@@ -91,6 +91,8 @@ In this mode Claude can read files and use this extension's review tools, and no
 
 If a run can't start, the send goes to your terminal and the toast says why. If Claude Code can't load the review tools (MCP disabled by policy), headless stops being offered in that workspace until you reset the send mode.
 
+**Restricted Mode.** In a workspace your editor doesn't trust, you can open the review view, read threads, add, reply to and resolve comments, and copy prompts to the clipboard. Sending to a terminal, running Claude, the review tool server, agent setup (AGENTS.md, `.mcp.json`, the Claude Code plugin), the playground, the conventions editor and the Git and PR views stay off until you trust the workspace; each says so when you use it. Your workspace's conventions file isn't added to copied prompts either.
+
 ### What the status bar shows
 
 Every review request has a pulse, whichever way it was sent. Each state is something the extension observed, not a guess.
@@ -215,7 +217,7 @@ Under `.markdown-collab/`, the extension writes runtime state for the tool serve
 
 **Start with Report a Problem.** It answers the first questions of any diagnosis in one paste, with tokens redacted. Then set **Show Logs** to Trace and reproduce: every send, tool call, refusal, and `gh`/`glab` call is logged with its outcome.
 
-**Run Claude for me isn't offered in the send-mode picker.** Headless needs `claude` on the PATH your editor sees (or `markdownCollab.claudePath`), a trusted workspace, and the tool server. The diagnostics report says which is missing.
+**Run Claude for me isn't offered in the send-mode picker.** Headless needs `claude` on the PATH your editor sees (or `markdownCollab.claudePath`), a trusted workspace (not Restricted Mode), and the tool server. The diagnostics report says which is missing.
 
 **Claude replied in the terminal, but nothing changed in the file.** Claude may not have the review tools or the plugin. Run **Connect an Agent…** → **Claude Code**, and restart the Claude session.
 

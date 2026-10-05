@@ -67,6 +67,13 @@ export function setCliRunner(runner: CliRunner): void {
   activeRunner = runner;
 }
 
+let cliAllowed: () => boolean = () => true;
+export function setCliGate(allowed: () => boolean): void {
+  cliAllowed = allowed;
+}
+
+const disabledInRestrictedMode = (): Error => new Error("disabled in Restricted Mode");
+
 /**
  * Where CLI invocations are logged, when a logger has been installed. PR/MR
  * work is entirely `gh`/`glab` subprocesses, so "the review didn't post" is
@@ -94,7 +101,11 @@ export function getLogger(): Logger | null {
  * logger; redaction strips anything token-shaped.
  */
 export function getCliRunner(): CliRunner {
-  const runner = activeRunner;
+  const inner = activeRunner;
+  const runner: CliRunner = async (bin, args, opts) => {
+    if (!cliAllowed()) throw disabledInRestrictedMode();
+    return inner(bin, args, opts);
+  };
   if (!cliLog) return runner;
   const log = cliLog;
   return async (bin, args, opts) => {
@@ -118,6 +129,7 @@ export async function runCliOrThrow(
   args: string[],
   opts: RunCliOptions = {},
 ): Promise<RunCliResult> {
+  if (!cliAllowed()) throw disabledInRestrictedMode();
   const res = await activeRunner(bin, args, opts);
   if (res.code !== 0) {
     throw new Error(

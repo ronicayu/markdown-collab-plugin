@@ -62,6 +62,9 @@ type ClaudeLookup = { ok: true; claude: ResolvedClaude } | { ok: false; error: s
 let lookupCache: { key: string; lookup: Promise<ClaudeLookup> } | null = null;
 
 export function lookupClaude(log?: Logger): Promise<ClaudeLookup> {
+  if (!vscode.workspace.isTrusted) {
+    return Promise.resolve({ ok: false, error: "this workspace isn't trusted" });
+  }
   const configured =
     vscode.workspace.getConfiguration("markdownCollab").get<string>("claudePath", "") ?? "";
   if (lookupCache && lookupCache.key === configured) return lookupCache.lookup;

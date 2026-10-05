@@ -282,6 +282,7 @@ export async function startMcpServer(
   context: vscode.ExtensionContext,
   deps: McpHostDeps,
 ): Promise<McpServerHandle | null> {
+  if (!vscode.workspace.isTrusted) return null;
   if (running) return running;
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) return null;

@@ -122,6 +122,8 @@ const workspace = {
   onDidSaveTextDocument: () => noopDisposable,
   onDidRenameFiles: () => noopDisposable,
   onDidChangeWorkspaceFolders: () => noopDisposable,
+  isTrusted: true,
+  onDidGrantWorkspaceTrust: () => noopDisposable,
   openTextDocument: async () => undefined,
   findFiles: async (_pattern: any) => [] as any[],
   asRelativePath: (p: string) => p,

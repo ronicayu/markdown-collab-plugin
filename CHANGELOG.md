@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.35.36 — 2026-10-05 (GitHub only)
+
+### Added: Markdown Collab now opens in Restricted Mode
+
+It used to stay off in a workspace you hadn't trusted. Now you can open the
+review view, read threads, add, reply to and resolve comments, and copy prompts
+to the clipboard. Sending to a terminal, running Claude, the review tool server,
+agent setup (AGENTS.md, `.mcp.json`, the Claude Code plugin), the playground,
+the conventions editor and the Git and PR views are off until you trust the
+workspace, and each says so when you use it.
+Prompts you copy leave out the workspace's conventions file. Trust the
+workspace and everything starts without a reload. (#13)
+
+### Tests
+
+- The manifest declares limited support and lists the settings that are ignored
+  in Restricted Mode.
+- Sending always copies, a terminal never receives text, `claude` is never
+  probed or run, the tool server never starts, and `git`/`gh`/`glab` never run
+  while the workspace is untrusted.
+- Setup, connect, disconnect, the playground and the conventions editor write
+  nothing and show one warning; no Claude terminal opens.
+- The Uncommitted Markdown tree shows no repo without running git or logging an
+  error, and fills in once trust is granted.
+- Granting trust starts the tool server and the skill check once.
+- A guard fails when a new file starts a subprocess without a trust gate.
+
 ## 0.35.35 — 2026-10-05 (GitHub only)
 
 ### Fixed: commands said "Open a Markdown file first" while the review view was open

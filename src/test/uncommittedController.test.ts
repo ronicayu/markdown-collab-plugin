@@ -20,7 +20,14 @@ import * as os from "os";
 import * as path from "path";
 import { UncommittedChangesController } from "../uncommitted/uncommittedController";
 import { CollabEditorProvider } from "../collab/collabEditorProvider";
-import { getCliRunner, setCliRunner, type CliRunner, type RunCliResult } from "../pr/cli";
+import {
+  getCliRunner,
+  setCliGate,
+  setCliLogger,
+  setCliRunner,
+  type CliRunner,
+  type RunCliResult,
+} from "../pr/cli";
 import { Uri, commands, window, workspace } from "./vscode-stub";
 import type { Logger } from "../logging";
 
@@ -413,6 +420,52 @@ describe("UncommittedChangesController — refresh refreshes live-editor diff pa
     await refreshHandler();
     expect(spy).toHaveBeenCalledTimes(2);
 
+    controller.dispose();
+  });
+});
+
+describe("UncommittedChangesController — Restricted Mode", () => {
+  afterEach(() => {
+    (workspace as any).isTrusted = true;
+    setCliGate(() => true);
+    setCliLogger(null);
+  });
+
+  it("shows no repo without running git or logging an error, then lists files once trust is granted", async () => {
+    const repoRoot = mkTempRepo();
+    fs.writeFileSync(path.join(repoRoot, "notes.md"), "Untracked note.\n");
+    const run = vi.fn(
+      fakeGit({
+        "git rev-parse --show-toplevel": ok(`${repoRoot}\n`),
+        "git diff --name-status -M HEAD": ok(""),
+        "git ls-files --others --exclude-standard": ok("notes.md\n"),
+        "git diff --name-only --cached -M": ok(""),
+        "git diff --name-only -M": ok(""),
+      }),
+    );
+    const error = vi.fn();
+    const log = makeLogger();
+    log.error = error;
+    setCliLogger(log);
+    setCliRunner(run);
+    (workspace as any).isTrusted = false;
+    setCliGate(() => (workspace as any).isTrusted);
+
+    (workspace as any).workspaceFolders = [{ uri: Uri.file(repoRoot), name: "ws", index: 0 }];
+    const controller = new UncommittedChangesController(async () => undefined, makeLogger());
+    await Promise.resolve();
+
+    expect(capturedProvider.getChildren(undefined)).toEqual([]);
+    expect(capturedView.message).toBeTruthy();
+    expect(run).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+
+    (workspace as any).isTrusted = true;
+    const changed = waitForChange();
+    await registeredCommands.get("markdownCollab.uncommittedRefresh")!();
+    await changed;
+
+    expect((capturedProvider.getChildren(undefined) as any[]).map((n) => n.name)).toEqual(["notes.md"]);
     controller.dispose();
   });
 });

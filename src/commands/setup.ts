@@ -17,6 +17,7 @@ import {
 } from "../claudePlugin";
 import { spawnCommand } from "../transports/claudeBinary";
 import { lookupClaude } from "../transports/headlessHost";
+import { requireTrust } from "../trust";
 import { buildTutorialDocument, TUTORIAL_REL } from "../tutorial";
 import {
   currentMcpServer,
@@ -50,6 +51,7 @@ import type { CommandDeps } from "./deps";
  * the first minute, with no skill install, no send mode, and no Claude session.
  */
 async function invokeOpenTutorial(log: Logger): Promise<void> {
+  if (!requireTrust("The playground")) return;
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
     void vscode.window.showWarningMessage(
@@ -149,6 +151,7 @@ export async function maybePromptSkillUpdate(
   context: vscode.ExtensionContext,
   log: Logger,
 ): Promise<void> {
+  if (!vscode.workspace.isTrusted) return;
   const extensionVersion = String(context.extension?.packageJSON?.version ?? "");
   if (extensionVersion && context.globalState.get<string>(PLUGIN_PROMPT_KEY) !== extensionVersion) {
     await context.globalState.update(PLUGIN_PROMPT_KEY, extensionVersion);
@@ -281,6 +284,7 @@ async function setUpClaudeCode(context: vscode.ExtensionContext, log: Logger): P
  * plus `.mcp.json`).
  */
 async function invokeSetUpClaudeCode(context: vscode.ExtensionContext, log: Logger): Promise<void> {
+  if (!requireTrust("Setting up Claude Code")) return;
   const outcome = await setUpClaudeCode(context, log);
   if (outcome.summary === null) return;
   if (outcome.failed) {
@@ -357,6 +361,7 @@ async function applyAgentsSnippet(folder: vscode.WorkspaceFolder, log: Logger): 
 }
 
 async function invokeInitializeAgents(log: Logger): Promise<void> {
+  if (!requireTrust("Writing AGENTS.md")) return;
   const folder = await pickWorkspaceFolder();
   if (!folder) {
     void vscode.window.showWarningMessage(
@@ -615,6 +620,7 @@ async function registerWithClient(
 }
 
 async function invokeConnectAgent(deps: CommandDeps): Promise<void> {
+  if (!requireTrust("Connecting an agent")) return;
   const { context, rootLog, log } = deps;
   const handle = currentMcpServer();
   const folder = vscode.workspace.workspaceFolders?.[0];
@@ -749,6 +755,7 @@ export function buildDisconnectAgentItems(caps: { cursorInApp: boolean; copilot:
  * explanation for "Other" (there was never anything to undo).
  */
 async function invokeDisconnectAgent(deps: CommandDeps): Promise<void> {
+  if (!requireTrust("Connecting an agent")) return;
   const { context } = deps;
   const folder = vscode.workspace.workspaceFolders?.[0];
   const items = buildDisconnectAgentItems({ cursorInApp: hasCursorInAppApi(), copilot: hasCopilotProviderApi() });
@@ -896,6 +903,7 @@ export function registerSetupCommands(deps: CommandDeps): void {
       await invokeOpenTutorial(reviewLog);
     }),
     vscode.commands.registerCommand("markdownCollab.registerMcpServer", async () => {
+      if (!requireTrust("Registering the review tools")) return;
       const handle = currentMcpServer();
       if (!handle) {
         void vscode.window.showWarningMessage(

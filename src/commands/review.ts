@@ -22,6 +22,7 @@ import { buildReviewDigest, type DigestFile } from "../reviewDigest";
 import type { ReviewView } from "../reviewView";
 import type { TerminalTracker } from "../transports/terminalTracker";
 import { activeMarkdownUri } from "../activeMarkdown";
+import { requireTrust } from "../trust";
 import { dispatchReviewPayload } from "./send";
 import type { CommandDeps } from "./deps";
 import type { OpenReviewView } from "./reviewViewRouter";
@@ -32,6 +33,7 @@ import type { OpenReviewView } from "./reviewViewRouter";
  * in it, and this is prose whose whole value is being specific.
  */
 async function invokeEditReviewConventions(log: Logger): Promise<void> {
+  if (!requireTrust("Editing review conventions")) return;
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
     void vscode.window.showWarningMessage(

@@ -29,6 +29,7 @@ import {
 } from "../transports/detectSendMode";
 import { buildSendModeItems } from "../transports/sendModePicker";
 import { sendViaTerminal, startClaudeTerminal } from "../transports/terminal";
+import { requireTrust } from "../trust";
 import type { TerminalTracker } from "../transports/terminalTracker";
 import {
   cancelHeadlessRuns,
@@ -43,6 +44,7 @@ import type { CommandDeps } from "./deps";
 
 /** The workspace's standing review conventions, or null when there are none. */
 async function readConventions(folder: vscode.WorkspaceFolder): Promise<string | null> {
+  if (!vscode.workspace.isTrusted) return null;
   const uri = vscode.Uri.joinPath(folder.uri, ...CONVENTIONS_REL.split("/"));
   try {
     return Buffer.from(await vscode.workspace.fs.readFile(uri)).toString("utf8");
@@ -236,11 +238,14 @@ export async function dispatchReviewPayload(
     conventions: conventions ? `${conventions.length} chars` : "none",
   });
 
+  const restricted = !vscode.workspace.isTrusted;
   let mode: SendMode;
   let remembering = false;
   /** Set when this send's mode was auto-detected rather than chosen. */
   let detected: SendModeDetection | null = null;
-  if (opts?.forceMode) {
+  if (restricted) {
+    mode = "clipboard";
+  } else if (opts?.forceMode) {
     // The caller already decided — e.g. the empty-state card's button, which
     // exists specifically so headless can run without a detour through the
     // picker. Config, remembered choice, and auto-detect are all skipped.
@@ -301,11 +306,13 @@ export async function dispatchReviewPayload(
     }
   }
 
-  const rememberedSuffix = detected
-    ? ` Send mode auto-detected.${CHANGE_HINT}`
-    : remembering
-      ? ' Run "Markdown Collab: Reset Send Mode" to change later.'
-      : "";
+  const rememberedSuffix = restricted
+    ? " Sending is off in Restricted Mode."
+    : detected
+      ? ` Send mode auto-detected.${CHANGE_HINT}`
+      : remembering
+        ? ' Run "Markdown Collab: Reset Send Mode" to change later.'
+        : "";
 
   log.info("delivering", { mode, file: payload.file });
 
@@ -463,6 +470,7 @@ export function registerSendCommands(deps: CommandDeps): void {
     vscode.commands.registerCommand(
       "markdownCollab.startClaudeTerminal",
       async () => {
+        if (!requireTrust("Starting a Claude terminal")) return;
         startClaudeTerminal(terminalTracker);
       },
     ),
