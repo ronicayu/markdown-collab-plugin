@@ -303,6 +303,7 @@ export async function startMcpServer(
       token,
       port: preferredPort(folder.uri.fsPath),
       onError: (m) => deps.log.warn("transport error", m),
+      onWarn: (m) => deps.log.warn(m),
       handlers: {
         serverInfo: { name: MCP_SERVER_NAME, version: extensionVersion(context) },
         // The workflow in brief, from the same sections as the skill (10x-plan-4

@@ -11,6 +11,7 @@ editor can support. Skip it and any agent still works: copy the prompt
 | Claude Code | Installs the plugin and adds a `.mcp.json` entry, in one step. |
 | Cursor, in-app agent | Nothing on disk. Registered live for the session, and again after each reload. |
 | Cursor CLI | `.cursor/mcp.json` with environment references. Open a new terminal in this window and start `cursor-agent` there. |
+| Windsurf (Cascade) | Nothing on disk. A scratch document with the address and a session token to paste into Windsurf's MCP config. |
 | Codex | A `[mcp_servers.markdown-collab]` table in `.codex/config.toml`. Codex loads it once you trust the project, so run `codex` in this folder from a new terminal in this window. |
 | GitHub Copilot, agent mode | Nothing on disk. Enable the Markdown Collab tools in Copilot's tool picker. |
 | Anything else | A scratch document with the address and a snippet to copy. |

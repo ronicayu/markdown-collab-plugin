@@ -21,9 +21,9 @@ import {
 const pkg = JSON.parse(readFileSync(resolve(__dirname, "../../package.json"), "utf8"));
 
 describe("buildConnectAgentItems", () => {
-  it("always offers Claude Code, Cursor CLI, Codex, and the generic fallback", () => {
+  it("always offers Claude Code, Cursor CLI, Windsurf, Codex, and the generic fallback", () => {
     const ids = buildConnectAgentItems({ cursorInApp: false, copilot: false }).map((i) => i.id);
-    expect(ids).toEqual(["claude", "cursor-cli", "codex", "other"]);
+    expect(ids).toEqual(["claude", "cursor-cli", "windsurf", "codex", "other"]);
   });
 
   it("adds Cursor's in-app agent only when that API exists", () => {
@@ -38,7 +38,15 @@ describe("buildConnectAgentItems", () => {
 
   it("offers every entry when every capability is present, in a stable order", () => {
     const ids = buildConnectAgentItems({ cursorInApp: true, copilot: true }).map((i) => i.id);
-    expect(ids).toEqual(["claude", "cursor-inapp", "cursor-cli", "codex", "copilot", "other"]);
+    expect(ids).toEqual(["claude", "cursor-inapp", "cursor-cli", "windsurf", "codex", "copilot", "other"]);
+  });
+
+  it("lists Windsurf (Cascade) between the Cursor entries and Codex", () => {
+    const items = buildConnectAgentItems({ cursorInApp: true, copilot: true });
+    const ids = items.map((i) => i.id);
+    expect(ids.indexOf("windsurf")).toBe(ids.indexOf("cursor-cli") + 1);
+    expect(ids.indexOf("windsurf")).toBe(ids.indexOf("codex") - 1);
+    expect(items.find((i) => i.id === "windsurf")!.label).toBe("Windsurf (Cascade)");
   });
 
   it("every item carries a one-line, non-empty description", () => {
@@ -63,14 +71,14 @@ describe("buildConnectAgentItems", () => {
 // 4.4: "Connect an Agent has no inverse" — same guard shape as
 // buildConnectAgentItems above, for the QuickPick that undoes it.
 describe("buildDisconnectAgentItems", () => {
-  it("always offers Claude Code, Cursor CLI, Codex, and Other", () => {
+  it("always offers Claude Code, Cursor CLI, Windsurf, Codex, and Other", () => {
     const ids = buildDisconnectAgentItems({ cursorInApp: false, copilot: false }).map((i) => i.id);
-    expect(ids).toEqual(["claude", "cursor-cli", "codex", "other"]);
+    expect(ids).toEqual(["claude", "cursor-cli", "windsurf", "codex", "other"]);
   });
 
   it("adds Cursor's in-app agent and Copilot only when those APIs exist — same gating as Connect", () => {
     const withBoth = buildDisconnectAgentItems({ cursorInApp: true, copilot: true }).map((i) => i.id);
-    expect(withBoth).toEqual(["claude", "cursor-inapp", "cursor-cli", "codex", "copilot", "other"]);
+    expect(withBoth).toEqual(["claude", "cursor-inapp", "cursor-cli", "windsurf", "codex", "copilot", "other"]);
   });
 
   it("every item's detail says exactly what running it removes", () => {
@@ -89,7 +97,7 @@ describe("buildDisconnectAgentItems", () => {
 // 10x-plan-6 P1.1: for every agent but Claude Code the file format is the
 // API — Connect writes AGENTS.md first and offers the MCP registration second,
 // and Disconnect only ever undoes the second step.
-const FORMAT_FIRST: FormatFirstAgentId[] = ["cursor-inapp", "cursor-cli", "codex", "copilot", "other"];
+const FORMAT_FIRST: FormatFirstAgentId[] = ["cursor-inapp", "cursor-cli", "windsurf", "codex", "copilot", "other"];
 
 describe("Connect an Agent: AGENTS.md first, the review tools optional", () => {
   const items = buildConnectAgentItems({ cursorInApp: true, copilot: true });
@@ -108,6 +116,7 @@ describe("Connect an Agent: AGENTS.md first, the review tools optional", () => {
   it.each([
     ["cursor-inapp", /Cursor's in-app agent/, /registers live/],
     ["cursor-cli", /Cursor CLI/, /writes \.cursor\/mcp\.json/],
+    ["windsurf", /Windsurf/, /opens a scratch document/],
     ["codex", /Codex/, /writes \.codex\/config\.toml/],
     ["copilot", /GitHub Copilot/, /registers live/],
     ["other", /your agent/, /opens a scratch document/],
@@ -225,6 +234,23 @@ describe("the generic scratch-document copy doesn't overclaim 'nothing on disk' 
     expect(src).toContain("the token lives only in");
     expect(src).toContain("this session; don't save this document.");
     expect(src).not.toMatch(/session token — nothing written to disk/);
+  });
+});
+
+describe("package.json names Windsurf", () => {
+  it("lists Windsurf among the supported agents in the description", () => {
+    expect(pkg.description).toMatch(/Claude Code, Cursor, Windsurf, Codex and Copilot\.$/);
+  });
+
+  it("has windsurf and cascade keywords", () => {
+    expect(pkg.keywords).toEqual(expect.arrayContaining(["windsurf", "cascade"]));
+  });
+
+  it("names Windsurf in the walkthrough step that lists the agents", () => {
+    const step = pkg.contributes.walkthroughs
+      .flatMap((w: { steps: Array<{ id: string; description: string }> }) => w.steps)
+      .find((s: { id: string }) => s.id === "connect-agent");
+    expect(step.description).toMatch(/Windsurf/);
   });
 });
 

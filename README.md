@@ -3,7 +3,7 @@
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/markdown-collab.markdown-collab-plugin?label=VS%20Code%20Marketplace&color=4F46E5)](https://marketplace.visualstudio.com/items?itemName=markdown-collab.markdown-collab-plugin)
 [![Open VSX](https://img.shields.io/open-vsx/v/markdown-collab/markdown-collab-plugin?label=Open%20VSX&color=4F46E5)](https://open-vsx.org/extension/markdown-collab/markdown-collab-plugin)
 
-Review Markdown *with* your AI agent — Claude Code, Cursor, Codex or Copilot — in VS Code, Cursor or Windsurf. Comments live inside the `.md` file, anchored to the text they're about. The agent reads them, replies, and proposes edits you accept or reject. Or it reviews the document and leaves comments for you.
+Review Markdown *with* your AI agent — Claude Code, Cursor, Windsurf, Codex or Copilot — in VS Code, Cursor or Windsurf. Comments live inside the `.md` file, anchored to the text they're about. The agent reads them, replies, and proposes edits you accept or reject. Or it reviews the document and leaves comments for you.
 
 ![Click Ask agent to review; three comment threads land; walk them with the keyboard](media/gifs/ask-agent-to-review.gif)
 
@@ -15,7 +15,7 @@ Click **Ask agent to review**. The agent reads your doc and leaves a comment per
 - **Your agent as reviewer or as writer.** Ask it to review a document, a folder, or only what changed since its last pass. Or leave comments yourself and send them; the agent edits the document and replies in each thread.
 - **Suggestions you can undo.** In suggest mode, the agent's edits arrive as tracked changes. Accept applies one, Reject keeps your wording, and both are ordinary editor edits, so Cmd+Z takes them back.
 - **The Markdown Collab view, and the text editor too.** The rendered document with a threads sidebar — read it, or switch to Editing and edit in place — plus dimmed markers, hovers, and a CodeLens in the plain text editor, so a reviewed file never looks corrupted.
-- **Any agent.** Claude Code is the most complete setup — a plugin and the review tools in one step. Beyond it, the file format is the contract: copy the prompt and any agent can edit it by following `AGENTS.md`, no integration required. Connect Cursor, Codex, Copilot, or another MCP client as an optional second step, for edits you can undo; comments say which agent wrote them.
+- **Any agent.** Claude Code is the most complete setup — a plugin and the review tools in one step. Beyond it, the file format is the contract: copy the prompt and any agent can edit it by following `AGENTS.md`, no integration required. Connect Cursor, Windsurf, Codex, Copilot, or another MCP client as an optional second step, for edits you can undo; comments say which agent wrote them.
 
 ## Get started
 
@@ -24,7 +24,7 @@ Click **Ask agent to review**. The agent reads your doc and leaves a comment per
    code --install-extension markdown-collab.markdown-collab-plugin
    ```
    Cursor, Windsurf, VSCodium, and Gitpod install it from [Open VSX](https://open-vsx.org/extension/markdown-collab/markdown-collab-plugin). A `.vsix` is on every [GitHub release](https://github.com/ronicayu/markdown-collab-plugin/releases).
-2. **Connect an Agent…, once per machine.** `Cmd-Shift-P` → **Markdown Collab: Connect an Agent…** → **Claude Code**. This installs the Markdown Collab plugin into Claude Code — the review workflow as `/markdown-collab:review`, the anchor-safe `mdc` helper on Claude's PATH, a check that tells Claude the moment an edit breaks a comment anchor — and registers this extension's review tools in the same step, so Claude's edits arrive as edits you can undo. It installs from a marketplace the extension keeps on your machine, so the plugin always matches the extension's version, and it offers an update when a new one ships. Restart any running Claude session afterwards, or run `/reload-plugins`. If Claude Code isn't found, it says so and writes nothing; set `markdownCollab.claudePath` if it's installed where your editor can't see it. Using Cursor, Codex, or Copilot instead? The same command lists them — see [Other agents](#other-agents) below.
+2. **Connect an Agent…, once per machine.** `Cmd-Shift-P` → **Markdown Collab: Connect an Agent…** → **Claude Code**. This installs the Markdown Collab plugin into Claude Code — the review workflow as `/markdown-collab:review`, the anchor-safe `mdc` helper on Claude's PATH, a check that tells Claude the moment an edit breaks a comment anchor — and registers this extension's review tools in the same step, so Claude's edits arrive as edits you can undo. It installs from a marketplace the extension keeps on your machine, so the plugin always matches the extension's version, and it offers an update when a new one ships. Restart any running Claude session afterwards, or run `/reload-plugins`. If Claude Code isn't found, it says so and writes nothing; set `markdownCollab.claudePath` if it's installed where your editor can't see it. Using Cursor, Windsurf, Codex, or Copilot instead? The same command lists them — see [Other agents](#other-agents) below.
 3. **Open a Markdown file** and click the comment icon in its title bar. Then either click **Ask agent to review**, or select a passage in the rendered document, click **+ Add comment**, write your note, and click **Send**.
 
 Want to try it with no agent at all? **Markdown Collab: Open Tutorial Playground** writes a scratch document that arrives mid-review, with threads, a reply, and two pending suggestions to accept or reject.
@@ -107,7 +107,7 @@ Every review request has a pulse, whichever way it was sent. Each state is somet
 
 ## Other agents
 
-The file format is the contract, and any agent that reads project instructions can act on it — Cursor, Codex, Copilot, or anything else:
+The file format is the contract, and any agent that reads project instructions can act on it — Cursor, Windsurf, Codex, Copilot, or anything else:
 
 1. **Copy the prompt.** Set the send mode to `clipboard`, or pick it from the picker on your first send — the prompt goes to your clipboard instead of a terminal.
 2. **The agent edits the file, following `AGENTS.md`.** [`docs/format.md`](docs/format.md) is the full contract — every marker, the threads block, the suggestion shape. The `AGENTS.md` snippet (written or refreshed by **Connect an Agent…**, or the hidden **Initialize AGENTS.md** command) points any agent that reads it at the same rules, so it can reply and open threads without a tool of its own.
@@ -122,6 +122,7 @@ For an agent that can call MCP tools, **Connect an Agent…** hooks the review t
 | Claude Code | Installs the Claude Code plugin and adds a `markdown-collab` entry to the workspace's `.mcp.json`, in one step. If Claude is already running, `/mcp` reconnects it. |
 | Cursor, in-app agent | Nothing on disk. Registered live for the session, and again after each reload. |
 | Cursor CLI | `.cursor/mcp.json` with environment references. Open a new terminal in this window and start `cursor-agent` there. |
+| Windsurf (Cascade) | AGENTS.md only; nothing else on disk. A scratch document shows the address and a per-session token for you to paste into Windsurf's MCP config (`~/.codeium/windsurf/mcp_config.json`). The token changes on every reload, so paste it again after one. |
 | Codex | A `[mcp_servers.markdown-collab]` table in `.codex/config.toml`, with the loopback address and the name of the token's environment variable. Codex loads it once you trust the project, so run `codex` in this folder from a new terminal in this window. |
 | GitHub Copilot, agent mode | Nothing on disk. Enable the Markdown Collab tools in Copilot's tool picker. |
 | Anything else | A scratch document with the address, the token, and a snippet to copy. |
@@ -165,7 +166,7 @@ The single keys do nothing while you're typing. There's no key for accepting a s
 | Remove All Resolved Comments | Delete every resolved thread, anchors included. One undo step. |
 | Remove All Review Data | Strip every comment, anchor, and checkpoint, leaving clean Markdown to commit. A pending suggestion is discarded, not applied. One undo step. |
 | Repair Comment Anchors | Fix the anchor damage that can be fixed without guessing. |
-| Connect an Agent… | Hook the review tools up to Claude Code, Cursor, Codex, Copilot, or another MCP client. |
+| Connect an Agent… | Hook the review tools up to Claude Code, Cursor, Windsurf, Codex, Copilot, or another MCP client. |
 | Disconnect an Agent… | Remove an agent's entry you no longer want registered. |
 | Open Tutorial Playground | The scratch document that arrives mid-review. |
 | Show Logs | The Markdown Collab output channel. Set it to Trace for per-send and per-tool-call detail. |

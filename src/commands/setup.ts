@@ -432,7 +432,7 @@ async function pickWorkspaceFolder(): Promise<vscode.WorkspaceFolder | undefined
 
 /** One entry in the Connect an Agent quick pick. */
 export interface ConnectAgentItem extends vscode.QuickPickItem {
-  id: "claude" | "cursor-inapp" | "cursor-cli" | "codex" | "copilot" | "other";
+  id: "claude" | "cursor-inapp" | "cursor-cli" | "windsurf" | "codex" | "copilot" | "other";
 }
 
 /**
@@ -466,6 +466,12 @@ export function buildConnectAgentItems(caps: { cursorInApp: boolean; copilot: bo
     id: "cursor-cli",
     label: "Cursor CLI (cursor-agent)",
     description: "Writes AGENTS.md, then offers .cursor/mcp.json for the review tools — env references only, no token.",
+  });
+  items.push({
+    id: "windsurf",
+    label: "Windsurf (Cascade)",
+    description:
+      "Writes AGENTS.md, then offers the review tools' URL and a session token in a scratch document for Windsurf's MCP config.",
   });
   items.push({
     id: "codex",
@@ -508,6 +514,11 @@ const MCP_OFFERS: Record<FormatFirstAgentId, McpOffer> = {
     question:
       "Also register the review tools with Cursor CLI so its edits are undoable? (writes .cursor/mcp.json — env references only, no token)",
     accept: "Register",
+  },
+  windsurf: {
+    question:
+      "Also connect Windsurf's Cascade to the review tools so its edits are undoable? (opens a scratch document with the URL and a session token — lives only in this session)",
+    accept: "Show connection details",
   },
   codex: {
     question:
@@ -650,6 +661,13 @@ async function registerWithClient(
       );
       return;
     }
+    case "windsurf":
+      await openGenericSnippetDocument(handle, "windsurf");
+      void vscode.window.showInformationMessage(
+        "Markdown Collab: opened a scratch document with Windsurf's MCP config — the token lives only in " +
+          "this session; don't save this document.",
+      );
+      return;
     case "other":
       await openGenericSnippetDocument(handle);
       void vscode.window.showInformationMessage(
@@ -731,7 +749,7 @@ const AGENTS_KEPT = " AGENTS.md is left as is — other agents may be reading it
 
 /** One entry in the Disconnect Agent quick pick — the inverse listing of `ConnectAgentItem` (4.4). */
 export interface DisconnectAgentItem extends vscode.QuickPickItem {
-  id: "claude" | "cursor-inapp" | "cursor-cli" | "codex" | "copilot" | "other";
+  id: "claude" | "cursor-inapp" | "cursor-cli" | "windsurf" | "codex" | "copilot" | "other";
 }
 
 /**
@@ -768,6 +786,12 @@ export function buildDisconnectAgentItems(caps: { cursorInApp: boolean; copilot:
     label: "Cursor CLI (cursor-agent)",
     description: "Removes the markdown-collab entry from .cursor/mcp.json.",
     detail: `Leaves every other server in .cursor/mcp.json untouched.${AGENTS_KEPT}`,
+  });
+  items.push({
+    id: "windsurf",
+    label: "Windsurf (Cascade)",
+    description: "Nothing to remove here.",
+    detail: `The connection details were never saved by this extension. If you pasted them into ~/.codeium/windsurf/mcp_config.json, delete the markdown-collab entry there.${AGENTS_KEPT}`,
   });
   items.push({
     id: "codex",
@@ -893,6 +917,12 @@ async function invokeDisconnectAgent(deps: CommandDeps): Promise<void> {
       await markAgentDisconnected(context, "copilot");
       void vscode.window.showInformationMessage(
         "Markdown Collab: unregistered from GitHub Copilot for this session.",
+      );
+      break;
+    }
+    case "windsurf": {
+      void vscode.window.showInformationMessage(
+        "Markdown Collab: nothing to remove — the connection details were never saved by this extension. If you pasted them into ~/.codeium/windsurf/mcp_config.json, delete the markdown-collab entry there. AGENTS.md is left as is.",
       );
       break;
     }

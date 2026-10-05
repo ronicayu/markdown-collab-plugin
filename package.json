@@ -1,8 +1,8 @@
 {
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
-  "description": "Review Markdown with your AI agent — comments anchored in the file itself, suggestions you accept or reject. Works with Claude Code, Cursor, Codex and Copilot.",
-  "version": "0.35.39",
+  "description": "Review Markdown with your AI agent — comments anchored in the file itself, suggestions you accept or reject. Works with Claude Code, Cursor, Windsurf, Codex and Copilot.",
+  "version": "0.35.40",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -43,6 +43,8 @@
     "technical writing",
     "docs",
     "cursor",
+    "windsurf",
+    "cascade",
     "codex",
     "copilot",
     "headless"
@@ -760,7 +762,7 @@
             "id": "connect-agent",
             "when": "isWorkspaceTrusted",
             "title": "Connect your agent",
-            "description": "Pick your agent — Claude Code, Cursor, Codex, Copilot or another — and Markdown Collab sets up what it needs. No token is written to any file.\n[Connect an Agent…](command:markdownCollab.connectAgent)",
+            "description": "Pick your agent — Claude Code, Cursor, Windsurf, Codex, Copilot or another — and Markdown Collab sets up what it needs. No token is written to any file.\n[Connect an Agent…](command:markdownCollab.connectAgent)",
             "media": {
               "markdown": "media/walkthrough/agents.md"
             },

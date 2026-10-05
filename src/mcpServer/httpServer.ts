@@ -36,7 +36,11 @@ export interface ServeOptions {
   /** Path the MCP endpoint answers on. */
   path?: string;
   onError?(message: string): void;
+  /** A notable refusal worth a log line; a repeated one is reported at most once a minute. */
+  onWarn?(message: string): void;
 }
+
+const UNAUTHORIZED_REPORT_INTERVAL_MS = 60_000;
 
 /** Constant-time bearer comparison — a length-sensitive `===` leaks the token. */
 export function tokenMatches(header: string | undefined, expected: string): boolean {
@@ -112,6 +116,7 @@ function readBody(req: IncomingMessage): Promise<string> {
 /** Start the listener. Resolves once it is accepting connections. */
 export async function serveMcp(opts: ServeOptions): Promise<McpHttpServer> {
   const path = opts.path ?? "/mcp";
+  let lastUnauthorizedReport = -Infinity;
 
   const server = createServer((req, res) => {
     void handleRequest(req, res).catch((e) => {
@@ -132,6 +137,13 @@ export async function serveMcp(opts: ServeOptions): Promise<McpHttpServer> {
       return;
     }
     if (!tokenMatches(req.headers.authorization, opts.token)) {
+      const now = Date.now();
+      if (now - lastUnauthorizedReport >= UNAUTHORIZED_REPORT_INTERVAL_MS) {
+        lastUnauthorizedReport = now;
+        opts.onWarn?.(
+          "rejected a request with a wrong or missing token — likely an agent config pasted before the last window reload",
+        );
+      }
       res.setHeader("www-authenticate", "Bearer");
       send(res, 401, { error: "unauthorized" });
       return;

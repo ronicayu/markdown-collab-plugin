@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.35.40 — 2026-10-05 (GitHub only)
+
+### Added: Windsurf is listed as an agent
+
+Connect an Agent now has a Windsurf (Cascade) entry. It writes AGENTS.md, then
+offers a scratch document with the config to paste into Windsurf's MCP settings
+and where it goes. Nothing else is written to disk. The "Other agent…" document
+no longer says "VS Code". The extension's description and keywords name Windsurf
+too. The Windsurf config keys are unverified on a real install; the document
+says so and includes the generic snippet as a fallback.
+
+### Fixed: a stale token left no trace in the log
+
+When a request is refused for a wrong or missing token, the Markdown Collab log
+now says so, once a minute at most. The usual cause is a config pasted before
+the last window reload. (#11)
+
+### Tests
+
+- Connect an Agent lists Windsurf between Cursor and Codex, and picking it opens
+  the scratch document with `serverUrl`, the URL, the token, the config path and
+  the "not verified" note, writing nothing but AGENTS.md.
+- The description and keywords name Windsurf; the "Other agent…" text is
+  unchanged apart from the wording.
+- A wrong token is refused and reported once for a burst, without the token.
+
 ## 0.35.39 — 2026-10-05 (GitHub only)
 
 ### Fixed: the startup prompts assumed you use Claude Code

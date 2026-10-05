@@ -36,7 +36,7 @@ import type { McpServerHandle } from "./index";
 import { MCP_SERVER_NAME, removeMcpJsonEntry } from "./registration";
 import { mergeCursorMcpJson, removeCursorMcpEntry } from "./clients/cursor";
 import { codexTablePresent, mergeCodexToml, removeCodexTable } from "./clients/codex";
-import { genericSnippet } from "./clients/generic";
+import { genericSnippet, type SnippetClient } from "./clients/generic";
 import { CopilotMcpProvider, COPILOT_PROVIDER_ID, hasCopilotProviderApi } from "./clients/copilot";
 
 export type SessionAgentId = "cursor-inapp" | "copilot";
@@ -280,10 +280,13 @@ export async function reconcileCodexConfig(folder: vscode.Uri, port: number): Pr
   await vscode.workspace.fs.writeFile(uri, Buffer.from(merged.text, "utf8"));
 }
 
-/** Open the "Other agent" scratch document. Nothing is written to disk. */
-export async function openGenericSnippetDocument(handle: Pick<McpServerHandle, "url" | "token">): Promise<void> {
+/** Open the "Other agent" (or Windsurf) scratch document. Nothing is written to disk. */
+export async function openGenericSnippetDocument(
+  handle: Pick<McpServerHandle, "url" | "token">,
+  client: SnippetClient = "generic",
+): Promise<void> {
   const doc = await vscode.workspace.openTextDocument({
-    content: genericSnippet(handle.url, handle.token),
+    content: genericSnippet(handle.url, handle.token, client),
     language: "markdown",
   });
   await vscode.window.showTextDocument(doc);

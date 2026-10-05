@@ -4,7 +4,7 @@
 // feature — a token-authenticated listener on the user's machine — so they are
 // tested against the actual server rather than the functions it calls.
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { isBrowserOrigin, serveMcp, tokenMatches, type McpHttpServer } from "../mcpServer/httpServer";
 import type { ProtocolHandlers } from "../mcpServer/protocol";
 
@@ -29,8 +29,8 @@ afterEach(async () => {
   server = null;
 });
 
-async function start(port?: number): Promise<McpHttpServer> {
-  server = await serveMcp({ token: TOKEN, handlers, port });
+async function start(port?: number, onWarn?: (message: string) => void): Promise<McpHttpServer> {
+  server = await serveMcp({ token: TOKEN, handlers, port, onWarn });
   return server;
 }
 
@@ -142,6 +142,32 @@ describe("serveMcp", () => {
     const s = await start();
     const r = await post(s, { jsonrpc: "2.0", id: 1, method: "tools/list" }, { token: "b".repeat(64) });
     expect(r.status).toBe(401);
+  });
+
+  it("reports a wrong token once, however many requests follow", async () => {
+    const reports = vi.fn();
+    const s = await start(undefined, reports);
+    const rpc = { jsonrpc: "2.0", id: 1, method: "tools/list" };
+    for (let i = 0; i < 5; i++) expect((await post(s, rpc, { token: "b".repeat(64) })).status).toBe(401);
+    expect((await post(s, rpc, { token: null })).status).toBe(401);
+    expect(reports).toHaveBeenCalledTimes(1);
+    expect(reports.mock.calls[0]![0]).toMatch(/wrong or missing token/);
+  });
+
+  it("never puts the real or the presented token in the warning", async () => {
+    const reports = vi.fn();
+    const s = await start(undefined, reports);
+    await post(s, { jsonrpc: "2.0", id: 1, method: "tools/list" }, { token: "b".repeat(64) });
+    const message = reports.mock.calls[0]![0] as string;
+    expect(message).not.toContain(TOKEN);
+    expect(message).not.toContain("b".repeat(64));
+  });
+
+  it("does not report a request that carries the right token", async () => {
+    const reports = vi.fn();
+    const s = await start(undefined, reports);
+    await post(s, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    expect(reports).not.toHaveBeenCalled();
   });
 
   // DNS rebinding: a page the user has open resolves a hostname to 127.0.0.1

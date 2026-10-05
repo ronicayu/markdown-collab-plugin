@@ -26,4 +26,54 @@ describe("genericSnippet", () => {
       `Bearer ${"deadbeef".repeat(8)}`,
     );
   });
+
+  it("says this editor session, never VS Code", () => {
+    expect(text).toContain("this editor session");
+    expect(text).not.toContain("VS Code");
+  });
+
+  it("has no Windsurf block by default", () => {
+    expect(text).not.toMatch(/windsurf|serverUrl/i);
+  });
+});
+
+describe("genericSnippet for Windsurf", () => {
+  const url = "http://127.0.0.1:51234/mcp";
+  const token = "deadbeef".repeat(8);
+  const text = genericSnippet(url, token, "windsurf");
+
+  it("shows Windsurf's serverUrl shape, built from the same values", () => {
+    const snippet = JSON.parse(text.match(/```json\n([\s\S]*?)\n```/)![1]!);
+    expect(snippet).toEqual({
+      mcpServers: {
+        "markdown-collab": { serverUrl: url, headers: { Authorization: `Bearer ${token}` } },
+      },
+    });
+  });
+
+  it("says where to paste it and to press Refresh", () => {
+    expect(text).toContain("~/.codeium/windsurf/mcp_config.json");
+    expect(text).toContain("Settings → Cascade → MCP Servers → View raw config");
+    expect(text).toContain("Refresh");
+  });
+
+  it("says the token changes on reload and Cascade still works from AGENTS.md", () => {
+    expect(text).toMatch(/pasted again after a reload/);
+    expect(text).toContain("Cascade still works from AGENTS.md");
+  });
+
+  it("says the keys are unverified and falls back to the generic snippet", () => {
+    expect(text).toContain("These Windsurf keys have not been verified against a real Windsurf install");
+    const blocks = [...text.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => JSON.parse(m[1]!));
+    expect(blocks).toHaveLength(2);
+    expect(blocks[1].mcpServers["markdown-collab"]).toEqual({
+      type: "http",
+      url,
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  });
+
+  it("never says VS Code", () => {
+    expect(text).not.toContain("VS Code");
+  });
 });
