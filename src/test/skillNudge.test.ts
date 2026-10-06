@@ -3,7 +3,9 @@ import * as nodeOs from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import * as vscode from "vscode";
-import { maybePromptSkillUpdate } from "../commands/setup";
+import { CLAUDE_SETUP_MISSING, maybePromptSkillUpdate } from "../commands/setup";
+import { installedLocalPlugin } from "../claudePlugin";
+import { lookupClaude } from "../transports/headlessHost";
 import { AGENTS_SNIPPET } from "../agents";
 import { SKILL_REL_PATH } from "../skill";
 
@@ -12,6 +14,14 @@ const home = vi.hoisted(() => ({ dir: "", fingerprint: "fp1" }));
 vi.mock("os", async (importOriginal) => ({
   ...(await importOriginal<typeof import("os")>()),
   homedir: () => home.dir,
+}));
+vi.mock("../claudePlugin", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../claudePlugin")>()),
+  installedLocalPlugin: vi.fn(),
+}));
+vi.mock("../transports/headlessHost", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../transports/headlessHost")>()),
+  lookupClaude: vi.fn(),
 }));
 vi.mock("../skill", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../skill")>()),
@@ -169,6 +179,77 @@ describe("the startup skill nudge", () => {
       await run();
 
       expect(messages()[1]).toBe(NO_AGENT);
+    });
+  });
+
+  describe("when Claude Code is installed without the plugin or the skill", () => {
+    const pkg = () => (context as unknown as { extension: { packageJSON: { version?: string } } }).extension.packageJSON;
+
+    beforeEach(() => {
+      pkg().version = "1.0.0";
+      (lookupClaude as Mock).mockResolvedValue({ ok: true, claude: { path: "/usr/bin/claude" } });
+      (installedLocalPlugin as Mock).mockResolvedValue(null);
+    });
+
+    it("offers Set Up Claude Code", async () => {
+      await run();
+
+      expect(messages()).toEqual([CLAUDE_SETUP_MISSING]);
+      expect(show.mock.calls[0].slice(1)).toEqual(["Set Up Claude Code", "Not now"]);
+    });
+
+    it("runs Set Up Claude Code when the button is clicked", async () => {
+      show.mockResolvedValueOnce("Set Up Claude Code");
+
+      await run();
+
+      expect(cmds.executeCommand).toHaveBeenCalledWith("markdownCollab.installClaudeSkill");
+    });
+
+    // The gap this closes: another agent's AGENTS.md section used to silence
+    // the only startup prompt, so a Claude Code user there was never told.
+    it("offers it even when another agent is connected", async () => {
+      writeFileSync(path.join(wsDir, "AGENTS.md"), `# Repo\n\n${AGENTS_SNIPPET}`);
+
+      await run();
+
+      expect(messages()).toEqual([CLAUDE_SETUP_MISSING]);
+    });
+
+    it("offers it once per extension version, not once per machine", async () => {
+      await run();
+      await run();
+      expect(show).toHaveBeenCalledTimes(1);
+
+      pkg().version = "1.0.1";
+      await run();
+      expect(messages()).toEqual([CLAUDE_SETUP_MISSING, CLAUDE_SETUP_MISSING]);
+    });
+
+    it("stays quiet about it when the plugin is installed and current", async () => {
+      (installedLocalPlugin as Mock).mockResolvedValue({ id: "markdown-collab@markdown-collab", version: "1.0.0" });
+
+      await run();
+
+      expect(messages()).not.toContain(CLAUDE_SETUP_MISSING);
+    });
+
+    it("leaves an installed standalone skill to the out-of-date check", async () => {
+      writeSkill("an older skill");
+
+      await run();
+
+      expect(messages()).toEqual([
+        "Markdown Collab: the Claude skill is out of date. Update it so Claude follows the latest comment-handling behavior.",
+      ]);
+    });
+
+    it("falls back to the no-agent nudge when Claude Code isn't found", async () => {
+      (lookupClaude as Mock).mockResolvedValue({ ok: false, error: "not on PATH" });
+
+      await run();
+
+      expect(messages()).toEqual([NO_AGENT]);
     });
   });
 });

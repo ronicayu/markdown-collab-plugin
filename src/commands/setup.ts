@@ -87,6 +87,10 @@ const SKILL_PROMPT_KEY = "markdownCollab.skillPromptedFingerprint";
 const NO_AGENT_PROMPT_KEY = "markdownCollab.noAgentPrompted";
 const PLUGIN_PROMPT_KEY = "markdownCollab.pluginPromptedVersion";
 
+export const CLAUDE_SETUP_MISSING =
+  "Markdown Collab: Claude Code is installed but doesn't have the Markdown Collab plugin, " +
+  "so it can't run the review workflow (/markdown-collab:review).";
+
 /** Every `claude plugin …` step gets this long; a registry refresh is seconds. */
 const PLUGIN_COMMAND_TIMEOUT_MS = 60_000;
 
@@ -132,7 +136,9 @@ function pluginPaths(context: vscode.ExtensionContext): { sourcePluginDir: strin
  * Plugin installs are checked once per extension version, through
  * `claude plugin list --json` (a process, so not on every activation): the
  * plugin comes from this extension's own local marketplace, so a version that
- * differs from the extension's means the Claude side is stale.
+ * differs from the extension's means the Claude side is stale. A `claude`
+ * with neither the plugin nor the standalone skill gets its own nudge in the
+ * same once-per-version check, whatever other agent is connected.
  * "No agent connected yet" is said
  * once per machine, and not at all to a workspace that already has an agent.
  */
@@ -157,6 +163,19 @@ export async function maybePromptSkillUpdate(
             "Not now",
           );
           if (choice === "Update") await updatePluginFromNudge(context, lookup.claude.path, log);
+          return;
+        }
+        // Claude Code is here with neither the plugin nor the standalone skill,
+        // so `/markdown-collab:review` is an unknown skill. Said regardless of
+        // other agents: AGENTS.md or Copilot being connected says nothing about
+        // whether Claude Code has the workflow. Once per extension version, by
+        // the gate above.
+        if ((await checkClaudeSkill(os.homedir())) === "missing") {
+          // This covers what the no-agent nudge would say; don't follow it
+          // with that one on the next window.
+          await context.globalState.update(NO_AGENT_PROMPT_KEY, true);
+          const choice = await vscode.window.showInformationMessage(CLAUDE_SETUP_MISSING, "Set Up Claude Code", "Not now");
+          if (choice === "Set Up Claude Code") await vscode.commands.executeCommand("markdownCollab.installClaudeSkill");
           return;
         }
       }

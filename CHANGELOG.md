@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.35.46 — 2026-10-06 (GitHub only)
+
+### Fixed: Claude Code users with another agent connected were never told to set up Claude
+
+If Claude Code had neither the Markdown Collab plugin nor the standalone skill,
+`/markdown-collab:review` failed with "Unknown skill" and nothing in the editor
+said why. The only startup prompt was "no agent is connected yet", shown once
+per machine and skipped entirely when the workspace already had an agent, such
+as an AGENTS.md written by Connect an Agent. Now, when the extension finds a
+`claude` binary with neither installed, it says so and offers **Set Up Claude
+Code**, whatever else is connected. It asks once per extension version, and
+replaces the no-agent prompt rather than following it.
+
 ## 0.35.45 — 2026-10-05 (GitHub only)
 
 ### Added: Connect an Agent installs the review skill for Codex, Cursor, Copilot and Windsurf
