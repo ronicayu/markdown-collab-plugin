@@ -1,7 +1,7 @@
 // All state mutations round-trip through the extension host as `WorkspaceEdit`s on the
 // underlying .md file — there is no in-webview cache of comments.
 
-import { createMarkdownRenderer, ensurePlantuml } from "../../webviewShared/markdownPipeline";
+import { createMarkdownRenderer, ensurePlantuml, setHtmlImageResolver } from "../../webviewShared/markdownPipeline";
 import { isAgentComment } from "../../agentIdentity";
 import { isClaudeUnread } from "../claudeUnread";
 import { slugifyHeading } from "../linkParse";
@@ -184,6 +184,8 @@ let imageBaseUris: ImageBaseUris = {
 // webview-loadable URI by the extension host). Without this every
 // `![alt](foo.png)` 404s against the webview's own vscode-webview://
 // origin.
+// Same for an `<img>` written as raw HTML.
+setHtmlImageResolver(md, (src) => resolveImageSrc(src, imageBaseUris));
 const defaultImageRule = md.renderer.rules.image ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
 md.renderer.rules.image = (tokens, idx, options, env, self) => {
   const tok = tokens[idx];

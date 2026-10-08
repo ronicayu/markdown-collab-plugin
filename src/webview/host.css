@@ -745,10 +745,54 @@ button.mdc-banner--jump:hover {
   max-width: 100%;
   height: auto;
 }
-/* Unrecognized raw HTML keeps its previous look: escaped source text. */
+/* Raw HTML shown as its source: a tag or comment while editing, or anything
+   the sanitizer doesn't render. */
 .mdc-html-raw {
   font-family: var(--vscode-editor-font-family, monospace);
   opacity: 0.8;
+}
+/* Inline tags are small chips while editing, so the styled text between them
+   stays readable; while reading, a paired tag disappears. */
+.mdc-html-tag {
+  font-size: 0.8em;
+}
+.mdc-html-tag--reading.mdc-html-tag--paired,
+.mdc-html-hidden {
+  display: none;
+}
+
+/* Sanitized raw HTML (`<details>`, `<div align>`, an HTML table…). */
+.mdc-html--block {
+  display: block;
+}
+.mdc-html img {
+  max-width: 100%;
+  height: auto;
+}
+.mdc-html table {
+  border-collapse: collapse;
+}
+.mdc-html th,
+.mdc-html td {
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  padding: 4px 8px;
+}
+.mdc-html summary {
+  font-weight: 600;
+}
+.mdc-html kbd,
+.mdc-editor-root kbd {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.85em;
+  padding: 1px 5px;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}
+.mdc-editor-root mark,
+.mdc-html mark {
+  background: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 210, 0, 0.35));
+  color: inherit;
 }
 
 /* Source line numbers in the live editor (markdownCollab.showLineNumbers).

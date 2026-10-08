@@ -7,10 +7,15 @@ import MarkdownIt from "markdown-it";
 import { installSourceOffsetPlugin } from "../inlineComments/webview/renderWithOffsets";
 import { installLineNumberPlugin } from "./lineNumbers";
 import { installPlantumlPlugin, type PlantumlOptions } from "../plantumlPlugin";
+import { sanitizeHtml } from "./htmlSanitize";
 
 /** markdown-it options both surfaces use. Kept explicit — these are a contract. */
 export const MARKDOWN_OPTIONS = {
-  /** No raw HTML: the source is under review and may be untrusted. */
+  /**
+   * No raw HTML passed through as written: the source may be untrusted.
+   * The document renderer turns this on and routes every HTML token through
+   * `sanitizeHtml`; comment bodies keep it off and escape everything.
+   */
   html: false,
   linkify: true,
   /** Single newlines are not line breaks — CommonMark, matching GitHub. */
@@ -24,13 +29,37 @@ export const MARKDOWN_OPTIONS = {
  * every fence.
  */
 export function createMarkdownRenderer(): MarkdownIt {
-  const md = new MarkdownIt({ ...MARKDOWN_OPTIONS });
+  const md = new MarkdownIt({ ...MARKDOWN_OPTIONS, html: true });
+  installSanitizedHtml(md);
   installSourceOffsetPlugin(md);
   // After the offset plugin: this one only sets an attribute on block tokens,
   // and both surfaces want it available whether or not the user has line
   // numbers switched on (the client decides whether to paint them).
   installLineNumberPlugin(md);
   return md;
+}
+
+const htmlSrcResolvers = new WeakMap<MarkdownIt, (src: string) => string>();
+
+/**
+ * Rewrite image sources inside the document's raw HTML (`<img src>`), for a
+ * surface that resolves markdown images at render time. A surface that fixes
+ * up every `<img>` after rendering doesn't need it.
+ */
+export function setHtmlImageResolver(md: MarkdownIt, resolve: (src: string) => string): void {
+  htmlSrcResolvers.set(md, resolve);
+}
+
+/**
+ * Raw HTML in the document renders, through the allowlist sanitizer. Each
+ * token is sanitized on its own: markdown-it hands an inline `<sup>` and its
+ * `</sup>` over as separate tokens, and a `<details>` block and its
+ * `</details>` as separate blocks, and the browser pairs the clean tags.
+ */
+function installSanitizedHtml(md: MarkdownIt): void {
+  const render = (content: string): string => sanitizeHtml(content, { resolveSrc: htmlSrcResolvers.get(md) });
+  md.renderer.rules.html_block = (tokens, idx) => render(tokens[idx].content);
+  md.renderer.rules.html_inline = (tokens, idx) => render(tokens[idx].content);
 }
 
 /**

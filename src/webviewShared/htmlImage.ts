@@ -47,7 +47,7 @@ function attributesOf(tag: string): Map<string, string> {
  * recognize is refused rather than resolved: `resolveImageSrc` passes an
  * unknown scheme through untouched, and "untouched" must not mean "rendered".
  */
-function safeSrc(raw: string): string | null {
+export function safeSrc(raw: string): string | null {
   const src = raw.trim();
   if (!src) return null;
   // A scheme-bearing URL must be one of the ones a picture can legitimately use.
@@ -62,7 +62,7 @@ function safeSrc(raw: string): string | null {
 }
 
 /** A dimension is a bare number, or a number with px / %. Never arbitrary CSS. */
-function safeDimension(raw: string | undefined): string | undefined {
+export function safeDimension(raw: string | undefined): string | undefined {
   if (raw === undefined) return undefined;
   const v = raw.trim();
   return /^\d+(\.\d+)?(px|%)?$/.test(v) ? v : undefined;

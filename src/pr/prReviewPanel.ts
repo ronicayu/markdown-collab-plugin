@@ -200,7 +200,7 @@ export class PrReviewPanel {
     const raw = Buffer.from(sourceBytes).toString("utf8");
     // Strip inline-comment anchor markers and the threads region before
     // rendering — otherwise the raw `<!--mc:a:ID-->` comments leak into the
-    // preview (and, under `html:false`, break heading/prose parsing). Markers
+    // preview as hidden HTML comments that still split headings and prose. Markers
     // are inline and the threads region is trailing, so prose line numbers are
     // unchanged: the diff stripes and line-jump mapping stay aligned.
     const source = stripAllInlineMarkup(raw);
