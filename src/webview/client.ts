@@ -42,7 +42,8 @@ import { decodeNamedReference, installSourcePositions } from "./sourcePositionPl
 import { slugifyHeading } from "../inlineComments/linkParse";
 import { resolveImageSrc, type ImageBaseUris } from "../webviewShared/imageSrc";
 import { parseHtmlImage } from "../webviewShared/htmlImage";
-import { classifyHtml, INLINE_PAIR_TAGS, isBlockHtml, sanitizeHtml } from "../webviewShared/htmlSanitize";
+import { classifyHtml, INLINE_PAIR_TAGS, isBlockHtml, isSelfContained, sanitizeHtml } from "../webviewShared/htmlSanitize";
+import { mountShadowHtml, SHADOW_WRAPPER_CLASS, ShadowStyles, splitStyles } from "../webviewShared/shadowHtml";
 import { makeHtmlTagPairPlugin } from "./plugins/htmlTagPairPlugin";
 import { displayLine, topLevelBlockLines } from "../webviewShared/lineNumbers";
 import { smoothScrollIntoView } from "../webviewShared/scrollIntoView";
@@ -1815,21 +1816,42 @@ function makeImageResolvePlugin(): Plugin {
   //   pair plugin hides while reading once it finds the partner.
   // - anything else: the sanitized fragment, or — when that shows nothing, like
   //   a lone `</details>` — the same hidden/source split as a comment.
+  // One per editor: every shadow-rendered block in this document shares the
+  // document's `<style>` rules, wherever in it they sit.
+  const shadowStyles = new ShadowStyles();
   const renderHtml = (dom: HTMLElement, node: PmHtmlNode): void => {
-    if (applyHtml(dom, node)) return;
+    // An update can move a node between cases: drop what a shadow mount set.
+    dom.removeAttribute("style");
+    dom.classList.remove(SHADOW_WRAPPER_CLASS);
+    if (applyHtml(dom, node)) return shadowStyles.set(dom, null);
     const raw = String(node.attrs.value ?? "");
     const showSource = (): void => {
       setOwnClasses(dom, readOnly ? ["mdc-html-hidden"] : ["mdc-html-raw"]);
       dom.textContent = readOnly ? "" : raw;
     };
     const snippet = classifyHtml(raw);
+    if (snippet.kind !== "fragment") shadowStyles.set(dom, null);
     if (snippet.kind === "comment") return showSource();
     if (snippet.kind === "tag" && INLINE_PAIR_TAGS.has(snippet.tag.name)) {
       setOwnClasses(dom, readOnly ? ["mdc-html-raw", "mdc-html-tag", "mdc-html-tag--reading"] : ["mdc-html-raw", "mdc-html-tag"]);
       dom.textContent = raw;
       return;
     }
-    const html = sanitizeHtml(raw, { resolveSrc: (src) => resolveImageSrc(src, imageBaseUris) });
+    const resolveSrc = (src: string): string => resolveImageSrc(src, imageBaseUris);
+    // A complete fragment renders as written — its own CSS included — in a
+    // contained shadow root. Only a fragment that leans on the blocks around
+    // it (a `<details>` closed later, a lone `</div>`) takes the inline path.
+    if (isSelfContained(raw)) {
+      const { css, html } = splitStyles(sanitizeHtml(raw, { resolveSrc, shadow: true }));
+      shadowStyles.set(dom, css || null);
+      // A block that is only a `<style>`: applied, and shown like a comment.
+      if (!html.trim()) return showSource();
+      setOwnClasses(dom, ["mdc-html"]);
+      mountShadowHtml(dom, html, isBlockHtml(html), shadowStyles);
+      return;
+    }
+    shadowStyles.set(dom, null);
+    const html = sanitizeHtml(raw, { resolveSrc });
     dom.innerHTML = html;
     // A `<details>` whose body is markdown arrives without that body (it's in
     // the following blocks), so a closed one would hide nothing and look empty.
@@ -1865,6 +1887,7 @@ function makeImageResolvePlugin(): Plugin {
               renderHtml(dom, next);
               return true;
             },
+            destroy: () => shadowStyles.set(dom, null),
           };
         },
       },

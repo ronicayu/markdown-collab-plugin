@@ -4,7 +4,8 @@
 import "../../webviewShared/threadSidebar.css";
 import "../../webviewShared/controls.css";
 import "./client.css";
-import { createMarkdownRenderer, ensurePlantuml } from "../../webviewShared/markdownPipeline";
+import { createMarkdownRenderer, ensurePlantuml, setHtmlImageResolver } from "../../webviewShared/markdownPipeline";
+import { hydrateShadowHtml } from "../../webviewShared/shadowHtml";
 import { slugifyHeading } from "../../inlineComments/linkParse";
 import {
   buildComposer,
@@ -98,6 +99,9 @@ type ClientToHost =
 const vscode = window.acquireVsCodeApi();
 
 const md = createMarkdownRenderer();
+// `rewriteImageSrcs` fixes up the preview's own <img>s after rendering, but
+// can't see into shadow-rendered HTML blocks: resolve those at render time.
+setHtmlImageResolver(md, (src) => (state ? resolveImageSrc(src, state.imageBaseUris) : src));
 function ensurePlantumlInstalled(opts: { serverUrl: string; format: "svg" | "png" } | undefined): void {
   ensurePlantuml(md, opts);
 }
@@ -378,6 +382,7 @@ function rangeOverlapsAdded(startLine: number, endLine: number, added: LineRange
 
 function renderPreview(source: string, addedRanges: LineRange[]): void {
   dom.preview.innerHTML = md.render(source);
+  hydrateShadowHtml(dom.preview);
   rewriteImageSrcs();
   paintDiffStripes(addedRanges);
   annotateLineNumbers();

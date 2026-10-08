@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyHtml, isBlockHtml, safeHref, sanitizeHtml } from "../webviewShared/htmlSanitize";
+import { classifyHtml, isBlockHtml, isSelfContained, safeHref, sanitizeHtml } from "../webviewShared/htmlSanitize";
 
 describe("sanitizeHtml: what documents use renders", () => {
   it.each([
@@ -173,5 +173,77 @@ describe("isBlockHtml and safeHref", () => {
     for (const ok of ["docs/a.md", "#x", "/abs", "https://a.b", "mailto:a@b.c", "//cdn.example/x"]) {
       expect(safeHref(ok)).toBe(ok);
     }
+  });
+});
+
+describe("sanitizeHtml in shadow mode", () => {
+  const shadow = (raw: string) => sanitizeHtml(raw, { shadow: true });
+
+  it("keeps class, id and any style declaration as written", () => {
+    expect(shadow('<div class="card" id="intro" style="position:fixed; inset:0; color:red">t</div>')).toBe(
+      '<div class="card" id="intro" style="position:fixed; inset:0; color:red">t</div>',
+    );
+  });
+
+  it("still adds a readable text color to a background without one", () => {
+    expect(shadow('<td style="background:#101820">t</td>')).toBe('<td style="background:#101820; color: #ffffff">t</td>');
+  });
+
+  it("copies <style> verbatim, combinators included", () => {
+    expect(shadow("<style>.a > .b { color: red }</style><div class=a>x</div>")).toBe(
+      '<style>.a > .b { color: red }</style><div class="a">x</div>',
+    );
+  });
+
+  it("ends a <style> where the HTML parser would, so nothing can break out of it", () => {
+    expect(shadow("<style>p{}</style ><script>alert(1)</script>")).toBe(
+      "<style>p{}</style>&lt;script&gt;alert(1)&lt;/script&gt;",
+    );
+    expect(shadow("<style>p{}")).toBe("<style>p{}</style>");
+  });
+
+  it("keeps sectioning elements", () => {
+    expect(shadow("<section><header>H</header></section>")).toBe("<section><header>H</header></section>");
+  });
+
+  it.each([
+    ['<div onclick="alert(1)">t</div>', "<div>t</div>"],
+    ['<a href="javascript:alert(1)">x</a>', "<a>x</a>"],
+    ["<script>alert(1)</script>", "&lt;script&gt;alert(1)&lt;/script&gt;"],
+    ["<iframe src=x></iframe>", "&lt;iframe src=x&gt;&lt;/iframe&gt;"],
+    ['<form action="x"><input></form>', '&lt;form action="x"&gt;&lt;input&gt;&lt;/form&gt;'],
+    ['<link rel="stylesheet" href="https://x">', '&lt;link rel="stylesheet" href="https://x"&gt;'],
+    ['<meta http-equiv="refresh" content="0;url=https://x">', '&lt;meta http-equiv="refresh" content="0;url=https://x"&gt;'],
+  ])("still refuses what executes, navigates or submits: %j", (raw, expected) => {
+    expect(shadow(raw)).toBe(expected);
+  });
+
+  it("leaves the non-shadow path exactly as it was", () => {
+    expect(sanitizeHtml('<div class="card" style="position:fixed; color:red">t</div>')).toBe('<div style="color: red">t</div>');
+    expect(sanitizeHtml("<style>p{}</style>")).toBe("&lt;style&gt;p{}&lt;/style&gt;");
+  });
+});
+
+describe("isSelfContained", () => {
+  it.each([
+    "<div>x</div>",
+    '<table><tr><td style="background:#eee">A</td></tr></table>',
+    "<details><summary>S</summary><p>body</p></details>",
+    "<style>.a{}</style><div class=a>x</div>",
+    "<p>a<br>b<img src=x.png></p>",
+  ])("accepts %j", (raw) => {
+    expect(isSelfContained(raw)).toBe(true);
+  });
+
+  it.each([
+    ["an open <details> closed in a later block", "<details>\n<summary>More</summary>"],
+    ["a lone closing tag", "</details>"],
+    ["crossed tags", "<b><i>x</b></i>"],
+    ["an implied end tag", "<ul><li>a<li>b</ul>"],
+    ["no renderable tag", "<script>alert(1)</script>"],
+    ["only a comment", "<!-- note -->"],
+    ["a `</div>` inside <style> doesn't count", "<div><style>x{content:'</div>'}</style>"],
+  ])("rejects %s", (_label, raw) => {
+    expect(isSelfContained(raw)).toBe(false);
   });
 });
