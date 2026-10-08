@@ -105,3 +105,23 @@ export function safeStyle(raw: string): string | null {
   if (shade !== null && !declared.has("color")) kept.push(`color: ${shade > 0.5 ? "#1f2328" : "#ffffff"}`);
   return kept.length ? kept.join("; ") : null;
 }
+
+/**
+ * The text color `safeStyle` would add for a style that sets a background but
+ * no color, for callers that keep the style as written (shadow-rendered HTML,
+ * where any declaration is safe but a dark background on a theme's dark text
+ * still isn't readable). Null when the style sets a color or no recognizable
+ * background.
+ */
+export function readableTextColor(raw: string): string | null {
+  const declared = new Map<string, string>();
+  for (const declaration of raw.split(";")) {
+    const colon = declaration.indexOf(":");
+    if (colon < 0) continue;
+    declared.set(declaration.slice(0, colon).trim().toLowerCase(), declaration.slice(colon + 1).trim());
+  }
+  if (declared.has("color")) return null;
+  const background = declared.get("background-color") ?? declared.get("background");
+  const shade = background === undefined ? null : luminance(background.toLowerCase());
+  return shade === null ? null : shade > 0.5 ? "#1f2328" : "#ffffff";
+}

@@ -3,8 +3,10 @@
 // Documents reach for HTML where Markdown has no syntax — `<details>`,
 // `<sup>`, `<kbd>`, a centred `<div>`, an HTML table — and every surface used
 // to show it as escaped source. Now the allowlisted part renders and the rest
-// (a `<script>`, an `on*` handler, a `style`) stays inert, while the markdown
-// itself is untouched: these are rendering changes only.
+// (a `<script>`, an `on*` handler) stays inert, while the markdown itself is
+// untouched: these are rendering changes only. A complete HTML block renders
+// in a contained shadow root with its own CSS as written; the containment
+// tests at the end are what make that safe.
 
 import { expect, test, type Page } from "@playwright/test";
 import { awaitPosted, bootInlineView, bootLiveEditor } from "./harness";
@@ -39,9 +41,13 @@ Hidden **markdown** body.
 const editor = (page: Page) => page.locator(".mdc-editor-root .milkdown");
 
 async function noUnsafeDom(root: import("@playwright/test").Locator): Promise<void> {
+  // Locators pierce open shadow roots, so this covers shadow-rendered blocks too.
   await expect(root.locator("script")).toHaveCount(0);
-  await expect(root.locator("[onclick], [onerror], [style*='position']")).toHaveCount(0);
-  await expect(root.locator("#threads-list")).toHaveCount(0);
+  await expect(root.locator("[onclick], [onerror]")).toHaveCount(0);
+  // The document's `id="threads-list"` is kept, but inside a shadow root: the
+  // page's own lookups can't see it, so it can't shadow the app's element.
+  const leaked = await root.page().evaluate(() => !!document.getElementById("threads-list")?.closest(".mdc-html, #preview"));
+  expect(leaked).toBe(false);
 }
 
 test.describe("live editor, Reading", () => {
@@ -129,5 +135,71 @@ test.describe("inline comments view", () => {
     await expect(preview).not.toContainText("a note");
     await noUnsafeDom(preview);
     await expect(preview).toContainText("<script>alert(1)</script>");
+  });
+});
+
+// A document's own CSS, at its most hostile: a full-window overlay on the
+// fragment and on its shadow host (`:host … !important` outranks any outside
+// rule on the host itself), and rules aimed at the app's own classes.
+const HOSTILE = `# Hostile
+
+<style>
+:host { position: fixed !important; inset: 0 !important; z-index: 2147483647 !important; background: red !important; }
+.mdc-sidebar, #mdc-sidebar, #find-bar, button { display: none !important; }
+.card { background: rgb(1, 2, 3); color: rgb(250, 250, 250); padding: 6px; }
+</style>
+<div class="card">styled card</div>
+<div style="position:fixed; inset:0; z-index:2147483647; background:rgba(255,0,0,.5)">overlay</div>
+
+After the block.
+`;
+
+/** Whether the element under the centre of `selector` is that element (or inside it). */
+async function receivesPointer(page: Page, selector: string): Promise<boolean> {
+  return page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return !!hit && (hit === el || el.contains(hit));
+  }, selector);
+}
+
+/** The hostile `:host` rule really applies: the block's shadow host is fixed, full-window. */
+async function hostileHostApplies(page: Page): Promise<void> {
+  const position = await page.evaluate(() => {
+    const host = document.querySelector(".mdc-html-shadow")?.firstElementChild;
+    return host ? getComputedStyle(host).position : null;
+  });
+  expect(position).toBe("fixed");
+}
+
+test.describe("shadow-rendered blocks are contained", () => {
+  test("live editor: the block's CSS styles the block and nothing else", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(HOSTILE), readOnly: true });
+    await expect(editor(page).locator(".card")).toHaveCSS("background-color", "rgb(1, 2, 3)");
+    // The <style> sits in a block of its own and still styles the card's block.
+    await hostileHostApplies(page);
+    // The app's controls are still shown, and still the thing under the pointer.
+    await expect(page.locator("#edit-mode-toggle")).toBeVisible();
+    await expect(page.locator("#mdc-comments-toggle")).toBeVisible();
+    expect(await receivesPointer(page, "#edit-mode-toggle")).toBe(true);
+    expect(await receivesPointer(page, "#mdc-comments-toggle")).toBe(true);
+    // Text after the block is still reachable too.
+    expect(await receivesPointer(page, ".mdc-editor-root .milkdown h1")).toBe(true);
+  });
+
+  test("inline comments view: same containment, and find searches inside the block", async ({ page }) => {
+    await bootInlineView(page, inlineInit(HOSTILE));
+    await expect(page.locator("#preview .card")).toHaveCSS("background-color", "rgb(1, 2, 3)");
+    await hostileHostApplies(page);
+    expect(await receivesPointer(page, "#outline-toggle")).toBe(true);
+    expect(await receivesPointer(page, "#preview h1")).toBe(true);
+    await page.locator("#preview").click({ position: { x: 5, y: 5 } });
+    await page.keyboard.press("ControlOrMeta+f");
+    await expect(page.locator("#find-bar")).toBeVisible();
+    await page.locator("#find-input").fill("styled card");
+    await expect(page.locator("#find-count")).toHaveText("1 / 1");
+    await expect(page.locator("#preview mark.mc-search--current")).toHaveText("styled card");
   });
 });

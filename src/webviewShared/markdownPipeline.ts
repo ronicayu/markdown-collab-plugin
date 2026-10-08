@@ -7,7 +7,8 @@ import MarkdownIt from "markdown-it";
 import { installSourceOffsetPlugin } from "../inlineComments/webview/renderWithOffsets";
 import { installLineNumberPlugin } from "./lineNumbers";
 import { installPlantumlPlugin, type PlantumlOptions } from "../plantumlPlugin";
-import { sanitizeHtml } from "./htmlSanitize";
+import { isBlockHtml, isSelfContained, sanitizeHtml } from "./htmlSanitize";
+import { shadowTemplate } from "./shadowTemplate";
 
 /** markdown-it options both surfaces use. Kept explicit — these are a contract. */
 export const MARKDOWN_OPTIONS = {
@@ -58,7 +59,16 @@ export function setHtmlImageResolver(md: MarkdownIt, resolve: (src: string) => s
  */
 function installSanitizedHtml(md: MarkdownIt): void {
   const render = (content: string): string => sanitizeHtml(content, { resolveSrc: htmlSrcResolvers.get(md) });
-  md.renderer.rules.html_block = (tokens, idx) => render(tokens[idx].content);
+  // A complete HTML block renders as written, its own CSS included, in a
+  // contained shadow root (shadowHtml.ts): emitted as an inert template the
+  // surface hydrates after rendering. An open `<details>` waiting for a later
+  // `</details>` can't be isolated that way, so it keeps the shared path.
+  md.renderer.rules.html_block = (tokens, idx) => {
+    const content = tokens[idx].content;
+    if (!isSelfContained(content)) return render(content);
+    const html = sanitizeHtml(content, { resolveSrc: htmlSrcResolvers.get(md), shadow: true });
+    return shadowTemplate(html, isBlockHtml(html));
+  };
   md.renderer.rules.html_inline = (tokens, idx) => render(tokens[idx].content);
 }
 

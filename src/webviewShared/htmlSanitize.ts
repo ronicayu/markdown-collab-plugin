@@ -23,11 +23,19 @@
 // Pure: no DOM, so the unit tests exercise exactly what the webviews run.
 
 import { safeDimension, safeSrc } from "./htmlImage";
-import { safeStyle } from "./htmlStyle";
+import { readableTextColor, safeStyle } from "./htmlStyle";
 
 export interface SanitizeOptions {
   /** Rewrite an image `src` that passed the safety check (e.g. to a webview URI). */
   resolveSrc?: (src: string) => string;
+  /**
+   * The output goes into a shadow root inside a `contain: paint` box (see
+   * shadowHtml.ts), where CSS can neither leak out nor paint outside the box.
+   * There, `class`, `id`, any `style` declaration and `<style>` elements are
+   * kept as written; only what executes, navigates or submits is still
+   * refused. Only for a fragment `isSelfContained` accepts.
+   */
+  shadow?: boolean;
 }
 
 /** Elements that render. Roughly what GitHub keeps, minus anything interactive. */
@@ -38,6 +46,15 @@ export const ALLOWED_TAGS: ReadonlySet<string> = new Set([
   "ol", "p", "pre", "q", "rp", "rt", "ruby", "s", "samp", "small", "span", "strike", "strong",
   "sub", "summary", "sup", "table", "tbody", "td", "tfoot", "th", "thead", "time", "tr", "tt",
   "u", "ul", "var", "wbr",
+]);
+
+/**
+ * Allowed only in shadow-rendered fragments: `<style>`, whose rules can't
+ * leave the shadow root, and sectioning elements that carry nothing but
+ * layout (and classes for that `<style>` to target).
+ */
+const SHADOW_TAGS: ReadonlySet<string> = new Set([
+  "style", "section", "article", "header", "footer", "nav", "aside", "main", "address", "hgroup",
 ]);
 
 /** Elements with no content and no closing tag. */
@@ -57,6 +74,7 @@ export const INLINE_PAIR_TAGS: ReadonlySet<string> = new Set([
 const BLOCK_TAGS: ReadonlySet<string> = new Set([
   "blockquote", "center", "dd", "details", "div", "dl", "dt", "figcaption", "figure", "h1",
   "h2", "h3", "h4", "h5", "h6", "hr", "li", "ol", "p", "pre", "summary", "table", "ul",
+  "section", "article", "header", "footer", "nav", "aside", "main", "address", "hgroup",
 ]);
 
 type AttrCheck = (value: string) => string | null;
@@ -79,6 +97,18 @@ const GLOBAL_ATTRS: Record<string, AttrCheck> = {
   lang: (v) => (/^[a-zA-Z]{1,8}(-[a-zA-Z0-9]{1,8})*$/.test(v.trim()) ? v.trim() : null),
   dir: oneOf("ltr", "rtl", "auto"),
   align: oneOf("left", "right", "center", "justify"),
+};
+
+/** Added to `GLOBAL_ATTRS` (and replacing its `style` check) in shadow-rendered fragments. */
+const SHADOW_ATTRS: Record<string, AttrCheck> = {
+  class: anything,
+  id: anything,
+  style: (v) => {
+    const color = readableTextColor(v);
+    const kept = v.trim().replace(/;\s*$/, "");
+    if (!kept) return null;
+    return color ? `${kept}; color: ${color}` : kept;
+  },
 };
 
 const TAG_ATTRS: Record<string, Record<string, AttrCheck>> = {
@@ -152,7 +182,7 @@ export interface CleanTag {
 /** Parse one tag and keep what the allowlist permits, or null to show it as text. */
 function cleanTag(closing: string, rawName: string, rawAttrs: string, opts: SanitizeOptions): CleanTag | null {
   const name = rawName.toLowerCase();
-  if (!ALLOWED_TAGS.has(name)) return null;
+  if (!ALLOWED_TAGS.has(name) && !(opts.shadow && SHADOW_TAGS.has(name))) return null;
   if (closing) return { name, closing: true, attrs: {} };
   const attrs: Record<string, string> = {};
   const specific = TAG_ATTRS[name] ?? {};
@@ -166,7 +196,7 @@ function cleanTag(closing: string, rawName: string, rawAttrs: string, opts: Sani
       if (src !== null) attrs.src = opts.resolveSrc ? opts.resolveSrc(src) : src;
       continue;
     }
-    const check = specific[attr] ?? GLOBAL_ATTRS[attr];
+    const check = (opts.shadow ? SHADOW_ATTRS[attr] : undefined) ?? specific[attr] ?? GLOBAL_ATTRS[attr];
     if (!check) continue;
     const ok = check(value);
     if (ok !== null) attrs[attr] = ok;
@@ -198,9 +228,60 @@ export function sanitizeHtml(raw: string, opts: SanitizeOptions = {}): string {
     last = TOKEN_RE.lastIndex;
     if (m[0].startsWith("<!--")) continue;
     const tag = cleanTag(m[1], m[2], m[3], opts);
+    if (tag && tag.name === "style") {
+      // Only reachable in shadow mode. Its body is CSS, a raw-text element the
+      // parser ends at the first `</style`: copy it verbatim up to exactly
+      // there (escaping would break `>` combinators), and drop a stray close.
+      if (tag.closing) continue;
+      const body = styleBody(raw, last);
+      out += `<style>${body.css}</style>`;
+      last = TOKEN_RE.lastIndex = body.end;
+      continue;
+    }
     out += tag ? emit(tag) : escapeText(m[0]);
   }
   return out + escapeText(raw.slice(last));
+}
+
+/** The CSS of a `<style>` opened at `from`, and where its closing tag ends. */
+function styleBody(raw: string, from: number): { css: string; end: number } {
+  const rest = raw.slice(from);
+  // The HTML parser's own rule: `</style` followed by whitespace, `/` or `>`.
+  const close = /<\/style[\s/>]/i.exec(rest);
+  if (!close) return { css: rest, end: raw.length };
+  const gt = rest.indexOf(">", close.index);
+  return { css: rest.slice(0, close.index), end: from + (gt < 0 ? rest.length : gt + 1) };
+}
+
+/**
+ * Whether a fragment can be rendered on its own in a shadow root: it holds at
+ * least one renderable tag, and every element it opens it also closes, in
+ * order. A `<details>` whose `</details>` is in a later block, or a `<p>`
+ * relying on an implied end tag, isn't — those keep the inline path, where
+ * the surrounding document supplies the rest.
+ */
+export function isSelfContained(raw: string): boolean {
+  const re = new RegExp(TOKEN_RE.source, "g");
+  const open: string[] = [];
+  let tags = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw)) !== null) {
+    if (m[0].startsWith("<!--")) continue;
+    const name = m[2].toLowerCase();
+    if (!ALLOWED_TAGS.has(name) && !SHADOW_TAGS.has(name)) continue;
+    tags++;
+    if (name === "style" && !m[1]) {
+      re.lastIndex = styleBody(raw, re.lastIndex).end;
+      continue;
+    }
+    if (VOID_TAGS.has(name)) continue;
+    if (m[1]) {
+      if (open.pop() !== name) return false;
+    } else if (!m[4]) {
+      open.push(name);
+    }
+  }
+  return tags > 0 && open.length === 0;
 }
 
 /** What one raw-HTML snippet is, for a renderer that handles tags one at a time. */

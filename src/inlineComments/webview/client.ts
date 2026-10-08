@@ -2,6 +2,7 @@
 // underlying .md file — there is no in-webview cache of comments.
 
 import { createMarkdownRenderer, ensurePlantuml, setHtmlImageResolver } from "../../webviewShared/markdownPipeline";
+import { hydrateShadowHtml, shadowRootsIn } from "../../webviewShared/shadowHtml";
 import { isAgentComment } from "../../agentIdentity";
 import { isClaudeUnread } from "../claudeUnread";
 import { slugifyHeading } from "../linkParse";
@@ -466,31 +467,31 @@ function findRun(): void {
   const query = dom.findInput.value;
   if (!query) return;
   const needle = query.toLowerCase();
-  const root = dom.preview;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      // Skip text inside SVG (mermaid diagrams) — wrapping their text
-      // nodes in <mark> breaks the rendered diagram.
-      let p: Node | null = node.parentNode;
-      while (p && p !== root) {
-        const name = (p as Element).nodeName;
-        if (name === "SVG" || name === "STYLE" || name === "SCRIPT") {
-          return NodeFilter.FILTER_REJECT;
-        }
-        p = p.parentNode;
-      }
-      return (node.textContent ?? "").toLowerCase().includes(needle)
-        ? NodeFilter.FILTER_ACCEPT
-        : NodeFilter.FILTER_REJECT;
-    },
-  });
-
   const targets: Text[] = [];
-  let n: Node | null = walker.nextNode();
-  while (n) {
-    targets.push(n as Text);
-    n = walker.nextNode();
-  }
+  // Shadow-rendered HTML blocks are searched where they sit, so matches stay
+  // in reading order: a tree walk doesn't enter a shadow root on its own.
+  const shadowHosts = new Set(shadowRootsIn(dom.preview).map((sr) => sr.host));
+  const collect = (root: Node): void => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+      acceptNode(node) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          // Skip text inside SVG (mermaid diagrams) — wrapping their text
+          // nodes in <mark> breaks the rendered diagram.
+          const name = node.nodeName;
+          if (name === "SVG" || name === "STYLE" || name === "SCRIPT") return NodeFilter.FILTER_REJECT;
+          return shadowHosts.has(node as Element) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+        }
+        return (node.textContent ?? "").toLowerCase().includes(needle)
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_SKIP;
+      },
+    });
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (n.nodeType === Node.TEXT_NODE) targets.push(n as Text);
+      else if ((n as Element).shadowRoot) collect((n as Element).shadowRoot!);
+    }
+  };
+  collect(dom.preview);
 
   for (const textNode of targets) {
     const text = textNode.textContent ?? "";
@@ -860,6 +861,7 @@ function renderPreview(state: SerializedState): void {
   // data unless the numbers are being shown.
   const showLines = Array.isArray(state.lineMap);
   dom.preview.innerHTML = md.render(state.prose, showLines ? { [LINE_ENV_KEY]: true } : {});
+  hydrateShadowHtml(dom.preview);
   dom.preview.classList.toggle("with-line-numbers", showLines);
   if (showLines) paintLineNumbers(state.lineMap!);
   paintDiffStripes(state.prose, currentDiff);

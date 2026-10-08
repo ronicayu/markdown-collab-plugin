@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.35.50 — 2026-10-08 (GitHub only)
+
+### Changed: complete HTML blocks render with their own CSS, in a contained shadow root
+
+A styled card or table needs the document's own CSS — `<style>`, `class`,
+`style` — and filtering that CSS down to a safe subset either broke the design
+or let something through. An HTML block that is complete on its own (every
+element it opens it also closes) now renders as written inside a shadow root,
+on all three review surfaces:
+
+- the shadow root scopes selectors both ways, so the document's rules can't
+  restyle the editor and the editor's table striping can't reach the block,
+  while colors, fonts and theme variables still flow in;
+- `contain: paint` on the block's wrapper keeps even `position: fixed` and a
+  `:host { … !important }` overlay inside the block's own box;
+- a document's `<style>` usually sits in a block of its own, so its rules are
+  shared by every shadow-rendered block of that document — and nothing else.
+
+Scripts, event handlers, `javascript:` links, forms, iframes, `<link>` and
+`<meta>` are still refused, and the CSP still blocks scripts as a second line
+of defence. HTML that leans on the blocks around it — a `<details>` closed
+after Markdown paragraphs, inline tags like `<sup>` — keeps the 0.35.47–0.35.49
+path, cosmetic style filtering included. The classic view's find bar now also
+searches inside shadow-rendered blocks.
+
 ## 0.35.49 — 2026-10-08 (GitHub only)
 
 ### Fixed: styled HTML tables render in the live editor
