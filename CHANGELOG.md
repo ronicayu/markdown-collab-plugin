@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.35.47 — 2026-10-08 (GitHub only)
+
+### Added: HTML in Markdown renders, sanitized
+
+Documents reach for HTML where Markdown has no syntax, and every review
+surface used to show it as escaped source. Now the live editor, the classic
+inline comments view and the PR review view render it:
+
+- inline formatting: `<sup>`, `<sub>`, `<kbd>`, `<mark>`, `<u>`, `<ins>`,
+  `<del>`, `<abbr>`, `<a href>` and the like;
+- blocks: `<details>`/`<summary>`, `<div align="center">`, HTML tables, lists,
+  headings, `<img>` with `width`/`height`;
+- HTML comments are hidden.
+
+The document may come from anyone, so nothing in it reaches the page as
+written. Each tag on an allowlist is rebuilt from its name and the attributes
+that pass a check; `style`, `class`, `id`, `on*` and `data-*` never survive,
+and links and images keep only safe schemes. Anything else — a `<script>`, an
+`<iframe>`, an unknown element — stays visible as its source text, so a
+reviewer still sees what the file holds.
+
+In the live editor, HTML is still an opaque piece of the document: the
+Markdown round-trips unchanged, comments can't anchor inside a rendered HTML
+block, and in Editing mode the inline tags stay visible as small chips so
+none is deleted unseen. A `<details>` whose body is Markdown shows open there,
+because the editor keeps that body as ordinary blocks after it.
+
 ## 0.35.46 — 2026-10-06 (GitHub only)
 
 ### Fixed: Claude Code users with another agent connected were never told to set up Claude

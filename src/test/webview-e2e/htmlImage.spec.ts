@@ -49,11 +49,14 @@ test("a script tag still renders as escaped text, not as HTML", async ({ page })
   await expect(page.locator(".milkdown")).toContainText("alert(1)");
 });
 
-test("an img carrying an event handler is refused entirely", async ({ page }) => {
+test("an img carrying an event handler renders without the handler", async ({ page }) => {
   await boot(page, `# Doc\n\n<img src="x.png" onerror="alert(1)">\n`);
-  // No element is built from it — it stays the escaped source.
+  // Not the single-image fast path (it refuses `on*`), but the general
+  // sanitizer rebuilds the tag from allowlisted attributes only.
   await expect(page.locator(".milkdown .mdc-html-image")).toHaveCount(0);
-  await expect(page.locator(".milkdown")).toContainText("onerror");
+  const img = page.locator(".milkdown .mdc-html img");
+  await expect(img).toHaveAttribute("src", "https://base.test/dir/x.png");
+  await expect(page.locator(".milkdown [onerror]")).toHaveCount(0);
 });
 
 test("a javascript: src is refused", async ({ page }) => {

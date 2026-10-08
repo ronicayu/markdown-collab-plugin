@@ -42,6 +42,8 @@ import { decodeNamedReference, installSourcePositions } from "./sourcePositionPl
 import { slugifyHeading } from "../inlineComments/linkParse";
 import { resolveImageSrc, type ImageBaseUris } from "../webviewShared/imageSrc";
 import { parseHtmlImage } from "../webviewShared/htmlImage";
+import { classifyHtml, INLINE_PAIR_TAGS, isBlockHtml, sanitizeHtml } from "../webviewShared/htmlSanitize";
+import { makeHtmlTagPairPlugin } from "./plugins/htmlTagPairPlugin";
 import { displayLine, topLevelBlockLines } from "../webviewShared/lineNumbers";
 import { smoothScrollIntoView } from "../webviewShared/scrollIntoView";
 import { buildOutline } from "../webviewShared/outline";
@@ -558,6 +560,7 @@ async function createEditor(text: string): Promise<Editor> {
           makePlantumlPlugin(),
           makeDrawioPlugin(),
           makeImageResolvePlugin(),
+          makeHtmlTagPairPlugin(),
           makeAnchorHighlightPlugin(),
           makeSuggestionHighlightPlugin(
             () => sidebarState.suggestions,
@@ -1765,6 +1768,16 @@ function makeDrawioPlugin(): Plugin {
 type PmImageNode = { attrs: Record<string, unknown>; type: { name: string } };
 /** Milkdown keeps raw HTML as an opaque node whose `value` attr is the source. */
 type PmHtmlNode = { attrs: Record<string, unknown>; type: { name: string } };
+/**
+ * Swap the classes this file manages on a node view's dom, leaving the ones
+ * ProseMirror adds from node decorations (the tag pair plugin's) alone.
+ */
+function setOwnClasses(dom: HTMLElement, classes: string[]): void {
+  for (const c of (dom.dataset.mdcOwn ?? "").split(" ")) if (c) dom.classList.remove(c);
+  dom.classList.add(...classes);
+  dom.dataset.mdcOwn = classes.join(" ");
+}
+
 function makeImageResolvePlugin(): Plugin {
   const apply = (img: HTMLImageElement, node: PmImageNode): void => {
     img.setAttribute("src", resolveImageSrc(String(node.attrs.src ?? ""), imageBaseUris));
@@ -1783,7 +1796,7 @@ function makeImageResolvePlugin(): Plugin {
   const applyHtml = (dom: HTMLElement, node: PmHtmlNode): boolean => {
     const parsed = parseHtmlImage(String(node.attrs.value ?? ""));
     if (!parsed) return false;
-    dom.className = parsed.centered ? "mdc-html-image mdc-html-image--center" : "mdc-html-image";
+    setOwnClasses(dom, parsed.centered ? ["mdc-html-image", "mdc-html-image--center"] : ["mdc-html-image"]);
     const img = document.createElement("img");
     img.className = "mdc-image";
     img.setAttribute("src", resolveImageSrc(parsed.src, imageBaseUris));
@@ -1793,6 +1806,36 @@ function makeImageResolvePlugin(): Plugin {
     if (parsed.height !== undefined) img.setAttribute("height", parsed.height);
     dom.replaceChildren(img);
     return true;
+  };
+
+  // Everything else that's raw HTML. Each case keeps the node an opaque atom
+  // (so the markdown round-trips unchanged) and only decides what it shows:
+  // - a comment: nothing while reading; its source while editing.
+  // - one inline formatting tag (`<sup>`, `</kbd>`): its source, which the tag
+  //   pair plugin hides while reading once it finds the partner.
+  // - anything else: the sanitized fragment, or — when that shows nothing, like
+  //   a lone `</details>` — the same hidden/source split as a comment.
+  const renderHtml = (dom: HTMLElement, node: PmHtmlNode): void => {
+    if (applyHtml(dom, node)) return;
+    const raw = String(node.attrs.value ?? "");
+    const showSource = (): void => {
+      setOwnClasses(dom, readOnly ? ["mdc-html-hidden"] : ["mdc-html-raw"]);
+      dom.textContent = readOnly ? "" : raw;
+    };
+    const snippet = classifyHtml(raw);
+    if (snippet.kind === "comment") return showSource();
+    if (snippet.kind === "tag" && INLINE_PAIR_TAGS.has(snippet.tag.name)) {
+      setOwnClasses(dom, readOnly ? ["mdc-html-raw", "mdc-html-tag", "mdc-html-tag--reading"] : ["mdc-html-raw", "mdc-html-tag"]);
+      dom.textContent = raw;
+      return;
+    }
+    const html = sanitizeHtml(raw, { resolveSrc: (src) => resolveImageSrc(src, imageBaseUris) });
+    dom.innerHTML = html;
+    // A `<details>` whose body is markdown arrives without that body (it's in
+    // the following blocks), so a closed one would hide nothing and look empty.
+    for (const d of dom.querySelectorAll("details")) d.open = true;
+    if (!dom.textContent?.trim() && !dom.querySelector("img, hr, br, table")) return showSource();
+    setOwnClasses(dom, isBlockHtml(html) ? ["mdc-html", "mdc-html--block"] : ["mdc-html"]);
   };
 
   return new Plugin({
@@ -1812,22 +1855,14 @@ function makeImageResolvePlugin(): Plugin {
           };
         },
         html: (node: PmHtmlNode) => {
-          const raw = String(node.attrs.value ?? "");
-          // Not an image: fall back to what Milkdown does, escaped source text.
           const dom = document.createElement("span");
           dom.setAttribute("contenteditable", "false");
-          if (!applyHtml(dom, node)) {
-            dom.className = "mdc-html-raw";
-            dom.textContent = raw;
-          }
+          renderHtml(dom, node);
           return {
             dom,
             update: (next: PmHtmlNode) => {
               if (next.type.name !== "html") return false;
-              if (!applyHtml(dom, next)) {
-                dom.className = "mdc-html-raw";
-                dom.textContent = String(next.attrs.value ?? "");
-              }
+              renderHtml(dom, next);
               return true;
             },
           };

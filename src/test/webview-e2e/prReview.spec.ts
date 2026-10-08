@@ -676,3 +676,18 @@ test("clicking a line marker while the sidebar is hidden brings the sidebar back
   await expect(page.locator("#comments-toggle")).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator('#existing-list .thread-card[data-thread-id="1"]')).toBeVisible();
 });
+
+test("raw HTML in the reviewed file renders sanitized, with HTML images resolved", async ({ page }) => {
+  await bootPrReview(page, {
+    source:
+      "# Title\n\nx<sup>2</sup> and <kbd>K</kbd>\n\n<details>\n<summary>More</summary>\n\nBody.\n\n</details>\n\n" +
+      '<img src="shot.png" onerror="alert(1)">\n\n<script>alert(1)</script>\n',
+  });
+  const preview = page.locator("#preview");
+  await expect(preview.locator("sup")).toHaveText("2");
+  await expect(preview.locator("kbd")).toHaveText("K");
+  await expect(preview.locator("details")).toContainText("Body.");
+  await expect(preview.locator("img")).toHaveAttribute("src", "https://example.invalid/doc/shot.png");
+  await expect(preview.locator("[onerror], script")).toHaveCount(0);
+  await expect(preview).toContainText("<script>alert(1)</script>");
+});
