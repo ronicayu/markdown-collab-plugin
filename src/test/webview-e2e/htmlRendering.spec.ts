@@ -27,7 +27,7 @@ Hidden **markdown** body.
 
 <table><tr><td>Cell A</td><td>Cell B</td></tr></table>
 
-<div style="position:fixed" onclick="alert(1)" class="mdc-sidebar" id="threads-list">styled</div>
+<div style="position:fixed; color:rgb(200, 0, 0)" onclick="alert(1)" class="mdc-sidebar" id="threads-list">styled</div>
 
 <script>alert(1)</script>
 
@@ -73,6 +73,7 @@ test.describe("live editor, Reading", () => {
     await noUnsafeDom(editor(page));
     // Stripped attributes, kept content.
     await expect(editor(page).locator(".mdc-html div").filter({ hasText: "styled" })).toHaveCount(1);
+    await expect(editor(page).locator(".mdc-html div").filter({ hasText: "styled" })).toHaveCSS("color", "rgb(200, 0, 0)");
     // A script stays visible as its source, so the reviewer still sees it.
     await expect(editor(page)).toContainText("<script>alert(1)</script>");
   });

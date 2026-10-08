@@ -36,6 +36,42 @@ describe("sanitizeHtml: what documents use renders", () => {
   });
 });
 
+describe("sanitizeHtml: style", () => {
+  it("keeps cosmetic declarations", () => {
+    expect(sanitizeHtml('<div style="color: #c00; background-color:rgb(255, 0, 0); font-size: 1.2em; margin: 0 auto; text-align:center">t</div>')).toBe(
+      '<div style="color: #c00; background-color: rgb(255, 0, 0); font-size: 1.2em; margin: 0 auto; text-align: center">t</div>',
+    );
+    expect(sanitizeHtml('<span style="border: 1px solid red; font-weight: bold">t</span>')).toBe(
+      '<span style="border: 1px solid red; font-weight: bold">t</span>',
+    );
+  });
+
+  it("drops declarations that could cover or leave the page, keeping the safe ones", () => {
+    expect(sanitizeHtml('<div style="position:fixed; top:0; color:red; z-index:99; display:none">t</div>')).toBe(
+      '<div style="color: red">t</div>',
+    );
+  });
+
+  it.each([
+    "background: url(https://evil.example/x.png)",
+    "background-color: url(x)",
+    "color: expression(alert(1))",
+    "color: var(--x)",
+    "margin: -9999px",
+    "width: calc(100vw + 1px)",
+    "color: red\\3b position:fixed",
+    "color: red /* x */",
+    "font-family: 'a'; behavior: url(x)",
+    "-moz-binding: url(x)",
+  ])("rejects %j", (style) => {
+    expect(sanitizeHtml(`<div style="${style}">t</div>`)).toBe("<div>t</div>");
+  });
+
+  it("drops the attribute when nothing survives", () => {
+    expect(sanitizeHtml('<p style="position:absolute">t</p>')).toBe("<p>t</p>");
+  });
+});
+
 describe("sanitizeHtml: nothing executable or stylable gets through", () => {
   it.each([
     ["<script>alert(1)</script>", "&lt;script&gt;alert(1)&lt;/script&gt;"],
@@ -47,7 +83,7 @@ describe("sanitizeHtml: nothing executable or stylable gets through", () => {
     expect(sanitizeHtml(raw)).toBe(expected);
   });
 
-  it("strips event handlers, style, class, id and data attributes", () => {
+  it("strips event handlers, class, id and data attributes and unsafe style", () => {
     expect(
       sanitizeHtml('<div onclick="alert(1)" style="position:fixed" class="mdc-x" id="threads-list" data-x="1">t</div>'),
     ).toBe("<div>t</div>");
