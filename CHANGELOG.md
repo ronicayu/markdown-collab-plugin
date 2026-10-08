@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.35.49 — 2026-10-08 (GitHub only)
+
+### Fixed: styled HTML tables render in the live editor
+
+In 0.35.48 the live editor's Markdown-table rules forced every cell of an HTML
+table to a transparent background and the theme's text color, so a table's
+`style` colors never showed, and the theme's column striping and full-width
+layout leaked into it. Those rules now apply to Markdown tables only.
+
+A cell that sets a `background` without a `color` gets a dark or light text
+color to match, so pale cells stay readable on a dark theme.
+
+## 0.35.48 — 2026-10-08 (GitHub only)
+
+### Added: `style` on HTML in Markdown renders
+
+0.35.47 dropped every `style` attribute, so colored, aligned and bordered HTML
+showed up plain. A `style` now survives as a rebuilt copy holding only the
+cosmetic declarations that pass a check: colors, font size, weight, style and
+family, text alignment and decoration, spacing, borders, sizes and `float`.
+
+Anything that could cover the review UI or reach outside the document is
+dropped, declaration by declaration, while the safe ones stay: `position`,
+`z-index`, `display`, `transform`, `url(...)`, `var(...)`, `calc(...)`, negative
+lengths, quotes, backslashes and CSS comments. `class`, `id` and `<style>`
+blocks still don't render.
+
 ## 0.35.47 — 2026-10-08 (GitHub only)
 
 ### Added: HTML in Markdown renders, sanitized

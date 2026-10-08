@@ -27,7 +27,9 @@ Hidden **markdown** body.
 
 <table><tr><td>Cell A</td><td>Cell B</td></tr></table>
 
-<div style="position:fixed" onclick="alert(1)" class="mdc-sidebar" id="threads-list">styled</div>
+<table style="border-collapse:collapse"><tr><td style="background:#d1f2d9;padding:8px 12px">Green</td><td>Plain</td></tr></table>
+
+<div style="position:fixed; color:rgb(200, 0, 0)" onclick="alert(1)" class="mdc-sidebar" id="threads-list">styled</div>
 
 <script>alert(1)</script>
 
@@ -66,13 +68,18 @@ test.describe("live editor, Reading", () => {
     await expect(editor(page)).toContainText("Hidden markdown body.");
     await expect(editor(page)).not.toContainText("</details>");
     await expect(editor(page).locator('div[align="center"] b')).toHaveText("Centered");
-    await expect(editor(page).locator(".mdc-html table td")).toHaveText(["Cell A", "Cell B"]);
+    await expect(editor(page).locator(".mdc-html table td")).toHaveText(["Cell A", "Cell B", "Green", "Plain"]);
+    const green = editor(page).locator(".mdc-html td", { hasText: "Green" });
+    await expect(green).toHaveCSS("background-color", "rgb(209, 242, 217)");
+    await expect(green).toHaveCSS("color", "rgb(31, 35, 40)");
+    await expect(editor(page).locator(".mdc-html td", { hasText: "Plain" })).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   });
 
   test("unsafe HTML stays inert", async ({ page }) => {
     await noUnsafeDom(editor(page));
     // Stripped attributes, kept content.
     await expect(editor(page).locator(".mdc-html div").filter({ hasText: "styled" })).toHaveCount(1);
+    await expect(editor(page).locator(".mdc-html div").filter({ hasText: "styled" })).toHaveCSS("color", "rgb(200, 0, 0)");
     // A script stays visible as its source, so the reviewer still sees it.
     await expect(editor(page)).toContainText("<script>alert(1)</script>");
   });
@@ -118,7 +125,7 @@ test.describe("inline comments view", () => {
     // markdown-it keeps the blocks between <details> and </details> inside it.
     await expect(preview.locator("details summary")).toHaveText("More details");
     await expect(preview.locator("details")).toContainText("Hidden markdown body.");
-    await expect(preview.locator("table td")).toHaveText(["Cell A", "Cell B"]);
+    await expect(preview.locator("table td")).toHaveText(["Cell A", "Cell B", "Green", "Plain"]);
     await expect(preview).not.toContainText("a note");
     await noUnsafeDom(preview);
     await expect(preview).toContainText("<script>alert(1)</script>");

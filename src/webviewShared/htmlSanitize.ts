@@ -11,8 +11,9 @@
 // isn't a well-formed allowlisted tag — `<script>`, `<iframe>`, `<style>`, an
 // unknown element, a stray `<` — stays visible as literal text, the way all
 // raw HTML used to look, so a reviewer still sees exactly what the file holds.
-// No `style`, `class`, `id`, `on*` or `data-*` attribute ever survives, and the
-// webviews' CSP (nonce-only scripts) stays as a second line of defence.
+// A `style` attribute is rebuilt from an allowlist of cosmetic properties with
+// checked values (see htmlStyle.ts); `class`, `id`, `on*` and `data-*` never
+// survive, and the webviews' CSP (nonce-only scripts) stays as a second line of defence.
 //
 // Works on fragments, not documents: an opening tag and its closing tag may
 // arrive in different calls (markdown-it gives `<details>` and `</details>`
@@ -22,6 +23,7 @@
 // Pure: no DOM, so the unit tests exercise exactly what the webviews run.
 
 import { safeDimension, safeSrc } from "./htmlImage";
+import { safeStyle } from "./htmlStyle";
 
 export interface SanitizeOptions {
   /** Rewrite an image `src` that passed the safety check (e.g. to a webview URI). */
@@ -73,6 +75,7 @@ const boolean: AttrCheck = () => "";
 /** On every allowed element. */
 const GLOBAL_ATTRS: Record<string, AttrCheck> = {
   title: anything,
+  style: safeStyle,
   lang: (v) => (/^[a-zA-Z]{1,8}(-[a-zA-Z0-9]{1,8})*$/.test(v.trim()) ? v.trim() : null),
   dir: oneOf("ltr", "rtl", "auto"),
   align: oneOf("left", "right", "center", "justify"),
