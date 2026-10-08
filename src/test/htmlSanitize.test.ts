@@ -67,6 +67,15 @@ describe("sanitizeHtml: style", () => {
     expect(sanitizeHtml(`<div style="${style}">t</div>`)).toBe("<div>t</div>");
   });
 
+  it("adds a readable text color when a background is set without one", () => {
+    expect(sanitizeHtml('<td style="background:#f1f3f5">t</td>')).toBe('<td style="background: #f1f3f5; color: #1f2328">t</td>');
+    expect(sanitizeHtml('<td style="background-color:rgb(10, 20, 30)">t</td>')).toBe(
+      '<td style="background-color: rgb(10, 20, 30); color: #ffffff">t</td>',
+    );
+    expect(sanitizeHtml('<td style="background:#f1f3f5;color:#c00">t</td>')).toBe('<td style="background: #f1f3f5; color: #c00">t</td>');
+    expect(sanitizeHtml('<td style="background:lightblue">t</td>')).toBe('<td style="background: lightblue">t</td>');
+  });
+
   it("drops the attribute when nothing survives", () => {
     expect(sanitizeHtml('<p style="position:absolute">t</p>')).toBe("<p>t</p>");
   });

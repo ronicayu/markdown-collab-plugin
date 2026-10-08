@@ -72,16 +72,36 @@ const PROPERTIES: Record<string, ValueCheck> = {
   float: words("left", "right", "none"),
 };
 
+function luminance(value: string): number | null {
+  const hex = /^#([0-9a-f]{3,8})$/i.exec(value)?.[1];
+  let rgb: number[] | null = null;
+  if (hex && [3, 4, 6, 8].includes(hex.length)) {
+    const full = hex.length <= 4 ? [...hex].map((c) => c + c).join("") : hex;
+    rgb = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+  } else {
+    const fn = /^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/i.exec(value);
+    if (fn) rgb = [Number(fn[1]), Number(fn[2]), Number(fn[3])];
+  }
+  return rgb ? (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255 : null;
+}
+
 export function safeStyle(raw: string): string | null {
   if (raw.includes("/*") || raw.includes("\\")) return null;
   const kept: string[] = [];
+  const declared = new Map<string, string>();
   for (const declaration of raw.split(";")) {
     const colon = declaration.indexOf(":");
     if (colon < 0) continue;
     const property = declaration.slice(0, colon).trim().toLowerCase();
     const value = declaration.slice(colon + 1).trim().replace(/\s+/g, " ");
     const check = PROPERTIES[property];
-    if (check && value && check(value.toLowerCase())) kept.push(`${property}: ${value}`);
+    if (check && value && check(value.toLowerCase())) {
+      kept.push(`${property}: ${value}`);
+      declared.set(property, value);
+    }
   }
+  const background = declared.get("background-color") ?? declared.get("background");
+  const shade = background === undefined ? null : luminance(background);
+  if (shade !== null && !declared.has("color")) kept.push(`color: ${shade > 0.5 ? "#1f2328" : "#ffffff"}`);
   return kept.length ? kept.join("; ") : null;
 }

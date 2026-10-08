@@ -47,16 +47,16 @@ body { overflow: hidden; }
    VS Code theme — on a dark theme the odd columns turn dark-on-dark and become
    unreadable. Force cell colors onto VS Code tokens and replace the stripe
    with a faint, theme-agnostic overlay that reads in both light and dark. */
-.milkdown table th,
-.milkdown table td {
+.milkdown table:not(.mdc-html table) th,
+.milkdown table:not(.mdc-html table) td {
   color: var(--vscode-editor-foreground) !important;
   background-color: transparent !important;
   border-color: var(--vscode-panel-border, rgba(127, 127, 127, 0.3)) !important;
 }
-.milkdown table td:nth-child(odd) {
+.milkdown table:not(.mdc-html table) td:nth-child(odd) {
   background-color: rgba(127, 127, 127, 0.06) !important;
 }
-.milkdown table th {
+.milkdown table:not(.mdc-html table) th {
   background-color: rgba(127, 127, 127, 0.12) !important;
   font-weight: 600;
 }
@@ -65,17 +65,17 @@ body { overflow: hidden; }
    100%-wide colgroup, so a 1-char "#"/No. column gets the same width as a prose
    column. Switch to auto layout + content width and drop the equal colgroup
    widths. (Trade-off: drag-to-resize column handles stop taking effect.) */
-.milkdown table {
+.milkdown table:not(.mdc-html table) {
   table-layout: auto !important;
   /* Fill the editor width; auto layout still sizes each column to its content
      (a "#"/No. column stays narrow) and shares the slack across prose columns. */
   width: 100% !important;
 }
-.milkdown table col {
+.milkdown table:not(.mdc-html table) col {
   width: auto !important;
 }
-.milkdown table th,
-.milkdown table td {
+.milkdown table:not(.mdc-html table) th,
+.milkdown table:not(.mdc-html table) td {
   /* Let short cells stay narrow; only wrap genuinely long content. */
   white-space: normal;
   overflow-wrap: anywhere;
@@ -771,11 +771,21 @@ button.mdc-banner--jump:hover {
 }
 .mdc-html table {
   border-collapse: collapse;
+  width: auto;
+}
+.milkdown .mdc-html table th,
+.milkdown .mdc-html table td,
+.milkdown .mdc-html table td:nth-child(odd) {
+  background-color: transparent;
 }
 .mdc-html th,
 .mdc-html td {
+  color: inherit;
   border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
   padding: 4px 8px;
+}
+.mdc-html code {
+  color: inherit !important;
 }
 .mdc-html summary {
   font-weight: 600;

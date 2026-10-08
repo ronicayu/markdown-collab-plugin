@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with your AI agent — comments anchored in the file itself, suggestions you accept or reject. Works with Claude Code, Cursor, Windsurf, Codex and Copilot.",
-  "version": "0.35.48",
+  "version": "0.35.49",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",

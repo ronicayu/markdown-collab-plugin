@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.35.49 — 2026-10-08 (GitHub only)
+
+### Fixed: styled HTML tables render in the live editor
+
+In 0.35.48 the live editor's Markdown-table rules forced every cell of an HTML
+table to a transparent background and the theme's text color, so a table's
+`style` colors never showed, and the theme's column striping and full-width
+layout leaked into it. Those rules now apply to Markdown tables only.
+
+A cell that sets a `background` without a `color` gets a dark or light text
+color to match, so pale cells stay readable on a dark theme.
+
 ## 0.35.48 — 2026-10-08 (GitHub only)
 
 ### Added: `style` on HTML in Markdown renders
