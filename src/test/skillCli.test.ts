@@ -859,12 +859,42 @@ describe("mdc CLI: writes go through the running extension", () => {
     }
   });
 
-  it("read-only verbs stay local", async () => {
+  it("list stays local", async () => {
     const doc = writeDoc("a.md", DOC);
     const fake = await fakeExtension(tools((msg) => toolResult(msg, {})));
     try {
       expect((await runAsync(["list", doc], cliEnv(fake.ext))).status).toBe(0);
-      expect((await runAsync(["check", doc], cliEnv(fake.ext))).status).toBe(0);
+      expect(fake.seen).toHaveLength(0);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  // `check` writes a review checkpoint into a healthy file, so it is a write:
+  // done directly, it raced an unsaved buffer in the editor. It goes through
+  // `mc_check` instead, and only the path crosses the (loopback) wire.
+  it("check goes through the extension, which writes the checkpoint", async () => {
+    const doc = writeDoc("a.md", DOC);
+    const fake = await fakeExtension(
+      tools((msg) => toolResult(msg, { file: "file:///elsewhere", ok: true, issues: [], checkpointed: "2026-01-01T00:00:00.000Z" })),
+    );
+    try {
+      const r = await runAsync(["check", doc], cliEnv(fake.ext));
+      expect(r.status).toBe(0);
+      expect(fake.seen[1]!.body.params).toEqual({ name: "mc_check", arguments: { file: doc } });
+      expect(json(r)).toMatchObject({ file: doc, ok: true, checkpointed: "2026-01-01T00:00:00.000Z", via: "extension" });
+      // Nothing written from here: the extension owns the write.
+      expect(fs.readFileSync(doc, "utf8")).toBe(DOC);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  it("check --repair stays local", async () => {
+    const doc = writeDoc("a.md", DOC);
+    const fake = await fakeExtension(tools((msg) => toolResult(msg, {})));
+    try {
+      expect((await runAsync(["check", doc, "--repair"], cliEnv(fake.ext))).status).toBe(0);
       expect(fake.seen).toHaveLength(0);
     } finally {
       await fake.close();

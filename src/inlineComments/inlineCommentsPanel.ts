@@ -26,7 +26,7 @@ import type { LineRange } from "../pr/diff";
 import { headFileContent, repoRootFor } from "../uncommitted/gitUncommitted";
 import { diffProse, type RemovedRun } from "../uncommitted/proseDiff";
 import { findFrontmatter, parse, type ParsedDocument } from "./format";
-import { minimalEdit } from "./minimalEdit";
+import { ConflictError, mutateDocument } from "../collab/documentWriteQueue";
 import { applyClientMutation, type MutationMessage } from "./mutations";
 import { mapProseToSource } from "./proseMapping";
 import { serialize, type SerializedState } from "./serializeState";
@@ -787,28 +787,29 @@ ${inlineCommentsAppBody()}
   }
 
   private async applyMutation(fn: (parsed: ParsedDocument) => string): Promise<void> {
-    const parsed = parse(this.doc.getText());
-    const next = fn(parsed);
-    if (next === parsed.source) return;
-    // Replace only the span that changed, not the whole file: a reply touches
-    // one line of the threads region, and rewriting the entire document to say
-    // so re-tokenizes the buffer, disturbs folds and decorations, and tells
-    // every watcher that everything changed.
-    const change = minimalEdit(parsed.source, next);
-    if (!change) return;
-    const edit = new vscode.WorkspaceEdit();
-    edit.replace(
-      this.doc.uri,
-      new vscode.Range(this.doc.positionAt(change.start), this.doc.positionAt(change.end)),
-      change.replacement,
-    );
+    // Through the document's write queue (collab/documentWriteQueue.ts): the
+    // mutation runs on the file as it is when this write's turn comes, after
+    // any agent call or live-editor edit already in flight — so a reply here
+    // can't undo one that landed a moment earlier. The queue replaces only the
+    // span that changed, so a reply touching one line of the threads region
+    // doesn't re-tokenize the buffer or tell every watcher everything changed.
     this.pendingApply = true;
     try {
-      const ok = await vscode.workspace.applyEdit(edit);
-      if (!ok) {
-        void vscode.window.showErrorMessage("Inline comments: edit failed to apply.");
+      let changed: boolean | null;
+      try {
+        changed = await mutateDocument(this.doc.uri, (source) => {
+          const next = fn(parse(source));
+          return next === source ? null : { next, result: true };
+        });
+      } catch (e) {
+        void vscode.window.showErrorMessage(
+          e instanceof ConflictError
+            ? "Inline comments: the file kept changing, so the comment wasn't applied. Try again."
+            : `Inline comments: edit failed to apply: ${(e as Error).message}`,
+        );
         return;
       }
+      if (!changed) return;
       // The .md file is the source of truth, and review actions (add / reply /
       // resolve / delete) are expected to persist immediately, not sit in an
       // unsaved buffer. Other pending edits in the text editor flush with this

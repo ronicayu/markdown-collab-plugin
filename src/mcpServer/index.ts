@@ -22,7 +22,7 @@ import type { Logger } from "../logging";
 import { isInsideRoot } from "../pathUtils";
 import { claudePending } from "../claudePendingService";
 import { reviewPassPending } from "../reviewPassPendingService";
-import { minimalEdit } from "../inlineComments/minimalEdit";
+import { ConflictError, mutateDocument } from "../collab/documentWriteQueue";
 import { serveMcp, type McpHttpServer } from "./httpServer";
 import { SessionRegistry } from "./sessions";
 import { callTool, TOOLS, ToolRefusal, type ToolDeps } from "./tools";
@@ -164,32 +164,29 @@ export async function resolveWorkspaceFile(file: string): Promise<vscode.Uri> {
 }
 
 /**
- * Apply `next` to the document as a `WorkspaceEdit`, then save. Unlike a raw disk
- * write, the edit is ordered against the buffer's unsaved state instead of racing
- * it, joins the editor's undo stack (Cmd+Z undoes Claude), and every open view
- * re-renders from the document-change event it already listens to.
+ * Change a document for a tool call through its write queue
+ * (collab/documentWriteQueue.ts): the op runs on the text current in the
+ * write's turn and lands as a `WorkspaceEdit`, then saves. Unlike a raw disk
+ * write, the edit is ordered against the buffer's unsaved state and every other
+ * writer of the file instead of racing them, joins the editor's undo stack
+ * (Cmd+Z undoes Claude), and every open view re-renders from the
+ * document-change event it already listens to.
  */
-async function applyDocumentEdit(uri: vscode.Uri, next: string): Promise<void> {
-  const doc = await vscode.workspace.openTextDocument(uri);
-  const change = minimalEdit(doc.getText(), next);
-  if (!change) return;
-  const edit = new vscode.WorkspaceEdit();
-  edit.replace(
-    uri,
-    new vscode.Range(doc.positionAt(change.start), doc.positionAt(change.end)),
-    change.replacement,
-  );
-  const applied = await vscode.workspace.applyEdit(edit);
-  if (!applied) {
-    throw new Error("the editor rejected the edit (the document may have changed underneath it)");
-  }
-  // Review state is meant to be on disk the moment it is written — the same
-  // rule the panels follow after every mutation. `save()` also answers false
-  // when there was nothing to save (a reload landed the same bytes first), so
-  // the dirty flag, not the return value, is what says the write is lost.
-  const saved = await doc.save();
-  if (!saved && doc.isDirty) {
-    throw new Error("the edit applied but the file could not be saved");
+async function mutateForTool<T>(
+  key: string,
+  fn: (source: string) => { next: string; result: T } | null,
+): Promise<T | null> {
+  try {
+    return await mutateDocument(vscode.Uri.parse(key), fn, { save: true });
+  } catch (e) {
+    if (e instanceof ConflictError) {
+      throw new ToolRefusal(
+        "conflict",
+        "the document kept changing while this call was being applied, so nothing was written. " +
+          "Re-read it (mc_list) and make the call again.",
+      );
+    }
+    throw e;
   }
 }
 
@@ -197,7 +194,7 @@ export function buildToolDeps(deps: McpHostDeps): ToolDeps {
   return {
     resolveFile: async (file) => (await resolveWorkspaceFile(file)).toString(),
     readDoc: async (key) => (await vscode.workspace.openTextDocument(vscode.Uri.parse(key))).getText(),
-    writeDoc: async (key, next) => applyDocumentEdit(vscode.Uri.parse(key), next),
+    mutateDoc: mutateForTool,
     // Read fresh on every call, never cached — the human can flip
     // `markdownCollab.proposeEditsAsSuggestions` mid-session and the very next tool
     // call must see it. Resolved against the document's own URI so a future

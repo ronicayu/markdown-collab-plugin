@@ -417,6 +417,36 @@ function integrityOkOnDisk(absPath: string): boolean | undefined {
   }
 }
 
+/**
+ * Compute a new text from the file and write it — unless the file changed
+ * between the read and the write, which means another process (an agent's own
+ * edit tool, a second `mdc`) wrote it meanwhile and this result would erase
+ * that write. Then the computation is redone on the new text, a few times,
+ * before giving up with `conflict` and writing nothing. Only for the direct
+ * path: a forwarded call is ordered by the extension's own write queue.
+ *
+ * `compute` returns null to write nothing.
+ */
+function writeComputed<T>(
+  file: string,
+  compute: (source: string) => { next: string; result: T } | null,
+): { source: string; outcome: { next: string; result: T } | null } {
+  for (let attempt = 1; ; attempt++) {
+    const source = readDoc(file);
+    const outcome = compute(source);
+    if (!outcome || outcome.next === source) return { source, outcome };
+    if (readFileSync(file, "utf8") === source) {
+      writeFileSync(file, outcome.next, "utf8");
+      return { source, outcome };
+    }
+    if (attempt === 3) {
+      fail(`${file} kept changing while mdc was writing it; nothing was written — run the command again`, {
+        code: "conflict",
+      });
+    }
+  }
+}
+
 interface Mutation<T> {
   action: string;
   tool: string;
@@ -463,15 +493,13 @@ async function apply<T>(file: string, m: Mutation<T>, ext: Extension | null, aut
     }
   }
 
-  const source = readDoc(file);
   let outcome: OpOutcome<T>;
   try {
-    outcome = m.run(source);
+    outcome = writeComputed(file, m.run).outcome!;
   } catch (e) {
     if (e instanceof DocOpError) return refuse(e.code, e.message, e.details, m.integrityCodes);
     throw e;
   }
-  writeFileSync(file, outcome.next, "utf8");
   out({ action: m.action, file, ...outcome.result, integrityOk: checkIntegrity(outcome.next).ok });
 }
 
@@ -479,20 +507,48 @@ function cmdList(file: string, actionableOnly: boolean): void {
   out({ file, ...opList(readDoc(file), actionableOnly) });
 }
 
-function cmdCheck(file: string, repair: boolean): void {
-  const source = readDoc(file);
+async function cmdCheck(file: string, repair: boolean, ext: Extension | null, author: string): Promise<void> {
   if (!repair) {
+    // The checkpoint is a write, so with the extension running it goes through
+    // `mc_check` like every other write: ordered in the document's write
+    // queue, never racing an unsaved buffer in the editor.
+    if (ext) {
+      readDoc(file);
+      const f = await forward(ext, "mc_check", { file: path.resolve(file) }, author);
+      if (f.kind === "applied") {
+        const rest = { ...f.result };
+        delete rest.file;
+        out({ file, ...rest, via: "extension" });
+        process.exit(rest.ok === true ? EXIT_OK : EXIT_INTEGRITY);
+      }
+      if (f.kind === "refused" && f.code !== "file_not_found" && f.code !== "no_workspace") {
+        return refuse(f.code, f.message, f.details);
+      }
+      if (f.kind === "unknown") {
+        return fail(
+          `the extension at ${ext.url} did not answer (${f.reason}); run \`mdc check ${file}\` again`,
+          { code: "no_answer" },
+        );
+      }
+      writeSync(2, `mdc: checking ${file} directly\n`);
+    }
     // Shares `opCheckAndCheckpoint` with `mc_check`: a healthy document gets a review
     // checkpoint here too, so "Review Changes Since Last Pass" is incremental for a
     // terminal Claude. A broken document is reported and left untouched.
-    const { report, next, checkpoint } = opCheckAndCheckpoint(source);
-    if (next !== undefined) writeFileSync(file, next, "utf8");
-    out(checkpoint ? { file, ...report, checkpointed: checkpoint.ts } : { file, ...report });
+    let report!: ReturnType<typeof opCheckAndCheckpoint>["report"];
+    const { outcome } = writeComputed(file, (source) => {
+      const checked = opCheckAndCheckpoint(source);
+      report = checked.report;
+      return checked.next !== undefined && checked.checkpoint ? { next: checked.next, result: checked.checkpoint } : null;
+    });
+    out(outcome ? { file, ...report, checkpointed: outcome.result.ts } : { file, ...report });
     process.exit(report.ok ? EXIT_OK : EXIT_INTEGRITY);
   }
 
-  const result = repairIntegrity(source);
-  if (result.source !== source) {
+  let result!: ReturnType<typeof repairIntegrity>;
+  writeComputed(file, (source) => {
+    result = repairIntegrity(source);
+    if (result.source === source) return null;
     // The prose rule is enforced inside repairIntegrity, but this is the
     // process that actually writes to the user's file — verify again here.
     if (stripAllInlineMarkup(result.source) !== stripAllInlineMarkup(source)) {
@@ -501,8 +557,8 @@ function cmdCheck(file: string, repair: boolean): void {
         exit: EXIT_INTEGRITY,
       });
     }
-    writeFileSync(file, result.source, "utf8");
-  }
+    return { next: result.source, result: null };
+  });
   out({
     file,
     repaired: result.repairs.length,
@@ -672,7 +728,7 @@ async function main(): Promise<void> {
       // guard below rejects a bare `mdc check --hook` for lacking one.
       if (flags.hook === true) return cmdCheckHook();
       if (!rest[0]) fail("usage: mdc check <file> [--repair]");
-      return cmdCheck(rest[0], flags.repair === true);
+      return cmdCheck(rest[0], flags.repair === true, ext, author);
     default:
       fail(`unknown command: ${command}`, { detail: USAGE });
   }

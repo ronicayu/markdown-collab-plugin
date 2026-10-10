@@ -16,6 +16,7 @@ import {
   opResolve,
 } from "../inlineComments/docOps";
 import type { ReviewNode } from "../reviewView";
+import { ConflictError, mutateDocument } from "../collab/documentWriteQueue";
 import { activeMarkdownUri } from "../activeMarkdown";
 import type { CommandDeps } from "./deps";
 import { reviewViewOptsFrom } from "./reviewViewRouter";
@@ -57,26 +58,14 @@ async function invokeRemoveResolvedComments(arg: vscode.Uri | undefined, log: Lo
   );
   if (choice !== "Remove") return;
 
-  let next: string;
-  let removed: string[];
-  try {
-    const outcome = opPurgeResolved(source);
-    next = outcome.next;
-    removed = outcome.result.removed;
-  } catch (e) {
-    const err = e as DocOpError;
-    log.warn("remove resolved refused", { code: err.code, message: err.message });
-    void vscode.window.showWarningMessage(`Could not remove the resolved comments: ${err.message}`);
-    return;
-  }
-
-  const edit = new vscode.WorkspaceEdit();
-  edit.replace(doc.uri, new vscode.Range(doc.positionAt(0), doc.positionAt(source.length)), next);
-  if (!(await vscode.workspace.applyEdit(edit))) {
-    log.error("remove resolved: applyEdit was rejected");
-    void vscode.window.showErrorMessage("Could not write the change into the document.");
-    return;
-  }
+  // Removes what is resolved now, not what the dialog counted.
+  const result = await applyOp(doc, opPurgeResolved, log, "remove resolved", (err) =>
+    err.code === "nothing_to_do"
+      ? void vscode.window.showInformationMessage("No resolved comments left in this file — nothing to remove.")
+      : void vscode.window.showWarningMessage(`Could not remove the resolved comments: ${err.message}`),
+  );
+  if (!result) return;
+  const removed = result.removed;
   // A review action, like every mutation the panel applies — the user expects
   // it to persist immediately, not sit in an unsaved buffer they have to
   // remember to Cmd+S.
@@ -85,6 +74,42 @@ async function invokeRemoveResolvedComments(arg: vscode.Uri | undefined, log: Lo
   void vscode.window.showInformationMessage(
     `Removed ${removed.length} resolved comment${removed.length === 1 ? "" : "s"}. Undo with Cmd+Z.`,
   );
+}
+
+/**
+ * Apply a comment op through the document's write queue, on the file as it is
+ * when the write's turn comes — after the command's dialog, and after any
+ * agent call or live-editor edit already in flight. Computing it from the
+ * text read before the dialog and writing that over the file would erase
+ * whatever landed while the dialog was open.
+ *
+ * A refusal (`DocOpError`) goes to `refused`; a document that kept changing,
+ * or a failed edit, is reported here. Resolves to the op's result, or
+ * undefined when nothing was written.
+ */
+async function applyOp<T>(
+  doc: vscode.TextDocument,
+  op: (source: string) => { next: string; result: T },
+  log: Logger,
+  what: string,
+  refused: (err: DocOpError) => void,
+): Promise<T | undefined> {
+  try {
+    const result = await mutateDocument(doc.uri, (source) => op(source));
+    return result ?? undefined;
+  } catch (e) {
+    if (e instanceof DocOpError) {
+      log.warn(`${what} refused`, { code: e.code, message: e.message });
+      refused(e);
+    } else if (e instanceof ConflictError) {
+      log.warn(`${what}: the document kept changing`);
+      void vscode.window.showErrorMessage("The file kept changing, so the change wasn't made. Try again.");
+    } else {
+      log.error(`${what} failed`, e);
+      void vscode.window.showErrorMessage(`Could not write the change into the document: ${(e as Error).message}`);
+    }
+    return undefined;
+  }
 }
 
 /** Save `doc` after a successful applyEdit, warning (not throwing) on failure. */
@@ -123,12 +148,10 @@ async function invokeFinalizeDocument(arg: vscode.Uri | undefined, log: Logger):
   }
 
   const source = doc.getText();
-  let next: string;
   let counts: { removedOpen: number; removedResolved: number; discardedSuggestions: number };
   try {
-    const outcome = opFinalize(source);
-    next = outcome.next;
-    counts = outcome.result;
+    // Only to describe what will go; the write recomputes it after the dialog.
+    counts = opFinalize(source).result;
   } catch (e) {
     const err = e as DocOpError;
     if (err.code === "nothing_to_do") {
@@ -167,15 +190,15 @@ async function invokeFinalizeDocument(arg: vscode.Uri | undefined, log: Logger):
   );
   if (choice !== "Remove all") return;
 
-  const edit = new vscode.WorkspaceEdit();
-  edit.replace(doc.uri, new vscode.Range(doc.positionAt(0), doc.positionAt(source.length)), next);
-  if (!(await vscode.workspace.applyEdit(edit))) {
-    log.error("finalize: applyEdit was rejected");
-    void vscode.window.showErrorMessage("Could not write the change into the document.");
-    return;
-  }
+  // The dialog described the file as it was; finalize the file as it is now.
+  const done = await applyOp(doc, opFinalize, log, "finalize", (err) =>
+    err.code === "nothing_to_do"
+      ? void vscode.window.showInformationMessage("No review data left in this file — it's already clean markdown.")
+      : void vscode.window.showWarningMessage(`Could not finalize the document: ${err.message}`),
+  );
+  if (!done) return;
   await saveOrWarn(doc, log, "Finalized the document");
-  log.info("finalized document", { file: doc.uri.fsPath, ...counts });
+  log.info("finalized document", { file: doc.uri.fsPath, ...done });
   void vscode.window.showInformationMessage(
     `Removed all review data from ${path.basename(uri.fsPath)}. Undo with Cmd+Z.`,
   );
@@ -214,34 +237,26 @@ async function invokeCommentOnSelection(log: Logger): Promise<void> {
 
   const author = currentAuthorName();
 
-  let next: string;
-  let threadId: string;
-  try {
-    const outcome = opOpenAt(doc.getText(), start, end, body.trim(), author);
-    next = outcome.next;
-    threadId = outcome.result.threadId;
-  } catch (e) {
-    const err = e as DocOpError;
-    log.warn("comment on selection refused", { code: err.code, message: err.message });
-    void vscode.window.showWarningMessage(
-      err.code === "not_anchorable"
-        ? `That selection can't hold a comment: ${err.message}`
-        : `Could not add the comment: ${err.message}`,
-    );
-    return;
-  }
-
-  const edit = new vscode.WorkspaceEdit();
-  edit.replace(
-    doc.uri,
-    new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length)),
-    next,
+  // The offsets are from before the input box. If text above the selection
+  // moved meanwhile, they'd anchor the comment to whatever now sits there, so
+  // the quote is checked in the write's turn and relocated when it's unique.
+  const opened = await applyOp(
+    doc,
+    (source) => {
+      const at = source.slice(start, end) === quote ? start : uniqueIndexOf(source, quote);
+      return opOpenAt(source, at, at + quote.length, body.trim(), author);
+    },
+    log,
+    "comment on selection",
+    (err) =>
+      void vscode.window.showWarningMessage(
+        err.code === "not_anchorable"
+          ? `That selection can't hold a comment: ${err.message}`
+          : `Could not add the comment: ${err.message}`,
+      ),
   );
-  if (!(await vscode.workspace.applyEdit(edit))) {
-    log.error("comment on selection: applyEdit was rejected");
-    void vscode.window.showErrorMessage("Could not write the comment into the document.");
-    return;
-  }
+  if (!opened) return;
+  const threadId = opened.threadId;
   // Same reasoning as the panel's own mutations (inlineCommentsPanel.ts): the
   // .md file is the source of truth, and a comment sitting in an unsaved
   // buffer is invisible to an agent reading it from disk.
@@ -266,31 +281,28 @@ async function invokeRepairInlineComments(
     return;
   }
   const uri = vscode.Uri.file(fsPath);
-  let doc: vscode.TextDocument;
+  let found: ReturnType<typeof repairIntegrity> | undefined;
+  let result: ReturnType<typeof repairIntegrity> | null;
   try {
-    doc = await vscode.workspace.openTextDocument(uri);
+    result = await mutateDocument(uri, (source) => {
+      found = repairIntegrity(source);
+      return found.repairs.length === 0 ? null : { next: found.source, result: found };
+    });
   } catch (e) {
-    void vscode.window.showErrorMessage(`Could not open ${path.basename(fsPath)}: ${(e as Error).message}`);
+    void vscode.window.showErrorMessage(
+      e instanceof ConflictError
+        ? "The file kept changing, so the comment-anchor repair wasn't applied. Try again."
+        : `Could not apply the comment-anchor repair: ${(e as Error).message}`,
+    );
     return;
   }
-
-  const before = doc.getText();
-  const result = repairIntegrity(before);
-  if (result.repairs.length === 0) {
-    const remaining = result.remaining.length;
+  if (!result) {
+    const remaining = found?.remaining.length ?? 0;
     void vscode.window.showInformationMessage(
       remaining === 0
         ? "No comment-anchor problems found."
         : `Nothing could be repaired automatically; ${remaining} problem(s) need a manual fix.`,
     );
-    return;
-  }
-
-  const edit = new vscode.WorkspaceEdit();
-  edit.replace(uri, new vscode.Range(doc.positionAt(0), doc.positionAt(before.length)), result.source);
-  const applied = await vscode.workspace.applyEdit(edit);
-  if (!applied) {
-    void vscode.window.showErrorMessage("Could not apply the comment-anchor repair.");
     return;
   }
   for (const r of result.repairs) log.info("repaired anchor", { file: path.basename(fsPath), repair: r.description });
@@ -368,39 +380,30 @@ async function invokeResolveThread(
     return;
   }
 
-  const source = doc.getText();
-  const thread = parseInline(source).threads.find((t) => t.id === threadId);
-  if (!thread) {
-    void vscode.window.showWarningMessage("That thread no longer exists in this file.");
-    return;
-  }
-  const reopening = thread.status === "resolved";
-  const verb = reopening ? "reopen" : "resolve";
   // The resolver's name is the human's, same as the review view records —
   // `opResolve` defaults to "claude" because the agent tools are its usual
   // caller.
   const author = currentAuthorName();
 
-  let next: string;
-  try {
-    const outcome = reopening
-      ? opReopen(source, threadId)
-      : opResolve(source, threadId, () => new Date().toISOString(), author);
-    next = outcome.next;
-  } catch (e) {
-    const err = e as DocOpError;
-    log.warn(`${verb} thread refused`, { code: err.code, message: err.message });
-    void vscode.window.showWarningMessage(`Could not ${verb} the thread: ${err.message}`);
-    return;
-  }
-
-  const edit = new vscode.WorkspaceEdit();
-  edit.replace(doc.uri, new vscode.Range(doc.positionAt(0), doc.positionAt(source.length)), next);
-  if (!(await vscode.workspace.applyEdit(edit))) {
-    log.error(`${verb} thread: applyEdit was rejected`);
-    void vscode.window.showErrorMessage("Could not write the change into the document.");
-    return;
-  }
+  // Which way the toggle goes is read in the write's turn, so a thread an
+  // agent resolved a moment ago is reopened, not resolved twice.
+  let reopening = false;
+  const toggled = await applyOp(
+    doc,
+    (source) => {
+      const thread = parseInline(source).threads.find((t) => t.id === threadId);
+      if (!thread) throw new DocOpError("thread_not_found", "that thread no longer exists in this file");
+      reopening = thread.status === "resolved";
+      return reopening ? opReopen(source, threadId) : opResolve(source, threadId, () => new Date().toISOString(), author);
+    },
+    log,
+    "resolve/reopen thread",
+    (err) =>
+      void vscode.window.showWarningMessage(
+        err.code === "thread_not_found" ? "That thread no longer exists in this file." : `Could not update the thread: ${err.message}`,
+      ),
+  );
+  if (!toggled) return;
   await saveOrWarn(doc, log, reopening ? "Reopened the thread" : "Resolved the thread");
 }
 
@@ -446,29 +449,35 @@ async function invokeReplyToThread(
 
   const author = currentAuthorName();
 
-  let next: string;
-  try {
-    // `agent: false` — this is the human replying from the hover, not an
-    // agent through mc_reply/mdc reply, so it neither stamps the comment as
-    // an agent's nor reopens a resolved thread the way an agent's reply does
-    // (`opReply`'s own doc comment).
-    const outcome = opReply(source, threadId, body.trim(), () => new Date().toISOString(), author, false);
-    next = outcome.next;
-  } catch (e) {
-    const err = e as DocOpError;
-    log.warn("reply to thread refused", { code: err.code, message: err.message });
-    void vscode.window.showWarningMessage(`Could not add the reply: ${err.message}`);
-    return;
-  }
-
-  const edit = new vscode.WorkspaceEdit();
-  edit.replace(doc.uri, new vscode.Range(doc.positionAt(0), doc.positionAt(source.length)), next);
-  if (!(await vscode.workspace.applyEdit(edit))) {
-    log.error("reply to thread: applyEdit was rejected");
-    void vscode.window.showErrorMessage("Could not write the reply into the document.");
-    return;
-  }
+  // `agent: false` — this is the human replying from the hover, not an
+  // agent through mc_reply/mdc reply, so it neither stamps the comment as
+  // an agent's nor reopens a resolved thread the way an agent's reply does
+  // (`opReply`'s own doc comment). Appended to the thread as it is after the
+  // input box, so a reply an agent added meanwhile is kept.
+  const replied = await applyOp(
+    doc,
+    (current) => opReply(current, threadId, body.trim(), () => new Date().toISOString(), author, false),
+    log,
+    "reply to thread",
+    (err) => void vscode.window.showWarningMessage(`Could not add the reply: ${err.message}`),
+  );
+  if (!replied) return;
   await saveOrWarn(doc, log, "Reply added");
+}
+
+/** The one place `quote` occurs in `source`; a refusal when it's gone or appears more than once. */
+function uniqueIndexOf(source: string, quote: string): number {
+  const first = source.indexOf(quote);
+  if (first < 0) {
+    throw new DocOpError("passage_not_found", "the selected text changed while you were writing the comment");
+  }
+  if (source.indexOf(quote, first + 1) >= 0) {
+    throw new DocOpError(
+      "passage_ambiguous",
+      "the text around your selection changed while you were writing the comment, and the passage now appears more than once — select it again",
+    );
+  }
+  return first;
 }
 
 export function registerCommentsCommands(deps: CommandDeps): void {

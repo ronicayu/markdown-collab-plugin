@@ -739,3 +739,95 @@ describe("environmentVariableCollection (L2b)", () => {
     expect(src).toMatch(/environmentVariableCollection\.persistent\s*=\s*false/);
   });
 });
+
+describe("concurrent calls on one file", () => {
+  /** A file whose reads and writes each take a turn of the event loop, like a real round trip. */
+  function slowHost(initial = DOC) {
+    let text = initial;
+    const deps: ToolDeps = {
+      resolveFile: async (file) => `/ws/${file}`,
+      readDoc: async () => {
+        await new Promise((r) => setTimeout(r, 2));
+        return text;
+      },
+      writeDoc: async (_key, next) => {
+        await new Promise((r) => setTimeout(r, 2));
+        text = next;
+      },
+      now: () => "2026-07-30T00:00:00.000Z",
+    };
+    return { deps, read: () => text, call: (name: string, args: Record<string, unknown>) => callTool(name, args, deps) };
+  }
+
+  it("lands every one of them — none computed on text another had already changed", async () => {
+    const h = slowHost();
+    const results = await Promise.all([
+      h.call("mc_open", { file: "guide.md", quote: "nested lists", body: "Which kinds?" }),
+      h.call("mc_open", { file: "guide.md", quote: "behind a setting", body: "Which setting?" }),
+      h.call("mc_edit", { file: "guide.md", old: "# Guide", new: "# The guide" }),
+    ]);
+    for (const r of results) expect(r.isError).toBeFalsy();
+    const doc = parse(h.read());
+    expect(doc.threads.map((t) => t.comments[0]!.body).sort()).toEqual(["Which kinds?", "Which setting?"]);
+    expect(h.read()).toContain("# The guide");
+    expect(checkIntegrity(h.read()).ok).toBe(true);
+  });
+
+  it("judges each call on the document as it is in its turn", async () => {
+    const h = slowHost();
+    const opened = await h.call("mc_open", { file: "guide.md", quote: "nested lists", body: "Why?" });
+    const threadId = body(opened).threadId as string;
+    // Resolved and replied-to at once: the reply is judged after the resolve
+    // landed, on the thread as the resolve left it — so it sees a resolved
+    // thread and reopens it, as an agent's reply to a resolved thread does.
+    // Computed on the text read when the call was made, it would have seen an
+    // open thread, and its write would have undone the resolve silently.
+    const [resolved, replied] = await Promise.all([
+      h.call("mc_resolve", { file: "guide.md", threadId }),
+      h.call("mc_reply", { file: "guide.md", threadId, body: "Answered." }),
+    ]);
+    expect(resolved.isError).toBeFalsy();
+    expect(body(replied).reopened).toBe(true);
+    const thread = parse(h.read()).threads.find((t) => t.id === threadId)!;
+    expect(thread.status).toBe("open");
+    expect(thread.comments.map((c) => c.body)).toEqual(["Why?", "Answered."]);
+  });
+
+  it("uses the host's own mutateDoc when it has one, handing it the op rather than a result", async () => {
+    let text = DOC;
+    const ops: string[] = [];
+    const deps: ToolDeps = {
+      resolveFile: async (file) => `/ws/${file}`,
+      readDoc: async () => text,
+      mutateDoc: async (_key, fn) => {
+        // A write that landed after the call was made, before its turn.
+        text = text.replace("# Guide", "# Guide (edited)");
+        ops.push(text);
+        const out = fn(text);
+        if (!out) return null;
+        text = out.next;
+        return out.result;
+      },
+    };
+    const r = await callTool("mc_open", { file: "guide.md", quote: "nested lists", body: "Hm?" }, deps);
+    expect(r.isError).toBeFalsy();
+    expect(ops).toHaveLength(1);
+    // The op ran on the newer text, so the earlier change survives.
+    expect(text).toContain("# Guide (edited)");
+    expect(parse(text).threads).toHaveLength(1);
+  });
+
+  it("reports the host's conflict as a refusal the agent can act on", async () => {
+    const deps: ToolDeps = {
+      resolveFile: async (file) => `/ws/${file}`,
+      readDoc: async () => DOC,
+      mutateDoc: async () => {
+        const { ToolRefusal } = await import("../mcpServer/tools");
+        throw new ToolRefusal("conflict", "the document kept changing; nothing was written");
+      },
+    };
+    const r = await callTool("mc_reply", { file: "guide.md", threadId: "x", body: "y" }, deps);
+    expect(r.isError).toBe(true);
+    expect(body(r).error.code).toBe("conflict");
+  });
+});
