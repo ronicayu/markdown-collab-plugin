@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.35.52 — 2026-10-10 (pre-release)
+
+First build since 0.35.45 on the marketplaces' pre-release channel. It carries
+everything from 0.35.46 to 0.35.51, which shipped to GitHub only:
+
+- HTML in Markdown renders on every review surface; a complete HTML block
+  renders with its own CSS in a contained shadow root (0.35.47, 0.35.50).
+- A Set Up Claude Code prompt for a `claude` binary with neither the plugin nor
+  the skill (0.35.46).
+- One write queue per document, so concurrent writers no longer undo each
+  other (0.35.51).
+
+No code change since 0.35.51.
+
 ## 0.35.51 — 2026-10-10 (GitHub only)
 
 ### Fixed: concurrent writes to a document no longer undo each other
