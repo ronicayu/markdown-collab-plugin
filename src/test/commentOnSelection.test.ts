@@ -12,6 +12,8 @@ import { DocOpError, opOpenAt } from "../inlineComments/docOps";
 import { parse } from "../inlineComments/format";
 import { safeHoverTargetUri } from "../commands/comments";
 import { readHostSources } from "./hostSources";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const DOC = `---
 title: Guide
@@ -195,10 +197,18 @@ describe("the editor's comment path uses the shared verb", () => {
   });
 
   it("writes through a WorkspaceEdit, so the comment is undoable", () => {
-    const fn = extension.slice(extension.indexOf("async function invokeCommentOnSelection"));
-    const body = fn.slice(0, fn.indexOf("\n}\n"));
-    expect(body).toContain("new vscode.WorkspaceEdit()");
-    expect(body).toContain("applyEdit");
+    const fnOf = (src: string, sig: string) => {
+      const from = src.slice(src.indexOf(sig));
+      return from.slice(0, from.indexOf("\n}\n"));
+    };
+    // The command hands its op to `applyOp`, which runs it through the
+    // document's write queue, whose `mutateDocument` lands it as a WorkspaceEdit.
+    const body = fnOf(extension, "async function invokeCommentOnSelection");
+    expect(body).toContain("applyOp(");
     expect(body).not.toMatch(/fs\.|writeFile/);
+    expect(fnOf(extension, "async function applyOp<")).toContain("mutateDocument(");
+    const queue = fnOf(readFileSync(join(__dirname, "../collab/documentWriteQueue.ts"), "utf8"), "export function mutateDocument<");
+    expect(queue).toContain("new vscode.WorkspaceEdit()");
+    expect(queue).toContain("applyEdit");
   });
 });

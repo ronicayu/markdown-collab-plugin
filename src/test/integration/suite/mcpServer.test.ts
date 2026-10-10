@@ -145,6 +145,42 @@ suite("mcpServer: tools against a real workspace", () => {
     assert.ok(text.includes("<!--mc:a:"), "the tool's edit was lost");
   });
 
+  test("concurrent tool calls on one file all land, none undoing another", async () => {
+    // Before the document write queue, each call read the text, computed, and
+    // wrote its result over whatever had landed meanwhile — so of several
+    // calls at once, the later writes reverted the earlier ones.
+    const { doc, name } = await openFixture();
+    const quotes = ["parser", "nested lists", "Suggest mode", "behind a setting"];
+    const results = await Promise.all(
+      quotes.map((quote) => callTool("mc_open", { file: name, quote, body: `About ${quote}` }, deps())),
+    );
+    for (const r of results) assert.notStrictEqual(r.isError, true, JSON.stringify(r));
+    const threads = parse(doc.getText()).threads;
+    assert.deepStrictEqual(
+      threads.map((t) => t.comments[0]!.body).sort(),
+      quotes.map((q) => `About ${q}`).sort(),
+    );
+    assert.strictEqual(doc.isDirty, false, "document should have been saved");
+    const checked = json(await callTool("mc_check", { file: name }, deps()));
+    assert.strictEqual(checked.ok, true, JSON.stringify(checked.issues));
+  });
+
+  test("a human edit typed while a tool call is in flight survives it", async () => {
+    // The one writer the queue can't see is the text editor. The call's edit
+    // is built against a document version; if the human's keystroke lands
+    // first, VS Code refuses it and the queue recomputes on the new text.
+    const { doc, name } = await openFixture();
+    const editor = await vscode.window.showTextDocument(doc, { preview: false });
+    const call = callTool("mc_open", { file: name, quote: "nested lists", body: "Typed during." }, deps());
+    await editor.edit((b) => b.insert(doc.positionAt(0), "Typed first.\n\n"));
+    const r = await call;
+    assert.notStrictEqual(r.isError, true, JSON.stringify(r));
+    const text = doc.getText();
+    assert.ok(text.startsWith("Typed first."), "the human's edit was lost");
+    assert.ok(text.includes("<!--mc:a:"), "the tool's edit was lost");
+    assert.strictEqual(parse(text).threads.length, 1);
+  });
+
   test("a refused call leaves the document untouched", async () => {
     const { doc, name } = await openFixture();
     const before = doc.getText();

@@ -42,7 +42,7 @@ Two of these do more than they look like they do: **`mc_check` ends the pass** �
 
 Ordinary prose edits — text outside an anchored span — may use `mc_edit` (CLI: `mdc edit`), which refuses anything that would break a marker or touch the threads region; the Edit tool remains fine too in interactive sessions. Every `mdc` command prints JSON to stdout — a failure is `{"ok":false,"code":…,"message":…}` — with exit codes `0` ok, `1` usage error or refusal, `2` integrity violation; mutating commands validate before writing and refuse a change that would introduce a new integrity problem, so a failed command leaves the file untouched rather than half-edited.
 
-**Both paths refuse rather than guess.** Ambiguous passage (appears more than once)? Pass the occurrence. Inside a code span? Choose a different anchor. Never work around a refusal by hand-editing — it's telling you the edit was unsafe, and the hand-edit would perform it anyway.
+**Both paths refuse rather than guess.** Ambiguous passage (appears more than once)? Pass the occurrence. Inside a code span? Choose a different anchor. The file kept changing under the call (`conflict`)? Nothing was written — re-read it and run the command again. Never work around a refusal by hand-editing — it's telling you the edit was unsafe, and the hand-edit would perform it anyway.
 
 **If neither path is available** (older install, no `node` on PATH, no tools), follow the appendix, and run a check as soon as either is back.
 

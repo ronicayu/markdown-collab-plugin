@@ -104,17 +104,12 @@ describe("the skill and the server agree on the tool names", () => {
 
 describe("the MCP write path goes through the editor", () => {
   const host = read("mcpServer/index.ts");
-  // Scoped to applyDocumentEdit itself, not the whole file (security review
-  // L1/L2/L5): the file also uses Node's `fs/promises` directly now, for
-  // `resolveWorkspaceFile`'s symlink-realpath check and the tool-server
-  // descriptor's 0600 permissions and symlink refusal — none of that is a
-  // *document* write, and `vscode.workspace.fs` exposes neither `realpath`
-  // nor file permissions nor `lstat`, so there is no way to implement those
-  // checks without Node's fs somewhere in this file. What must never touch it
-  // is the document edit path specifically.
-  const applyDocumentEditFn = host.slice(
-    host.indexOf("async function applyDocumentEdit("),
-    host.indexOf("\n}\n", host.indexOf("async function applyDocumentEdit(")),
+  // The tools' document writer is the shared write queue; its `mutateDocument`
+  // is the code that must apply a WorkspaceEdit rather than write the file.
+  const queue = read("collab/documentWriteQueue.ts");
+  const mutateDocumentFn = queue.slice(
+    queue.indexOf("export function mutateDocument<"),
+    queue.indexOf("\n}\n", queue.indexOf("export function mutateDocument<")),
   );
 
   // The whole point of hosting the server in the extension. A raw write here
@@ -123,19 +118,24 @@ describe("the MCP write path goes through the editor", () => {
   // The undo half can only be observed in a host that delivers the undo
   // command, so this is the deterministic half of that assertion.
   it("applies a WorkspaceEdit and saves, rather than writing the file", () => {
-    expect(applyDocumentEditFn.length).toBeGreaterThan(0);
-    expect(applyDocumentEditFn).toMatch(/new vscode\.WorkspaceEdit\(\)/);
-    expect(applyDocumentEditFn).toMatch(/vscode\.workspace\.applyEdit\(/);
-    expect(applyDocumentEditFn).toMatch(/\.save\(\)/);
-    expect(applyDocumentEditFn).not.toMatch(/writeFileSync|fs\.promises\.writeFile|fs\/promises/);
+    expect(mutateDocumentFn.length).toBeGreaterThan(0);
+    expect(mutateDocumentFn).toMatch(/new vscode\.WorkspaceEdit\(\)/);
+    expect(mutateDocumentFn).toMatch(/vscode\.workspace\.applyEdit\(/);
+    expect(mutateDocumentFn).toMatch(/\.save\(\)/);
+    expect(queue).not.toMatch(/writeFileSync|fs\.promises\.writeFile|fs\/promises|node:fs/);
   });
 
-  // The narrowing above must not become a hole: the tools' document writer is
-  // applyDocumentEdit, and the file's only raw writes are the descriptor and
-  // the `.markdown-collab/.gitignore` beside it — a third would be new and has
-  // to be looked at.
-  it("routes every tool document write through applyDocumentEdit, and writes nothing else raw", () => {
-    expect(host).toMatch(/writeDoc:\s*async\s*\([^)]*\)\s*=>\s*applyDocumentEdit\(/);
+  // Scoped (security review L1/L2/L5): index.ts also uses Node's `fs/promises`
+  // directly, for `resolveWorkspaceFile`'s symlink-realpath check and the
+  // tool-server descriptor's 0600 permissions and symlink refusal — none of
+  // that is a *document* write. The tools' document writer is the queue, and
+  // the file's only raw writes are the descriptor and the
+  // `.markdown-collab/.gitignore` beside it — a third would be new and has to
+  // be looked at.
+  it("routes every tool document write through the write queue, and writes nothing else raw", () => {
+    expect(host).toMatch(/mutateDoc:\s*mutateForTool/);
+    expect(host).toMatch(/mutateDocument\(vscode\.Uri\.parse\(key\), fn, \{ save: true \}\)/);
+    expect(host).not.toMatch(/writeDoc:/);
     expect(host).not.toMatch(/writeFileSync|fs\.promises\.writeFile/);
     const rawWrites = host.match(/fsp\.writeFile\(/g) ?? [];
     expect(rawWrites).toHaveLength(1);
@@ -148,7 +148,7 @@ describe("the MCP write path goes through the editor", () => {
   it("narrows the rewrite to the span that changed", () => {
     // A whole-file replacement would land as "everything changed" in the undo
     // stack and in every watcher.
-    expect(host).toMatch(/minimalEdit\(/);
+    expect(mutateDocumentFn).toMatch(/minimalEdit\(/);
   });
 
   it("keeps the tool surface off arbitrary paths", () => {

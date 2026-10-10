@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.35.51 — 2026-10-10 (GitHub only)
+
+### Fixed: concurrent writes to a document no longer undo each other
+
+Every writer in the extension — the live editor, an agent's MCP tool calls,
+the inline comments panel, the comment commands — now shares one write queue
+per document, and each write is computed on the file as it is when its turn
+comes rather than on text read earlier:
+
+- **An agent's tool call can't revert a change that landed while it was in
+  flight.** A call used to read the document, compute, and write its result
+  over whatever had arrived meanwhile — another agent's call, a reply from the
+  sidebar, an edit in the review view — undoing it. Several calls on one file
+  at once now all land.
+- **Two review views on one file** share the queue instead of each racing the
+  other's edits and autosave.
+- **Remove resolved, Remove all, reply/resolve from a hover, and Comment on
+  Selection** compute their change after their dialog closes, so anything an
+  agent wrote while the dialog was open is kept. Comment on Selection checks
+  that the selected text is still where it was and relocates it when it moved
+  (or refuses when it can't tell).
+- **A keystroke in the text editor during a write** makes VS Code refuse that
+  write; it is recomputed on the new text and retried. If the file keeps
+  changing, the write gives up and changes nothing: tools refuse with
+  `conflict` ("re-read and make the call again"), and the panel and commands
+  say the change wasn't made.
+- **`mdc check`** now writes its review checkpoint through the extension when
+  it is running, like every other mutating verb, instead of straight to disk
+  under an unsaved buffer. When `mdc` does write directly, it re-reads the file
+  just before writing and redoes the change if another process wrote it
+  meanwhile.
+
+Still turn-based by design: two writers changing the same sentence at the
+same moment is not merged (the later one wins or is refused), and a write
+made outside the extension — an agent's own file-edit tool, `git` — isn't
+queued. Agents are steered to the tools for exactly that reason.
+
 ## 0.35.50 — 2026-10-08 (GitHub only)
 
 ### Changed: complete HTML blocks render with their own CSS, in a contained shadow root

@@ -1596,6 +1596,22 @@ function integrityOkOnDisk(absPath) {
     return void 0;
   }
 }
+function writeComputed(file, compute) {
+  for (let attempt = 1; ; attempt++) {
+    const source = readDoc(file);
+    const outcome = compute(source);
+    if (!outcome || outcome.next === source) return { source, outcome };
+    if (readFileSync(file, "utf8") === source) {
+      writeFileSync(file, outcome.next, "utf8");
+      return { source, outcome };
+    }
+    if (attempt === 3) {
+      fail(`${file} kept changing while mdc was writing it; nothing was written \u2014 run the command again`, {
+        code: "conflict"
+      });
+    }
+  }
+}
 async function apply(file, m, ext, author) {
   if (ext) {
     readDoc(file);
@@ -1627,38 +1643,62 @@ async function apply(file, m, ext, author) {
         break;
     }
   }
-  const source = readDoc(file);
   let outcome;
   try {
-    outcome = m.run(source);
+    outcome = writeComputed(file, m.run).outcome;
   } catch (e) {
     if (e instanceof DocOpError) return refuse(e.code, e.message, e.details, m.integrityCodes);
     throw e;
   }
-  writeFileSync(file, outcome.next, "utf8");
   out({ action: m.action, file, ...outcome.result, integrityOk: checkIntegrity(outcome.next).ok });
 }
 function cmdList(file, actionableOnly) {
   out({ file, ...opList(readDoc(file), actionableOnly) });
 }
-function cmdCheck(file, repair) {
-  const source = readDoc(file);
+async function cmdCheck(file, repair, ext, author) {
   if (!repair) {
-    const { report, next, checkpoint } = opCheckAndCheckpoint(source);
-    if (next !== void 0) writeFileSync(file, next, "utf8");
-    out(checkpoint ? { file, ...report, checkpointed: checkpoint.ts } : { file, ...report });
+    if (ext) {
+      readDoc(file);
+      const f = await forward(ext, "mc_check", { file: path2.resolve(file) }, author);
+      if (f.kind === "applied") {
+        const rest = { ...f.result };
+        delete rest.file;
+        out({ file, ...rest, via: "extension" });
+        process.exit(rest.ok === true ? EXIT_OK : EXIT_INTEGRITY);
+      }
+      if (f.kind === "refused" && f.code !== "file_not_found" && f.code !== "no_workspace") {
+        return refuse(f.code, f.message, f.details);
+      }
+      if (f.kind === "unknown") {
+        return fail(
+          `the extension at ${ext.url} did not answer (${f.reason}); run \`mdc check ${file}\` again`,
+          { code: "no_answer" }
+        );
+      }
+      writeSync(2, `mdc: checking ${file} directly
+`);
+    }
+    let report;
+    const { outcome } = writeComputed(file, (source) => {
+      const checked = opCheckAndCheckpoint(source);
+      report = checked.report;
+      return checked.next !== void 0 && checked.checkpoint ? { next: checked.next, result: checked.checkpoint } : null;
+    });
+    out(outcome ? { file, ...report, checkpointed: outcome.result.ts } : { file, ...report });
     process.exit(report.ok ? EXIT_OK : EXIT_INTEGRITY);
   }
-  const result = repairIntegrity(source);
-  if (result.source !== source) {
+  let result;
+  writeComputed(file, (source) => {
+    result = repairIntegrity(source);
+    if (result.source === source) return null;
     if (stripAllInlineMarkup(result.source) !== stripAllInlineMarkup(source)) {
       fail("internal error: repair would have altered prose; nothing was written", {
         code: "integrity",
         exit: EXIT_INTEGRITY
       });
     }
-    writeFileSync(file, result.source, "utf8");
-  }
+    return { next: result.source, result: null };
+  });
   out({
     file,
     repaired: result.repairs.length,
@@ -1810,7 +1850,7 @@ async function main() {
     case "check":
       if (flags.hook === true) return cmdCheckHook();
       if (!rest[0]) fail("usage: mdc check <file> [--repair]");
-      return cmdCheck(rest[0], flags.repair === true);
+      return cmdCheck(rest[0], flags.repair === true, ext, author);
     default:
       fail(`unknown command: ${command}`, { detail: USAGE });
   }

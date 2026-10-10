@@ -33,8 +33,20 @@ export interface ToolDeps {
    */
   resolveFile(file: string): Promise<string>;
   readDoc(key: string): Promise<string>;
-  /** Apply `next` to the document. Rejects if the edit could not be applied. */
-  writeDoc(key: string, next: string): Promise<void>;
+  /**
+   * Change the document through its write queue: run `fn` on the text as it is
+   * when this write's turn comes, and apply what it returns. This is what keeps
+   * a tool call from reverting a change that landed while it was in flight —
+   * the op is computed at write time, not at call time. The VS Code host's
+   * implementation is `mutateDocument` (collab/documentWriteQueue.ts).
+   */
+  mutateDoc?<T>(key: string, fn: (source: string) => { next: string; result: T } | null): Promise<T | null>;
+  /**
+   * Replace the document's text with `next`. Only used, with `readDoc`, to build
+   * a `mutateDoc` for a host that doesn't supply one (the test harnesses, a
+   * plain-file host): calls on one key are then serialized in-process.
+   */
+  writeDoc?(key: string, next: string): Promise<void>;
   /**
    * Called for every tool invocation before it runs, with the resolved document
    * key when the tool names one. It is the first hard evidence that Claude is
@@ -53,6 +65,36 @@ export interface ToolDeps {
    * keeps allowing direct edits.
    */
   suggestModeFor?(file: string): boolean;
+}
+
+const fallbackTails = new Map<string, Promise<void>>();
+
+/**
+ * `deps.mutateDoc`, or one built from `readDoc` + `writeDoc` that serializes
+ * calls per key and computes each op on the text read in its turn.
+ */
+function mutatorFor(deps: ToolDeps): NonNullable<ToolDeps["mutateDoc"]> {
+  if (deps.mutateDoc) return deps.mutateDoc.bind(deps);
+  const write = deps.writeDoc;
+  if (!write) throw new ToolRefusal("host_error", "this host can't write documents");
+  return <T>(key: string, fn: (source: string) => { next: string; result: T } | null): Promise<T | null> => {
+    const run = (fallbackTails.get(key) ?? Promise.resolve()).then(async () => {
+      const source = await deps.readDoc(key);
+      const out = fn(source);
+      if (!out) return null;
+      if (out.next !== source) await write(key, out.next);
+      return out.result;
+    });
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    fallbackTails.set(key, tail);
+    void tail.then(() => {
+      if (fallbackTails.get(key) === tail) fallbackTails.delete(key);
+    });
+    return run;
+  };
 }
 
 /** A refusal the caller should see as a tool error, not a transport failure. */
@@ -423,51 +465,61 @@ export async function callTool(
 
     const key = await deps.resolveFile(str(args, "file"));
     deps.onCall?.({ tool: name, file: key, agent: author });
-    const source = await deps.readDoc(key);
     const now = deps.now;
 
     // Read-only tools first — no write, no integrity gate.
     if (name === "mc_list") {
-      return text({ file: key, ...opList(source, args.actionable === true) });
+      return text({ file: key, ...opList(await deps.readDoc(key), args.actionable === true) });
     }
+    const mutate = mutatorFor(deps);
     if (name === "mc_check") {
       // A healthy document also gets a review checkpoint: this call is the one moment we
       // know a pass over this file finished. Shared with `mdc check` (no `--repair`) via
       // `opCheckAndCheckpoint` so the two front ends can't drift on when one is written.
-      const { report, next, checkpoint } = opCheckAndCheckpoint(source, now);
-      if (next !== undefined && checkpoint) {
-        await deps.writeDoc(key, next);
-        return text({ file: key, ...report, checkpointed: checkpoint.ts });
-      }
-      return text({ file: key, ...report });
+      // Checked and checkpointed in the write's turn, so the checkpoint records the text
+      // it was written into.
+      let report: ReturnType<typeof opCheckAndCheckpoint>["report"] | undefined;
+      const checkpoint = await mutate(key, (source) => {
+        const outcome = opCheckAndCheckpoint(source, now);
+        report = outcome.report;
+        return outcome.next !== undefined && outcome.checkpoint ? { next: outcome.next, result: outcome.checkpoint } : null;
+      });
+      return text({ file: key, ...report!, ...(checkpoint ? { checkpointed: checkpoint.ts } : {}) });
     }
 
-    const write = async <T>(outcome: OpOutcome<T>, action: string): Promise<ToolResult> => {
-      await deps.writeDoc(key, outcome.next);
-      return text({ action, file: key, ...outcome.result });
+    // `return await`, not `return`: the op now throws inside the queue, after
+    // this function has moved on, and only an awaited rejection reaches the
+    // catch below that turns it into a refusal.
+    // Each op runs on the document's text in the write's turn — never on text
+    // read before another write landed — so a call can't undo a change that
+    // arrived while it was in flight. An op's refusal (thread gone, passage not
+    // found) is therefore judged on the current document too.
+    const write = async <T>(op: (source: string) => OpOutcome<T>, action: string): Promise<ToolResult> => {
+      const result = await mutate(key, (source) => op(source));
+      return text({ action, file: key, ...result });
     };
 
     // Every comment or suggestion written here is stamped as arriving through the
     // tools — a forwarded `mdc` write included, since it is this same call by then.
     switch (name) {
       case "mc_reply":
-        return write(opReply(source, str(args, "threadId"), str(args, "body"), now, author, true, "tools"), "reply");
+        return await write((source) => opReply(source, str(args, "threadId"), str(args, "body"), now, author, true, "tools"), "reply");
       case "mc_open":
-        return write(
-          opOpen(source, str(args, "quote"), str(args, "body"), parseOccurrence(args.occurrence), now, author, "tools"),
+        return await write(
+          (source) => opOpen(source, str(args, "quote"), str(args, "body"), parseOccurrence(args.occurrence), now, author, "tools"),
           "open",
         );
       case "mc_rewrite":
         refuseIfSuggestMode(deps, key);
-        return write(opRewrite(source, str(args, "threadId"), str(args, "with")), "rewrite");
+        return await write((source) => opRewrite(source, str(args, "threadId"), str(args, "with")), "rewrite");
       case "mc_edit":
         refuseIfSuggestMode(deps, key);
-        return write(
-          opEdit(source, str(args, "old"), strAllowEmpty(args, "new"), parseOccurrence(args.occurrence)),
+        return await write(
+          (source) => opEdit(source, str(args, "old"), strAllowEmpty(args, "new"), parseOccurrence(args.occurrence)),
           "edit",
         );
       case "mc_resolve":
-        return write(opResolve(source, str(args, "threadId"), now, author), "resolve");
+        return await write((source) => opResolve(source, str(args, "threadId"), now, author), "resolve");
       case "mc_suggest": {
         const quote = str(args, "quote");
         const proposed = str(args, "with");
@@ -478,8 +530,8 @@ export async function callTool(
               "split it into smaller suggestions, one sentence or list item each",
           );
         }
-        return write(
-          opSuggest(
+        return await write(
+          (source) => opSuggest(
             source,
             quote,
             proposed,
@@ -496,9 +548,9 @@ export async function callTool(
         );
       }
       case "mc_accept":
-        return write(opAccept(source, str(args, "anchorId")), "accept");
+        return await write((source) => opAccept(source, str(args, "anchorId")), "accept");
       case "mc_reject":
-        return write(opReject(source, str(args, "anchorId")), "reject");
+        return await write((source) => opReject(source, str(args, "anchorId")), "reject");
       default:
         return refusal("unknown_tool", `unknown tool: ${name}`);
     }

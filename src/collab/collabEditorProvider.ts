@@ -1,6 +1,7 @@
 import * as crypto from "crypto";
 import * as path from "path";
 import * as vscode from "vscode";
+import { exclusive as documentExclusive } from "./documentWriteQueue";
 import {
   addThreadAtEditorRange,
   addThreadAtProseRange,
@@ -714,15 +715,10 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     // Every write to the document, one at a time: each edit is spliced into the file the previous write
     // produced, a sidebar or comment write reads the text it writes over with
     // no edit landing in between, and a mode switch waits for all of them.
-    let editQueue: Promise<void> = Promise.resolve();
-    const exclusive = <T>(job: () => Promise<T>): Promise<T> => {
-      const run = editQueue.then(job);
-      editQueue = run.then(
-        () => undefined,
-        () => undefined,
-      );
-      return run;
-    };
+    // The queue is the document's, not this panel's: a second panel on the
+    // same file, an agent's tool call and the comment commands wait their turn
+    // in it too (documentWriteQueue.ts).
+    const exclusive = <T>(job: () => Promise<T>): Promise<T> => documentExclusive(document.uri, job);
     /** Queue a write whose own result the webview is told; one that throws is said, not just logged. */
     const queued = (what: string, job: () => Promise<void>): void => {
       void exclusive(job).catch((e) => {

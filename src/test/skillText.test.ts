@@ -138,6 +138,10 @@ const INTENTIONAL_CHANGES: Array<[string, string]> = [
     "The user runs the IDE; you do the writing.",
     "The user runs the IDE; you do the writing. If you are not Claude Code and have a `markdown-collab` skill, use that one instead of this.",
   ],
+  [
+    "Inside a code span? Choose a different anchor. Never work around a refusal by hand-editing",
+    "Inside a code span? Choose a different anchor. The file kept changing under the call (`conflict`)? Nothing was written — re-read it and run the command again. Never work around a refusal by hand-editing",
+  ],
 ];
 
 const legacy = renderSkill("legacy");

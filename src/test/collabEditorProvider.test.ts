@@ -16,6 +16,7 @@ import { addSuggestion, addThread, appendReply, parse, replaceThread } from "../
 import { applyClientMutation } from "../inlineComments/mutations";
 import type { Logger } from "../logging";
 import { onlyMarkersAdded } from "./support/oneViewCorpus";
+import { mutateDocument } from "../collab/documentWriteQueue";
 
 vi.mock("vscode", async (importOriginal) => {
   const stub = await importOriginal<typeof import("./vscode-stub")>();
@@ -727,5 +728,22 @@ describe("failures the person has to hear about", () => {
     await new Promise((r) => setTimeout(r, 5));
     expect(h.shown.error).not.toHaveBeenCalled();
     expect(h.log.info).toHaveBeenCalledWith(expect.stringContaining("boom"));
+  });
+});
+
+describe("the document's write queue, shared with other writers", () => {
+  it("runs an agent's write after a block edit already queued, on the text that edit produced", async () => {
+    const h = await openEditor(DOC);
+    (vscode.workspace as unknown as Record<string, unknown>).openTextDocument = async () => h.doc;
+    h.send(editBlocks(DOC, 0, BETA_BANG));
+    // Queued in the same tick as the edit, as an MCP call arriving mid-keystroke would be.
+    let seen: string | null = null;
+    const tool = mutateDocument(h.doc.uri, (source) => {
+      seen = source;
+      return { next: source.replace("Alpha sentence.", "Alpha sentence, revised."), result: null };
+    });
+    await tool;
+    expect(seen).toBe(spliced(DOC, BETA_BANG));
+    expect(h.doc.text).toBe(spliced(DOC, BETA_BANG).replace("Alpha sentence.", "Alpha sentence, revised."));
   });
 });
