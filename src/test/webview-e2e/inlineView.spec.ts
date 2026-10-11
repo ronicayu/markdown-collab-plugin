@@ -332,6 +332,8 @@ test("r focuses the highlighted thread's reply textarea, expanding a collapsed c
     .locator(".reply-box textarea")
     .evaluate((el) => el === document.activeElement);
   expect(focused).toBe(true);
+  // The key opened the box; it isn't typed into it.
+  await expect(card.locator(".reply-box textarea")).toHaveValue("");
 });
 
 test("r is a no-op when nothing is highlighted", async ({ page }) => {

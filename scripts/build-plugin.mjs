@@ -7,7 +7,7 @@
 //     skills/review/SKILL.md       the skill (src/skillText.ts, "plugin" rendering)
 //     bin/mdc, bin/mdc.cmd         shims that put `mdc` on the Bash tool's PATH
 //     lib/mdc.mjs                  the CLI (out/skill/mdc.mjs, from bundle:skill-cli)
-//     hooks/hooks.json             PostToolUse → `mdc check --hook`
+//     hooks/hooks.json             PreToolUse → `mdc guard --hook`, PostToolUse → `mdc check --hook`
 //   .claude-plugin/marketplace.json  the GitHub marketplace, listing ./plugin
 //
 // The output is COMMITTED: a GitHub marketplace is fetched straight from the
@@ -47,6 +47,21 @@ export const MARKETPLACE_DESCRIPTION =
 /** The hook, verbatim — scripts/verify-plugin.mjs holds the shape to this. */
 export const HOOKS = {
   hooks: {
+    // Before the edit: refuse one that would change a review marker or thread
+    // line by hand (src/skillCli/guardHook.ts).
+    PreToolUse: [
+      {
+        matcher: "Edit|Write|MultiEdit",
+        hooks: [
+          {
+            type: "command",
+            command: "node",
+            args: ["${CLAUDE_PLUGIN_ROOT}/lib/mdc.mjs", "guard", "--hook"],
+          },
+        ],
+      },
+    ],
+    // After it: report marker damage that got through anyway (checkHook.ts).
     PostToolUse: [
       {
         matcher: "Edit|Write|MultiEdit",

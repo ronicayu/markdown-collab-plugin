@@ -40,7 +40,8 @@ import {
 } from "../inlineComments/docOps";
 import { PROTOCOL_VERSION } from "../mcpServer/protocol";
 import { ENV_TOKEN, ENV_URL } from "../mcpServer/registration";
-import { runCheckHook, type HookIo } from "./checkHook";
+import { runCheckHook, type HookIo, type HookOutcome } from "./checkHook";
+import { runGuardHook } from "./guardHook";
 
 const EXIT_OK = 0;
 const EXIT_USAGE = 1;
@@ -66,6 +67,8 @@ const USAGE = `mdc — Markdown Collab inline-comment CLI
   mdc check <file> [--repair]                 integrity report; exit 2 if broken
   mdc check --hook                            Claude Code PostToolUse hook: reads the hook JSON on stdin;
                                               exit 2 + report on stderr if the edited .md has broken markers
+  mdc guard --hook                            Claude Code PreToolUse hook: exit 2 (the edit is refused) when an
+                                              Edit/Write would change a <!--mc:…--> marker or thread line by hand
 
   --author SLUG applies to reply/open/resolve/suggest — the agent writing the
   comment. Defaults to "claude"; every headless Claude Code
@@ -592,14 +595,14 @@ const realHookIo: HookIo = {
  * edited path on stdin. Reading stdin can fail (no stdin attached, a closed pipe);
  * that must be survived silently rather than crash the hook.
  */
-function cmdCheckHook(): void {
+function cmdCheckHook(run: (stdinText: string, io: HookIo) => HookOutcome = runCheckHook): void {
   let stdinText: string;
   try {
     stdinText = readFileSync(0, "utf8");
   } catch {
     process.exit(EXIT_OK);
   }
-  const outcome = runCheckHook(stdinText, realHookIo);
+  const outcome = run(stdinText, realHookIo);
   // writeSync, like `out()`: on macOS a pipe write is asynchronous, and the
   // exit below would race it — and the report IS the point of exit 2.
   if (outcome.stderr) writeSync(2, outcome.stderr);
@@ -729,6 +732,10 @@ async function main(): Promise<void> {
       if (flags.hook === true) return cmdCheckHook();
       if (!rest[0]) fail("usage: mdc check <file> [--repair]");
       return cmdCheck(rest[0], flags.repair === true, ext, author);
+    case "guard":
+      // Only the hook form exists: the edit to judge comes on stdin.
+      if (flags.hook !== true) fail("usage: mdc guard --hook (Claude Code PreToolUse hook; reads the hook JSON on stdin)");
+      return cmdCheckHook(runGuardHook);
     default:
       fail(`unknown command: ${command}`, { detail: USAGE });
   }

@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import * as vscode from "vscode";
 import { CLAUDE_SETUP_MISSING, maybePromptSkillUpdate } from "../commands/setup";
-import { installedLocalPlugin } from "../claudePlugin";
+import { installedLocalPlugin, setUpClaudePlugin } from "../claudePlugin";
 import { lookupClaude } from "../transports/headlessHost";
 import { AGENTS_SNIPPET } from "../agents";
 import { SKILL_REL_PATH } from "../skill";
@@ -18,6 +18,7 @@ vi.mock("os", async (importOriginal) => ({
 vi.mock("../claudePlugin", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../claudePlugin")>()),
   installedLocalPlugin: vi.fn(),
+  setUpClaudePlugin: vi.fn(),
 }));
 vi.mock("../transports/headlessHost", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../transports/headlessHost")>()),
@@ -62,6 +63,8 @@ describe("the startup skill nudge", () => {
     });
     context = {
       extension: { packageJSON: {} },
+      extensionPath: "/ext",
+      globalStorageUri: vscode.Uri.file("/storage"),
       globalState: memento(globalState),
       workspaceState: memento(workspaceState),
     } as never;
@@ -250,6 +253,70 @@ describe("the startup skill nudge", () => {
       await run();
 
       expect(messages()).toEqual([NO_AGENT]);
+    });
+  });
+
+  // It used to ask "Update?" once per extension version; one "Not now" left
+  // the person on the old hooks and skill until the next release.
+  describe("when the installed plugin is older than the extension", () => {
+    const pkg = () => (context as unknown as { extension: { packageJSON: { version?: string } } }).extension.packageJSON;
+    let warn: Mock<any[], any>;
+
+    beforeEach(() => {
+      pkg().version = "1.0.1";
+      (lookupClaude as Mock).mockResolvedValue({ ok: true, claude: { path: "/usr/bin/claude" } });
+      (installedLocalPlugin as Mock).mockResolvedValue({ id: "markdown-collab@markdown-collab-local", version: "1.0.0" });
+      (setUpClaudePlugin as Mock).mockReset();
+      warn = vi.fn(async () => undefined);
+      win.showWarningMessage = warn;
+    });
+
+    it("updates it without asking, then says so and what to restart", async () => {
+      (setUpClaudePlugin as Mock).mockResolvedValue({ ok: true, version: "1.0.1" });
+
+      await run();
+
+      expect(setUpClaudePlugin).toHaveBeenCalledTimes(1);
+      expect((setUpClaudePlugin as Mock).mock.calls[0][0]).toMatchObject({
+        sourcePluginDir: path.join("/ext", "plugin"),
+      });
+      expect(messages()).toEqual([
+        "Markdown Collab updated its Claude Code plugin (1.0.0 → 1.0.1). Restart running Claude sessions (or run /reload-plugins) to pick it up.",
+      ]);
+      expect(show.mock.calls[0]).toHaveLength(1); // no buttons: nothing to decide
+    });
+
+    it("does it once per extension version", async () => {
+      (setUpClaudePlugin as Mock).mockResolvedValue({ ok: true, version: "1.0.1" });
+      await run();
+      await run();
+      expect(setUpClaudePlugin).toHaveBeenCalledTimes(1);
+    });
+
+    it("says why a failed update failed, and Retry tries again", async () => {
+      (setUpClaudePlugin as Mock)
+        .mockResolvedValueOnce({ ok: false, reason: "claude plugin install exited 1" })
+        .mockResolvedValueOnce({ ok: true, version: "1.0.1" });
+      warn.mockResolvedValueOnce("Retry");
+
+      await run();
+      await vi.waitFor(() => expect(setUpClaudePlugin).toHaveBeenCalledTimes(2));
+
+      expect(warn.mock.calls[0]).toEqual([
+        "Markdown Collab couldn't update its Claude Code plugin (still 1.0.0) — claude plugin install exited 1.",
+        "Retry",
+      ]);
+      await vi.waitFor(() => expect(messages()).toHaveLength(1));
+      expect(messages()[0]).toContain("(1.0.0 → 1.0.1)");
+    });
+
+    it("leaves a current plugin alone", async () => {
+      (installedLocalPlugin as Mock).mockResolvedValue({ id: "markdown-collab@markdown-collab-local", version: "1.0.1" });
+
+      await run();
+
+      expect(setUpClaudePlugin).not.toHaveBeenCalled();
+      expect(show).not.toHaveBeenCalled();
     });
   });
 });

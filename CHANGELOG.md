@@ -1,5 +1,84 @@
 # Changelog
 
+## 0.35.53 — 2026-10-11 (GitHub only)
+
+### Changed: agents change a reviewed file only through `mdc` or the tools
+
+Claude Code often answered comments with its own Edit tool and broke the
+comment markers. The send prompt only said to use the `mdc` CLI "if the skill
+gave you one", which read as optional.
+
+- **The prompt says it outright.** Every Send and Copy prompt opens its tools
+  line with the rule: change the file only through the `markdown-collab` MCP
+  tools or `mdc`, never edit a `<!--mc:…-->` marker or thread line by hand. It
+  also says where `mdc` is. Only an agent with neither edits by hand, per
+  AGENTS.md.
+- **The plugin refuses the hand edit before it lands.** A new PreToolUse hook
+  (`mdc guard --hook`) works out what an Edit, MultiEdit or Write would leave.
+  If any marker or thread line would change, it refuses the edit and names the
+  `mdc` command for the job (`reply`, `rewrite`, `edit`, `open`, `resolve`,
+  `suggest`).
+  - Prose edits that leave every marker as it was still go through, as do
+    edits to files with no review data and repairs to a file that's already
+    broken.
+  - A marker shown inside a code block or code span, as in the format's own
+    docs, isn't treated as review data.
+  - Removing every comment is left to the person: the refusal points to
+    **Remove All Review Data**.
+  - With suggest mode on, every direct edit of a reviewed file is refused in
+    favour of `mdc suggest`. The message names the setting, for a person who
+    wants the direct edit.
+  - Checked in a live Claude Code session: the Edit was refused, the file was
+    left untouched, and Claude turned to `mdc edit`.
+
+### Changed: the Claude Code plugin updates itself
+
+When the extension updates, it now updates the Claude Code plugin it installed
+too, without asking, and says so. Before, it asked "Update?" once per version,
+and one "Not now" left you on the old skill and hooks, including the guard
+above, until the next release. The plugin comes from the extension's own copy,
+so nothing new is downloaded or trusted. If the update fails you're told why,
+with **Retry**. Installing the plugin the first time still takes **Set Up
+Claude Code**. Restart running Claude sessions, or run `/reload-plugins`, to
+pick up an update.
+
+### Changed: suggest mode is a visible switch
+
+"Ask for suggestions instead of edits" was the only item in a menu behind
+Send's ▾, where it went unnoticed. It is now a switch above Send in the
+sidebar footer, and the ▾ is gone. Clicking the words toggles it too.
+
+### Fixed: the text a new comment is about stays highlighted while you write it
+
+Once the comment box took focus, the editor stopped drawing your selection, so
+you wrote the comment without seeing what it was on — and in Editing mode the
+floating "+ Add comment" button came back on top of that very text. The
+selected span is now marked from the moment the comment box opens until the
+comment is saved (its own highlight takes over) or cancelled; a save that fails
+keeps the mark for the retry. The button stays off the span being commented on,
+and comes back when you select something else. Switching between Reading and
+Editing closes a comment you haven't saved, along with its mark. A save's
+answer that arrives after you've started another comment leaves the new one
+alone.
+
+### Fixed: Cmd+Z in Editing mode scrolled down the document
+
+In any document with headings, undo moved the caret, and the view, towards
+the end of the file. Once a heading is on screen the editor gives it an id
+(made from its text), and the file's text, freshly read, has none, so every
+heading looked changed. The undo was taken to span from the first heading to
+the last, and was revealed at the end of that span. Headings' ids are now left
+out of the comparison: the view stays where it was, and the caret goes back to
+where the undone text was. The same mismatch made every outside change (an
+agent's edit, a save) replace the document from its first heading to its last,
+which also moved the caret; that's fixed too.
+
+### Fixed: pressing `r` typed an "r" into the reply box
+
+`r` opens the highlighted thread's reply box, and the browser then typed the
+key into it. The single-key shortcuts no longer type anything, in the
+Markdown Collab view and the inline comments view.
+
 ## 0.35.52 — 2026-10-10 (pre-release)
 
 First build since 0.35.45 on the marketplaces' pre-release channel. It carries

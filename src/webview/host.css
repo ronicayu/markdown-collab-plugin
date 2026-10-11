@@ -593,6 +593,13 @@ body { overflow: hidden; }
   border-radius: 2px;
   transition: background 0.12s ease;
 }
+/* The span a comment is being written about, while the composer is open and
+   the editor's own selection isn't drawn. Selection-coloured, so it reads as
+   "what you selected" rather than as an existing thread. */
+.mdc-anchor-pending {
+  background: var(--vscode-editor-selectionBackground, rgba(38, 120, 220, 0.35));
+  border-radius: 2px;
+}
 .mdc-anchor-highlight:hover {
   background: var(--vscode-editor-findMatchHighlightBackground, rgba(255, 220, 0, 0.45));
 }

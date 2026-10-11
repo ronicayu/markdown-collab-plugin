@@ -3,7 +3,7 @@
 import { writeSync } from "node:fs";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
-import * as path2 from "node:path";
+import * as path3 from "node:path";
 
 // src/inlineComments/staleness.ts
 function hashAnchorText(text) {
@@ -1329,6 +1329,109 @@ function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// src/skillCli/guardHook.ts
+import * as path2 from "node:path";
+var PASS = { exitCode: 0, stderr: "" };
+var REVIEW_DATA = /<!--mc:[\s\S]*?-->/g;
+function runGuardHook(stdinText, io) {
+  try {
+    return decide2(stdinText, io);
+  } catch {
+    return PASS;
+  }
+}
+function decide2(stdinText, io) {
+  let payload;
+  try {
+    payload = JSON.parse(stdinText);
+  } catch {
+    return PASS;
+  }
+  if (!isPlainObject(payload)) return PASS;
+  const input = payload.tool_input;
+  if (!isPlainObject(input)) return PASS;
+  const filePath = input.file_path;
+  if (typeof filePath !== "string" || filePath === "") return PASS;
+  const ext = path2.extname(filePath).toLowerCase();
+  if (ext !== ".md" && ext !== ".markdown") return PASS;
+  const hookCwd = typeof payload.cwd === "string" ? payload.cwd : io.cwd();
+  const absPath = path2.isAbsolute(filePath) ? filePath : path2.resolve(hookCwd, filePath);
+  const current = io.readFile(absPath);
+  if (current === null || !current.includes("<!--mc:")) return PASS;
+  const before = reviewData(current);
+  if (before.length === 0) return PASS;
+  const next = afterTool(payload.tool_name, input, current);
+  if (next === null || next === current) return PASS;
+  if (opCheck(current).issues.some((issue) => issue.severity === "error")) return PASS;
+  if (suggestModeOnDisk(hookCwd, io)) return { exitCode: 2, stderr: suggestModeRefusal(filePath) };
+  const after = reviewData(next);
+  if (before.length === after.length && before.every((token, i) => token === after[i])) return PASS;
+  return { exitCode: 2, stderr: refusal(filePath, usesReplaceAll(input) && after.length === before.length) };
+}
+function afterTool(tool, input, current) {
+  if (tool === "Write") return typeof input.content === "string" ? input.content : null;
+  if (tool === "Edit") return applyEdit(current, input);
+  if (tool === "MultiEdit") {
+    if (!Array.isArray(input.edits)) return null;
+    let text = current;
+    for (const edit of input.edits) {
+      if (!isPlainObject(edit) || text === null) return null;
+      text = applyEdit(text, edit);
+    }
+    return text;
+  }
+  return null;
+}
+function applyEdit(text, edit) {
+  const { old_string: rawOld, new_string: rawNew, replace_all: replaceAll } = edit;
+  if (typeof rawOld !== "string" || typeof rawNew !== "string" || rawOld === "") return null;
+  let oldString = rawOld;
+  let newString = rawNew;
+  if (!text.includes(oldString) && text.includes("\r\n") && oldString.includes("\n")) {
+    oldString = oldString.replace(/\r?\n/g, "\r\n");
+    newString = newString.replace(/\r?\n/g, "\r\n");
+  }
+  const at = text.indexOf(oldString);
+  if (at < 0) return null;
+  if (replaceAll === true) return text.split(oldString).join(newString);
+  return text.slice(0, at) + newString + text.slice(at + oldString.length);
+}
+function reviewData(text) {
+  const mask = buildCodeMask(text);
+  const tokens = [];
+  for (const m of text.matchAll(REVIEW_DATA)) if (!mask[m.index]) tokens.push(m[0]);
+  return tokens;
+}
+function usesReplaceAll(input) {
+  if (input.replace_all === true) return true;
+  return Array.isArray(input.edits) && input.edits.some((e) => isPlainObject(e) && e.replace_all === true);
+}
+function refusal(filePath, replaceAllHitThreadText) {
+  const lines = [
+    `Markdown Collab: not applied \u2014 this edit to ${filePath} would change its review comments (a <!--mc:\u2026--> marker or thread line), and a hand edit is how they break.`
+  ];
+  if (replaceAllHitThreadText) {
+    lines.push(
+      "replace_all also rewrote text quoted inside a thread line. Make the same Edit once per occurrence in the prose instead (or mdc edit with --occurrence N)."
+    );
+  }
+  lines.push(
+    "Make the change with mdc (or the matching markdown-collab MCP tool: mc_reply, mc_rewrite, mc_edit, \u2026):",
+    `- reply to a thread: mdc reply ${filePath} <threadId> --body "\u2026"`,
+    `- rewrite a commented passage, markers kept: mdc rewrite ${filePath} <threadId> --with "\u2026"`,
+    `- change or delete prose around markers: mdc edit ${filePath} --old "\u2026" --new "\u2026"`,
+    `- open, resolve, suggest: mdc open / mdc resolve / mdc suggest ${filePath} \u2026`,
+    "Removing every comment from the file is the human's call: ask them to run Markdown Collab: Remove All Review Data.",
+    "An Edit that leaves every <!--mc:\u2026--> exactly as it is still goes through.",
+    ""
+  );
+  return lines.join("\n");
+}
+function suggestModeRefusal(filePath) {
+  return `Markdown Collab: not applied \u2014 suggest mode is on for this workspace, so ${filePath} isn't edited directly. Propose the change with mdc suggest ${filePath} --quote "\u2026" --with "\u2026" --note "\u2026" (or mc_suggest). If the human wants this edit made directly, they can turn suggest mode off (the switch above Send, or markdownCollab.proposeEditsAsSuggestions in .vscode/settings.json).
+`;
+}
+
 // src/skillCli/mdc.ts
 var EXIT_OK = 0;
 var EXIT_USAGE = 1;
@@ -1353,6 +1456,8 @@ var USAGE = `mdc \u2014 Markdown Collab inline-comment CLI
   mdc check <file> [--repair]                 integrity report; exit 2 if broken
   mdc check --hook                            Claude Code PostToolUse hook: reads the hook JSON on stdin;
                                               exit 2 + report on stderr if the edited .md has broken markers
+  mdc guard --hook                            Claude Code PreToolUse hook: exit 2 (the edit is refused) when an
+                                              Edit/Write would change a <!--mc:\u2026--> marker or thread line by hand
 
   --author SLUG applies to reply/open/resolve/suggest \u2014 the agent writing the
   comment. Defaults to "claude"; every headless Claude Code
@@ -1459,14 +1564,14 @@ function readDoc(file) {
 var REACH_TIMEOUT_MS = 3e3;
 var CALL_TIMEOUT_MS = 1e4;
 function post(ext, message, sessionId, timeoutMs) {
-  return new Promise((resolve3) => {
+  return new Promise((resolve4) => {
     let connected = false;
     let settled = false;
     const settle = (a) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve3(a);
+      resolve4(a);
     };
     const payload = JSON.stringify(message);
     let req;
@@ -1503,7 +1608,7 @@ function post(ext, message, sessionId, timeoutMs) {
         }
       );
     } catch (e) {
-      resolve3({ kind: "unreachable", reason: e.message });
+      resolve4({ kind: "unreachable", reason: e.message });
       return;
     }
     const timer = setTimeout(() => {
@@ -1615,7 +1720,7 @@ function writeComputed(file, compute) {
 async function apply(file, m, ext, author) {
   if (ext) {
     readDoc(file);
-    const abs = path2.resolve(file);
+    const abs = path3.resolve(file);
     const f = await forward(ext, m.tool, { file: abs, ...m.args }, author);
     switch (f.kind) {
       case "applied": {
@@ -1659,7 +1764,7 @@ async function cmdCheck(file, repair, ext, author) {
   if (!repair) {
     if (ext) {
       readDoc(file);
-      const f = await forward(ext, "mc_check", { file: path2.resolve(file) }, author);
+      const f = await forward(ext, "mc_check", { file: path3.resolve(file) }, author);
       if (f.kind === "applied") {
         const rest = { ...f.result };
         delete rest.file;
@@ -1724,14 +1829,14 @@ var realHookIo = {
   },
   cwd: () => process.cwd()
 };
-function cmdCheckHook() {
+function cmdCheckHook(run = runCheckHook) {
   let stdinText;
   try {
     stdinText = readFileSync(0, "utf8");
   } catch {
     process.exit(EXIT_OK);
   }
-  const outcome = runCheckHook(stdinText, realHookIo);
+  const outcome = run(stdinText, realHookIo);
   if (outcome.stderr) writeSync(2, outcome.stderr);
   process.exit(outcome.exitCode);
 }
@@ -1851,6 +1956,9 @@ async function main() {
       if (flags.hook === true) return cmdCheckHook();
       if (!rest[0]) fail("usage: mdc check <file> [--repair]");
       return cmdCheck(rest[0], flags.repair === true, ext, author);
+    case "guard":
+      if (flags.hook !== true) fail("usage: mdc guard --hook (Claude Code PreToolUse hook; reads the hook JSON on stdin)");
+      return cmdCheckHook(runGuardHook);
     default:
       fail(`unknown command: ${command}`, { detail: USAGE });
   }

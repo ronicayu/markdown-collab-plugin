@@ -563,6 +563,7 @@ async function createEditor(text: string): Promise<Editor> {
           makeImageResolvePlugin(),
           makeHtmlTagPairPlugin(),
           makeAnchorHighlightPlugin(),
+          makePendingAnchorPlugin(),
           makeSuggestionHighlightPlugin(
             () => sidebarState.suggestions,
             // Read-only: by source position, like threads; edit mode keeps the text search.
@@ -746,6 +747,11 @@ async function reinitEditor(msg: InitMessage): Promise<void> {
   sourceIndexCache = null;
   pendingSelection = null;
   lastNonEmptySelection = null;
+  // A comment being written goes with the view it was about: its range was
+  // named in the old mode's addressing, and the view that marked its text is
+  // gone. (A save already sent still gets its toast.)
+  addComposer = null;
+  if (composerEl) composerEl.innerHTML = "";
   lastHighlightSig = " ";
   lineMap = Array.isArray(msg.lineMap) ? msg.lineMap : null;
   currentDiff = msg.diff ?? null;
@@ -1180,6 +1186,40 @@ function refreshLineNumbers(): void {
   editor?.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     view.dispatch(view.state.tr.setMeta(lineNumberPluginKey, "refresh"));
+  });
+}
+
+// The text a comment being written is about. Once the composer's textarea has
+// focus the editor's own selection is no longer drawn, so without this the
+// person can't see what they're commenting on — in Editing mode especially,
+// where the floating button used to come back and cover it. It maps through
+// edits, and goes when the comment is saved (its real highlight takes over)
+// or cancelled.
+const PENDING_ANCHOR_KEY = new PluginKey<DecorationSet>("mdc-pending-anchor");
+
+function makePendingAnchorPlugin(): Plugin<DecorationSet> {
+  return new Plugin<DecorationSet>({
+    key: PENDING_ANCHOR_KEY,
+    state: {
+      init: () => DecorationSet.empty,
+      apply: (tr, old) => {
+        const meta = tr.getMeta(PENDING_ANCHOR_KEY) as { from: number; to: number } | null | undefined;
+        if (meta === null) return DecorationSet.empty;
+        if (meta) return DecorationSet.create(tr.doc, [Decoration.inline(meta.from, meta.to, { class: "mdc-anchor-pending" })]);
+        return old.map(tr.mapping, tr.doc);
+      },
+    },
+    props: {
+      decorations: (state) => PENDING_ANCHOR_KEY.getState(state),
+    },
+  });
+}
+
+/** Mark (or, with null, unmark) the span a comment is being written about. */
+function setPendingAnchor(range: { from: number; to: number } | null): void {
+  editor?.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.setMeta(PENDING_ANCHOR_KEY, range));
   });
 }
 
@@ -2030,6 +2070,12 @@ function installAddCommentAffordance(): void {
       const view = ctx.get(editorViewCtx);
       const sel = view.state.selection;
       if (sel.empty) return;
+      // A comment is already being written on exactly this selection (the
+      // editor keeps it after the composer takes focus): the button would sit
+      // on top of the very text the comment is about. Selecting something
+      // else brings it back, to start a comment there instead.
+      const pending = (PENDING_ANCHOR_KEY.getState(view.state) as DecorationSet | undefined)?.find()[0];
+      if (pending && pending.from === sel.from && pending.to === sel.to) return;
       try {
         const c = view.coordsAtPos(sel.to);
         coords = { top: c.top, left: c.right };
@@ -2103,6 +2149,7 @@ function openComposerForCurrentSelection(): void {
   const captured = pendingSelection;
   pendingSelection = null;
   const recent = lastNonEmptySelection;
+  let selected: { from: number; to: number } | null = null;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     const live = view.state.selection;
@@ -2125,6 +2172,7 @@ function openComposerForCurrentSelection(): void {
       failureReason = "No text is selected. Highlight some text in the editor first.";
       return;
     }
+    selected = { from: selFrom, to: selTo };
     if (readOnly) {
       // Each selected character knows its source bytes, so the comment goes
       // exactly there — or, when a boundary has no trusted bytes, nowhere.
@@ -2164,6 +2212,7 @@ function openComposerForCurrentSelection(): void {
     showToast(failureReason || "Couldn't anchor this selection.");
     return;
   }
+  setPendingAnchor(selected);
   const finalAnchor: import("../types").Anchor = anchor;
   const finalRange = proseRange as { start: number; end: number; text: string } | null;
   const finalEditRange = editRange as { first: EditorPoint; last: EditorPoint } | null;
@@ -2208,6 +2257,7 @@ function openComposerForCurrentSelection(): void {
     onCancel: () => {
       addComposer = null;
       if (composerEl) composerEl.innerHTML = "";
+      setPendingAnchor(null);
     },
   });
   composerEl.appendChild(composer.el);
@@ -2241,6 +2291,32 @@ function reportReady(synced: boolean): void {
     error = (e as Error)?.message ?? String(e);
   }
   vscode.postMessage({ type: "ready-with-content", length, synced, error });
+}
+
+/**
+ * `doc` without the attributes the editor derives for itself, which a freshly
+ * parsed document doesn't have yet: a heading's `id`, which Milkdown fills in
+ * from its text once the heading is in the view. Compared with them, every
+ * heading of the editor's document differed from the file's, so an outside
+ * change or an undo was taken to span from the first heading to the last —
+ * replaced whole, with the caret (and, for an undo, the view) sent to the end.
+ * Positions are unchanged, so a range found on these applies to the real one.
+ */
+function withoutDerivedAttrs(doc: PmDocNode): PmDocNode {
+  const strip = (node: PmDocNode): PmDocNode => {
+    if (node.isText || node.isLeaf) return node;
+    const kids: PmDocNode[] = [];
+    let changed = false;
+    node.forEach((child) => {
+      const bare = strip(child);
+      if (bare !== child) changed = true;
+      kids.push(bare);
+    });
+    const derived = node.type.name === "heading" && node.attrs.id;
+    if (!changed && !derived) return node;
+    return node.type.create(derived ? { ...node.attrs, id: "" } : node.attrs, changed ? kids : node.content, node.marks);
+  };
+  return strip(doc);
 }
 
 /**
@@ -2300,9 +2376,12 @@ function applyExternalChange(
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     const parser = ctx.get(parserCtx);
-    const next = parser(text);
-    if (!next) return;
-    const prev = view.state.doc;
+    const parsed = parser(text);
+    if (!parsed) return;
+    // Compared without the heading ids the editor fills in itself (which the
+    // view adds back to whatever lands); see `withoutDerivedAttrs`.
+    const prev = withoutDerivedAttrs(view.state.doc);
+    const next = withoutDerivedAttrs(parsed);
 
     const start = prev.content.findDiffStart(next.content);
     if (start == null) return; // same document: dispatch nothing
@@ -2325,7 +2404,7 @@ function applyExternalChange(
           endB += overlap;
         }
         tr.replace(start, endA, next.slice(start, endB));
-        if (tr.doc.eq(next)) {
+        if (withoutDerivedAttrs(tr.doc).eq(next)) {
           revealTo = endB;
           landed = true;
         }
@@ -2337,7 +2416,7 @@ function applyExternalChange(
     if (!landed) {
       tr = view.state.tr;
       const blockEnd = applyBlockLevelReplacement(tr, prev, next);
-      if (blockEnd != null && tr.doc.eq(next)) {
+      if (blockEnd != null && withoutDerivedAttrs(tr.doc).eq(next)) {
         revealTo = blockEnd;
         landed = true;
       }
@@ -2570,16 +2649,27 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     currentDiff = msg.diff ?? null;
     forceDiffRefresh();
   } else if (msg.type === "add-comment-result") {
+    // The composer whose save this answers — if it's still the one on screen.
+    // Another selection may have opened a new composer, with its own mark,
+    // while the save was in flight; that one isn't this result's to close.
+    const saving = addComposer;
+    addComposer = null;
+    const shown = saving && composerEl?.contains(saving.el) ? saving : null;
     if (msg.ok) {
-      addComposer = null;
-      if (composerEl) composerEl.innerHTML = "";
+      if (shown && composerEl) {
+        composerEl.innerHTML = "";
+        // The saved comment's own highlight replaces the pending mark (a
+        // failed save keeps it, with the composer, so the retry still shows
+        // its text).
+        setPendingAnchor(null);
+      }
       showToast("Comment added.");
       // Belt-and-suspenders: re-run the anchor highlight once the doc has
       // settled (the sidecar-changed refresh can fire before a save-participant
       // re-seed lands), so a fresh comment's highlight shows immediately.
       requestAnimationFrame(() => forceHighlightRefresh());
     } else {
-      addComposer?.setError(`Could not save comment: ${msg.error ?? "unknown error"}`);
+      shown?.setError(`Could not save comment: ${msg.error ?? "unknown error"}`);
       showToast(`Could not save comment: ${msg.error ?? "unknown error"}`);
     }
   } else if (msg.type === "reply-comment-result") {

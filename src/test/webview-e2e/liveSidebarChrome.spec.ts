@@ -1,5 +1,5 @@
 // The redesigned sidebar chrome: the
-// document toolbar's comments toggle, the footer and its send-options menu,
+// document toolbar's comments toggle, the footer and its suggest-mode switch,
 // the filter tabs' own counts, and the header-height budget that keeps the
 // clutter this redesign removed from creeping back.
 //
@@ -9,7 +9,7 @@
 
 import { expect, test } from "@playwright/test";
 import { parse, replaceThread } from "../../inlineComments/format";
-import { awaitPosted, bootLiveEditor, posted, pushToWebview } from "./harness";
+import { awaitPosted, bootLiveEditor, clearPosted, posted, pushToWebview } from "./harness";
 import { liveInit, liveSidecar, reviewFixture } from "./fixtures";
 
 const RESOLVED_TS = "2026-07-02T09:00:00.000Z";
@@ -55,72 +55,40 @@ test.describe("sidebar footer", () => {
   });
 });
 
-test.describe("send options", () => {
+test.describe("the footer's suggest-mode switch", () => {
   test.beforeEach(async ({ page }) => {
     const fixture = reviewFixture();
     await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
   });
 
-  test("opening the menu shows suggest mode and nothing else", async ({ page }) => {
-    const btn = page.locator("#send-options-btn");
-    await expect(btn).toHaveAttribute("aria-haspopup", "menu");
-    await expect(btn).toHaveAttribute("aria-expanded", "false");
-    await expect(page.locator("#send-options-menu")).toBeHidden();
-
-    await btn.click();
-    await expect(page.locator("#send-options-menu")).toBeVisible();
-    await expect(btn).toHaveAttribute("aria-expanded", "true");
-    await expect(page.locator("#send-options-menu").getByRole("menuitem")).toHaveCount(0);
-    await expect(page.locator("#send-options-menu").getByRole("menuitemcheckbox")).toHaveText([
-      "Ask for suggestions instead of edits",
-    ]);
-    await expect(page.locator("#send-options-menu #copy-prompt")).toHaveCount(0);
+  // It used to be the only item in a menu behind Send's chevron, and people
+  // didn't find it there.
+  test("is in plain sight above Send, labelled, with no menu to open", async ({ page }) => {
+    const toggle = page.locator("#suggest-mode-toggle");
+    await expect(toggle).toBeVisible();
+    await expect(toggle).toHaveAttribute("role", "switch");
+    await expect(toggle).toHaveAttribute("aria-checked", "false");
+    await expect(page.getByRole("switch", { name: "Ask for suggestions instead of edits" })).toBeVisible();
+    await expect(page.locator("#send-options-btn, #send-options-menu")).toHaveCount(0);
+    const [sw, send] = await Promise.all([toggle.boundingBox(), page.locator("#send-to-claude").boundingBox()]);
+    expect(sw!.y + sw!.height).toBeLessThanOrEqual(send!.y);
   });
 
-  test("toggling suggest mode posts toggle-suggest-mode", async ({ page }) => {
-    await page.locator("#send-options-btn").click();
+  test("clicking the switch, or its words, posts toggle-suggest-mode once", async ({ page }) => {
     await page.locator("#suggest-mode-toggle").click();
-    expect(await awaitPosted(page, "toggle-suggest-mode")).toEqual({ type: "toggle-suggest-mode" });
+    expect(await posted(page)).toEqual([{ type: "toggle-suggest-mode" }]);
+    await clearPosted(page);
+    await page.locator("#suggest-mode-label").click();
+    expect(await posted(page)).toEqual([{ type: "toggle-suggest-mode" }]);
   });
 
-  test("the footer's copy button needs no menu: labelled, visible, one click posts copy-prompt", async ({ page }) => {
+  test("the footer's copy button: labelled, visible, one click posts copy-prompt", async ({ page }) => {
     const copy = page.locator("#copy-prompt");
     await expect(copy).toBeVisible();
     await expect(copy).toHaveAttribute("aria-label", "Copy prompt");
     await expect(copy).toHaveAttribute("title", "Copy the prompt to your clipboard.");
-    await expect(copy).not.toHaveAttribute("role", "menuitem");
-    await expect(page.locator("#send-options-menu")).toBeHidden();
     await copy.click();
     expect(await posted(page)).toEqual([{ type: "copy-prompt" }]);
-  });
-
-  test("Escape closes it and returns focus to its trigger", async ({ page }) => {
-    const btn = page.locator("#send-options-btn");
-    await btn.click();
-    await page.keyboard.press("Escape");
-    await expect(page.locator("#send-options-menu")).toBeHidden();
-    expect(await btn.evaluate((el) => el === document.activeElement)).toBe(true);
-  });
-
-  test("one menu open at a time with the \"…\" menu", async ({ page }) => {
-    await page.locator("#send-options-btn").click();
-    await expect(page.locator("#send-options-menu")).toBeVisible();
-
-    await page.locator("#overflow-menu-btn").click();
-    await expect(page.locator("#overflow-menu")).toBeVisible();
-    await expect(page.locator("#send-options-menu")).toBeHidden();
-
-    await page.locator("#send-options-btn").click();
-    await expect(page.locator("#send-options-menu")).toBeVisible();
-    await expect(page.locator("#overflow-menu")).toBeHidden();
-  });
-
-  test("opens upward — its bottom sits at or above the trigger's top", async ({ page }) => {
-    const btn = page.locator("#send-options-btn");
-    await btn.click();
-    const btnBox = (await btn.boundingBox())!;
-    const menuBox = (await page.locator("#send-options-menu").boundingBox())!;
-    expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(btnBox.y + 1);
   });
 });
 
@@ -238,10 +206,10 @@ test.describe("suggest mode shows in the Send label", () => {
 
     await pushToWebview(page, { type: "sidecar-changed", ...liveSidecar(fixture.source, { suggestMode: true }) });
     await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments as suggestions");
-    await expect(page.locator("#send-options-btn")).toHaveAttribute("title", "Suggest mode is on");
+    await expect(page.locator("#suggest-mode-toggle")).toHaveAttribute("aria-checked", "true");
   });
 
-  test("Send, the chevron and the copy button share one row and height, Send truncating rather than wrapping", async ({
+  test("Send and the copy button share one row and height, Send truncating rather than wrapping", async ({
     page,
   }) => {
     const fixture = reviewFixture();
@@ -249,19 +217,15 @@ test.describe("suggest mode shows in the Send label", () => {
     await pushToWebview(page, { type: "sidecar-changed", ...liveSidecar(fixture.source, { suggestMode: true }) });
     await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments as suggestions");
 
-    const [send, chevron, copy, footer] = await Promise.all([
+    const [send, copy, footer] = await Promise.all([
       page.locator("#send-to-claude").boundingBox(),
-      page.locator("#send-options-btn").boundingBox(),
       page.locator("#copy-prompt").boundingBox(),
       page.locator(".mc-sidebar-footer").boundingBox(),
     ]);
-    for (const box of [chevron!, copy!]) {
-      expect(box.y).toBeCloseTo(send!.y, 0);
-      expect(box.height).toBeCloseTo(send!.height, 0);
-    }
+    expect(copy!.y).toBeCloseTo(send!.y, 0);
+    expect(copy!.height).toBeCloseTo(send!.height, 0);
     // Left to right, inside the footer, and the copy button is not squeezed out.
-    expect(chevron!.x).toBeGreaterThanOrEqual(send!.x + send!.width - 1);
-    expect(copy!.x).toBeGreaterThan(chevron!.x + chevron!.width);
+    expect(copy!.x).toBeGreaterThan(send!.x + send!.width);
     expect(copy!.x + copy!.width).toBeLessThanOrEqual(footer!.x + footer!.width + 1);
     expect(copy!.width).toBeGreaterThanOrEqual(24);
     // Send fills what's left: nothing but the 12px footer padding beside the copy button.

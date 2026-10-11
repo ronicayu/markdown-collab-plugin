@@ -60,7 +60,7 @@ async function invokeCopyClaudePrompt(): Promise<void> {
   }
   // The command is "Copy Prompt" (the id keeps its old name): the prompt opens
   // with the skill's workflow line, but whichever agent it is pasted into reads it.
-  const prompt = `${workflowOpener("installed")} to address the unresolved review comments on ${promptPathFor(uri)}.`;
+  const prompt = `${workflowOpener("installed")} to address the unresolved review comments on ${promptPathFor(uri)}.\n\n${mcpToolsDirective()}`;
   await vscode.env.clipboard.writeText(prompt);
   void vscode.window.showInformationMessage(
     "Prompt copied — paste it into your agent.",

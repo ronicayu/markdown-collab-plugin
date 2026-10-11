@@ -54,26 +54,20 @@ test.describe("with the review fixture", () => {
   });
 
   test("suggest mode posts toggle-suggest-mode, follows the host's answer, and shows in the Send label", async ({ page }) => {
-    const sendOptionsBtn = page.locator("#send-options-btn");
     const toggle = page.locator("#suggest-mode-toggle");
-    await sendOptionsBtn.click();
-    await expect(toggle).toHaveAttribute("role", "menuitemcheckbox");
-    await expect(toggle).toHaveText("Ask for suggestions instead of edits");
+    await expect(toggle).toHaveAttribute("role", "switch");
+    await expect(toggle).toHaveAccessibleName("Ask for suggestions instead of edits");
     await expect(toggle).toHaveAttribute("aria-checked", "false");
     await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments");
 
     await toggle.click();
     expect(await awaitPosted(page, "toggle-suggest-mode")).toEqual({ type: "toggle-suggest-mode" });
-    // The setting is the host's: the item only shows what comes back. Every
-    // menu item closes the menu after its click, so this also checks that.
-    await expect(page.locator("#send-options-menu")).toBeHidden();
+    // The setting is the host's: the switch only shows what comes back.
+    await expect(toggle).toHaveAttribute("aria-checked", "false");
 
     await pushSidecar(page, fixture.source, { suggestMode: true });
-    await sendOptionsBtn.click();
     await expect(toggle).toHaveAttribute("aria-checked", "true");
-    // The Send label keeps the setting visible with the menu closed.
     await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments as suggestions");
-    await expect(sendOptionsBtn).toHaveAttribute("title", "Suggest mode is on");
   });
 
   test("replying in a thread posts the reply with its thread id and body", async ({ page }) => {
@@ -529,6 +523,8 @@ test.describe("with the review fixture", () => {
     await page.keyboard.press("r");
     await expect(card).not.toHaveClass(/collapsed/);
     expect(await card.locator(".reply-box textarea").evaluate((el) => el === document.activeElement)).toBe(true);
+    // The key opened the box; it isn't typed into it.
+    await expect(card.locator(".reply-box textarea")).toHaveValue("");
   });
 
   test("r and o are no-ops when nothing is highlighted", async ({ page }) => {

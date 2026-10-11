@@ -15,13 +15,23 @@ export type SendMode = "headless" | "terminal" | "clipboard" | "ask";
  * The line appended to every terminal and clipboard delivery. The reader may
  * have the MCP tools, the skill's `mdc` CLI, or neither, so it names each in
  * turn and ends on hand-editing per AGENTS.md.
+ *
+ * It opens with the rule, not the tools: an agent that had the skill only by
+ * reference read "use the CLI if the skill gave you one" as optional, reached
+ * for its own Edit tool, and broke markers. So the prompt itself says the file
+ * changes only through the tools or `mdc`, and where `mdc` is.
  */
 export function mcpToolsDirective(): string {
   return (
-    "If the `markdown-collab` MCP tools are in your tool list, use them for this pass — mc_list to read, " +
+    "Change this file's review comments — a reply, a new thread, a rewrite of a commented passage, any edit " +
+    "that crosses a marker — only through the `markdown-collab` MCP tools or the `mdc` CLI; never edit a " +
+    "`<!--mc:…-->` marker or thread line yourself, with an Edit tool or otherwise: a hand edit breaks the comments. " +
+    "If the MCP tools are in your tool list, use them for this pass — mc_list to read, " +
     "mc_reply / mc_open / mc_rewrite / mc_suggest to act, mc_edit for prose outside anchored spans, " +
-    "mc_status to say what you're doing, and mc_check on each file when you're done; if they aren't, " +
-    "use the `mdc` CLI if the skill gave you one, otherwise edit the file by hand as the " +
+    "mc_status to say what you're doing, and mc_check on each file when you're done. If they aren't, " +
+    "use the `mdc` CLI for the same steps (mdc list / reply / open / rewrite / suggest / edit / check) — in Claude Code " +
+    "it is on your PATH with the Markdown Collab plugin, or `node ~/.claude/skills/vs-markdown-collab/mdc.mjs` with the " +
+    "standalone skill. Only with neither, edit the file by hand exactly as the " +
     "\"Markdown review comments\" section of AGENTS.md describes."
   );
 }

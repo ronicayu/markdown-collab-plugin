@@ -120,14 +120,14 @@ const SHELL = `<header id="threads-header">
 </header>
 <div id="threads-list" role="feed"><p class="mc-loading">Loading…</p></div>
 <footer class="mc-sidebar-footer" hidden>
+  <label class="mc-suggest-row" title="When on, Send asks the agent to propose edits as suggestions you accept or reject.">
+    <button id="suggest-mode-toggle" type="button" class="mc-switch" role="switch" aria-checked="false" aria-labelledby="suggest-mode-label"></button>
+    <span id="suggest-mode-label">Ask for suggestions instead of edits</span>
+  </label>
+  <div class="mc-send-row">
   <button id="send-to-claude" class="mc-btn mc-btn--primary" title="Send the prompt to your agent's terminal (or your configured send mode).">Send</button>
-  <span class="mc-menu-wrap">
-    <button id="send-options-btn" type="button" class="mc-btn mc-btn--primary" aria-haspopup="menu" aria-expanded="false" aria-controls="send-options-menu" aria-label="Send options" title="Send options"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5l4 4 4-4"/></svg></button>
-    <div id="send-options-menu" class="mc-menu mc-menu--up" role="menu" aria-label="Send options" hidden>
-      <button id="suggest-mode-toggle" type="button" role="menuitemcheckbox" class="mc-menuitem" aria-checked="false" title="When on, Send asks the agent to propose edits as suggestions you accept or reject.">Ask for suggestions instead of edits</button>
-    </div>
-  </span>
   <button id="copy-prompt" type="button" class="mc-icon-btn" aria-label="Copy prompt" title="Copy the prompt to your clipboard."><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg></button>
+  </div>
 </footer>`;
 
 /**
@@ -151,8 +151,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     threadsList: byId<HTMLElement>("threads-list"),
     filterRadios: root.querySelectorAll<HTMLInputElement>('input[name="filter"]'),
     sendToClaude: byId<HTMLButtonElement>("send-to-claude"),
-    sendOptionsBtn: byId<HTMLButtonElement>("send-options-btn"),
-    sendOptionsMenu: byId<HTMLElement>("send-options-menu"),
+    suggestRow: root.querySelector<HTMLElement>(".mc-suggest-row")!,
     copyPrompt: byId<HTMLButtonElement>("copy-prompt"),
     suggestModeToggle: byId<HTMLButtonElement>("suggest-mode-toggle"),
     removeResolved: byId<HTMLButtonElement>("remove-resolved"),
@@ -192,10 +191,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   dom.overflowMenuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     menu.toggleMenuAt(dom.overflowMenuBtn, dom.overflowMenu);
-  });
-  dom.sendOptionsBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    menu.toggleMenuAt(dom.sendOptionsBtn, dom.sendOptionsMenu);
   });
 
   let currentState: SidebarState | null = null;
@@ -270,15 +265,16 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   // An open menu closes on this click like on any other outside click (the
   // menu controller's document listener).
   dom.copyPrompt.addEventListener("click", () => host.post({ type: "copy-prompt" }));
-  // Every item in the send-options and "…" menus closes it after each click:
-  // even the two menuitemcheckbox toggles (suggest mode, the keys hint) are
-  // one action per click here, not a multi-select list to leave open.
-  // The suggest-mode toggle doesn't flip itself: the setting is the host's,
-  // and it only reflects what comes back — anything else would show "on"
-  // after a write that failed.
+  // Every item in the "…" menu closes it after each click: even the
+  // menuitemcheckbox toggle (the keys hint) is one action per click here, not
+  // a multi-select list to leave open.
+  // The suggest-mode switch sits in the footer in plain sight — it was in a
+  // menu behind Send's chevron, where people didn't find it. It doesn't flip
+  // itself: the setting is the host's, and it only reflects what comes back —
+  // anything else would show "on" after a write that failed. Its label is a
+  // <label>, so clicking the words toggles it too.
   dom.suggestModeToggle.addEventListener("click", () => {
     host.post({ type: "toggle-suggest-mode" });
-    menu.closeOpenMenu(false);
   });
   // The host owns the confirm and the write for both bulk deletes: a webview
   // can't show a modal, and a two-click arm is too quiet for something that
@@ -311,9 +307,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
 
   function updateSwitches(state: SidebarState): void {
     dom.suggestModeToggle.setAttribute("aria-checked", String(state.suggestMode));
-    // With the menu closed the only trace of suggest mode is the Send label
-    // ("…as suggestions", see updateFooter) and this title.
-    dom.sendOptionsBtn.title = state.suggestMode ? "Suggest mode is on" : "Send options";
   }
 
   /**
@@ -327,7 +320,9 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     dom.sendToClaude.title = agentName
       ? `Send the prompt to a running ${agentName} terminal (or your configured send mode).`
       : "Send the prompt to your agent's terminal (or your configured send mode).";
-    dom.suggestModeToggle.title = `When on, Send asks ${agentName ?? "the agent"} to propose edits as suggestions you accept or reject.`;
+    const suggestTitle = `When on, Send asks ${agentName ?? "the agent"} to propose edits as suggestions you accept or reject.`;
+    dom.suggestModeToggle.title = suggestTitle;
+    dom.suggestRow.title = suggestTitle;
   }
 
   /**
@@ -440,6 +435,9 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     } else {
       return;
     }
+    // The key is spent: `r` has just moved focus into the reply box, and
+    // the browser would otherwise type the "r" there.
+    e.preventDefault();
     dismissHintOnFirstUse();
   });
 

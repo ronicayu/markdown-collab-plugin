@@ -182,7 +182,7 @@ const THREAD_LINE_RE = /<!--mc:t\s+(\{[\s\S]*?\})\s*-->/g;
 const SUGGESTION_LINE_RE = /<!--mc:s\s+(\{[\s\S]*?\})\s*-->/g;
 const CHECKPOINT_LINE_RE = /<!--mc:rev\s+(\{[\s\S]*?\})\s*-->/g;
 
-function buildCodeMask(source: string): Uint8Array {
+export function buildCodeMask(source: string): Uint8Array {
   const mask = new Uint8Array(source.length);
   const fenceLineRe = /^[ \t]{0,3}(```+|~~~+)[^\n]*$/gm;
   let fenceMatch: RegExpExecArray | null;
