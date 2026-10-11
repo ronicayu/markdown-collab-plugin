@@ -1013,6 +1013,9 @@ document.addEventListener("keydown", (e) => {
   } else {
     return;
   }
+  // The key is spent: `r` has just moved focus into the reply box, and
+  // the browser would otherwise type the "r" there.
+  e.preventDefault();
   dismissHintOnFirstUse();
 });
 

@@ -529,6 +529,8 @@ test.describe("with the review fixture", () => {
     await page.keyboard.press("r");
     await expect(card).not.toHaveClass(/collapsed/);
     expect(await card.locator(".reply-box textarea").evaluate((el) => el === document.activeElement)).toBe(true);
+    // The key opened the box; it isn't typed into it.
+    await expect(card.locator(".reply-box textarea")).toHaveValue("");
   });
 
   test("r and o are no-ops when nothing is highlighted", async ({ page }) => {

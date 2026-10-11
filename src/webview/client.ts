@@ -2289,6 +2289,32 @@ function reportReady(synced: boolean): void {
 }
 
 /**
+ * `doc` without the attributes the editor derives for itself, which a freshly
+ * parsed document doesn't have yet: a heading's `id`, which Milkdown fills in
+ * from its text once the heading is in the view. Compared with them, every
+ * heading of the editor's document differed from the file's, so an outside
+ * change or an undo was taken to span from the first heading to the last —
+ * replaced whole, with the caret (and, for an undo, the view) sent to the end.
+ * Positions are unchanged, so a range found on these applies to the real one.
+ */
+function withoutDerivedAttrs(doc: PmDocNode): PmDocNode {
+  const strip = (node: PmDocNode): PmDocNode => {
+    if (node.isText || node.isLeaf) return node;
+    const kids: PmDocNode[] = [];
+    let changed = false;
+    node.forEach((child) => {
+      const bare = strip(child);
+      if (bare !== child) changed = true;
+      kids.push(bare);
+    });
+    const derived = node.type.name === "heading" && node.attrs.id;
+    if (!changed && !derived) return node;
+    return node.type.create(derived ? { ...node.attrs, id: "" } : node.attrs, changed ? kids : node.content, node.marks);
+  };
+  return strip(doc);
+}
+
+/**
  * The fallback behind the character-precise replace in `applyExternalChange`:
  * replace the run of top-level blocks that differ between `prev` and `next`.
  * Used when a single content-level `replace` step doesn't land on `next`
@@ -2345,9 +2371,12 @@ function applyExternalChange(
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     const parser = ctx.get(parserCtx);
-    const next = parser(text);
-    if (!next) return;
-    const prev = view.state.doc;
+    const parsed = parser(text);
+    if (!parsed) return;
+    // Compared without the heading ids the editor fills in itself (which the
+    // view adds back to whatever lands); see `withoutDerivedAttrs`.
+    const prev = withoutDerivedAttrs(view.state.doc);
+    const next = withoutDerivedAttrs(parsed);
 
     const start = prev.content.findDiffStart(next.content);
     if (start == null) return; // same document: dispatch nothing
@@ -2370,7 +2399,7 @@ function applyExternalChange(
           endB += overlap;
         }
         tr.replace(start, endA, next.slice(start, endB));
-        if (tr.doc.eq(next)) {
+        if (withoutDerivedAttrs(tr.doc).eq(next)) {
           revealTo = endB;
           landed = true;
         }
@@ -2382,7 +2411,7 @@ function applyExternalChange(
     if (!landed) {
       tr = view.state.tr;
       const blockEnd = applyBlockLevelReplacement(tr, prev, next);
-      if (blockEnd != null && tr.doc.eq(next)) {
+      if (blockEnd != null && withoutDerivedAttrs(tr.doc).eq(next)) {
         revealTo = blockEnd;
         landed = true;
       }

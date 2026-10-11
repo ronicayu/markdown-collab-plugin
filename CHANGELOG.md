@@ -12,6 +12,24 @@ comment is saved (its own highlight takes over) or cancelled; a save that fails
 keeps the mark for the retry. The button stays off the span being commented on,
 and comes back when you select something else.
 
+### Fixed: Cmd+Z in Editing mode scrolled down the document
+
+In any document with headings, undo moved the caret, and the view, towards
+the end of the file. Once a heading is on screen the editor gives it an id
+(made from its text), and the file's text, freshly read, has none, so every
+heading looked changed. The undo was taken to span from the first heading to
+the last, and was revealed at the end of that span. Headings' ids are now left
+out of the comparison: the view stays where it was, and the caret goes back to
+where the undone text was. The same mismatch made every outside change (an
+agent's edit, a save) replace the document from its first heading to its last,
+which also moved the caret; that's fixed too.
+
+### Fixed: pressing `r` typed an "r" into the reply box
+
+`r` opens the highlighted thread's reply box, and the browser then typed the
+key into it. The single-key shortcuts no longer type anything, in the
+Markdown Collab view and the inline comments view.
+
 ## 0.35.52 — 2026-10-10 (pre-release)
 
 First build since 0.35.45 on the marketplaces' pre-release channel. It carries

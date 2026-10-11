@@ -594,6 +594,57 @@ test.describe("undo and redo keys", () => {
     await expect(page.locator(".mdc-toast--visible")).toHaveCount(0);
   });
 
+  // Milkdown gives each heading an `id` once it's in the view; a document
+  // freshly parsed from the file has none. Compared with them, the editor's
+  // document differed from the file's at every heading, so an undo in any
+  // document with headings looked like a change from the first heading to the
+  // last: the caret, and the view, went to the end of the file.
+  test("in a document with headings, the host's undo answer stays where it was typed", async ({ page }) => {
+    const sectioned = Array.from(
+      { length: 12 },
+      (_, s) =>
+        `## Section ${s + 1}\n\n` +
+        Array.from({ length: 4 }, (_, p) => `Paragraph ${s + 1}.${p + 1} of a long document that scrolls.`).join("\n\n"),
+    ).join("\n\n");
+    const source = `# Handbook\n\n${sectioned}\n`;
+    await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
+    await caretIn(page, "Paragraph 6.2 of");
+    const scroller = page.locator(".mdc-editor-scroll");
+    await scroller.evaluate((el) => {
+      const p = Array.from(el.querySelectorAll("p")).find((x) => x.textContent!.startsWith("Paragraph 6.2"))!;
+      el.scrollTop = p.offsetTop - el.clientHeight / 2;
+    });
+    const before = await scroller.evaluate((el) => el.scrollTop);
+    expect(before).toBeGreaterThan(0);
+
+    await page.keyboard.type("!");
+    await spliced(page, source);
+    await page.keyboard.press("ControlOrMeta+z");
+    await awaitPosted(page, "undo");
+    await clearPosted(page);
+    await pushToWebview(page, { type: "externalChange", text: liveProse(source), epoch: 2, quiet: true, reveal: true });
+    await expect(editable(page)).not.toContainText("scrolls.!");
+
+    // The view stays put, and typing carries on where the "!" was.
+    await page.waitForTimeout(200);
+    expect(await scroller.evaluate((el) => el.scrollTop)).toBe(before);
+    await page.keyboard.type("?");
+    await expect(editable(page).locator("p", { hasText: "Paragraph 6.2 of" })).toHaveText(
+      "Paragraph 6.2 of a long document that scrolls.?",
+    );
+  });
+
+  test("with headings, an outside change with the text the editor already shows dispatches nothing", async ({ page }) => {
+    const source = "# Title\n\nFirst paragraph.\n\n## Part two\n\nSecond paragraph.\n";
+    await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
+    await caretIn(page, "First paragraph", "First".length);
+    await pushToWebview(page, { type: "externalChange", text: liveProse(source), epoch: 2, quiet: true });
+    // Had the document been replaced from the first heading to the last, the
+    // caret would have been mapped to the end of it.
+    await page.keyboard.type("!");
+    await expect(editable(page).locator("p").first()).toHaveText("First! paragraph.");
+  });
+
   test("a reveal change scrolls it into view; without reveal, the same change leaves scrollTop alone", async ({ page }) => {
     await bootLiveEditor(page, { ...liveInit(LONG), epoch: 1 });
     // ProseMirror's own scrollIntoView only moves the viewport when the view
