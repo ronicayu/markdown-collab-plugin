@@ -40,6 +40,7 @@ import { currentAuthorName } from "../authorName";
 import { workflowOpener } from "../skillDelivery";
 import { imageResourceRootPaths } from "../webviewShared/resourceRoots";
 import type { Logger } from "../logging";
+import { mcpToolsDirective } from "../sendToClaude";
 import {
   handleSidebarMessage,
   isSidebarMessage,
@@ -1468,7 +1469,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
         // The existing copyClaudePrompt command operates on the active
         // editor; ours isn't a TextEditor so we can't rely on that path.
         // Mimic its payload directly.
-        const prompt = `${workflowOpener()} to address the unresolved review comments on ${promptPathFor(document.uri)}.`;
+        const prompt = `${workflowOpener()} to address the unresolved review comments on ${promptPathFor(document.uri)}.\n\n${mcpToolsDirective()}`;
         await vscode.env.clipboard.writeText(prompt);
         void vscode.window.showInformationMessage(
           "Prompt copied — paste it into your agent.",

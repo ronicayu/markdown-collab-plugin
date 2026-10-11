@@ -129,7 +129,7 @@ function suggestModeReport(filePath: string): string {
  * is on somewhere this cheap, single-file check can't see (a multi-root
  * `.code-workspace`, a workspace root above this one).
  */
-function suggestModeOnDisk(hookCwd: string, io: HookIo): boolean {
+export function suggestModeOnDisk(hookCwd: string, io: HookIo): boolean {
   const raw = io.readFile(path.join(hookCwd, ".vscode", "settings.json"));
   if (raw === null) return false;
   const parsed = parseJsonc(raw);
@@ -198,6 +198,6 @@ function formatReport(filePath: string, errors: Array<{ message: string }>): str
   return `${lines.join("\n")}\n`;
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

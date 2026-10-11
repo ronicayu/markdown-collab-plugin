@@ -492,6 +492,20 @@ describe("mdc CLI: check writes a review checkpoint", () => {
     expect(parse(fs.readFileSync(doc, "utf8")).checkpoint).toBeNull();
   });
 
+  it("guard --hook refuses an Edit that would drop a marker, and lets a prose edit through", () => {
+    const doc = writeDoc("guard.md", DOC);
+    const id = json(run(["open", doc, "--quote", "exponential backoff", "--body", "q"])).threadId;
+    const hookInput = (old_string: string, new_string: string): string =>
+      JSON.stringify({ cwd: tmp, tool_name: "Edit", tool_input: { file_path: doc, old_string, new_string } });
+    const refused = runWithStdin(["guard", "--hook"], hookInput(`backoff<!--mc:/a:${id}-->`, "backoff"));
+    expect(refused.status).toBe(2);
+    expect(refused.stderr).toContain("mdc rewrite");
+    expect(refused.stdout).toBe("");
+    expect(runWithStdin(["guard", "--hook"], hookInput("bearer token", "API key")).status).toBe(0);
+    // A bare `guard` is a usage error, not a silent pass.
+    expect(run(["guard"]).status).toBe(1);
+  });
+
   it("check --repair stays checkpoint-free too — repair is a distinct affordance", () => {
     const doc = writeDoc("a.md", DOC);
     const id = json(run(["open", doc, "--quote", "exponential backoff", "--body", "q"])).threadId;

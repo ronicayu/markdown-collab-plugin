@@ -73,12 +73,19 @@ export async function verifyPlugin() {
   // 3. The hook: shape, event, matcher, and the command it runs.
   const hooks = readJson(`${PLUGIN_DIR}/hooks/hooks.json`, problems);
   if (hooks && !isDeepStrictEqual(hooks, HOOKS)) {
-    problems.push(`${PLUGIN_DIR}/hooks/hooks.json isn't the PostToolUse → mdc check --hook registration`);
+    problems.push(
+      `${PLUGIN_DIR}/hooks/hooks.json isn't the PreToolUse → mdc guard --hook, PostToolUse → mdc check --hook registration`,
+    );
   }
-  const hook = hooks?.hooks?.PostToolUse?.[0]?.hooks?.[0] ?? {};
-  const command = [hook.command ?? "", ...(Array.isArray(hook.args) ? hook.args : [])].join(" ");
-  if (!command.includes("${CLAUDE_PLUGIN_ROOT}/lib/mdc.mjs") || !command.includes("check --hook")) {
-    problems.push("the hook command doesn't run ${CLAUDE_PLUGIN_ROOT}/lib/mdc.mjs check --hook");
+  for (const [event, verb] of [
+    ["PreToolUse", "guard --hook"],
+    ["PostToolUse", "check --hook"],
+  ]) {
+    const hook = hooks?.hooks?.[event]?.[0]?.hooks?.[0] ?? {};
+    const command = [hook.command ?? "", ...(Array.isArray(hook.args) ? hook.args : [])].join(" ");
+    if (!command.includes("${CLAUDE_PLUGIN_ROOT}/lib/mdc.mjs") || !command.includes(verb)) {
+      problems.push(`the ${event} hook command doesn't run \${CLAUDE_PLUGIN_ROOT}/lib/mdc.mjs ${verb}`);
+    }
   }
 
   // 4. The shims and the CLI they run.

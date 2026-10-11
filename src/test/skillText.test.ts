@@ -207,8 +207,9 @@ describe("plugin rendering", () => {
     expect(plugin).toMatch(/CLI[\s\S]{0,200}same verbs/);
   });
 
-  it("mentions the post-edit hook, which only the plugin has", () => {
-    expect(plugin).toContain("This plugin also runs that check after every Edit and Write");
+  it("mentions the pre- and post-edit hooks, which only the plugin has", () => {
+    expect(plugin).toContain("This plugin also refuses, before it lands, an Edit or Write that would change a marker or thread line");
+    expect(plugin).toContain("runs that check after every Edit and Write");
     expect(legacy).not.toContain("This plugin");
   });
 
