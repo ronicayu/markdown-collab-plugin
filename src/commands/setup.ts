@@ -136,7 +136,12 @@ function pluginPaths(context: vscode.ExtensionContext): { sourcePluginDir: strin
  * Plugin installs are checked once per extension version, through
  * `claude plugin list --json` (a process, so not on every activation): the
  * plugin comes from this extension's own local marketplace, so a version that
- * differs from the extension's means the Claude side is stale. A `claude`
+ * differs from the extension's means the Claude side is stale — and it is
+ * updated then and there, without asking. The person agreed to the plugin when
+ * they set it up, the update comes from the extension's own copy (no network,
+ * nothing new to trust), and an "Update?" prompt dismissed once left them on
+ * the old hooks and skill until the next release. A failed update says why and
+ * offers Retry. A `claude`
  * with neither the plugin nor the standalone skill gets its own nudge in the
  * same once-per-version check, whatever other agent is connected.
  * "No agent connected yet" is said
@@ -156,13 +161,7 @@ export async function maybePromptSkillUpdate(
         const installed = await installedLocalPlugin(claudeRunner(lookup.claude.path, log));
         if (installed) {
           if (installed.version === extensionVersion) return;
-          const choice = await vscode.window.showInformationMessage(
-            "Markdown Collab's Claude Code plugin is out of date " +
-              `(${installed.version}; this extension is ${extensionVersion}).`,
-            "Update",
-            "Not now",
-          );
-          if (choice === "Update") await updatePluginFromNudge(context, lookup.claude.path, log);
+          await updatePluginQuietly(context, lookup.claude.path, installed.version, log);
           return;
         }
         // Claude Code is here with neither the plugin nor the standalone skill,
@@ -227,20 +226,35 @@ async function anyAgentConnected(context: vscode.ExtensionContext): Promise<bool
   return folder !== undefined && agentsSectionPresent(folder.uri.fsPath);
 }
 
-async function updatePluginFromNudge(
+/**
+ * Bring an installed plugin up to this extension's version, then say so — or,
+ * when it fails, say why and offer Retry. Not awaited past the update itself:
+ * the messages are fire-and-forget, so activation never waits on a click.
+ */
+async function updatePluginQuietly(
   context: vscode.ExtensionContext,
   claudePath: string,
+  from: string,
   log: Logger,
 ): Promise<void> {
   const outcome = await setUpClaudePlugin({ run: claudeRunner(claudePath, log), ...pluginPaths(context) });
   if (outcome.ok) {
+    log.info("claude plugin updated", { from, to: outcome.version });
     void vscode.window.showInformationMessage(
-      `Claude Code plugin updated to ${outcome.version}. Restart running Claude sessions (or run /reload-plugins) to pick it up.`,
+      `Markdown Collab updated its Claude Code plugin (${from} → ${outcome.version}). ` +
+        "Restart running Claude sessions (or run /reload-plugins) to pick it up.",
     );
-  } else {
-    log.warn("plugin update failed", { reason: outcome.reason });
-    void vscode.window.showErrorMessage(`Markdown Collab: couldn't update the Claude Code plugin — ${outcome.reason}.`);
+    return;
   }
+  log.warn("plugin update failed", { reason: outcome.reason });
+  void Promise.resolve(
+    vscode.window.showWarningMessage(
+      `Markdown Collab couldn't update its Claude Code plugin (still ${from}) — ${outcome.reason}.`,
+      "Retry",
+    ),
+  ).then((pick) => {
+    if (pick === "Retry") void updatePluginQuietly(context, claudePath, from, log);
+  });
 }
 
 /** What `setUpClaudeCode` did, for a caller that folds it into its own toast. */

@@ -31,6 +31,17 @@ gave you one", which read as optional.
   - Checked in a live Claude Code session: the Edit was refused, the file was
     left untouched, and Claude turned to `mdc edit`.
 
+### Changed: the Claude Code plugin updates itself
+
+When the extension updates, it now updates the Claude Code plugin it installed
+too, without asking, and says so. Before, it asked "Update?" once per version,
+and one "Not now" left you on the old skill and hooks, including the guard
+above, until the next release. The plugin comes from the extension's own copy,
+so nothing new is downloaded or trusted. If the update fails you're told why,
+with **Retry**. Installing the plugin the first time still takes **Set Up
+Claude Code**. Restart running Claude sessions, or run `/reload-plugins`, to
+pick up an update.
+
 ### Changed: suggest mode is a visible switch
 
 "Ask for suggestions instead of edits" was the only item in a menu behind
