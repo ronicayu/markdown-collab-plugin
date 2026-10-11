@@ -563,6 +563,7 @@ async function createEditor(text: string): Promise<Editor> {
           makeImageResolvePlugin(),
           makeHtmlTagPairPlugin(),
           makeAnchorHighlightPlugin(),
+          makePendingAnchorPlugin(),
           makeSuggestionHighlightPlugin(
             () => sidebarState.suggestions,
             // Read-only: by source position, like threads; edit mode keeps the text search.
@@ -1180,6 +1181,40 @@ function refreshLineNumbers(): void {
   editor?.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     view.dispatch(view.state.tr.setMeta(lineNumberPluginKey, "refresh"));
+  });
+}
+
+// The text a comment being written is about. Once the composer's textarea has
+// focus the editor's own selection is no longer drawn, so without this the
+// person can't see what they're commenting on — in Editing mode especially,
+// where the floating button used to come back and cover it. It maps through
+// edits, and goes when the comment is saved (its real highlight takes over)
+// or cancelled.
+const PENDING_ANCHOR_KEY = new PluginKey<DecorationSet>("mdc-pending-anchor");
+
+function makePendingAnchorPlugin(): Plugin<DecorationSet> {
+  return new Plugin<DecorationSet>({
+    key: PENDING_ANCHOR_KEY,
+    state: {
+      init: () => DecorationSet.empty,
+      apply: (tr, old) => {
+        const meta = tr.getMeta(PENDING_ANCHOR_KEY) as { from: number; to: number } | null | undefined;
+        if (meta === null) return DecorationSet.empty;
+        if (meta) return DecorationSet.create(tr.doc, [Decoration.inline(meta.from, meta.to, { class: "mdc-anchor-pending" })]);
+        return old.map(tr.mapping, tr.doc);
+      },
+    },
+    props: {
+      decorations: (state) => PENDING_ANCHOR_KEY.getState(state),
+    },
+  });
+}
+
+/** Mark (or, with null, unmark) the span a comment is being written about. */
+function setPendingAnchor(range: { from: number; to: number } | null): void {
+  editor?.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.dispatch(view.state.tr.setMeta(PENDING_ANCHOR_KEY, range));
   });
 }
 
@@ -2030,6 +2065,12 @@ function installAddCommentAffordance(): void {
       const view = ctx.get(editorViewCtx);
       const sel = view.state.selection;
       if (sel.empty) return;
+      // A comment is already being written on exactly this selection (the
+      // editor keeps it after the composer takes focus): the button would sit
+      // on top of the very text the comment is about. Selecting something
+      // else brings it back, to start a comment there instead.
+      const pending = (PENDING_ANCHOR_KEY.getState(view.state) as DecorationSet | undefined)?.find()[0];
+      if (pending && pending.from === sel.from && pending.to === sel.to) return;
       try {
         const c = view.coordsAtPos(sel.to);
         coords = { top: c.top, left: c.right };
@@ -2103,6 +2144,7 @@ function openComposerForCurrentSelection(): void {
   const captured = pendingSelection;
   pendingSelection = null;
   const recent = lastNonEmptySelection;
+  let selected: { from: number; to: number } | null = null;
   editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     const live = view.state.selection;
@@ -2125,6 +2167,7 @@ function openComposerForCurrentSelection(): void {
       failureReason = "No text is selected. Highlight some text in the editor first.";
       return;
     }
+    selected = { from: selFrom, to: selTo };
     if (readOnly) {
       // Each selected character knows its source bytes, so the comment goes
       // exactly there — or, when a boundary has no trusted bytes, nowhere.
@@ -2164,6 +2207,7 @@ function openComposerForCurrentSelection(): void {
     showToast(failureReason || "Couldn't anchor this selection.");
     return;
   }
+  setPendingAnchor(selected);
   const finalAnchor: import("../types").Anchor = anchor;
   const finalRange = proseRange as { start: number; end: number; text: string } | null;
   const finalEditRange = editRange as { first: EditorPoint; last: EditorPoint } | null;
@@ -2208,6 +2252,7 @@ function openComposerForCurrentSelection(): void {
     onCancel: () => {
       addComposer = null;
       if (composerEl) composerEl.innerHTML = "";
+      setPendingAnchor(null);
     },
   });
   composerEl.appendChild(composer.el);
@@ -2573,6 +2618,9 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     if (msg.ok) {
       addComposer = null;
       if (composerEl) composerEl.innerHTML = "";
+      // The saved comment's own highlight replaces the pending mark (a failed
+      // save keeps it, with the composer, so the retry still shows its text).
+      setPendingAnchor(null);
       showToast("Comment added.");
       // Belt-and-suspenders: re-run the anchor highlight once the doc has
       // settled (the sidecar-changed refresh can fire before a save-participant

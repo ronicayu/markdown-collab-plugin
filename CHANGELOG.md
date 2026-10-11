@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.35.53 — 2026-10-11 (GitHub only)
+
+### Fixed: the text a new comment is about stays highlighted while you write it
+
+Once the comment box took focus, the editor stopped drawing your selection, so
+you wrote the comment without seeing what it was on — and in Editing mode the
+floating "+ Add comment" button came back on top of that very text. The
+selected span is now marked from the moment the comment box opens until the
+comment is saved (its own highlight takes over) or cancelled; a save that fails
+keeps the mark for the retry. The button stays off the span being commented on,
+and comes back when you select something else.
+
 ## 0.35.52 — 2026-10-10 (pre-release)
 
 First build since 0.35.45 on the marketplaces' pre-release channel. It carries
