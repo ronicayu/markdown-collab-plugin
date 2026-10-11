@@ -1358,12 +1358,15 @@ function decide2(stdinText, io) {
   const absPath = path2.isAbsolute(filePath) ? filePath : path2.resolve(hookCwd, filePath);
   const current = io.readFile(absPath);
   if (current === null || !current.includes("<!--mc:")) return PASS;
+  const before = reviewData(current);
+  if (before.length === 0) return PASS;
   const next = afterTool(payload.tool_name, input, current);
   if (next === null || next === current) return PASS;
-  if (suggestModeOnDisk(hookCwd, io)) return { exitCode: 2, stderr: suggestModeRefusal(filePath) };
-  if (sameReviewData(current, next)) return PASS;
   if (opCheck(current).issues.some((issue) => issue.severity === "error")) return PASS;
-  return { exitCode: 2, stderr: refusal(filePath) };
+  if (suggestModeOnDisk(hookCwd, io)) return { exitCode: 2, stderr: suggestModeRefusal(filePath) };
+  const after = reviewData(next);
+  if (before.length === after.length && before.every((token, i) => token === after[i])) return PASS;
+  return { exitCode: 2, stderr: refusal(filePath, usesReplaceAll(input) && after.length === before.length) };
 }
 function afterTool(tool, input, current) {
   if (tool === "Write") return typeof input.content === "string" ? input.content : null;
@@ -1380,32 +1383,52 @@ function afterTool(tool, input, current) {
   return null;
 }
 function applyEdit(text, edit) {
-  const { old_string: oldString, new_string: newString, replace_all: replaceAll } = edit;
-  if (typeof oldString !== "string" || typeof newString !== "string" || oldString === "") return null;
+  const { old_string: rawOld, new_string: rawNew, replace_all: replaceAll } = edit;
+  if (typeof rawOld !== "string" || typeof rawNew !== "string" || rawOld === "") return null;
+  let oldString = rawOld;
+  let newString = rawNew;
+  if (!text.includes(oldString) && text.includes("\r\n") && oldString.includes("\n")) {
+    oldString = oldString.replace(/\r?\n/g, "\r\n");
+    newString = newString.replace(/\r?\n/g, "\r\n");
+  }
   const at = text.indexOf(oldString);
   if (at < 0) return null;
   if (replaceAll === true) return text.split(oldString).join(newString);
   return text.slice(0, at) + newString + text.slice(at + oldString.length);
 }
-function sameReviewData(a, b) {
-  const before = a.match(REVIEW_DATA) ?? [];
-  const after = b.match(REVIEW_DATA) ?? [];
-  return before.length === after.length && before.every((token, i) => token === after[i]);
+function reviewData(text) {
+  const mask = buildCodeMask(text);
+  const tokens = [];
+  for (const m of text.matchAll(REVIEW_DATA)) if (!mask[m.index]) tokens.push(m[0]);
+  return tokens;
 }
-function refusal(filePath) {
-  return [
-    `Markdown Collab: not applied \u2014 this edit to ${filePath} would change its review comments (a <!--mc:\u2026--> marker or thread line), and a hand edit is how they break.`,
-    "Make the change with mdc (or the markdown-collab MCP tool of the same name):",
+function usesReplaceAll(input) {
+  if (input.replace_all === true) return true;
+  return Array.isArray(input.edits) && input.edits.some((e) => isPlainObject(e) && e.replace_all === true);
+}
+function refusal(filePath, replaceAllHitThreadText) {
+  const lines = [
+    `Markdown Collab: not applied \u2014 this edit to ${filePath} would change its review comments (a <!--mc:\u2026--> marker or thread line), and a hand edit is how they break.`
+  ];
+  if (replaceAllHitThreadText) {
+    lines.push(
+      "replace_all also rewrote text quoted inside a thread line. Make the same Edit once per occurrence in the prose instead (or mdc edit with --occurrence N)."
+    );
+  }
+  lines.push(
+    "Make the change with mdc (or the matching markdown-collab MCP tool: mc_reply, mc_rewrite, mc_edit, \u2026):",
     `- reply to a thread: mdc reply ${filePath} <threadId> --body "\u2026"`,
     `- rewrite a commented passage, markers kept: mdc rewrite ${filePath} <threadId> --with "\u2026"`,
     `- change or delete prose around markers: mdc edit ${filePath} --old "\u2026" --new "\u2026"`,
     `- open, resolve, suggest: mdc open / mdc resolve / mdc suggest ${filePath} \u2026`,
+    "Removing every comment from the file is the human's call: ask them to run Markdown Collab: Remove All Review Data.",
     "An Edit that leaves every <!--mc:\u2026--> exactly as it is still goes through.",
     ""
-  ].join("\n");
+  );
+  return lines.join("\n");
 }
 function suggestModeRefusal(filePath) {
-  return `Markdown Collab: not applied \u2014 suggest mode is on for this workspace, so ${filePath} isn't edited directly. Propose the change with mdc suggest ${filePath} --quote "\u2026" --with "\u2026" --note "\u2026" (or mc_suggest).
+  return `Markdown Collab: not applied \u2014 suggest mode is on for this workspace, so ${filePath} isn't edited directly. Propose the change with mdc suggest ${filePath} --quote "\u2026" --with "\u2026" --note "\u2026" (or mc_suggest). If the human wants this edit made directly, they can turn suggest mode off (the switch above Send, or markdownCollab.proposeEditsAsSuggestions in .vscode/settings.json).
 `;
 }
 

@@ -11,8 +11,9 @@
 // It stays narrow, for the same reason the check hook does (a guard that fires
 // on the wrong thing teaches Claude to ignore its tooling):
 //
-// - Only a .md file that already carries review data. Ordinary Markdown, and a
-//   file being created, are none of its business.
+// - Only a .md file that already carries review data. Ordinary Markdown, a
+//   file being created, and a `<!--mc:…-->` shown inside a code block or code
+//   span (the format's own docs are full of them) are none of its business.
 // - A prose edit that leaves every `<!--mc:…-->` exactly as it was passes,
 //   inside an anchored span or not.
 // - A file that is already broken passes, so a repair the check hook asked
@@ -21,12 +22,18 @@
 //   Edit tool refuses that itself.
 //
 // While suggest mode is on for the workspace, every direct edit of such a file
-// is refused: the change belongs in `mdc suggest`.
+// is refused: the change belongs in `mdc suggest`, and the message names the
+// setting for a person who does want the direct edit.
+//
+// Not covered: a write through Bash (`sed -i`, `cat >`) — telling one apart
+// from a read means parsing shell, and the prompt and the PostToolUse check
+// are the line there.
 //
 // Never throws; every unexpected path is a silent pass.
 
 import * as path from "node:path";
 import { opCheck } from "../inlineComments/docOps";
+import { buildCodeMask } from "../inlineComments/format";
 import { isPlainObject, suggestModeOnDisk, type HookIo, type HookOutcome } from "./checkHook";
 
 const PASS: HookOutcome = { exitCode: 0, stderr: "" };
@@ -60,15 +67,21 @@ function decide(stdinText: string, io: HookIo): HookOutcome {
   const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(hookCwd, filePath);
   const current = io.readFile(absPath);
   if (current === null || !current.includes("<!--mc:")) return PASS;
+  const before = reviewData(current);
+  if (before.length === 0) return PASS;
 
   const next = afterTool(payload.tool_name, input, current);
   if (next === null || next === current) return PASS;
 
+  // A repair of a file that's already broken goes through whatever it touches
+  // (the check hook asked for it), suggest mode or not.
+  if (opCheck(current).issues.some((issue) => issue.severity === "error")) return PASS;
+
   if (suggestModeOnDisk(hookCwd, io)) return { exitCode: 2, stderr: suggestModeRefusal(filePath) };
 
-  if (sameReviewData(current, next)) return PASS;
-  if (opCheck(current).issues.some((issue) => issue.severity === "error")) return PASS;
-  return { exitCode: 2, stderr: refusal(filePath) };
+  const after = reviewData(next);
+  if (before.length === after.length && before.every((token, i) => token === after[i])) return PASS;
+  return { exitCode: 2, stderr: refusal(filePath, usesReplaceAll(input) && after.length === before.length) };
 }
 
 /** The file as the tool would leave it, or null when that can't be worked out. */
@@ -88,36 +101,61 @@ function afterTool(tool: unknown, input: Record<string, unknown>, current: strin
 }
 
 function applyEdit(text: string, edit: Record<string, unknown>): string | null {
-  const { old_string: oldString, new_string: newString, replace_all: replaceAll } = edit;
-  if (typeof oldString !== "string" || typeof newString !== "string" || oldString === "") return null;
+  const { old_string: rawOld, new_string: rawNew, replace_all: replaceAll } = edit;
+  if (typeof rawOld !== "string" || typeof rawNew !== "string" || rawOld === "") return null;
+  let oldString = rawOld;
+  let newString = rawNew;
+  // The Edit tool matches a multi-line old_string against a CRLF file; so does this.
+  if (!text.includes(oldString) && text.includes("\r\n") && oldString.includes("\n")) {
+    oldString = oldString.replace(/\r?\n/g, "\r\n");
+    newString = newString.replace(/\r?\n/g, "\r\n");
+  }
   const at = text.indexOf(oldString);
   if (at < 0) return null;
   if (replaceAll === true) return text.split(oldString).join(newString);
   return text.slice(0, at) + newString + text.slice(at + oldString.length);
 }
 
-function sameReviewData(a: string, b: string): boolean {
-  const before = a.match(REVIEW_DATA) ?? [];
-  const after = b.match(REVIEW_DATA) ?? [];
-  return before.length === after.length && before.every((token, i) => token === after[i]);
+/** Every `<!--mc:…-->` that is review data — not one shown inside code. */
+function reviewData(text: string): string[] {
+  const mask = buildCodeMask(text);
+  const tokens: string[] = [];
+  for (const m of text.matchAll(REVIEW_DATA)) if (!mask[m.index]) tokens.push(m[0]);
+  return tokens;
 }
 
-function refusal(filePath: string): string {
-  return [
+function usesReplaceAll(input: Record<string, unknown>): boolean {
+  if (input.replace_all === true) return true;
+  return Array.isArray(input.edits) && input.edits.some((e) => isPlainObject(e) && e.replace_all === true);
+}
+
+function refusal(filePath: string, replaceAllHitThreadText: boolean): string {
+  const lines = [
     `Markdown Collab: not applied — this edit to ${filePath} would change its review comments (a <!--mc:…--> marker or thread line), and a hand edit is how they break.`,
-    "Make the change with mdc (or the markdown-collab MCP tool of the same name):",
+  ];
+  if (replaceAllHitThreadText) {
+    lines.push(
+      "replace_all also rewrote text quoted inside a thread line. Make the same Edit once per occurrence in the prose instead (or mdc edit with --occurrence N).",
+    );
+  }
+  lines.push(
+    "Make the change with mdc (or the matching markdown-collab MCP tool: mc_reply, mc_rewrite, mc_edit, …):",
     `- reply to a thread: mdc reply ${filePath} <threadId> --body "…"`,
     `- rewrite a commented passage, markers kept: mdc rewrite ${filePath} <threadId> --with "…"`,
     `- change or delete prose around markers: mdc edit ${filePath} --old "…" --new "…"`,
     `- open, resolve, suggest: mdc open / mdc resolve / mdc suggest ${filePath} …`,
+    "Removing every comment from the file is the human's call: ask them to run Markdown Collab: Remove All Review Data.",
     "An Edit that leaves every <!--mc:…--> exactly as it is still goes through.",
     "",
-  ].join("\n");
+  );
+  return lines.join("\n");
 }
 
 function suggestModeRefusal(filePath: string): string {
   return (
     `Markdown Collab: not applied — suggest mode is on for this workspace, so ${filePath} isn't edited directly. ` +
-    `Propose the change with mdc suggest ${filePath} --quote "…" --with "…" --note "…" (or mc_suggest).\n`
+    `Propose the change with mdc suggest ${filePath} --quote "…" --with "…" --note "…" (or mc_suggest). ` +
+    "If the human wants this edit made directly, they can turn suggest mode off (the switch above Send, or " +
+    "markdownCollab.proposeEditsAsSuggestions in .vscode/settings.json).\n"
   );
 }

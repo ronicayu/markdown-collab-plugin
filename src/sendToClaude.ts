@@ -23,7 +23,8 @@ export type SendMode = "headless" | "terminal" | "clipboard" | "ask";
  */
 export function mcpToolsDirective(): string {
   return (
-    "Change the file only through the `markdown-collab` MCP tools or the `mdc` CLI — never edit a " +
+    "Change this file's review comments — a reply, a new thread, a rewrite of a commented passage, any edit " +
+    "that crosses a marker — only through the `markdown-collab` MCP tools or the `mdc` CLI; never edit a " +
     "`<!--mc:…-->` marker or thread line yourself, with an Edit tool or otherwise: a hand edit breaks the comments. " +
     "If the MCP tools are in your tool list, use them for this pass — mc_list to read, " +
     "mc_reply / mc_open / mc_rewrite / mc_suggest to act, mc_edit for prose outside anchored spans, " +

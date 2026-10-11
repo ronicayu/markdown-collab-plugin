@@ -233,3 +233,7 @@ Building, the three test suites, and the release pipeline are described in [CONT
 ## Out of scope
 
 Real-time collaboration between people. "Collab" here means one person and an AI agent; the Markdown Collab view is not multi-user.
+
+<!--mc:threads:begin-->
+<!--mc:rev {"ts":"2026-10-11T17:53:04.771Z","contentHash":"9497b92a","sections":[{"heading":"Markdown Collab","hash":"5749ca5f"},{"heading":"What you get","hash":"749c2eb3"},{"heading":"Get started","hash":"4464f9de"},{"heading":"The loop","hash":"3566e218"},{"heading":"Reviewing a colleague's PR","hash":"afd1577f"},{"heading":"Asking your agent to review","hash":"04d908c1"},{"heading":"Where it shows up","hash":"6f803872"},{"heading":"How your comments reach your agent","hash":"c819caf3"},{"heading":"Other ways to send","hash":"5463fe63"},{"heading":"What the status bar shows","hash":"4167c3c6"},{"heading":"Other agents","hash":"4b8626d5"},{"heading":"Optional: undoable edits through MCP","hash":"2fb43dee"},{"heading":"Keyboard","hash":"3ddad5c1"},{"heading":"Commands","hash":"c2b81e67"},{"heading":"Settings","hash":"188b1c0b"},{"heading":"Privacy","hash":"05a871ec"},{"heading":"What's in your files","hash":"5b8587aa"},{"heading":"Troubleshooting","hash":"e733f0ee"},{"heading":"Contributing","hash":"f4d3b311"},{"heading":"Out of scope","hash":"ca655f7a"}]}-->
+<!--mc:threads:end-->

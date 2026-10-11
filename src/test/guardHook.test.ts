@@ -106,6 +106,76 @@ describe("let through", () => {
   });
 });
 
+describe("what the review data is", () => {
+  // The format's own docs are full of example markers in code blocks.
+  const DOCS = [
+    "# Format",
+    "",
+    "A thread wraps its passage like this:",
+    "",
+    "```markdown",
+    "Some <!--mc:a:k3x9q-->text<!--mc:/a:k3x9q--> here.",
+    "```",
+    "",
+    "Or inline: `<!--mc:a:k3x9q-->`.",
+    "",
+  ].join("\n");
+
+  it("a marker shown in a code block or code span isn't review data", () => {
+    expect(runGuardHook(edit("<!--mc:a:k3x9q-->text", "<!--mc:a:abcde-->text"), io({ [FILE]: DOCS })).exitCode).toBe(0);
+    expect(runGuardHook(stdin("Write", { content: "# Format\n" }), io({ [FILE]: DOCS })).exitCode).toBe(0);
+  });
+
+  it("but a real thread in the same file is", () => {
+    const { source, id } = reviewed();
+    const both = `${DOCS}\n${source}`;
+    expect(runGuardHook(edit("<!--mc:a:k3x9q-->text", "<!--mc:a:abcde-->text"), io({ [FILE]: both })).exitCode).toBe(0);
+    expect(runGuardHook(edit(`backoff<!--mc:/a:${id}-->`, "backoff"), io({ [FILE]: both })).exitCode).toBe(2);
+  });
+
+  it("a Write that keeps every marker and thread line as it was passes", () => {
+    const { source } = reviewed();
+    const r = runGuardHook(stdin("Write", { content: source.replace("A second paragraph.", "Rewritten.") }), io({ [FILE]: source }));
+    expect(r.exitCode).toBe(0);
+  });
+
+  it("a relative path resolves against the hook's cwd, and .markdown counts", () => {
+    const { source, id } = reviewed();
+    const rel = JSON.stringify({
+      cwd: "/proj",
+      tool_name: "Edit",
+      tool_input: { file_path: "docs/guide.markdown", old_string: `backoff<!--mc:/a:${id}-->`, new_string: "backoff" },
+    });
+    expect(runGuardHook(rel, io({ "/proj/docs/guide.markdown": source })).exitCode).toBe(2);
+  });
+
+  it("a CRLF file is matched the way the Edit tool matches it", () => {
+    const crlf = reviewed().source.replace(/\n/g, "\r\n");
+    // A prose edit across lines passes; one that drops a thread line doesn't.
+    const r = runGuardHook(edit(`with a cap.\n\nA second`, "with a cap. A second"), io({ [FILE]: crlf }));
+    expect(r.exitCode).toBe(0);
+    const threads = crlf.slice(crlf.indexOf("<!--mc:threads:begin-->"));
+    const firstTwo = threads.split("\r\n").slice(0, 2).join("\n");
+    expect(runGuardHook(edit(firstTwo, "<!--mc:threads:begin-->"), io({ [FILE]: crlf })).exitCode).toBe(2);
+  });
+});
+
+describe("what the refusal says", () => {
+  it("says how to remove every comment, which no mdc command does", () => {
+    const { source } = reviewed();
+    const r = runGuardHook(stdin("Write", { content: BASE }), io({ [FILE]: source }));
+    expect(r.stderr).toContain("Remove All Review Data");
+  });
+
+  it("explains a replace_all that reached into a thread line", () => {
+    const { source } = reviewed();
+    const r = runGuardHook(edit("cap", "limit", { replace_all: true }), io({ [FILE]: source }));
+    expect(r.stderr).toContain("replace_all also rewrote text quoted inside a thread line");
+    const plain = runGuardHook(edit('"body":"Which cap?"', '"body":"Which limit?"'), io({ [FILE]: source }));
+    expect(plain.stderr).not.toContain("replace_all");
+  });
+});
+
 describe("suggest mode on for the workspace", () => {
   const settings = { "/proj/.vscode/settings.json": '{ "markdownCollab.proposeEditsAsSuggestions": true }' };
 
@@ -117,5 +187,17 @@ describe("suggest mode on for the workspace", () => {
 
   it("leaves a file with no review data alone", () => {
     expect(runGuardHook(edit("A second paragraph.", "Edited."), io({ [FILE]: BASE, ...settings })).exitCode).toBe(0);
+  });
+
+  it("names the setting, for a person who wants the edit made directly", () => {
+    const r = runGuardHook(edit("A second paragraph.", "Edited."), io({ [FILE]: reviewed().source, ...settings }));
+    expect(r.stderr).toContain("markdownCollab.proposeEditsAsSuggestions");
+  });
+
+  it("still lets a repair of an already-broken file through", () => {
+    const { source, id } = reviewed();
+    const broken = source.replace(`<!--mc:/a:${id}-->`, "");
+    const r = runGuardHook(edit("backoff with", `backoff<!--mc:/a:${id}--> with`), io({ [FILE]: broken, ...settings }));
+    expect(r.exitCode).toBe(0);
   });
 });

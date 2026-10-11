@@ -501,7 +501,9 @@ describe("mdc CLI: check writes a review checkpoint", () => {
     expect(refused.status).toBe(2);
     expect(refused.stderr).toContain("mdc rewrite");
     expect(refused.stdout).toBe("");
-    expect(runWithStdin(["guard", "--hook"], hookInput("bearer token", "API key")).status).toBe(0);
+    const passed = runWithStdin(["guard", "--hook"], hookInput("bearer token", "API key"));
+    expect(passed.status).toBe(0);
+    expect(passed.stdout).toBe("");
     // A bare `guard` is a usage error, not a silent pass.
     expect(run(["guard"]).status).toBe(1);
   });

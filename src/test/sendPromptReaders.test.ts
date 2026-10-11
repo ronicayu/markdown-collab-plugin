@@ -41,7 +41,8 @@ function expectsEveryKindOfReader(prompt: string): void {
   expect(prompt).not.toContain("as the skill describes");
   // The rule comes first, in the prompt itself: tools or `mdc`, never a hand edit
   // of a marker — and where `mdc` is, for an agent that has the skill only by name.
-  expect(prompt).toContain("Change the file only through the `markdown-collab` MCP tools or the `mdc` CLI");
+  expect(prompt).toContain("only through the `markdown-collab` MCP tools or the `mdc` CLI");
+  expect(prompt).toContain("Change this file's review comments — a reply, a new thread, a rewrite of a commented passage");
   expect(prompt).toContain("never edit a `<!--mc:…-->` marker or thread line yourself");
   expect(prompt).toContain("node ~/.claude/skills/vs-markdown-collab/mdc.mjs");
   expect(prompt).toContain("Only with neither, edit the file by hand");

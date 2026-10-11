@@ -21,8 +21,15 @@ gave you one", which read as optional.
   - Prose edits that leave every marker as it was still go through, as do
     edits to files with no review data and repairs to a file that's already
     broken.
+  - A marker shown inside a code block or code span, as in the format's own
+    docs, isn't treated as review data.
+  - Removing every comment is left to the person: the refusal points to
+    **Remove All Review Data**.
   - With suggest mode on, every direct edit of a reviewed file is refused in
-    favour of `mdc suggest`.
+    favour of `mdc suggest`. The message names the setting, for a person who
+    wants the direct edit.
+  - Checked in a live Claude Code session: the Edit was refused, the file was
+    left untouched, and Claude turned to `mdc edit`.
 
 ### Changed: suggest mode is a visible switch
 
