@@ -106,6 +106,30 @@ for (const readOnly of [false, true]) {
       await expect(page.locator(".milkdown .mdc-anchor-pending")).toHaveText("nested lists");
     });
 
+    test("switching mode closes the comment being written, mark and all", async ({ page }) => {
+      await startComment(page, "nested lists");
+      await pushToWebview(page, { type: "init", ...liveInit(DOC), readOnly: !readOnly, epoch: 2 });
+      await expect(page.locator(".milkdown .ProseMirror")).toHaveAttribute("contenteditable", readOnly ? "true" : "false");
+      await expect(page.locator(".mdc-composer-slot .mc-composer")).toHaveCount(0);
+      await expect(page.locator(".milkdown .mdc-anchor-pending")).toHaveCount(0);
+    });
+
+    test("a save's answer leaves alone a comment started on other text while it was in flight", async ({ page }) => {
+      const first = await startComment(page, "nested lists");
+      await first.getByRole("button", { name: "Save" }).click();
+      await awaitPosted(page, "add-comment");
+      // Before the host answers, the person starts a comment somewhere else.
+      await startComment(page, "behind a setting");
+      await pushToWebview(page, { type: "add-comment-result", ok: false, error: "the file changed" });
+      const second = page.locator(".mdc-composer-slot .mc-composer");
+      await expect(second).toContainText("behind a setting");
+      await expect(second.locator("textarea")).toHaveValue("Ordered lists too?");
+      await expect(second.locator(".mc-composer__status--error")).toHaveCount(0);
+      await pushToWebview(page, { type: "add-comment-result", ok: true });
+      await expect(second).toBeVisible();
+      await expect(page.locator(".milkdown .mdc-anchor-pending")).toHaveText("behind a setting");
+    });
+
     test("selecting other text brings the button back, to comment there instead", async ({ page }) => {
       await startComment(page, "nested lists");
       await select(page, "behind a setting");

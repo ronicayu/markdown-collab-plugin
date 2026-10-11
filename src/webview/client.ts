@@ -747,6 +747,11 @@ async function reinitEditor(msg: InitMessage): Promise<void> {
   sourceIndexCache = null;
   pendingSelection = null;
   lastNonEmptySelection = null;
+  // A comment being written goes with the view it was about: its range was
+  // named in the old mode's addressing, and the view that marked its text is
+  // gone. (A save already sent still gets its toast.)
+  addComposer = null;
+  if (composerEl) composerEl.innerHTML = "";
   lastHighlightSig = " ";
   lineMap = Array.isArray(msg.lineMap) ? msg.lineMap : null;
   currentDiff = msg.diff ?? null;
@@ -2644,19 +2649,27 @@ window.addEventListener("message", (e: MessageEvent<IncomingMessage>) => {
     currentDiff = msg.diff ?? null;
     forceDiffRefresh();
   } else if (msg.type === "add-comment-result") {
+    // The composer whose save this answers — if it's still the one on screen.
+    // Another selection may have opened a new composer, with its own mark,
+    // while the save was in flight; that one isn't this result's to close.
+    const saving = addComposer;
+    addComposer = null;
+    const shown = saving && composerEl?.contains(saving.el) ? saving : null;
     if (msg.ok) {
-      addComposer = null;
-      if (composerEl) composerEl.innerHTML = "";
-      // The saved comment's own highlight replaces the pending mark (a failed
-      // save keeps it, with the composer, so the retry still shows its text).
-      setPendingAnchor(null);
+      if (shown && composerEl) {
+        composerEl.innerHTML = "";
+        // The saved comment's own highlight replaces the pending mark (a
+        // failed save keeps it, with the composer, so the retry still shows
+        // its text).
+        setPendingAnchor(null);
+      }
       showToast("Comment added.");
       // Belt-and-suspenders: re-run the anchor highlight once the doc has
       // settled (the sidecar-changed refresh can fire before a save-participant
       // re-seed lands), so a fresh comment's highlight shows immediately.
       requestAnimationFrame(() => forceHighlightRefresh());
     } else {
-      addComposer?.setError(`Could not save comment: ${msg.error ?? "unknown error"}`);
+      shown?.setError(`Could not save comment: ${msg.error ?? "unknown error"}`);
       showToast(`Could not save comment: ${msg.error ?? "unknown error"}`);
     }
   } else if (msg.type === "reply-comment-result") {

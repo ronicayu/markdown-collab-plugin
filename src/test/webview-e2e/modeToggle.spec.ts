@@ -634,7 +634,7 @@ test.describe("undo and redo keys", () => {
     );
   });
 
-  test("with headings, an outside change with the text the editor already shows dispatches nothing", async ({ page }) => {
+  test("with headings, an outside change with the text the editor already shows leaves the caret where it was", async ({ page }) => {
     const source = "# Title\n\nFirst paragraph.\n\n## Part two\n\nSecond paragraph.\n";
     await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
     await caretIn(page, "First paragraph", "First".length);

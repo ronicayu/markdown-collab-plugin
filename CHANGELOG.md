@@ -2,6 +2,34 @@
 
 ## 0.35.53 — 2026-10-11 (GitHub only)
 
+### Changed: agents change a reviewed file only through `mdc` or the tools
+
+Claude Code often answered comments with its own Edit tool and broke the
+comment markers. The send prompt only said to use the `mdc` CLI "if the skill
+gave you one", which read as optional.
+
+- **The prompt says it outright.** Every Send and Copy prompt opens its tools
+  line with the rule: change the file only through the `markdown-collab` MCP
+  tools or `mdc`, never edit a `<!--mc:…-->` marker or thread line by hand. It
+  also says where `mdc` is. Only an agent with neither edits by hand, per
+  AGENTS.md.
+- **The plugin refuses the hand edit before it lands.** A new PreToolUse hook
+  (`mdc guard --hook`) works out what an Edit, MultiEdit or Write would leave.
+  If any marker or thread line would change, it refuses the edit and names the
+  `mdc` command for the job (`reply`, `rewrite`, `edit`, `open`, `resolve`,
+  `suggest`).
+  - Prose edits that leave every marker as it was still go through, as do
+    edits to files with no review data and repairs to a file that's already
+    broken.
+  - With suggest mode on, every direct edit of a reviewed file is refused in
+    favour of `mdc suggest`.
+
+### Changed: suggest mode is a visible switch
+
+"Ask for suggestions instead of edits" was the only item in a menu behind
+Send's ▾, where it went unnoticed. It is now a switch above Send in the
+sidebar footer, and the ▾ is gone. Clicking the words toggles it too.
+
 ### Fixed: the text a new comment is about stays highlighted while you write it
 
 Once the comment box took focus, the editor stopped drawing your selection, so
@@ -10,7 +38,10 @@ floating "+ Add comment" button came back on top of that very text. The
 selected span is now marked from the moment the comment box opens until the
 comment is saved (its own highlight takes over) or cancelled; a save that fails
 keeps the mark for the retry. The button stays off the span being commented on,
-and comes back when you select something else.
+and comes back when you select something else. Switching between Reading and
+Editing closes a comment you haven't saved, along with its mark. A save's
+answer that arrives after you've started another comment leaves the new one
+alone.
 
 ### Fixed: Cmd+Z in Editing mode scrolled down the document
 
