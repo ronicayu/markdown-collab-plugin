@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.35.54 — 2026-10-12 (pre-release)
+
+First build on the marketplaces' pre-release channel since 0.35.52. It carries
+0.35.53, which shipped to GitHub only:
+
+- Agents change a reviewed file only through `mdc` or the tools; a new
+  PreToolUse hook in the Claude Code plugin refuses a hand edit that would
+  change a `<!--mc:…-->` marker or thread line.
+- The Claude Code plugin updates itself when the extension does.
+- A new comment's text stays highlighted while you write it; Cmd+Z in Editing
+  mode no longer scrolls to the end; `r` no longer types into the reply box.
+- Suggest mode is a visible switch above Send.
+
+No code change since 0.35.53.
+
 ## 0.35.53 — 2026-10-11 (GitHub only)
 
 ### Changed: agents change a reviewed file only through `mdc` or the tools
