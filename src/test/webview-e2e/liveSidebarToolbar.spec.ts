@@ -136,13 +136,12 @@ test.describe("with the review fixture, read-only", () => {
     await expect(menu.locator("#finalize-doc")).toBeVisible();
   });
 
-  test("the footer's Copy prompt button posts copy-prompt and closes an open send-options menu", async ({ page }) => {
-    // Out of the send-options menu: a standalone button beside the split button.
-    await page.locator("#send-options-btn").click();
-    await expect(page.locator("#send-options-menu")).toBeVisible();
+  test("the footer's Copy prompt button posts copy-prompt and closes an open \"…\" menu", async ({ page }) => {
+    await page.locator("#overflow-menu-btn").click();
+    await expect(page.locator("#overflow-menu")).toBeVisible();
     await page.locator("#copy-prompt").click();
     expect(await awaitPosted(page, "copy-prompt")).toEqual({ type: "copy-prompt" });
-    await expect(page.locator("#send-options-menu")).toBeHidden();
+    await expect(page.locator("#overflow-menu")).toBeHidden();
   });
 
   test("Collapse all folds every card kind, including the pending suggestion, then reads Expand all", async ({
