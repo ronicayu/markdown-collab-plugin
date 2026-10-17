@@ -37,7 +37,7 @@ const ALL_COMMANDS = [
   "markdownCollab.nextUnreadFromClaude",
   "markdownCollab.openInlineCommentsView",
   "markdownCollab.repairInlineComments",
-  "markdownCollab.toggleSuggestMode",
+  "markdownCollab.sendAllAsSuggestions",
   "markdownCollab.startPrReview",
   "markdownCollab.connectAgent",
   "markdownCollab.disconnectAgent",
