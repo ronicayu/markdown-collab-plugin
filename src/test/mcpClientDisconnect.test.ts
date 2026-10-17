@@ -208,11 +208,9 @@ describe("refuseSymlink (L5)", () => {
 // (see commentOnSelection.test.ts / hostSources.ts) where a real integration
 // test would need infrastructure this suite doesn't have.
 describe("agentConnections.ts: every writer/remover is guarded (L5)", () => {
-  it("writeCursorCliConfig, writeCodexConfig, removeClaudeMcpJson, removeCursorCliConfig, removeCodexConfig, and reconcileCodexConfig all call the guard", () => {
+  it("removeClaudeMcpJson, removeCursorCliConfig, removeCodexConfig, and reconcileCodexConfig all call the guard", () => {
     const src = readHostFile("mcpServer/agentConnections.ts");
     for (const fn of [
-      "writeCursorCliConfig",
-      "writeCodexConfig",
       "removeClaudeMcpJson",
       "removeCursorCliConfig",
       "removeCodexConfig",

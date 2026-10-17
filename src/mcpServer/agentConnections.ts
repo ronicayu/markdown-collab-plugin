@@ -1,26 +1,19 @@
-// Wiring for "Connect an Agent": which clients are hooked up, and keeping them hooked
-// up across restarts. This is the optional second step for agents that aren't Claude
-// Code: Connect writes AGENTS.md first (see `connectFormatFirst` in commands/setup.ts),
-// because the file format is what those agents are held to, and only then offers a
-// registration from here.
+// MCP client registrations made by earlier versions — kept up, and removable.
 //
-// Two kinds of "stay connected":
-//   - Cursor CLI's `.cursor/mcp.json` and Codex's `.codex/config.toml` are files.
-//     `.cursor/mcp.json` references the env vars, so it never goes stale;
-//     `.codex/config.toml` carries a literal port, so it can, but the file *having our
-//     table at all* is the remembered "yes" (like `.mcp.json`'s consent, stored in the
-//     file instead of `workspaceState`). Neither needs `workspaceState` bookkeeping.
-//   - Cursor's in-app agent and Copilot's agent mode are told the URL and token directly,
-//     in-process, every session — there is no file to leave behind, so nothing reconnects
-//     after a restart unless `reconnectAgents` does it: run once per activation, after
-//     the server has a port and a token, it re-registers whichever of these the workspace
-//     previously connected.
+// Connect no longer registers the review tools with each client: every agent
+// gets `mdc`, which finds the running editor on its own, so the same writes go
+// through the same queue with nothing per client to configure. What earlier
+// versions set up still works, though, so this keeps it working and lets
+// Disconnect take it away:
 //
-// Nothing here writes a file the human didn't ask for (Codex's self-heal only ever
-// *rewrites* a table that's already there, never creates one), and nothing here ever
-// writes a token to disk — only Codex's config carries a port, and only because
-// `bearer_token_env_var` is the one part of its config Codex is willing to read from the
-// environment instead.
+//   - Cursor's in-app agent and Copilot's agent mode were told the URL and
+//     token in-process; `reconnectAgents` re-registers whichever of these a
+//     workspace connected, once per activation.
+//   - Codex's `.codex/config.toml` carries a literal port, so the table is
+//     rewritten when the port moves (never created). Cursor CLI's
+//     `.cursor/mcp.json` references the env vars and never goes stale.
+//
+// Nothing here writes a token to disk.
 
 import { lstat } from "node:fs/promises";
 import * as path from "node:path";
@@ -28,10 +21,9 @@ import * as vscode from "vscode";
 import type { Logger } from "../logging";
 import type { McpServerHandle } from "./index";
 import { MCP_SERVER_NAME, removeMcpJsonEntry } from "./registration";
-import { mergeCursorMcpJson, removeCursorMcpEntry } from "./clients/cursor";
+import { removeCursorMcpEntry } from "./clients/cursor";
 import { codexTablePresent, mergeCodexToml, removeCodexTable } from "./clients/codex";
 import { agentFolder } from "../workspaceFolder";
-import { genericSnippet, type SnippetClient } from "./clients/generic";
 import { CopilotMcpProvider, COPILOT_PROVIDER_ID, hasCopilotProviderApi } from "./clients/copilot";
 
 export type SessionAgentId = "cursor-inapp" | "copilot";
@@ -55,7 +47,11 @@ export function isAgentConnected(context: vscode.ExtensionContext, id: SessionAg
   return connectedSet(context).has(id);
 }
 
-/** Remember that `id` was connected, so activation re-registers it next time. */
+
+/**
+ * Remember that `id` was connected, so activation re-registers it next time.
+ * Connect no longer sets it; it stands for a connection an earlier version made.
+ */
 export async function markAgentConnected(context: vscode.ExtensionContext, id: SessionAgentId): Promise<void> {
   const key = workspaceKey(context);
   if (!key) return;
@@ -171,36 +167,7 @@ async function readWorkspaceFile(uri: vscode.Uri): Promise<string | null> {
   }
 }
 
-/** Write/merge `.cursor/mcp.json` for Cursor CLI. Always safe to call: the
- *  entry never carries a port or a token, so there is nothing to rewrite on a
- *  later restart (see the file header) — this is only ever invoked from the
- *  Connect an Agent command, never from activation. */
-export async function writeCursorCliConfig(folder: vscode.Uri): Promise<FileWriteOutcome> {
-  const dir = vscode.Uri.joinPath(folder, ".cursor");
-  const uri = vscode.Uri.joinPath(dir, "mcp.json");
-  await guardAgainstSymlink(uri);
-  const existing = await readWorkspaceFile(uri);
-  const merged = mergeCursorMcpJson(existing);
-  if (merged.text === null) return "unchanged";
-  await vscode.workspace.fs.createDirectory(dir);
-  await vscode.workspace.fs.writeFile(uri, Buffer.from(merged.text, "utf8"));
-  return "written";
-}
 
-/** Write/merge `[mcp_servers.markdown-collab]` into `.codex/config.toml`.
- *  Called from the Connect an Agent command — unlike `reconcileCodexConfig`
- *  below, this one is allowed to create the table (and the file) fresh. */
-export async function writeCodexConfig(folder: vscode.Uri, port: number): Promise<FileWriteOutcome> {
-  const dir = vscode.Uri.joinPath(folder, ".codex");
-  const uri = vscode.Uri.joinPath(dir, "config.toml");
-  await guardAgainstSymlink(uri);
-  const existing = await readWorkspaceFile(uri);
-  const merged = mergeCodexToml(existing, port);
-  if (merged.text === null) return "unchanged";
-  await vscode.workspace.fs.createDirectory(dir);
-  await vscode.workspace.fs.writeFile(uri, Buffer.from(merged.text, "utf8"));
-  return "written";
-}
 
 // File removers — the inverse of the writers above. Each is idempotent: called on a
 // workspace that never connected, it finds nothing of ours and writes nothing back.
@@ -256,17 +223,6 @@ export async function reconcileCodexConfig(folder: vscode.Uri, port: number): Pr
   await vscode.workspace.fs.writeFile(uri, Buffer.from(merged.text, "utf8"));
 }
 
-/** Open the "Other agent" (or Windsurf) scratch document. Nothing is written to disk. */
-export async function openGenericSnippetDocument(
-  handle: Pick<McpServerHandle, "url" | "token">,
-  client: SnippetClient = "generic",
-): Promise<void> {
-  const doc = await vscode.workspace.openTextDocument({
-    content: genericSnippet(handle.url, handle.token, client),
-    language: "markdown",
-  });
-  await vscode.window.showTextDocument(doc);
-}
 
 /**
  * Re-establish every client whose connection can go stale across a restart — the

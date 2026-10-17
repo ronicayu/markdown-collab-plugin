@@ -61,7 +61,7 @@ describe("agent config in a multi-root window", () => {
     first = mkdtempSync(path.join(nodeOs.tmpdir(), "mc-af-one-"));
     second = mkdtempSync(path.join(nodeOs.tmpdir(), "mc-af-two-"));
     store = new Map();
-    agent = "codex";
+    agent = "agents";
     consent = ADD;
     folderPicks = vi.fn();
     chooseFolder = undefined;
@@ -129,11 +129,13 @@ describe("agent config in a multi-root window", () => {
 
     expect(folderPicks).not.toHaveBeenCalled();
     expect(existsSync(agentsMd(first))).toBe(true);
-    expect(existsSync(codexToml(first))).toBe(true);
+    expect(existsSync(codexToml(first))).toBe(false);
     expect([...store.keys()]).toEqual([]);
   });
 
-  it("keeps the connected-agents and consent keys of a single-root window exactly as before", async () => {
+  // Connect registers no client any more: Claude Code gets its plugin, and no
+  // `.mcp.json` consent is asked for or stored.
+  it("keeps an earlier connection's key, and Connect → Claude Code adds no consent key", async () => {
     setFolders(first);
     const uri = `file://${first}`;
 
@@ -141,14 +143,12 @@ describe("agent config in a multi-root window", () => {
     agent = "claude";
     await run("markdownCollab.connectAgent");
 
-    expect([...store.keys()].sort()).toEqual(
-      [`markdownCollab.connectedAgents:${uri}`, `markdownCollab.mcpJsonConsent:${uri}`].sort(),
-    );
+    expect([...store.keys()]).toEqual([`markdownCollab.connectedAgents:${uri}`]);
     expect(store.get(`markdownCollab.connectedAgents:${uri}`)).toEqual(["copilot"]);
-    expect(store.get(`markdownCollab.mcpJsonConsent:${uri}`)).toBe("yes");
+    expect(existsSync(path.join(first, ".mcp.json"))).toBe(false);
   });
 
-  it("writes AGENTS.md and the Codex config in the folder of the active file, and nothing in the other", async () => {
+  it("writes AGENTS.md in the folder of the active file, and nothing in the other", async () => {
     setFolders(first, second);
     activeFileIn(second);
 
@@ -156,9 +156,7 @@ describe("agent config in a multi-root window", () => {
 
     expect(folderPicks).not.toHaveBeenCalled();
     expect(existsSync(agentsMd(second))).toBe(true);
-    expect(existsSync(codexToml(second))).toBe(true);
     expect(existsSync(agentsMd(first))).toBe(false);
-    expect(existsSync(path.join(first, ".codex"))).toBe(false);
   });
 
   it("asks which folder when no file is active, and writes in the one chosen", async () => {
@@ -168,7 +166,7 @@ describe("agent config in a multi-root window", () => {
     await run("markdownCollab.connectAgent");
 
     expect(folderPicks).toHaveBeenCalledTimes(1);
-    expect(existsSync(codexToml(second))).toBe(true);
+    expect(existsSync(agentsMd(second))).toBe(true);
     expect(existsSync(agentsMd(first))).toBe(false);
   });
 
@@ -184,12 +182,18 @@ describe("agent config in a multi-root window", () => {
     expect(win.showQuickPick).toHaveBeenCalledTimes(1);
   });
 
-  describe("after connecting Codex in the second folder", () => {
+  describe("after connecting an agent in the second folder", () => {
+    // What an earlier version's Codex registration left there: kept current
+    // and removable, never created any more.
+    const codexTable = "[mcp_servers.markdown-collab]\nurl = \"http://127.0.0.1:51234/mcp\"\nbearer_token_env_var = \"MARKDOWN_COLLAB_MCP_TOKEN\"\n";
+
     beforeEach(async () => {
       setFolders(first, second);
       activeFileIn(second);
       await run("markdownCollab.connectAgent");
       activeFileIn(undefined);
+      mkdirSync(path.join(second, ".codex"), { recursive: true });
+      writeFileSync(codexToml(second), codexTable);
     });
 
     it("answers the second folder as the agent folder", () => {
@@ -202,6 +206,7 @@ describe("agent config in a multi-root window", () => {
       const untouched = "[mcp_servers.markdown-collab]\nurl = \"http://127.0.0.1:1/mcp\"\n";
       writeFileSync(codexToml(first), untouched);
 
+      agent = "codex";
       await run("markdownCollab.disconnectAgent");
 
       expect(readFileSync(codexToml(second), "utf8")).not.toContain("markdown-collab");
@@ -214,11 +219,8 @@ describe("agent config in a multi-root window", () => {
       expect(readFileSync(codexToml(second), "utf8")).toContain(":60001");
     });
 
-    it("registers .mcp.json and keeps the consent in the second folder when Claude Code is connected", async () => {
-      agent = "claude";
-      activeFileIn(second);
-
-      await run("markdownCollab.connectAgent");
+    it("Register Review Tools writes .mcp.json and keeps the consent in the second folder", async () => {
+      await run("markdownCollab.registerMcpServer");
 
       expect(existsSync(path.join(second, ".mcp.json"))).toBe(true);
       expect(existsSync(path.join(first, ".mcp.json"))).toBe(false);
@@ -227,9 +229,7 @@ describe("agent config in a multi-root window", () => {
     });
 
     it("refreshes .mcp.json in the second folder at activation", async () => {
-      agent = "claude";
-      activeFileIn(second);
-      await run("markdownCollab.connectAgent");
+      await run("markdownCollab.registerMcpServer");
 
       await ensureMcpJsonRegistration(context, { ...(handle as object), port: 60002 } as never, log as never);
 

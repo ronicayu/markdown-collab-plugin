@@ -176,7 +176,9 @@ describe("activation with the tool server running", () => {
     );
   });
 
-  it("gates the .mcp.json prompt on Claude Code being on this machine", async () => {
+  // Agents reach the editor through `mdc` now: an existing `.mcp.json` entry
+  // is kept current, but nobody is asked to add one at startup.
+  it("refreshes an accepted .mcp.json entry at startup but never asks for a new one", async () => {
     vi.mocked(ensureMcpJsonRegistration).mockResolvedValue("declined");
 
     await activateExtension();
@@ -184,8 +186,6 @@ describe("activation with the tool server running", () => {
     await vi.waitFor(() => expect(ensureMcpJsonRegistration).toHaveBeenCalledTimes(1));
     const gate = vi.mocked(ensureMcpJsonRegistration).mock.calls[0][3]!;
     vi.mocked(claudeBinaryFound).mockResolvedValue(true);
-    expect(await gate()).toBe(true);
-    vi.mocked(claudeBinaryFound).mockResolvedValue(false);
     expect(await gate()).toBe(false);
   });
 });

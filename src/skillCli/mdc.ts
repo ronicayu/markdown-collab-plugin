@@ -42,6 +42,7 @@ import { PROTOCOL_VERSION } from "../mcpServer/protocol";
 import { DESCRIPTOR_REL, ENV_TOKEN, ENV_URL } from "../mcpServer/registration";
 import { runCheckHook, type HookIo, type HookOutcome } from "./checkHook";
 import { runGuardHook } from "./guardHook";
+import { renderReviewGuide } from "../skillText";
 
 const EXIT_OK = 0;
 const EXIT_USAGE = 1;
@@ -65,6 +66,7 @@ const USAGE = `mdc — Markdown Collab inline-comment CLI
   mdc accept <file> <anchorId>                apply a pending suggestion
   mdc reject <file> <anchorId>                drop a pending suggestion, keep the original
   mdc check <file> [--repair]                 integrity report; exit 2 if broken
+  mdc help review                             the reviewer's rubric — read it before a review pass
   mdc check --hook                            Claude Code PostToolUse hook: reads the hook JSON on stdin;
                                               exit 2 + report on stderr if the edited .md has broken markers
   mdc guard --hook                            Claude Code PreToolUse hook: exit 2 (the edit is refused) when an
@@ -687,6 +689,11 @@ async function main(): Promise<void> {
   }
   const [command, ...rest] = _;
   if (command === undefined) fail("no command given", { detail: USAGE });
+  if (command === "help") {
+    // Plain text, not JSON: it is read, not parsed.
+    writeSync(1, rest[0] === "review" ? renderReviewGuide() : `${USAGE}\n`);
+    process.exit(EXIT_OK);
+  }
   // "claude" is the default: every existing caller, including headless Claude Code
   // runs, never passes `--author`.
   const author = typeof flags.author === "string" && flags.author !== "" ? flags.author : "claude";

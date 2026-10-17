@@ -9,8 +9,6 @@ import {
   removeClaudeMcpJson,
   removeCodexConfig,
   removeCursorCliConfig,
-  writeCodexConfig,
-  writeCursorCliConfig,
 } from "../mcpServer/agentConnections";
 
 vi.mock("../agents", async (importOriginal) => ({
@@ -33,8 +31,6 @@ vi.mock("../mcpServer", async (importOriginal) => ({
 }));
 vi.mock("../mcpServer/agentConnections", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../mcpServer/agentConnections")>()),
-  writeCursorCliConfig: vi.fn(),
-  writeCodexConfig: vi.fn(),
   removeClaudeMcpJson: vi.fn(),
   removeCursorCliConfig: vi.fn(),
   removeCodexConfig: vi.fn(),
@@ -54,8 +50,6 @@ describe("setup commands in Restricted Mode", () => {
     installClaudeSkill,
     setUpClaudePlugin,
     ensureMcpJsonRegistration,
-    writeCursorCliConfig,
-    writeCodexConfig,
     removeClaudeMcpJson,
     removeCursorCliConfig,
     removeCodexConfig,

@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.35.55 — 2026-10-17 (GitHub only)
+
+### Changed: every agent changes a reviewed file with `mdc`, and nothing else
+
+Agents were shown three ways to change a reviewed file: the MCP tools, `mdc`
+and editing the markers by hand. The hand route was the one that kept breaking
+comments. Now there is one way, for every agent.
+
+- **`mdc` for every agent.** Connect → Another agent installs `mdc` beside the
+  review skill, in `~/.agents/skills/markdown-collab/mdc.mjs`, kept in sync
+  like the skill. Claude Code still gets it with the plugin.
+- **`mdc` writes through the editor from any terminal.** It used to reach the
+  running editor only from a terminal the editor started; from any other it
+  wrote to disk underneath unsaved changes. It now finds the window through the
+  workspace's `.markdown-collab/.mcp-server.json`, so its changes go through
+  the editor's write queue and can be undone. A window that has gone away is
+  skipped, and it never posts anywhere but this machine.
+- **The skill is one short page.** It shrank from 30 KB to about 5 KB and has
+  one rule: change a reviewed file only with `mdc`. It lists the commands and
+  the workflow in brief. The reviewer's rubric moved to `mdc help review`, read
+  at the start of a review pass instead of on every turn. The hand-editing
+  appendix is gone, and so are the hand-editing rules in the agents' skill and
+  in `AGENTS.md`. An agent without `mdc` is told to ask for it instead.
+- **Every send says so.** The prompt's last line names the one rule and where
+  `mdc` is for Claude Code and for other agents.
+- **Connect an Agent is two choices: Claude Code, or another agent.** It no
+  longer registers the review tools with each client (Cursor, Codex, Copilot,
+  Windsurf), and no longer asks to add a `.mcp.json` entry, at Connect or at
+  startup. `mdc` reaches the editor by itself, so there is nothing to set up
+  per agent.
+  - Registrations made by earlier versions keep working, and **Disconnect an
+    Agent…** removes them.
+  - The hidden **Register Review Tools** command still adds a `.mcp.json` entry
+    for Claude Code.
+  - A headless run still uses the tools, with the full tools-only workflow,
+    unchanged.
+
 ## 0.35.54 — 2026-10-12 (pre-release)
 
 First build on the marketplaces' pre-release channel since 0.35.52. It carries

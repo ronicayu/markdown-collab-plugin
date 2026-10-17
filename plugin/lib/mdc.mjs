@@ -1433,6 +1433,272 @@ function suggestModeRefusal(filePath) {
 `;
 }
 
+// src/skillText.ts
+var TOOL_VERBS = {
+  check: "mc_check",
+  anchorRules: "Phase 5 constraints",
+  openMechanics: "same Phase 5 mechanics"
+};
+var CLI_VERBS = {
+  check: "mdc check",
+  anchorRules: "the anchoring rules `open` enforces",
+  openMechanics: "same `open` mechanics"
+};
+function reviewRubric(v) {
+  return `#### Focus directive
+
+The prompt may include a \`Focus:\` line \u2014 a free-form instruction from the human (e.g. *"check API examples for correctness," "find marketing-y tone," "look for contradictions with the architecture doc"*). When a focus directive is present:
+
+- It is the **primary filter** for what counts as a concern worth a thread. Only flag things that match the focus.
+- A general-quality issue that doesn't match the focus does **not** warrant a thread unless it's a hard error (e.g. broken example, factually wrong claim).
+- If no concerns match the focus after a careful read, reply (via the send channel, not via a thread) saying so. **Do not fabricate threads to feel productive.**
+
+Without a focus directive, do a general review against the rubric below.
+
+#### Standing conventions
+
+A payload may carry a **Conventions:** block \u2014 the project's standing rules (from \`.markdown-collab/conventions.md\`): terminology, tone, house style, and "we know, don't flag it" exceptions.
+
+- They apply to **every** pass, where \`Focus:\` applies to one. Where they pull apart, focus wins on **scope** (what warrants a thread); conventions still hold on **wording**. A convention violation is a legitimate thread even with no matching focus \u2014 that's what makes it standing.
+- Anything the block lists as known and accepted is **not** a finding \u2014 flagging it is the re-litigation the file exists to stop.
+- If the human dismisses a thread by stating a rule ("we always write it this way"), **suggest** adding it to the conventions file \u2014 don't write to that file yourself, it's theirs.
+
+#### What warrants a thread
+
+Factual error; an unclear claim a reader could plausibly misread; missing context (an undefined term used in passing); a broken example (code that won't run, a wrong flag, a link to a nonexistent file); a contradiction with another section or scoped-in file; a structural issue (order, heading hierarchy, buried info); anything matching the focus directive.
+
+#### What does NOT warrant a thread by default
+
+Pure typos \u2014 skip unless the focus is "copy-edit". Style preferences (Oxford comma, sentence length, voice) \u2014 skip unless the focus is "tone"/"style". A generic "could be clearer" with no named problem \u2014 if you can't name it, you can't anchor it. Restating the anchored text \u2014 the body must add something the human doesn't already see.
+
+#### Anchor sizing in Review Mode
+
+- The anchor should be the **smallest passage that makes the comment make sense**. Prefer one sentence over a paragraph. Prefer one phrase over a sentence when the issue is local.
+- Avoid wrapping a whole section. If the issue is structural ("this section is in the wrong place"), anchor the section heading line, not the body.
+- Anchors must still satisfy ${v.anchorRules}: a meaningful span, outside code spans, marker-safe location.
+
+#### Thread body \u2014 specificity rule
+
+Every \`c1\` body must name the concern concretely \u2014 **good:** *"The claim that \`X\` implies \`Y\` skips intermediate step \`Z\`. Either justify the jump or add the step."* **bad:** *"This could be clearer"* / *"The whole section needs work"* / restating the anchored text with no analysis.
+
+The body should fit in 1\u20133 sentences. If you need more, split into separate threads on different anchors.
+
+#### Worked examples \u2014 good vs bad
+
+These calibrate the rubric. Mirror the *shape* of the good examples; avoid the failure modes in the bad ones.
+
+**Good \u2014 concrete factual correction.** Doc says: *"The CLI accepts \`--all\` to include resolved comments."* Code says the flag is \`--include-resolved\`. Anchor the literal \`--all\` token only (smallest meaningful span). Body: *"CLI flag is \`--include-resolved\` per \`cli.ts:142\`, not \`--all\`. Either rename the doc or update the CLI."*
+
+**Good \u2014 unclear claim with a named ambiguity.** Doc says: *"The skill triggers on review-mode phrases."* Anchor the sentence. Body: *"\\'Review-mode phrases\\' isn't defined here \u2014 the rubric for what counts as one is in Phase 5+. Either inline a one-line definition or link to the Review Mode section."*
+
+**Good \u2014 contradiction across sections.** Doc's \`Quick start\` says \`Send to Claude\` is in the right-click menu; doc's \`Commands\` table says it's palette-only. Anchor the quick-start claim (because it's the one that's likely wrong). Body: *"Conflicts with the Commands table, which marks this palette-only as of v0.28. Update one or the other to match reality."*
+
+**Good \u2014 structural issue, anchored at a heading.** Doc has a \`## Settings\` heading before \`## Storage layout\`, but Storage explains terms used in Settings. Anchor the \`## Settings\` heading. Body: *"Settings references the \`<!--mc:threads:begin-->\` marker introduced in Storage layout below. Move Storage layout above Settings, or forward-link explicitly."*
+
+**Bad \u2014 vague.** *"This could be clearer."* No anchored specifics, no named problem, nothing the human can act on without re-deriving the concern. Either name the specific issue or skip.
+
+**Bad \u2014 anchor too wide.** Anchoring an entire 8-paragraph section because *"the whole section needs work."* The human can't tell which sentence drove the comment. Pick the single sentence (or heading) that crystallizes the issue.
+
+**Bad \u2014 restating the anchor.** Anchored: *"Channels need MCP."* Body: *"This sentence is about channels needing MCP."* Adds nothing the reader doesn't see. Either explain *why* the claim is problematic (it's incomplete? wrong? unclear in this context?) or skip.
+
+**Bad \u2014 opinion presented as fact.** *"This intro is too marketing-y."* \u2014 only valid if the focus directive explicitly asks for tone. Without that, style preferences aren't a substantive concern.
+
+**Bad \u2014 fix dressed as a comment.** Body: *"I changed this to X."* You don't edit prose in Review Mode. Open a thread proposing the change in the body; let the human accept it.
+
+#### Rank, cap at five, then summarize
+
+Rank concerns by severity and open threads for the **five** that matter most. Put everything else in one summary thread anchored to the document's title (its first \`#\` heading, or the very first line when it has none): \`Also noticed (N): \u2026\`, one line per item naming its passage \u2014 so the human can read it and say "open 3 and 7" for exactly the ones they want promoted. The \`Focus:\` line can override the cap explicitly ("give me ten", "everything"); absent that, five is it, whether the pass turns up six issues or sixty.
+
+Don't drop a finding to make the cap \u2014 every concern still reaches the human, in its own thread if it's top five, in the summary line otherwise. The human triages with the sidebar UI; your job is signal, ranked.
+
+#### Honest empty result
+
+If you read the doc carefully and find no concerns that match the focus (or no general-rubric concerns if no focus was given), say so explicitly via the send channel. Do **not** open a thread to comment "looks good" \u2014 threads are for actionable concerns. A short reply of *"Reviewed \`<path>\` against focus \`<focus>\`. No concerns found."* is the correct outcome.
+
+#### Delta passes \u2014 "review changes since last pass"
+
+A prompt may ask you to review **only what changed since your last pass**. It names the changed sections, includes their current text, and lists the threads that already exist.
+
+Do not review unchanged prose \u2014 it was reviewed already, and re-raising it is noise in the triage queue. Cross-reference by id instead of duplicating: if a concern is already covered by a listed thread, reply there rather than opening a second one. A resolved thread is settled \u2014 don't raise it again unless the new text genuinely reintroduces the problem, and say which thread it was ("this brings back the issue from a1b2c") when it does. Threads flagged "text changed" first, since their passage was edited and the concern may already be handled or moved. Unchanged text is fair game only when the change made it wrong \u2014 say why in the body. Finish with \`${v.check}\` as always \u2014 it's what makes the *next* delta pass possible.
+
+#### Multi-file review passes
+
+A Review Mode prompt may name **several files** instead of one \u2014 the extension's "Ask Agent to Review These Docs" command builds one pass over a folder or a multi-select. The prompt lists the files; treat that list as the work order.
+
+1. **Read every listed file end to end before opening any thread** \u2014 you can't judge cross-file consistency otherwise, and a thread opened in file 1 may be answered by file 3. Then open threads file by file, in the order listed (${v.openMechanics}; ids unique only within their own file).
+2. **Cross-document consistency is part of the pass**, not an optional extra: terminology drift, a claim in one file contradicted by another, duplicated guidance that's diverged, cross-references that no longer resolve. Anchor such a thread in the file that's wrong (or the more prominent one), quoting the other file's conflicting text \u2014 the human is reading without it open.
+3. **Focus applies per pass; the five-thread cap applies per file.** Each file gets its own top five and its own summary thread for the rest \u2014 not one shared cap or one shared summary across the whole pass. Verify each file with \`${v.check}\` before moving to the next \u2014 cheaper to catch a broken marker in file 1 before editing files 2 and 3 \u2014 and report per file, with cross-document findings called out separately.`;
+}
+function renderReviewGuide() {
+  return `# Reviewing a document with Markdown Collab
+
+You are the reviewer: you open threads on passages for the human to triage, and you never edit the prose \u2014 not even an obvious typo (open a thread on it). Read the whole document first, then open threads one at a time, in document order, with \`mdc open <file> --quote "\u2026" --body "\u2026"\` \u2014 re-reading between them, since each one moves the text after it. Finish every file with \`mdc check <file>\`, which also ends the human's "Waiting for the agent\u2026" row.
+
+${reviewRubric(CLI_VERBS).replace(/^#### /gm, "## ")}
+`;
+}
+var SECTIONS = [
+  {
+    id: "intro",
+    text: `# Markdown Collab \u2014 agentic review-address skill
+
+You are addressing human review comments left on Markdown files via the Markdown Collab VS Code extension. The user runs the IDE; you do the writing.`
+  },
+  {
+    id: "storage",
+    text: `## Storage format
+
+Comments are stored INLINE in the \`.md\` file itself \u2014 there is no sidecar.
+
+- Anchored spans are paired HTML comments: \`<!--mc:a:ID-->anchored text<!--mc:/a:ID-->\` (ID = 1\u201312 char base36).
+- One block at the end of the file holds one \`<!--mc:t {JSON}-->\` line per thread, fenced by \`<!--mc:threads:begin-->\`/\`<!--mc:threads:end-->\`: \`{"id":"<ID>","quote":"<original anchor text>","status":"open"|"resolved","comments":[Comment, \u2026]}\`.
+- Each \`Comment\`: \`{"id":"c<N>","parent"?:"c<N>","author":"<name>","ts":"<ISO-8601 UTC>","body":"<markdown>","editedTs"?:"<ISO-8601 UTC>","deleted"?:true}\`.
+
+**Detection:** the file contains the literal string \`<!--mc:threads:begin-->\` \u2014 its absence means no comments yet. A named file with no threads region: if the user asked you to **address** comments, there are none \u2014 tell them and stop; if they asked you to **initiate** a thread (opt-in, Phase 5), create the region.`,
+    brief: { kind: "intro", text: "Review threads and suggestions live INLINE in the .md file \u2014 `<!--mc:a:ID-->\u2026<!--mc:/a:ID-->` anchor markers plus one `<!--mc:threads:begin-->` block at the end. These tools are the only safe way to change them: never hand-edit a marker or a thread line." }
+  },
+  {
+    id: "change-paths",
+    text: `## How to change a document \u2014 the tools
+
+Marker surgery by hand is the single most common way this workflow breaks: one dropped \`-->\` silently orphans a reviewer's comment. So you never hand-edit a marker or a thread line \u2014 every change goes through the **MCP tools**, which run the *same* engine the editor itself uses: edits go through the editor, undoable with Cmd+Z, validated before they land.
+
+| MCP tool | What it does |
+| --- | --- |
+| \`mc_list(file, actionable?)\` | Threads and pending suggestions as JSON, including each thread's live anchored text. The actionable flag keeps only open threads whose last comment is not yours. |
+| \`mc_reply(file, threadId, body)\` | Appends a reply authored by \`claude\` with the correct \`c<N>\` id and timestamp. |
+| \`mc_rewrite(file, threadId, with)\` | Replaces the text between a thread's markers and updates its \`quote\`. Both markers are preserved by construction. |
+| \`mc_edit(file, old, new, occurrence?)\` | Replaces exact text outside anchored spans (prose, frontmatter), or deletes an anchored passage when \`old\` spans both of its markers. Refuses anything that splits a marker pair or touches the threads region \u2014 use \`mc_rewrite\` inside an anchor. |
+| \`mc_open(file, quote, body, occurrence?)\` | Opens a new thread on a passage: mints a unique id, wraps the passage, appends the thread line. |
+| \`mc_resolve(file, threadId)\` | Marks a thread resolved. Only when the human asks. |
+| \`mc_suggest(file, quote, with, note?, occurrence?)\` | Proposes an edit without applying it (suggest mode). Keeps the original in the prose. |
+| \`mc_accept(file, anchorId)\` / \`mc_reject(file, anchorId)\` | Apply / drop a pending suggestion. Normally the human's call in the UI. |
+| \`mc_check(file)\` | Integrity report. **Run this last on every file you touched** \u2014 see below. |
+| \`mc_status(note, file?)\` | Say what you're doing right now ("reading 2 of 3 files", "opening threads on \xA7Setup"). |
+
+Two of these do more than they look like they do: **\`mc_check\` ends the pass** \u2014 the extension shows the human a "Waiting for the agent\u2026" row on every thread it sent you, and your closing \`mc_check\` on a file is what clears it; skip it and they're left watching a spinner for work you already finished. **\`mc_status\` is free and worth it** \u2014 a review pass over three files is minutes of silence otherwise, and one short present-tense phrase per phase shows up next to the indicator and in the status bar.
+
+Ordinary prose edits \u2014 text outside an anchored span \u2014 use \`mc_edit\`, which refuses anything that would break a marker or touch the threads region. Every mutating tool validates before writing and refuses a change that would introduce a new integrity problem, so a refused call leaves the file untouched rather than half-edited.
+
+**The tools refuse rather than guess.** Ambiguous passage (appears more than once)? Pass the occurrence. Inside a code span? Choose a different anchor. The file kept changing under the call (\`conflict\`)? Nothing was written \u2014 re-read it with \`mc_list\` and make the call again. Never work around a refusal \u2014 it's telling you the edit was unsafe.`,
+    brief: { kind: "intro", text: "Writes go through the editor (the human can undo them) and are validated first. A refusal means the edit was unsafe \u2014 pass `occurrence` for an ambiguous passage; never work around it." }
+  },
+  {
+    id: "discover",
+    text: `## Workflow
+
+### Phase 1 \u2014 Discover
+
+Call \`mc_list(file, actionable: true)\` for the threads still waiting on you \u2014 open, last spoken to by someone other than you. Each comes with \`id\`, \`quote\`, \`comments\`, and \`anchoredText\` (the live text between that thread's markers \u2014 the passage the reviewer meant). A thread with \`"anchored": false\` has lost its markers; treat \`quote\` as the locator and see Phase 7.
+
+Read the file itself too \u2014 the threads are only the part someone commented on.`,
+    brief: { kind: "step", text: "Discover \u2014 `mc_list(file, actionable: true)` gives the threads waiting on you, with ids and live anchored text. Read the file too." }
+  },
+  {
+    id: "plan",
+    text: `### Phase 2 \u2014 Plan
+
+Group by file. Within a file, order edits by anchor position (earlier first). For each thread, write down: the reviewer's intent, the concrete edit, and whether the anchored passage will be rewritten in place (marker pair must move with it) or removed (markers go away, thread orphans).`
+  },
+  {
+    id: "edit-reply",
+    text: `### Phase 3 \u2014 Edit & reply
+
+For each thread, in order:
+
+1. **Make the prose change.** Rewriting the anchored passage: replace the text *between* the markers with \`mc_rewrite(file, threadId, with: "\u2026")\` \u2014 updates \`quote\` in the same operation, can't drop or split a marker. Editing prose outside the anchored span: use \`mc_edit\`, markers stay put. Removing the anchored passage: delete the open marker, the passage, and the close marker together with \`mc_edit\` \u2014 \`old\` spans both markers, so nothing is split; the thread orphans and shows as "broken anchor", the correct outcome; do NOT re-anchor to nearby unrelated text.
+
+2. **Append a reply:** \`mc_reply(file, threadId, body: "\u2026")\`. Assigns the next \`c<N>\` id, sets \`author\` to \`"claude"\` and \`ts\` to now, appends to the thread, leaves everything else untouched. Write one or two specific sentences \u2014 quote the new wording, name the section or file/function you changed. Don't say "done".
+
+3. **For threads you can't fully address** (ambiguous, missing info, conflicting with another thread), reply explaining what you tried and what you need \u2014 don't pretend it's done.`,
+    brief: { kind: "step", text: "Act \u2014 `mc_rewrite` changes text inside a thread's anchor; `mc_edit` changes prose outside anchors (an `old` spanning both markers of an anchor deletes that passage: the thread is left unanchored by design \u2014 never re-anchor it to nearby text). Then `mc_reply` with one or two specific sentences quoting what changed." }
+  },
+  {
+    id: "deletion",
+    text: `### Phase 4 \u2014 Deletion (opt-in)
+
+You only delete a thread when the human's body or trailing reply unambiguously asks for it ("delete this comment", "remove this thread", "drop this", "this comment is no longer relevant"). There is no tool for removing a thread record \u2014 reply that it can go and list it in your report; the human deletes it from the review view.
+
+- Never delete to "clean up". Never delete just because you addressed a comment \u2014 the human resolves.`
+  },
+  {
+    id: "initiate",
+    text: `### Phase 5 \u2014 Initiate a new thread (opt-in)
+
+Only **create** a thread when the human explicitly asks \u2014 "leave a comment on X", "flag this for follow-up", "drop a TODO comment here". Never spontaneously, as a reminder to yourself, or mid-maintenance-edit. Works whether the file already has a threads region or not (a fresh file gets one created).
+
+**Pick the passage:** a verbatim, meaningful substring \u2014 a word at minimum, usually a sentence. Code spans, frontmatter, and the threads region are refused for you; judge instead whether it's the *right* span and whether wrapping it would split something markdown cares about (a link target, an image alt, a table cell delimiter). **Open it:** \`mc_open(file, quote: "\u2026", body: "\u2026")\` \u2014 mints an id, wraps the passage, appends the thread line; an ambiguous passage tells you how many matches exist, so re-run with \`occurrence\`. **Verify** with \`mc_check\` (Phase 7).
+
+Adding several threads in one turn? Do them one at a time, re-reading between each \u2014 earlier edits shift the offsets the next anchor depends on.`
+  },
+  {
+    id: "invariants",
+    text: `### Phase 6 \u2014 Invariants (inline mode)
+
+These are judgement calls the tools can't make for you. You MUST NOT:
+
+- Change any thread's \`status\` (only the human resolves), or edit any comment other than to APPEND a new one (the record is history).
+- Re-anchor an orphaned thread to nearby unrelated text (let it orphan), or move anchor markers without also moving the passage they wrap.
+- Initiate a new thread (Phase 5) unless the human explicitly asked \u2014 the Review Mode trigger below counts as an explicit ask and unlocks it.
+- Edit prose in Review Mode: there you OPEN threads, never modify doc text. Even obvious typos go in a thread unless told to "fix as you go".
+- Reformat the threads region (newlines, key order, escaping) for any reason.
+
+The mechanical invariants \u2014 \`c<N>\` id sequence, thread ids/quotes staying put, threads-region formatting \u2014 are enforced by the tools; the judgement calls above are yours. Reporting isn't exempt either: quote what changed rather than saying "applied", and never say a comment is addressed when it isn't.`,
+    brief: { kind: "rule", text: "Only the human resolves: never call `mc_resolve`, `mc_accept` or `mc_reject` unless asked. The record is append-only history \u2014 add replies, never edit or delete anyone's comments." }
+  },
+  {
+    id: "review-mode",
+    text: `### Review Mode (inline) \u2014 Claude as the reviewer
+
+When the human's request matches **Review Mode** trigger phrases \u2014 "review this doc", "leave your thoughts on X", "do a review pass on Y", "second pair of eyes on README", "what would you flag in this file", or the Markdown Collab extension's "Ask Agent to Review This Doc" / "Ask Agent to Review These Docs" commands \u2014 you switch from addressing existing comments to **initiating** new review threads. The human will triage them in the sidebar. When the prompt names more than one file, read the *Multi-file review passes* section below before starting.
+
+The mechanics are the same as Phase 5: pick a passage, allocate an id, insert paired markers, append a \`<!--mc:t {\u2026}-->\` line with a single \`c1\` comment authored by \`"claude"\`, verify. Read Phase 5 first if you have not \u2014 it carries the invariants you must respect when wrapping passages.
+
+${reviewRubric(TOOL_VERBS)}
+
+#### Workflow \u2014 Review Mode pass, in short
+
+Read the doc end to end first. Initiate threads one at a time, in document order, with \`mc_open\` \u2014 never edit prose. Narrate long passes with \`mc_status\`. Verify with \`mc_check\`, which also ends the human's wait.`,
+    brief: { kind: "rule", text: 'Review mode ("review this doc"): open a thread with `mc_open` for the five most severe concerns, then one summary thread for the rest ("Also noticed (N): \u2026"). Never edit prose.' }
+  },
+  {
+    id: "verify",
+    text: `### Phase 7 \u2014 Verify, and end the pass
+
+Finish every file you touched with \`mc_check(file)\`. \`"ok": true\` means every marker is paired, every thread is anchored, and every thread line is valid JSON; otherwise you get the list \u2014 unpaired markers, orphaned anchors, unanchored threads, empty quotes, malformed thread JSON, duplicate ids \u2014 each saying whether it's \`repairable\`.
+
+This call does double duty: it's your correctness check, **and** it's how the extension learns your pass on that file is over \u2014 clearing the "Waiting for the agent\u2026" row the human is watching. Skip it and they're left watching a spinner for work you already finished.
+
+The tools refuse any change that would introduce damage, so anything the check reports was already there \u2014 name it in your report (the human can run **Markdown Collab: Repair Comment Anchors**) rather than trying to fix markers yourself. One case is not damage: **a thread whose passage you deliberately removed is expected to be unanchored.** Deletions become orphans by design \u2014 report it, don't "fix" it by re-anchoring to unrelated text.
+
+Then confirm, from \`mc_list\`, that each addressed thread ends with your comment and is still \`"status":"open"\`.`,
+    brief: { kind: "step", text: "Verify \u2014 `mc_check(file)` LAST on every file you touched: it is the integrity check, and it ends the human's wait. `mc_status(note)` narrates a long pass." }
+  },
+  {
+    id: "suggest-mode",
+    text: `## Suggest Mode \u2014 propose edits instead of applying them
+
+When the human asks you to **suggest** or **propose** changes rather than make them ("suggest edits", "don't apply, let me accept them", or a send payload requesting suggest mode), do NOT edit the prose directly \u2014 every change becomes a pending suggestion via \`mc_suggest(file, quote: "\u2026", with: "\u2026", note: "why")\`.
+
+The original text stays in the file; the proposal is recorded separately. \`note\` is your rationale, shown on the suggestion card \u2014 always include it. Same anchoring rules as opening a thread: ambiguous, or in code/frontmatter/the threads region, gets refused \u2014 pass \`occurrence\` or pick a different span. **One suggestion changes one sentence or one list item.** Re-read between several so offsets stay valid. A paragraph-level rewrite is split into several suggestions, one per sentence; when it genuinely can't be split (the change reworks the paragraph as a whole), open a comment carrying the proposed text instead of forcing it into one giant suggestion. A \`with\` far longer than the quoted passage is refused (\`suggestion_too_large\`) \u2014 that's the tool telling you to split it, not a limit to work around. **Do NOT accept or reject your own suggestions** \u2014 that's the human's call in the review UI, only on explicit instruction. Verify with \`mc_check\` and \`mc_list\` (reports each suggestion's \`original\` and \`proposed\`).
+
+Mutually exclusive with direct edits per request: if the human wants suggestions, route ALL changes through \`mc_suggest\`, never mix in a few direct edits. Review Mode is unaffected \u2014 it never edits prose at all.`,
+    brief: { kind: "rule", text: "Suggest mode: route every change through `mc_suggest` (with a `note`) \u2014 no direct edits at all." }
+  },
+  {
+    id: "maintenance",
+    text: `## Every \`.md\` edit goes through the tools
+
+Whenever you change a file that contains \`<!--mc:threads:begin-->\` \u2014 for any reason, not only to address a comment \u2014 make the change with \`mc_edit\` or \`mc_rewrite\`: they refuse an edit that would break a marker, which a plain text edit can't. If you **rewrote an anchored passage**, \`mc_rewrite\` kept its markers on the new wording; if you **removed one**, the thread surfaces as unanchored \u2014 correct, don't re-anchor it to unrelated nearby text. Do NOT change any \`<!--mc:t {\u2026}-->\` line \u2014 only the human reviewer and the reply workflow append to threads. Finish with \`mc_check\`.`
+  },
+  {
+    id: "reporting",
+    text: `## Reporting
+
+Tell the user, per file, using each thread's id (1\u201312 char base36) so they can find it in VS Code: threads addressed (+ one-line summary of each change), threads initiated on explicit request (+ anchored passage + the note you left), threads deleted on explicit request, threads left unanchored/orphaned because their target was removed (+ why), threads answered without a prose change (+ the question you replied with), and anything you skipped and why.`
+  }
+];
+
 // src/skillCli/mdc.ts
 var EXIT_OK = 0;
 var EXIT_USAGE = 1;
@@ -1455,6 +1721,7 @@ var USAGE = `mdc \u2014 Markdown Collab inline-comment CLI
   mdc accept <file> <anchorId>                apply a pending suggestion
   mdc reject <file> <anchorId>                drop a pending suggestion, keep the original
   mdc check <file> [--repair]                 integrity report; exit 2 if broken
+  mdc help review                             the reviewer's rubric \u2014 read it before a review pass
   mdc check --hook                            Claude Code PostToolUse hook: reads the hook JSON on stdin;
                                               exit 2 + report on stderr if the edited .md has broken markers
   mdc guard --hook                            Claude Code PreToolUse hook: exit 2 (the edit is refused) when an
@@ -1892,6 +2159,11 @@ async function main() {
   }
   const [command, ...rest] = _;
   if (command === void 0) fail("no command given", { detail: USAGE });
+  if (command === "help") {
+    writeSync(1, rest[0] === "review" ? renderReviewGuide() : `${USAGE}
+`);
+    process.exit(EXIT_OK);
+  }
   const author = typeof flags.author === "string" && flags.author !== "" ? flags.author : "claude";
   const mutate = (file, m) => apply(file, m, extensionFor(file, flags), author);
   switch (command) {
