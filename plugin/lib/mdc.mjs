@@ -1222,6 +1222,7 @@ var PROTOCOL_VERSION = "2025-06-18";
 // src/mcpServer/registration.ts
 var ENV_URL = "MARKDOWN_COLLAB_MCP_URL";
 var ENV_TOKEN = "MARKDOWN_COLLAB_MCP_TOKEN";
+var DESCRIPTOR_REL = ".markdown-collab/.mcp-server.json";
 
 // src/skillCli/checkHook.ts
 import * as path from "node:path";
@@ -1673,26 +1674,68 @@ async function forward(ext, tool, args, author) {
 }
 var LOOPBACK_HOSTS = /* @__PURE__ */ new Set(["127.0.0.1", "::1", "localhost"]);
 var MCP_PATH = "/mcp";
-function extensionFromEnv(flags) {
-  if (flags.direct === true) return null;
+function extensionFromEnv() {
   const url = process.env[ENV_URL];
   const token = process.env[ENV_TOKEN];
   if (!url || !token) return null;
+  return localServer(url, token, ENV_URL);
+}
+function localServer(url, token, from) {
   let parsed;
   try {
     parsed = new URL(url);
   } catch {
-    writeSync(2, `mdc: ${ENV_URL} is not a valid URL (${JSON.stringify(url)}) \u2014 writing directly
+    writeSync(2, `mdc: ${from} is not a valid URL (${JSON.stringify(url)}) \u2014 writing directly
 `);
     return null;
   }
   const host = parsed.hostname.replace(/^\[|\]$/g, "");
   if (!LOOPBACK_HOSTS.has(host) || parsed.pathname !== MCP_PATH) {
-    writeSync(2, `mdc: ${ENV_URL} does not point at the local tool server (${url}) \u2014 writing directly
+    writeSync(2, `mdc: ${from} does not point at the local tool server (${url}) \u2014 writing directly
 `);
     return null;
   }
   return { url, token };
+}
+function extensionFromDescriptor(file) {
+  let dir = path3.dirname(path3.resolve(file));
+  for (; ; ) {
+    const at = path3.join(dir, ...DESCRIPTOR_REL.split("/"));
+    let raw = null;
+    try {
+      raw = readFileSync(at, "utf8");
+    } catch {
+      raw = null;
+    }
+    if (raw !== null) {
+      let d;
+      try {
+        d = JSON.parse(raw);
+      } catch {
+        d = void 0;
+      }
+      if (isObject(d) && typeof d.url === "string" && typeof d.token === "string" && processAlive(d.pid)) {
+        return localServer(d.url, d.token, at);
+      }
+      return null;
+    }
+    const parent = path3.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+function processAlive(pid) {
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+}
+function extensionFor(file, flags) {
+  if (flags.direct === true) return null;
+  return extensionFromEnv() ?? extensionFromDescriptor(file);
 }
 function integrityOkOnDisk(absPath) {
   try {
@@ -1850,8 +1893,7 @@ async function main() {
   const [command, ...rest] = _;
   if (command === void 0) fail("no command given", { detail: USAGE });
   const author = typeof flags.author === "string" && flags.author !== "" ? flags.author : "claude";
-  const ext = extensionFromEnv(flags);
-  const mutate = (file, m) => apply(file, m, ext, author);
+  const mutate = (file, m) => apply(file, m, extensionFor(file, flags), author);
   switch (command) {
     case "list":
       if (!rest[0]) fail("usage: mdc list <file> [--actionable]");
@@ -1955,7 +1997,7 @@ async function main() {
     case "check":
       if (flags.hook === true) return cmdCheckHook();
       if (!rest[0]) fail("usage: mdc check <file> [--repair]");
-      return cmdCheck(rest[0], flags.repair === true, ext, author);
+      return cmdCheck(rest[0], flags.repair === true, extensionFor(rest[0], flags), author);
     case "guard":
       if (flags.hook !== true) fail("usage: mdc guard --hook (Claude Code PreToolUse hook; reads the hook JSON on stdin)");
       return cmdCheckHook(runGuardHook);

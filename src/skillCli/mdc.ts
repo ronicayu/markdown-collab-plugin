@@ -39,7 +39,7 @@ import {
   type OpOutcome,
 } from "../inlineComments/docOps";
 import { PROTOCOL_VERSION } from "../mcpServer/protocol";
-import { ENV_TOKEN, ENV_URL } from "../mcpServer/registration";
+import { DESCRIPTOR_REL, ENV_TOKEN, ENV_URL } from "../mcpServer/registration";
 import { runCheckHook, type HookIo, type HookOutcome } from "./checkHook";
 import { runGuardHook } from "./guardHook";
 
@@ -379,8 +379,8 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const MCP_PATH = "/mcp";
 
 /**
- * Both env vars, or null — null under `--direct`, and null when the URL doesn't point
- * at the local tool server. `MARKDOWN_COLLAB_MCP_URL` is meant to come only from a
+ * Both env vars, or null — null when the URL doesn't point at the local tool
+ * server. `MARKDOWN_COLLAB_MCP_URL` is meant to come only from a
  * VS Code terminal's environment, but anything that can set an env var (a poisoned
  * shell rc file, a compromised `.env`, a misconfigured devcontainer) can set it to any
  * `http://` URL — and every mutating verb otherwise POSTs the document's own text
@@ -389,26 +389,94 @@ const MCP_PATH = "/mcp";
  * leaving the machine through this path; anything else falls back to a direct local
  * write, exactly like an unreachable server does.
  */
-function extensionFromEnv(flags: Args["flags"]): Extension | null {
-  if (flags.direct === true) return null;
+function extensionFromEnv(): Extension | null {
   const url = process.env[ENV_URL];
   const token = process.env[ENV_TOKEN];
   if (!url || !token) return null;
+  return localServer(url, token, ENV_URL);
+}
+
+/** `url` if it is the local tool server's, or null (said on stderr) when it isn't. */
+function localServer(url: string, token: string, from: string): Extension | null {
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
-    writeSync(2, `mdc: ${ENV_URL} is not a valid URL (${JSON.stringify(url)}) — writing directly\n`);
+    writeSync(2, `mdc: ${from} is not a valid URL (${JSON.stringify(url)}) — writing directly\n`);
     return null;
   }
   // URL.hostname keeps IPv6 addresses bracketed ("[::1]"); strip that to
   // compare against the plain form.
   const host = parsed.hostname.replace(/^\[|\]$/g, "");
   if (!LOOPBACK_HOSTS.has(host) || parsed.pathname !== MCP_PATH) {
-    writeSync(2, `mdc: ${ENV_URL} does not point at the local tool server (${url}) — writing directly\n`);
+    writeSync(2, `mdc: ${from} does not point at the local tool server (${url}) — writing directly\n`);
     return null;
   }
   return { url, token };
+}
+
+/**
+ * The running extension for `file`, found without any environment: the
+ * extension writes its tool server's address and token to
+ * `.markdown-collab/.mcp-server.json` (0600, gitignored) in the workspace
+ * folder it serves, so the nearest one above the file is the window that has
+ * it open. That lets a write from any terminal — not only one VS Code spawned
+ * — go through the extension's write queue, ordered against the editor's
+ * unsaved buffer, instead of under it.
+ *
+ * A descriptor whose process is gone (the window crashed) is skipped rather
+ * than tried, so a dead server costs nothing; the same loopback-only rule as
+ * the env vars keeps a document from being posted anywhere else.
+ */
+function extensionFromDescriptor(file: string): Extension | null {
+  let dir = path.dirname(path.resolve(file));
+  for (;;) {
+    const at = path.join(dir, ...DESCRIPTOR_REL.split("/"));
+    let raw: string | null = null;
+    try {
+      raw = readFileSync(at, "utf8");
+    } catch {
+      raw = null;
+    }
+    if (raw !== null) {
+      let d: unknown;
+      try {
+        d = JSON.parse(raw);
+      } catch {
+        d = undefined;
+      }
+      if (isObject(d) && typeof d.url === "string" && typeof d.token === "string" && processAlive(d.pid)) {
+        return localServer(d.url, d.token, at);
+      }
+      // The nearest workspace's descriptor decides: a stale or broken one
+      // means that window isn't running, not "look further up".
+      return null;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+function processAlive(pid: unknown): boolean {
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    // EPERM: it exists, it just isn't ours to signal.
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * The extension to forward `file`'s write to, or null to write directly:
+ * none with `--direct`, the env vars when this runs in a VS Code terminal,
+ * otherwise the descriptor of the workspace the file is in.
+ */
+function extensionFor(file: string, flags: Args["flags"]): Extension | null {
+  if (flags.direct === true) return null;
+  return extensionFromEnv() ?? extensionFromDescriptor(file);
 }
 
 /** Re-read after a forwarded write, for the same `integrityOk` a direct write reports. */
@@ -622,8 +690,7 @@ async function main(): Promise<void> {
   // "claude" is the default: every existing caller, including headless Claude Code
   // runs, never passes `--author`.
   const author = typeof flags.author === "string" && flags.author !== "" ? flags.author : "claude";
-  const ext = extensionFromEnv(flags);
-  const mutate = <T>(file: string, m: Mutation<T>): Promise<void> => apply(file, m, ext, author);
+  const mutate = <T>(file: string, m: Mutation<T>): Promise<void> => apply(file, m, extensionFor(file, flags), author);
 
   switch (command) {
     case "list":
@@ -731,7 +798,7 @@ async function main(): Promise<void> {
       // guard below rejects a bare `mdc check --hook` for lacking one.
       if (flags.hook === true) return cmdCheckHook();
       if (!rest[0]) fail("usage: mdc check <file> [--repair]");
-      return cmdCheck(rest[0], flags.repair === true, ext, author);
+      return cmdCheck(rest[0], flags.repair === true, extensionFor(rest[0], flags), author);
     case "guard":
       // Only the hook form exists: the edit to judge comes on stdin.
       if (flags.hook !== true) fail("usage: mdc guard --hook (Claude Code PreToolUse hook; reads the hook JSON on stdin)");
