@@ -12,7 +12,6 @@ import { getCliRunner, setCliGate, setCliRunner } from "../pr/cli";
 
 vi.mock("../editorPresence");
 vi.mock("../collab/collabEditorProvider");
-vi.mock("../inlineComments/inlineCommentsPanel");
 vi.mock("../pr/prReviewController");
 vi.mock("../uncommitted/uncommittedController");
 vi.mock("../mcpServer", () => ({

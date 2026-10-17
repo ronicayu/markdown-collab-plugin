@@ -1,7 +1,7 @@
 // Every write to a document, one at a time — across every writer in this
 // extension host, not just within one view.
 //
-// The live editor, the MCP tools an agent calls, the inline comments panel and
+// The live editor, the MCP tools an agent calls, the review view's sidebar and
 // the comment commands all change the same TextDocument. Ordering them is half
 // the fix; the other half is *where* each write is computed. A write computed
 // from text read before an earlier write landed, then applied over the newer

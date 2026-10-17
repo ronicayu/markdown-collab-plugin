@@ -1,12 +1,12 @@
 // Comment bodies render as markdown in the surfaces that display them.
 //
-// The unit tests pin what the renderer produces; these pin that each surface
-// actually uses it — the bug being fixed was three surfaces rendering the same
-// body three different ways, which is invisible to a test of the renderer alone.
+// The unit tests pin what the renderer produces; these pin that the review view
+// actually uses it — the bug being fixed was surfaces rendering the same body
+// different ways, which is invisible to a test of the renderer alone.
 
 import { expect, test } from "@playwright/test";
 import { addThread, appendReply, replaceThread } from "../../inlineComments/format";
-import { bootInlineView, bootLiveEditor } from "./harness";
+import { bootLiveEditor } from "./harness";
 import { liveInit } from "./fixtures";
 
 const BODY = "Two problems:\n\n- the retry count is wrong\n- and `maxDelay` is unused\n\n```js\nconst x = 1;\n```\n";
@@ -29,24 +29,6 @@ function withMarkdownReply(): { source: string; id: string } {
   return { source, id: first.thread.id };
 }
 
-test("the inline comments view renders a reply's list and code block", async ({ page }) => {
-  const { source } = withMarkdownReply();
-  const { serialize } = await import("../../inlineComments/serializeState");
-  const { parse } = await import("../../inlineComments/format");
-  await bootInlineView(page, {
-    fileName: "doc.md",
-    state: serialize(parse(source)),
-    user: { name: "ronica" },
-    imageBaseUris: { docDir: "", workspaceFolder: null },
-  });
-  const body = page.locator(".thread-card .mc-card__body-md").last();
-  await expect(body.locator("li")).toHaveCount(2);
-  await expect(body.locator("pre code")).toBeVisible();
-  await expect(body.locator("code").first()).toBeVisible();
-  // The raw markdown must not still be on screen.
-  await expect(body).not.toContainText("- the retry count");
-});
-
 test("the live editor renders a reply's list and code block", async ({ page }) => {
   const { source } = withMarkdownReply();
   await bootLiveEditor(page, liveInit(source));
@@ -62,14 +44,7 @@ test("a comment cannot inject markup into the surface showing it", async ({ page
     body: '<img src=x onerror="window.__pwned=1"> <b>not bold</b>',
     ts: "2026-08-01T10:00:00.000Z",
   }).source;
-  const { serialize } = await import("../../inlineComments/serializeState");
-  const { parse } = await import("../../inlineComments/format");
-  await bootInlineView(page, {
-    fileName: "doc.md",
-    state: serialize(parse(hostile)),
-    user: { name: "ronica" },
-    imageBaseUris: { docDir: "", workspaceFolder: null },
-  });
+  await bootLiveEditor(page, liveInit(hostile));
   const body = page.locator(".thread-card .mc-card__body-md").first();
   await expect(body.locator("img")).toHaveCount(0);
   await expect(body.locator("b")).toHaveCount(0);
@@ -84,14 +59,7 @@ test("an image in a comment is a link, not a remote fetch", async ({ page }) => 
     body: "See ![the graph](https://tracker.example/pixel.png)",
     ts: "2026-08-01T10:00:00.000Z",
   }).source;
-  const { serialize } = await import("../../inlineComments/serializeState");
-  const { parse } = await import("../../inlineComments/format");
-  await bootInlineView(page, {
-    fileName: "doc.md",
-    state: serialize(parse(withImage)),
-    user: { name: "ronica" },
-    imageBaseUris: { docDir: "", workspaceFolder: null },
-  });
+  await bootLiveEditor(page, liveInit(withImage));
   const body = page.locator(".thread-card .mc-card__body-md").first();
   await expect(body.locator("img")).toHaveCount(0);
   await expect(body.locator("a.mc-card__image-link")).toHaveText(/the graph/);

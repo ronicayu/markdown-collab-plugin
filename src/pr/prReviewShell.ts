@@ -1,5 +1,4 @@
-// The PR-review webview's DOM skeleton — see src/inlineComments/webviewShell.ts
-// for the pattern this follows and why: the client bundle resolves every
+// The PR-review webview's DOM skeleton. The client bundle resolves every
 // element it touches by id at module load, so this markup is part of the
 // client's contract, not decoration. It lives here — outside both the panel
 // (which imports `vscode`) and the client bundle (which never reads it) — so

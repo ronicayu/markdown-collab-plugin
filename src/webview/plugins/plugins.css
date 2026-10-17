@@ -94,10 +94,8 @@
 }
 
 /* --- Uncommitted-diff overlay (diffStripesPlugin.ts, changeNav.ts) ------- */
-/* Same green-added / red-removed language as the review view's
-   #diff-mode-badge / .mc-diff-changed / .mc-diff-removed
-   (src/inlineComments/webview/client.css), reusing the same gitDecoration
-   theme tokens so the two surfaces read as the same feature. */
+/* Green-added / red-removed, from the gitDecoration theme tokens, so the
+   overlay reads like VS Code's own change markers. */
 
 :root {
   --mdc-diff-add-stripe: var(--vscode-gitDecoration-addedResourceForeground, #4caf50);

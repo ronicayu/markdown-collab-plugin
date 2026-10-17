@@ -1,4 +1,4 @@
-// Send-to-Claude support for the inline-comments view.
+// Send-to-Claude payloads for inline (in-file) comments.
 //
 // Inline comments live inside the .md file itself, so we build the payload
 // directly from the parser output and shim it into the `ReviewPayload` shape

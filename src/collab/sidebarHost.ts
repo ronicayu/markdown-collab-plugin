@@ -1,7 +1,7 @@
 // The live editor's sidebar, host half: handles every message the sidebar posts
-// (`webviewShared/sidebarProtocol.ts`) the way the review view's panel does —
-// document operations through the pure `applyClientMutation` on the file's own
-// source, sends through the same commands and dispatcher.
+// (`webviewShared/sidebarProtocol.ts`): document operations through the pure
+// `applyClientMutation` on the file's own source, sends through the same
+// commands and dispatcher as everything else.
 //
 // Nothing here reads the editor's serialization: a mutation parses
 // `document.getText()`, rewrites it, and hands the whole new source back to the

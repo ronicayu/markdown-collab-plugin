@@ -120,8 +120,7 @@ interface InitMessage extends SidebarPush {
   /** Read-only mode: no editing; comments anchor by source position. */
   readOnly?: boolean;
   /**
-   * The host's `DiffState` (src/inlineComments/inlineCommentsPanel.ts), copied
-   * because the webview bundle can't import a vscode-touching module.
+   * The host's `DiffState` (src/collab/diffStripes.ts).
    * Absent/null = plain live editor.
    */
   diff?: DiffState | null;
@@ -1519,8 +1518,8 @@ function loadMermaid(): Promise<MermaidApi> {
     mermaidPromise = import("mermaid").then((mod) => {
       const candidate = (mod as { default?: unknown }).default ?? mod;
       const api = candidate as MermaidApi;
-      // Follow the editor theme, as the classic panel did: a light diagram on a
-      // dark background reads as a rendering bug.
+      // Follow the editor theme: a light diagram on a dark background reads as
+      // a rendering bug.
       const isDark =
         document.body.classList.contains("vscode-dark") ||
         document.body.classList.contains("vscode-high-contrast") ||

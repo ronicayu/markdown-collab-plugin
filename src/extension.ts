@@ -3,10 +3,8 @@ import * as vscode from "vscode";
 import { createLogger } from "./logging";
 import { refreshAgentsSkill } from "./agentsSkill";
 import { setCliGate, setCliLogger } from "./pr/cli";
-import { folderForDocument } from "./workspaceFolder";
 import { activateEditorPresence } from "./editorPresence";
 import { CollabEditorProvider } from "./collab/collabEditorProvider";
-import { InlineCommentsPanel } from "./inlineComments/inlineCommentsPanel";
 import { PrReviewController } from "./pr/prReviewController";
 import { UncommittedChangesController } from "./uncommitted/uncommittedController";
 import { ReviewView } from "./reviewView";
@@ -19,7 +17,7 @@ import { reconnectAgents } from "./mcpServer/agentConnections";
 import { lookupClaude, sweepHeadlessTempDirs } from "./transports/headlessHost";
 import { activateClaudeStatusBar } from "./claudeStatusBar";
 import { TerminalTracker } from "./transports/terminalTracker";
-import { dispatchReviewPayload, registerSendCommands } from "./commands/send";
+import { registerSendCommands } from "./commands/send";
 import { registerReviewCommands } from "./commands/review";
 import { registerCommentsCommands } from "./commands/comments";
 import { registerSetupCommands, maybePromptSkillUpdate } from "./commands/setup";
@@ -101,43 +99,12 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
   );
 
-  // The previous review view (the markdown-it panel),
-  // behind `markdownCollab.classicReviewView`. Only the router below opens it.
-  // `opts` carries an optional scroll target (the line of a thread's anchor).
-  const openInlineView = async (
-    uri: vscode.Uri,
-    opts?: { line?: number; showDiff?: boolean },
-  ): Promise<void> => {
-    const doc = await vscode.workspace.openTextDocument(uri);
-    InlineCommentsPanel.reveal(
-      context,
-      doc,
-      {
-        dispatchToClaude: async (payload) => {
-          const folder = folderForDocument(doc.uri);
-          await dispatchReviewPayload(
-            payload,
-            sendLog,
-            terminalTracker,
-            context.workspaceState,
-            folder,
-          );
-        },
-      },
-      opts,
-    );
-  };
-
-  // The one way into the review view: the live editor, or the
-  // previous panel while `markdownCollab.classicReviewView` is on. The
-  // commands, menus, key, hover link, tree rows, unread walk and status bar
-  // all come through here — see src/commands/reviewViewRouter.ts.
+  // The one way into the review view. The commands, menus, key, hover link,
+  // tree rows, unread walk and status bar all come through here — see
+  // src/commands/reviewViewRouter.ts.
   const openReviewView = createReviewViewRouter({
-    classic: openInlineView,
     live: (uri, opts) => CollabEditorProvider.open(uri, opts),
     readSource: async (uri) => (await vscode.workspace.openTextDocument(uri)).getText(),
-    classicEnabled: () =>
-      vscode.workspace.getConfiguration("markdownCollab").get<boolean>("classicReviewView", false),
   });
 
   // Uncommitted-changes review: the tree of locally changed markdown files,
@@ -148,7 +115,6 @@ export function activate(context: vscode.ExtensionContext): void {
       new UncommittedChangesController(
         (uri, opts) => openReviewView(uri, { diff: opts.showDiff }),
         rootLog.scope("uncommitted"),
-        (uri) => CollabEditorProvider.open(uri, { diff: true }),
       ),
     );
   } catch (e) {

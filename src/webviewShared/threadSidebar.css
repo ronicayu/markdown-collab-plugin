@@ -1,12 +1,10 @@
 /* The comment sidebar (threadSidebar.ts) — 10x-plan-6 P4, sidebar parity.
  *
- * The review view's threads-pane rules (src/inlineComments/webview/client.css),
- * scoped to `.mc-thread-sidebar` so they can sit in a page they don't own: the
- * live editor's own buttons, Milkdown's DOM, and the shared comment cards all
- * live alongside. Every selector is wrapped in `:where(.mc-thread-sidebar)`,
- * which adds no specificity — the rules keep exactly the weight they had in
- * the review view, so the shared `.mc-btn` classes still win over the bare
- * `button` rule here the way they always have. */
+ * The threads-pane rules, scoped to `.mc-thread-sidebar` so they can sit in a
+ * page they don't own: the live editor's own buttons, Milkdown's DOM, and the
+ * shared comment cards all live alongside. Every selector is wrapped in
+ * `:where(.mc-thread-sidebar)`, which adds no specificity, so the shared
+ * `.mc-btn` classes still win over the bare `button` rule here. */
 
 .mc-thread-sidebar {
   --bg: var(--vscode-editor-background, #1e1e1e);

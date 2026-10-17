@@ -1,9 +1,5 @@
-// The comment sidebar, shared with the live editor and written against
-// `SidebarState` instead of the review view's own DOM and message plumbing.
-//
-// Copied from src/inlineComments/webview/client.ts, which keeps its own copy
-// until the review view is removed. The ids and class names are the same on
-// purpose: the two surfaces look alike and their e2e specs read alike.
+// The live editor's comment sidebar, written against `SidebarState` rather
+// than any one view's DOM and message plumbing.
 //
 // The module owns its DOM, its keyboard map, and the preferences it persists
 // through the host's getState/setState. The document side — scrolling to a

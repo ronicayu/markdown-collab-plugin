@@ -34,9 +34,6 @@ const REQUIRED = [
   // + the Milkdown theme are imports, not separate assets).
   "extension/out/webview/client.css",
   "extension/out/webview/comments-shared.css",
-  "extension/out/inlineComments/client.js",
-  "extension/out/inlineComments/client.css",
-  "extension/out/inlineComments/comments-shared.css",
   "extension/out/pr/webview/client.js",
   "extension/out/pr/webview/client.css",
   "extension/out/pr/webview/comments-shared.css",
@@ -67,13 +64,12 @@ const FORBIDDEN = ["extension/.claude-plugin/marketplace.json"];
 const FORBIDDEN_PREFIXES = ["extension/scripts/", "extension/.playwright-mcp/", "extension/out/skill/", "extension/out/test/"];
 
 // The only JavaScript under out/ that the extension loads: the host bundle
-// and the three webview bundles. tsc's per-file output is inlined into the
+// and the two webview bundles. tsc's per-file output is inlined into the
 // host bundle and must not ship alongside it — it once made up 108 of the
 // package's 158 files.
 const OUT_JS_ALLOWED = new Set([
   "extension/out/extension.js",
   "extension/out/webview/client.js",
-  "extension/out/inlineComments/client.js",
   "extension/out/pr/webview/client.js",
 ]);
 

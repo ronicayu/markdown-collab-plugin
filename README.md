@@ -66,7 +66,7 @@ Afterwards, **Review Session Summary** turns the thread state into a digest for 
 
 ## Where it shows up
 
-**The Markdown Collab view.** The rendered document on the left, threads on the right. It opens read-only: select a passage and comment, and the comment's two markers are written into the file's original bytes, so nothing else in the file changes and every highlight sits exactly where its markers are. Switch to **Editing** in the toolbar above the document to edit in place; a change rewrites only the block you typed in. The agent's edits to the file show up as they land. Comments render as Markdown. There's a find bar, a collapsible outline, optional source line numbers, and buttons to remove every resolved thread or every trace of review data in one undoable step. Mermaid and PlantUML fences and linked draw.io files render in the document. It's also in **Open With… → Markdown Collab**. `markdownCollab.classicReviewView` brings back the previous Markdown Collab view, a rendered preview without editing, as a fallback; a later release removes it.
+**The Markdown Collab view.** The rendered document on the left, threads on the right. It opens read-only: select a passage and comment, and the comment's two markers are written into the file's original bytes, so nothing else in the file changes and every highlight sits exactly where its markers are. Switch to **Editing** in the toolbar above the document to edit in place; a change rewrites only the block you typed in. The agent's edits to the file show up as they land. Comments render as Markdown. There's a find bar, a collapsible outline, optional source line numbers, and buttons to remove every resolved thread or every trace of review data in one undoable step. Mermaid and PlantUML fences and linked draw.io files render in the document. It's also in **Open With… → Markdown Collab**.
 
 **The text editor.** Anchors are dimmed, commented text is tinted, and the threads block at the end of the file folds away. Hovering a commented passage shows its thread, with a link into the view, and one CodeLens at the top of the file gives the counts and opens the view. Select text and press `Cmd+K Cmd+Alt+M` to comment without leaving the editor.
 
@@ -170,7 +170,6 @@ A few commands still exist but are hidden from the palette, now that Connect an 
 | `markdownCollab.showLineNumbers` | `false` | Source line numbers beside each block in the Markdown Collab view. They're lines of the `.md` file, frontmatter and threads block included, so they match Go to Line. |
 | `markdownCollab.collab.userName` | your OS username | The name on comments you write. |
 | `markdownCollab.liveEditor.readOnly` | `true` | Open the Markdown Collab view read-only. Switch to **Editing** in the toolbar above the document to turn editing on for that view; turn this off to open every view editable. |
-| `markdownCollab.classicReviewView` | `false` | Use the previous Markdown Collab view, a rendered preview without editing. A fallback; a later release removes it. |
 | `markdownCollab.plantuml.serverUrl` | `https://www.plantuml.com/plantuml` | The server that renders `plantuml` fences. Diagram source is sent to it, so point it at your own server for private documents. |
 | `markdownCollab.plantuml.format` | `svg` | `svg` or `png`. |
 

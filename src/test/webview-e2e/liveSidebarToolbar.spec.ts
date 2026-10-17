@@ -1,7 +1,6 @@
-// The live editor's sidebar toolbar: the
-// review view's toolbar.spec.ts — filter segments, Send named after the agent,
-// the suggest-mode switch, the "…" menu, the keyboard hint — plus the one
-// control only the live editor has, the Reading/Editing mode control.
+// The live editor's sidebar toolbar: filter segments, Send named after the
+// agent, the suggest-mode switch, the "…" menu, the keyboard hint, and the
+// Reading/Editing mode control.
 
 import { expect, test } from "@playwright/test";
 import { addThread, replaceThread, type InlineThread } from "../../inlineComments/format";

@@ -1,6 +1,4 @@
-// The review view's router: which view opens —
-// the live editor, or the previous panel while
-// `markdownCollab.classicReviewView` is on — and where it lands.
+// The review view's router: where the live editor lands.
 
 import { describe, expect, it } from "vitest";
 import type * as vscode from "vscode";
@@ -25,41 +23,25 @@ function withThread(source: string, text: string, author: string): { source: str
   return { source: next, id: thread.id };
 }
 
-/** Line (1-based) the thread's anchored text starts on, as `TextDocument.positionAt` counts. */
-function anchorLine(source: string, id: string): number {
-  const anchor = parse(source).anchors.get(id)!;
-  return source.slice(0, anchor.openEnd).split("\n").length;
-}
-
 describe("routeReviewView", () => {
-  it("opens the live editor unless the classic view is on", () => {
-    expect(routeReviewView("", {}, false)).toEqual({ view: "live" });
-    expect(routeReviewView("", {}, true)).toEqual({ view: "classic" });
+  it("opens the live editor", () => {
+    expect(routeReviewView("", {})).toEqual({});
   });
 
-  it("passes the diff overlay to either view", () => {
-    expect(routeReviewView("", { diff: true }, false)).toEqual({ view: "live", diff: true });
-    expect(routeReviewView("", { diff: true }, true)).toEqual({ view: "classic", showDiff: true });
+  it("passes the diff overlay through", () => {
+    expect(routeReviewView("", { diff: true })).toEqual({ diff: true });
   });
 
-  it("lands the live editor on a thread by id, and the classic view on its anchor's line", () => {
+  it("lands on a thread by id", () => {
     const { source, id } = withThread(BODY, "the agent has a question", "ronica");
-    expect(routeReviewView(source, { revealThreadId: id }, false)).toEqual({ view: "live", revealThreadId: id });
-    const classic = routeReviewView(source, { revealThreadId: id }, true);
-    expect(classic).toEqual({ view: "classic", line: anchorLine(source, id) });
-    // The anchor is on the sixth line of the body.
-    expect(classic).toMatchObject({ line: 6 });
+    expect(routeReviewView(source, { revealThreadId: id })).toEqual({ revealThreadId: id });
   });
 
-  it("opens the classic view at the top for a thread with no anchor, and still names it to the live editor", () => {
+  it("still names a thread with no anchor to the live editor", () => {
     const anchored = withThread(BODY, "a claim", "ronica");
     const source = stripAnchorMarkers(anchored.source, anchored.id);
     expect(parse(source).unanchoredThreadIds).toContain(anchored.id);
-    expect(routeReviewView(source, { revealThreadId: anchored.id }, true)).toEqual({ view: "classic" });
-    expect(routeReviewView(source, { revealThreadId: anchored.id }, false)).toEqual({
-      view: "live",
-      revealThreadId: anchored.id,
-    });
+    expect(routeReviewView(source, { revealThreadId: anchored.id })).toEqual({ revealThreadId: anchored.id });
   });
 
   it("focusNewFromAgent lands on the first thread, in document order, an agent opened and no human answered", () => {
@@ -77,25 +59,16 @@ describe("routeReviewView", () => {
     const secondUnread = withThread(firstUnread.source, "a question", "codex");
     const source = secondUnread.source;
 
-    expect(routeReviewView(source, { focusNewFromAgent: true }, false)).toEqual({
-      view: "live",
-      revealThreadId: firstUnread.id,
-    });
-    expect(routeReviewView(source, { focusNewFromAgent: true }, true)).toEqual({
-      view: "classic",
-      line: anchorLine(source, firstUnread.id),
-    });
+    expect(routeReviewView(source, { focusNewFromAgent: true })).toEqual({ revealThreadId: firstUnread.id });
     // An explicit thread wins.
-    expect(routeReviewView(source, { focusNewFromAgent: true, revealThreadId: secondUnread.id }, false)).toEqual({
-      view: "live",
+    expect(routeReviewView(source, { focusNewFromAgent: true, revealThreadId: secondUnread.id })).toEqual({
       revealThreadId: secondUnread.id,
     });
   });
 
   it("focusNewFromAgent with nothing unread just opens the view", () => {
     const { source } = withThread(BODY, "a claim", "ronica");
-    expect(routeReviewView(source, { focusNewFromAgent: true }, false)).toEqual({ view: "live" });
-    expect(routeReviewView(source, { focusNewFromAgent: true }, true)).toEqual({ view: "classic" });
+    expect(routeReviewView(source, { focusNewFromAgent: true })).toEqual({});
   });
 });
 
@@ -122,53 +95,39 @@ describe("reviewViewOptsFrom", () => {
 describe("createReviewViewRouter", () => {
   const uri = { fsPath: "/ws/doc.md", toString: () => "file:///ws/doc.md" } as unknown as vscode.Uri;
 
-  function fakeTargets(source: string, classic: { on: boolean }) {
-    const calls: Array<{ view: string; opts: unknown }> = [];
+  function fakeTargets(source: string) {
+    const calls: Array<{ opts: unknown }> = [];
     let reads = 0;
     const targets: ReviewViewTargets = {
-      classic: async (_uri, opts) => void calls.push({ view: "classic", opts }),
-      live: async (_uri, opts) => void calls.push({ view: "live", opts }),
+      live: async (_uri, opts) => void calls.push({ opts }),
       readSource: async () => {
         reads++;
         return source;
       },
-      classicEnabled: () => classic.on,
     };
     return { targets, calls, reads: () => reads };
   }
 
-  it("reads the setting on every open, so a change applies to the next one", async () => {
-    const setting = { on: false };
-    const { targets, calls } = fakeTargets(BODY, setting);
+  it("opens the live editor with the diff overlay when asked", async () => {
+    const { targets, calls } = fakeTargets(BODY);
     const open = createReviewViewRouter(targets);
     await open(uri);
-    setting.on = true;
-    await open(uri, { diff: true });
-    setting.on = false;
     await open(uri, { diff: true });
     expect(calls).toEqual([
-      { view: "live", opts: { revealThreadId: undefined, diff: undefined } },
-      { view: "classic", opts: { line: undefined, showDiff: true } },
-      { view: "live", opts: { revealThreadId: undefined, diff: true } },
+      { opts: { revealThreadId: undefined, diff: undefined } },
+      { opts: { revealThreadId: undefined, diff: true } },
     ]);
   });
 
-  it("reads the file only when asked to land on a thread", async () => {
+  it("reads the file only to find the first unread agent thread", async () => {
     const { source, id } = withThread(BODY, "a claim", "ronica");
-    const { targets, calls, reads } = fakeTargets(source, { on: false });
+    const { targets, calls, reads } = fakeTargets(source);
     const open = createReviewViewRouter(targets);
     await open(uri, { diff: true });
-    expect(reads()).toBe(0);
     await open(uri, { revealThreadId: id });
+    expect(reads()).toBe(0);
     await open(uri, { focusNewFromAgent: true });
-    expect(reads()).toBe(2);
-    expect(calls[1]).toEqual({ view: "live", opts: { revealThreadId: id, diff: undefined } });
-  });
-
-  it("hands the classic view its anchor line for a reveal", async () => {
-    const { source, id } = withThread(BODY, "a claim", "ronica");
-    const { targets, calls } = fakeTargets(source, { on: true });
-    await createReviewViewRouter(targets)(uri, { revealThreadId: id });
-    expect(calls).toEqual([{ view: "classic", opts: { line: anchorLine(source, id), showDiff: undefined } }]);
+    expect(reads()).toBe(1);
+    expect(calls[1]).toEqual({ opts: { revealThreadId: id, diff: undefined } });
   });
 });

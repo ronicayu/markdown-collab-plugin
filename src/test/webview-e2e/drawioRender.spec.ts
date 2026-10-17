@@ -1,7 +1,7 @@
-// Draw.io diagrams in the inline (review) webview.
+// Draw.io diagrams in the review view (the live editor).
 //
-// `.drawio` files aren't a browser image format, so `![alt](x.drawio)` renders
-// a placeholder (`.mc-drawio`) that asks the host for the file's XML and hands
+// `.drawio` files aren't a browser image format, so a diagram reference renders
+// a placeholder (`.mdc-drawio`) that asks the host for the file's XML and hands
 // it to the shared `renderDrawioToSvg` (`src/webview/drawioRenderer.ts`) to
 // turn into an inline `<svg>`. That renderer calls into mxgraph's own factory
 // function, which both shipped bundles' strict-mode wrapping breaks (see
@@ -11,8 +11,8 @@
 
 import { expect, test } from "@playwright/test";
 import pako from "pako";
-import { awaitPosted, bootInlineView, bootLiveEditor, pushToWebview } from "./harness";
-import { inlineInit, liveInit } from "./fixtures";
+import { bootLiveEditor, pushToWebview } from "./harness";
+import { liveInit } from "./fixtures";
 
 // A minimal, uncompressed drawio file: `decodeDrawioFile` (drawioDecoder.ts)
 // accepts a `<diagram>` whose text content is already `<mxGraphModel>` XML, no
@@ -35,33 +35,13 @@ const MXFILE = [
 
 const SOURCE = "# Doc\n\n![Diagram](diagram.drawio)\n";
 
-test("a drawio image placeholder resolves to an inline <svg>", async ({ page }) => {
-  await bootInlineView(page, inlineInit(SOURCE));
-
-  const placeholder = page.locator(".mc-drawio");
-  await expect(placeholder).toHaveCount(1);
-  await expect(placeholder.locator("svg")).toHaveCount(0);
-
-  const req = await awaitPosted(page, "drawio-read");
-  await pushToWebview(page, {
-    type: "drawio-read-result",
-    requestId: req.requestId,
-    href: req.href,
-    ok: true,
-    content: MXFILE,
-  });
-
-  await expect(placeholder.locator("svg")).toHaveCount(1);
-  await expect(placeholder).toHaveClass(/ready/);
-});
-
 // The live (Milkdown) editor promotes a paragraph to the diagram widget for
 // both diagram syntaxes: a bare link alone in its own paragraph
 // (`[text](x.drawio)`) and an image alone in its own paragraph
 // (`![alt](x.drawio)`) — both reach the same shared `renderDrawioToSvg`.
 const LIVE_SOURCE = "# Doc\n\n[Diagram](diagram.drawio)\n";
 
-test("the live editor's link-syntax diagram also resolves to an inline <svg>", async ({ page }) => {
+test("the live editor's link-syntax diagram resolves to an inline <svg>", async ({ page }) => {
   await bootLiveEditor(page, liveInit(LIVE_SOURCE));
 
   // The widget requests the file's XML the moment it mounts, during the same
@@ -89,7 +69,7 @@ test("the live editor's link-syntax diagram also resolves to an inline <svg>", a
 // render a broken <img> for a non-image src alongside the diagram widget —
 // that image is hidden (`.mdc-drawio-image-hidden`) once the paragraph
 // promotes to the widget.
-test("the live editor's image-syntax diagram (![alt](x.drawio)) also resolves to an inline <svg>", async ({
+test("the live editor's image-syntax diagram (![alt](x.drawio)) resolves to an inline <svg>", async ({
   page,
 }) => {
   await bootLiveEditor(page, liveInit(SOURCE));
@@ -113,7 +93,7 @@ test("the live editor's image-syntax diagram (![alt](x.drawio)) also resolves to
 // ---------------------------------------------------------------------------
 // Security review: mxgraph's npm build never attaches its classes to
 // `window`, so `mxCodec.prototype.decode`'s `window[node.nodeName]` lookup
-// found nothing and every model decoded to zero cells — the two tests above
+// found nothing and every model decoded to zero cells — the tests above
 // only ever checked `<svg>` exists, which an empty-viewport SVG still
 // satisfies. The naive fix (`Object.assign(window, mx)`) plus HTML labels
 // would also open a script-injection hole (see drawioRenderer.ts's
@@ -168,32 +148,7 @@ const REALISTIC_FIXTURES = [
 ] as const;
 
 for (const [label, xml] of REALISTIC_FIXTURES) {
-  test(`a realistic diagram (${label}) decodes real cells and shows its labels — classic view`, async ({ page }) => {
-    await bootInlineView(page, inlineInit(SOURCE));
-    const placeholder = page.locator(".mc-drawio");
-    const req = await awaitPosted(page, "drawio-read");
-    await pushToWebview(page, {
-      type: "drawio-read-result",
-      requestId: req.requestId,
-      href: req.href,
-      ok: true,
-      content: xml,
-    });
-
-    const svg = placeholder.locator("svg");
-    await expect(svg).toHaveCount(1);
-    // Each vertex/edge mxgraph actually draws is its own shape element; an
-    // unpatched decode (zero cells) leaves only the SVG's own empty wrapper
-    // <g>s, so this is >0 only once real cells came through.
-    await expect(async () => {
-      expect(await svg.locator("rect, path").count()).toBeGreaterThan(0);
-    }).toPass();
-    await expect(svg).toContainText("Box A");
-    await expect(svg).toContainText("Box B");
-    await expect(svg).toContainText("Edge Label");
-  });
-
-  test(`a realistic diagram (${label}) decodes real cells and shows its labels — live editor`, async ({ page }) => {
+  test(`a realistic diagram (${label}) decodes real cells and shows its labels`, async ({ page }) => {
     await bootLiveEditor(page, liveInit(LIVE_SOURCE));
     const placeholder = page.locator(".mdc-drawio");
     await expect(placeholder).toContainText("Loading diagram");
@@ -207,6 +162,9 @@ for (const [label, xml] of REALISTIC_FIXTURES) {
 
     const svg = placeholder.locator("svg");
     await expect(svg).toHaveCount(1);
+    // Each vertex/edge mxgraph actually draws is its own shape element; an
+    // unpatched decode (zero cells) leaves only the SVG's own empty wrapper
+    // <g>s, so this is >0 only once real cells came through.
     await expect(async () => {
       expect(await svg.locator("rect, path").count()).toBeGreaterThan(0);
     }).toPass();
@@ -239,16 +197,16 @@ const MALICIOUS_XML = wrapMxfile(MALICIOUS_MODEL_XML);
 test("a malicious diagram (HTML-label onerror + mxStylesheet eval payload) runs no script and leaks no request", async ({
   page,
 }) => {
-  await bootInlineView(page, inlineInit(SOURCE));
+  await bootLiveEditor(page, liveInit(LIVE_SOURCE));
   const requests: string[] = [];
   page.on("request", (req) => requests.push(req.url()));
 
-  const placeholder = page.locator(".mc-drawio");
-  const req = await awaitPosted(page, "drawio-read");
+  const placeholder = page.locator(".mdc-drawio");
+  await expect(placeholder).toContainText("Loading diagram");
   await pushToWebview(page, {
     type: "drawio-read-result",
-    requestId: req.requestId,
-    href: req.href,
+    requestId: "drawio-1",
+    href: "diagram.drawio",
     ok: true,
     content: MALICIOUS_XML,
   });

@@ -85,7 +85,6 @@
         "markdownCollab.claudePath",
         "markdownCollab.headlessModel",
         "markdownCollab.plantuml.serverUrl",
-        "markdownCollab.classicReviewView",
         "markdownCollab.collab.userName",
         "markdownCollab.plantuml.format"
       ]
@@ -328,11 +327,6 @@
           "default": true,
           "description": "Open the Markdown Collab view read-only. Switch to Editing in the toolbar above the document to turn editing on for that panel."
         },
-        "markdownCollab.classicReviewView": {
-          "type": "boolean",
-          "default": false,
-          "description": "Use the previous Markdown Collab view (rendered preview without editing). A later release removes this fallback."
-        },
         "markdownCollab.plantuml.serverUrl": {
           "type": "string",
           "default": "https://www.plantuml.com/plantuml",
@@ -387,7 +381,7 @@
         "command": "markdownCollab.nextUnreadFromClaude",
         "key": "ctrl+k ctrl+alt+n",
         "mac": "cmd+k cmd+alt+n",
-        "when": "editorLangId == markdown || activeCustomEditorId == 'markdownCollab.collabEditor' || activeWebviewPanelId == 'markdownCollab.inlineCommentsView'"
+        "when": "editorLangId == markdown || activeCustomEditorId == 'markdownCollab.collabEditor'"
       },
       {
         "command": "markdownCollab.liveEditor.keyHandledInEditor",
@@ -814,12 +808,11 @@
     ]
   },
   "scripts": {
-    "compile": "npm run bundle:skill-cli && npm run build:plugin && tsc -p . && tsc -p tsconfig.webview.json && npm run bundle:extension && npm run bundle:webview && npm run bundle:inline-comments && npm run bundle:pr-review && npm run copy:shared-css && npm run copy:fixtures",
+    "compile": "npm run bundle:skill-cli && npm run build:plugin && tsc -p . && tsc -p tsconfig.webview.json && npm run bundle:extension && npm run bundle:webview && npm run bundle:pr-review && npm run copy:shared-css && npm run copy:fixtures",
     "watch": "tsc -w -p .",
     "bundle:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --external:bufferutil --external:utf-8-validate --outfile=out/extension.js --minify --sourcemap=linked --legal-comments=none",
     "bundle:webview": "esbuild src/webview/client.ts --bundle --format=iife --outfile=out/webview/client.js --target=es2020 --platform=browser --minify --sourcemap=linked --legal-comments=none",
     "bundle:webview:watch": "npm run bundle:webview -- --watch",
-    "bundle:inline-comments": "esbuild src/inlineComments/webview/client.ts --bundle --format=iife --outfile=out/inlineComments/client.js --target=es2020 --platform=browser --minify --sourcemap=linked --legal-comments=none && node -e \"require('fs').copyFileSync('src/inlineComments/webview/client.css','out/inlineComments/client.css')\"",
     "bundle:pr-review": "esbuild src/pr/webview/client.ts --bundle --format=iife --outfile=out/pr/webview/client.js --target=es2020 --platform=browser --minify --sourcemap=linked --legal-comments=none",
     "copy:fixtures": "node -e \"const fs=require('fs'),p=require('path');function cp(s,d){fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync(s,{withFileTypes:true})){const ss=p.join(s,f.name),dd=p.join(d,f.name);if(f.isDirectory())cp(ss,dd);else fs.copyFileSync(ss,dd);}}cp('src/test/integration/fixtures','out/test/integration/fixtures')\"",
     "test": "vitest run",

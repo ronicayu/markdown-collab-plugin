@@ -30,7 +30,7 @@ import { markdownBlocks, type EditorPoint, type MarkdownBlock } from "./sourcePo
 export type { DrawioReadResult };
 import { claudePending, onPendingChanged } from "../claudePendingService";
 import { pendingLabel } from "../inlineComments/claudePending";
-import type { DiffState } from "../inlineComments/inlineCommentsPanel";
+import type { DiffState } from "./diffStripes";
 import { diffProse } from "../uncommitted/proseDiff";
 import { headFileContent, repoRootFor } from "../uncommitted/gitUncommitted";
 import { classifyLink } from "./linkRouter";
@@ -79,14 +79,14 @@ interface InitPayload extends SidebarFields {
    */
   epoch: number;
   /**
-   * Uncommitted-vs-HEAD diff overlay, in the payload shape the inline panel
-   * sends (`DiffState`). Null when the panel wasn't opened in diff mode, or
-   * the file isn't inside a git work tree.
+   * Uncommitted-vs-HEAD diff overlay (`DiffState`, src/collab/diffStripes.ts).
+   * Null when the panel wasn't opened in diff mode, or the file isn't inside
+   * a git work tree.
    */
   diff: DiffState | null;
 }
 
-/** The sidebar's half of `init` and of every `sidecar-changed`: the same fields the review view's panel pushes. */
+/** The sidebar's half of `init` and of every `sidecar-changed`. */
 interface SidebarFields extends SidebarDocumentFields {
   /** Whether Send asks the agent for suggestions instead of edits. */
   suggestMode: boolean;
@@ -1427,8 +1427,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     try {
       const targetUri = vscode.Uri.file(decision.targetFsPath);
       if (decision.targetFsPath.toLowerCase().endsWith(".md")) {
-        // Another document stays in the review view — through the command, which
-        // honours `markdownCollab.classicReviewView`.
+        // Another document stays in the review view — through its command.
         await vscode.commands.executeCommand("markdownCollab.openInlineCommentsView", targetUri);
       } else {
         // vscode.open respects the user's editor associations.

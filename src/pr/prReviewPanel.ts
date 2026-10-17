@@ -139,7 +139,6 @@ export class PrReviewPanel {
         retainContextWhenHidden: true,
         localResourceRoots: [
           vscode.Uri.joinPath(context.extensionUri, "out", "pr", "webview"),
-          vscode.Uri.joinPath(context.extensionUri, "out", "inlineComments"),
           vscode.Uri.joinPath(context.extensionUri, "node_modules", "mermaid", "dist"),
           ...(folder ? [folder.uri] : [vscode.Uri.file(path.dirname(fullPath))]),
         ],

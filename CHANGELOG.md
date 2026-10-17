@@ -2,6 +2,21 @@
 
 ## 0.35.55 — 2026-10-17 (GitHub only)
 
+### Removed: the classic review view
+
+The previous Markdown Collab view (`markdownCollab.classicReviewView`, a
+rendered preview without editing) is gone, as promised when the live editor
+became the review view. Every entry point now opens the live editor; Reading
+mode is the read-only view. The command id behind **Open in Markdown Collab**
+is unchanged, so keybindings keep working. About 6,000 lines, a second
+renderer and its own position mapping, and a webview bundle go with it.
+
+- What the classic view's tests covered that the live editor shares
+  (comment markdown, draw.io, outline, line numbers, finalize, suggestion
+  diffs, `via` markers) now runs against the live editor.
+- The read-only alignment check used the classic view as its reference; its
+  placements are frozen in `fixtures/alignment/placements.json`.
+
 ### Changed: every agent changes a reviewed file with `mdc`, and nothing else
 
 Agents were shown three ways to change a reviewed file: the MCP tools, `mdc`

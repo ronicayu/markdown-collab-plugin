@@ -3,7 +3,7 @@
 //
 // The toggle, the setting, and the badge were all correct; four of the five
 // send paths simply never read the flag, including the "Send to Claude" button
-// sitting next to the toggle in the inline comments panel. Only the command
+// sitting next to the toggle in the review view's panel. Only the command
 // palette passed it, so the feature looked inert from the UI that advertises
 // it. Builder-level tests didn't catch it because the builders were fine — the
 // call sites were the bug, which is what the last test here pins.
@@ -107,13 +107,13 @@ describe("every send path reads the suggest-mode toggle", () => {
   //
   // "extension.ts" until these call sites moved into
   // src/commands/send.ts along with the rest of the send family.
-  const HOSTS = ["commands/send.ts", "inlineComments/inlineCommentsPanel.ts"];
+  const HOSTS = ["commands/send.ts", "collab/sidebarHost.ts"];
 
   it("finds the call sites it means to guard", () => {
     const sites = HOSTS.flatMap(payloadCallSites);
     // 2 in commands/send.ts (per-thread send + copy) + 1 (send all)
-    // + 4 in the panel (send, copy, per-thread send, per-thread copy).
-    expect(sites.length).toBeGreaterThanOrEqual(6);
+    // + 1 in the live editor's sidebar host (copy prompt).
+    expect(sites.length).toBeGreaterThanOrEqual(4);
   });
 
   it("passes a suggestMode option at every call site", () => {

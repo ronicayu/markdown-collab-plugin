@@ -1,0 +1,233 @@
+{
+  "rt-tables": {
+    "probes": [
+      "27 bug: commenting on a ",
+      "also appears in another ",
+      "in another cell used to ",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "eliberately — duplicate ",
+      "cell values must still ",
+      "ill anchor to the exact ",
+      "",
+      "Confirm the ",
+      "Confirm the Package ",
+      "",
+      "Confirm the ",
+      "Confirm the Publish "
+    ],
+    "suggestions": [
+      "the exact cell that was "
+    ]
+  },
+  "rt-frontmatter-lists": {
+    "probes": [
+      "the preview, so anchors ",
+      "n it. Emoji in prose 🚀 ",
+      "Should suggestions be a ",
+      "suggestions be a thread ",
+      "ant or their own marker ",
+      "A ",
+      "A new ",
+      "do we surface a damaged ",
+      "Status-bar ",
+      "Outer ",
+      "Inner ",
+      "Another inner "
+    ],
+    "suggestions": [
+      "ji in prose 🚀 must not ",
+      "How do we surface a ",
+      ""
+    ]
+  },
+  "int-sample": {
+    "probes": [
+      "",
+      "Sample ",
+      "This is a ",
+      "s a fixture used by the ",
+      "ture used by the collab ",
+      "llab editor integration ",
+      "tion test. The body has ",
+      "test. The body has both ",
+      "中文 characters so we can ",
+      "we can verify the seed/",
+      "he seed/round-trip pipe ",
+      "round-trip pipe handles ",
+      "handles UTF-8 correctly ",
+      "tly through the webview ",
+      "",
+      "A GFM ",
+      "",
+      "",
+      "",
+      "A ",
+      "",
+      "",
+      "A strikethrough ",
+      "h word and an autolink: "
+    ],
+    "suggestions": [
+      "ed by the collab editor ",
+      "8 correctly through the ",
+      "A "
+    ]
+  },
+  "embeds": {
+    "probes": [
+      "Every ",
+      "Every asset type the ",
+      "edEmbeds.test.ts to pin ",
+      "test.ts to pin that the ",
+      "pipeline and the shared ",
+      "A sibling ",
+      "A subdirectory ",
+      "A parent-relative ",
+      "A workspace-absolute ",
+      "An explicitly-relative ",
+      "A remote ",
+      "A protocol-relative ",
+      "An ",
+      "An inline data ",
+      "A fenced block ",
+      "An ",
+      "",
+      "PR ",
+      ""
+    ],
+    "suggestions": [
+      "A "
+    ]
+  },
+  "legacy-skill": {
+    "probes": [
+      "",
+      "le most common way this ",
+      "Proposes an ",
+      "edits — text outside an ",
+      "viewer meant). A thread ",
+      "ns and shows as \"broken ",
+      "Initiate a new thread (",
+      "",
+      "eview this doc\", \"leave ",
+      "concern worth a thread. ",
+      "to that file yourself, ",
+      "section is in the wrong ",
+      "c's Commands table says ",
+      "e claim is problematic (",
+      "Delta ",
+      "command builds one pass ",
+      "e doc end to end first. ",
+      "and re-anchors threads ",
+      "ring rules as opening a ",
+      "or any reason, not only ",
+      "nly exist while that VS ",
+      "; new_string = the same ",
+      "d--> (or append a fresh "
+    ],
+    "suggestions": [
+      "ext outside an anchored ",
+      "s in the wrong place\"), ",
+      "y reason, not only when "
+    ]
+  },
+  "README": {
+    "probes": [
+      "",
+      "the file overnight and ",
+      "with a threads sidebar, ",
+      "mdc helper on Claude's ",
+      "Want to try it ",
+      "ith what it changed. In ",
+      "r drafts, and post them ",
+      "he sidebar shows \"N new ",
+      "concern stays resolved. ",
+      "ource line numbers, and ",
+      "row. The diff is prose ",
+      "The Send to ",
+      "Headless ",
+      "n stops itself after 30 ",
+      "",
+      "open threads without a ",
+      "",
+      "",
+      "Start a ",
+      "Open PR ",
+      "The ",
+      "Suggest ",
+      "the file. All of it is ",
+      "h Claude isn't offered. "
+    ],
+    "suggestions": [
+      "Want to try it with no ",
+      "Headless runs are ",
+      "The scratch "
+    ]
+  },
+  "10x-plan-6": {
+    "probes": [
+      "Round 6: ",
+      "The only ",
+      "Review state survives a ",
+      "t do lead to a document ",
+      "e editor into one view, ",
+      "hero path is terminal. \"",
+      "a colleague's Markdown ",
+      "lace description: keep \"",
+      "is on PATH only inside ",
+      "P2 — Suggest mode that ",
+      "Keep the paragraph view ",
+      "Then turn suggest ",
+      "ith its passage, so the ",
+      "d differ in whether the ",
+      "e outline and find bar, ",
+      "iew's features onto the ",
+      "default, text editor in ",
+      "ges if the toolbar text ",
+      "non-Claude asks the MCP ",
+      "ti-root .code-workspace ",
+      "ets, tight→loose lists, ",
+      "omment (inlineBridge.ts ",
+      "Should the "
+    ],
+    "suggestions": [
+      "one view, read-only by ",
+      "turn suggest mode on by ",
+      "t .code-workspace isn't "
+    ]
+  },
+  "ux-review": {
+    "probes": [
+      "Product and UX ",
+      "ive actions are honest (",
+      "of them starting with \"",
+      "agent reading from disk ",
+      "0.6 Reply to a resolved ",
+      "P1 — One ",
+      "t it did. The other two ",
+      "Code for every agent. [",
+      "se that sentence in the ",
+      "Review This Doc, Review ",
+      "4, fold into Connect an ",
+      "surface. Webview title \"",
+      "olbar has no hierarchy. ",
+      "n, a narrow split keeps ",
+      "n/p/r/e/o are a keydown ",
+      "tate. Seven commands, a ",
+      "The integrity guard ",
+      "",
+      "threads? Thirty threads ",
+      "t still be able to edit ",
+      "4.1, 4.2 — reversed. "
+    ],
+    "suggestions": [
+      "into Connect an Agent → ",
+      ""
+    ]
+  }
+}
