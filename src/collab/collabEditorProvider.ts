@@ -45,7 +45,6 @@ import {
   handleSidebarMessage,
   isSidebarMessage,
   postSkillStatus,
-  readSuggestMode,
   type SidebarHostContext,
 } from "./sidebarHost";
 import { sidebarDocumentFields, type SidebarDocumentFields } from "./sidebarState";
@@ -87,10 +86,7 @@ interface InitPayload extends SidebarFields {
 }
 
 /** The sidebar's half of `init` and of every `sidecar-changed`. */
-interface SidebarFields extends SidebarDocumentFields {
-  /** Whether Send asks the agent for suggestions instead of edits. */
-  suggestMode: boolean;
-}
+type SidebarFields = SidebarDocumentFields;
 
 const EDIT_LOST = "Markdown Collab couldn't save your last edit — the view was reloaded from the file.";
 
@@ -884,10 +880,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     panelsForDoc.add(livePanel);
     openPanels.set(document.uri.toString(), panelsForDoc);
 
-    const sidebarFields = (source: string): SidebarFields => ({
-      ...sidebarDocumentFields(source),
-      suggestMode: readSuggestMode(),
-    });
+    const sidebarFields = (source: string): SidebarFields => sidebarDocumentFields(source);
 
     const pushComments = (): void => {
       const source = document.getText();
@@ -1208,8 +1201,6 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
 
     const configSub = vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("markdownCollab.showLineNumbers")) pushLineMap();
-      // The sidebar's suggest-mode switch follows the setting wherever it changed.
-      if (e.affectsConfiguration("markdownCollab.proposeEditsAsSuggestions")) pushComments();
       // `markdownCollab.liveEditor.readOnly` isn't followed here: it only seeds
       // a newly opened panel, and an open one keeps the mode its switch chose.
     });

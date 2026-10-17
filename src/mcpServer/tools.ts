@@ -57,14 +57,6 @@ export interface ToolDeps {
   /** Fired when a call is refused. The result still goes back to Claude. */
   onRefusal?(event: { tool: string; code: string; message: string }): void;
   now?(): string;
-  /**
-   * Whether the human's `markdownCollab.proposeEditsAsSuggestions` choice is on
-   * for this document, keyed by the same document key `resolveFile` returned.
-   * `mc_edit`/`mc_rewrite` refuse outright when it is. Optional so a caller with
-   * no VS Code window to ask (a test harness, the `mdc` CLI's local-write path)
-   * keeps allowing direct edits.
-   */
-  suggestModeFor?(file: string): boolean;
 }
 
 const fallbackTails = new Map<string, Promise<void>>();
@@ -106,21 +98,6 @@ export class ToolRefusal extends Error {
   ) {
     super(message);
     this.name = "ToolRefusal";
-  }
-}
-
-/**
- * `mc_edit` and `mc_rewrite` refuse outright when suggest mode is on for the
- * file, writing nothing — a request the agent can ignore is not enforcement. The
- * forwarded `mdc edit`/`mdc rewrite` inherit the refusal because they run this
- * same `callTool`.
- */
-function refuseIfSuggestMode(deps: ToolDeps, key: string): void {
-  if (deps.suggestModeFor?.(key)) {
-    throw new ToolRefusal(
-      "suggest_mode_on",
-      "Suggest mode is on for this file — propose the change with mc_suggest instead",
-    );
   }
 }
 
@@ -210,8 +187,8 @@ const BASE_TOOLS: readonly McpTool[] = [
     title: "Rewrite an anchored span",
     description:
       "Replace the text a thread is anchored to, keeping its markers intact. " +
-      "Use this to apply a change the human asked for in that thread. Refused with suggest_mode_on when " +
-      "suggest mode is on for the file — use mc_suggest instead.",
+      "Use this to apply a change the human asked for in that thread. When the request asks for suggestions, " +
+      "use mc_suggest instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -231,7 +208,7 @@ const BASE_TOOLS: readonly McpTool[] = [
       "passage and its close marker: the thread is left unanchored, by design. Anything else that touches a " +
       "review marker (splits one, or holds only one of a pair) or the threads region is refused with " +
       "not_editable. Ambiguous text (appears more than once) is refused unless occurrence (1-based) is given. " +
-      "Refused with suggest_mode_on when suggest mode is on for the file — use mc_suggest instead.",
+      "When the request asks for suggestions, use mc_suggest instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -510,10 +487,8 @@ export async function callTool(
           "open",
         );
       case "mc_rewrite":
-        refuseIfSuggestMode(deps, key);
         return await write((source) => opRewrite(source, str(args, "threadId"), str(args, "with")), "rewrite");
       case "mc_edit":
-        refuseIfSuggestMode(deps, key);
         return await write(
           (source) => opEdit(source, str(args, "old"), strAllowEmpty(args, "new"), parseOccurrence(args.occurrence)),
           "edit",

@@ -116,14 +116,11 @@ const SHELL = `<header id="threads-header">
 </header>
 <div id="threads-list" role="feed"><p class="mc-loading">Loading…</p></div>
 <footer class="mc-sidebar-footer" hidden>
-  <label class="mc-suggest-row" title="When on, Send asks the agent to propose edits as suggestions you accept or reject.">
-    <button id="suggest-mode-toggle" type="button" class="mc-switch" role="switch" aria-checked="false" aria-labelledby="suggest-mode-label"></button>
-    <span id="suggest-mode-label">Ask for suggestions instead of edits</span>
-  </label>
   <div class="mc-send-row">
   <button id="send-to-claude" class="mc-btn mc-btn--primary" title="Send the prompt to your agent's terminal (or your configured send mode).">Send</button>
   <button id="copy-prompt" type="button" class="mc-icon-btn" aria-label="Copy prompt" title="Copy the prompt to your clipboard."><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg></button>
   </div>
+  <button id="send-as-suggestions" type="button" class="mc-btn mc-btn--secondary" title="Send, asking the agent to propose each edit as a suggestion you accept or reject.">Send as suggestions</button>
 </footer>`;
 
 /**
@@ -147,9 +144,8 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     threadsList: byId<HTMLElement>("threads-list"),
     filterRadios: root.querySelectorAll<HTMLInputElement>('input[name="filter"]'),
     sendToClaude: byId<HTMLButtonElement>("send-to-claude"),
-    suggestRow: root.querySelector<HTMLElement>(".mc-suggest-row")!,
     copyPrompt: byId<HTMLButtonElement>("copy-prompt"),
-    suggestModeToggle: byId<HTMLButtonElement>("suggest-mode-toggle"),
+    sendAsSuggestions: byId<HTMLButtonElement>("send-as-suggestions"),
     removeResolved: byId<HTMLButtonElement>("remove-resolved"),
     finalizeDoc: byId<HTMLButtonElement>("finalize-doc"),
     skillWarning: byId<HTMLElement>("skill-warning"),
@@ -264,14 +260,9 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
   // Every item in the "…" menu closes it after each click: even the
   // menuitemcheckbox toggle (the keys hint) is one action per click here, not
   // a multi-select list to leave open.
-  // The suggest-mode switch sits in the footer in plain sight — it was in a
-  // menu behind Send's chevron, where people didn't find it. It doesn't flip
-  // itself: the setting is the host's, and it only reflects what comes back —
-  // anything else would show "on" after a write that failed. Its label is a
-  // <label>, so clicking the words toggles it too.
-  dom.suggestModeToggle.addEventListener("click", () => {
-    host.post({ type: "toggle-suggest-mode" });
-  });
+  // Edits or suggestions is chosen per send, not a mode: a mode was hidden
+  // state that silently changed what the agent did on later sends.
+  dom.sendAsSuggestions.addEventListener("click", () => host.post({ type: "send-to-claude", suggest: true }));
   // The host owns the confirm and the write for both bulk deletes: a webview
   // can't show a modal, and a two-click arm is too quiet for something that
   // removes many threads at once.
@@ -301,13 +292,9 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     if (nextId) focusThread(nextId);
   });
 
-  function updateSwitches(state: SidebarState): void {
-    dom.suggestModeToggle.setAttribute("aria-checked", String(state.suggestMode));
-  }
-
   /**
    * Put `agentName` wherever there's no per-thread agent to name instead: the
-   * Send button's title and the suggest-mode item's title. The Send label
+   * two Send buttons' titles. The Send label
    * itself names no agent: `agentName` is whoever wrote here last, which is not
    * necessarily who this send goes to. Until an agent has written here there
    * is nobody to name, so both titles read generic.
@@ -316,9 +303,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     dom.sendToClaude.title = agentName
       ? `Send the prompt to a running ${agentName} terminal (or your configured send mode).`
       : "Send the prompt to your agent's terminal (or your configured send mode).";
-    const suggestTitle = `When on, Send asks ${agentName ?? "the agent"} to propose edits as suggestions you accept or reject.`;
-    dom.suggestModeToggle.title = suggestTitle;
-    dom.suggestRow.title = suggestTitle;
+    dom.sendAsSuggestions.title = `Send, asking ${agentName ?? "the agent"} to propose each edit as a suggestion you accept or reject.`;
   }
 
   /**
@@ -330,8 +315,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     const openCount = state.threads.filter((t) => t.status === "open").length;
     dom.footer.hidden = openCount === 0;
     const what = openCount === 1 ? "1 comment" : `${openCount} comments`;
-    // The label says what the click does, so suggest mode can't be on silently.
-    dom.sendToClaude.textContent = `Send ${what}${state.suggestMode ? " as suggestions" : ""}`;
+    dom.sendToClaude.textContent = `Send ${what}`;
   }
 
   function setSkillStatus(status: SkillStatus | undefined): void {
@@ -569,7 +553,6 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
     pendingThreadIds = new Set(state.pendingThreadIds);
     agentName = state.agentName || undefined;
     pendingLabelText = state.pendingLabel ?? (agentName ? `${agentName} is working…` : WAITING_FOR_AGENT);
-    updateSwitches(state);
     updateAgentUi();
     updateFooter(state);
     renderThreads(state);
@@ -885,6 +868,10 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
       host.post({ type: "open-in-editor", threadId: t.id });
       menu.closeOpenMenu(false);
     });
+    const suggestThreadItem = menu.buildMenuItem("Send as suggestions", () => {
+      host.post({ type: "send-to-claude-comment", threadId: t.id, suggest: true });
+      menu.closeOpenMenu(false);
+    });
     const copyThreadItem = menu.buildMenuItem("Copy prompt", () => {
       host.post({ type: "copy-claude-comment", threadId: t.id });
       menu.closeOpenMenu(false);
@@ -909,7 +896,7 @@ export function createThreadSidebar(host: ThreadSidebarHost): ThreadSidebarHandl
       },
       { danger: true },
     );
-    menuPanel.append(openInEditorItem, copyThreadItem, deleteItem);
+    menuPanel.append(suggestThreadItem, openInEditorItem, copyThreadItem, deleteItem);
     menuWrap.append(menuBtn, menuPanel);
 
     actions.append(replyToggleBtn, resolveBtn, sendBtn, menuWrap);

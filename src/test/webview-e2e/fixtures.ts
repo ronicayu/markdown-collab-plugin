@@ -97,7 +97,6 @@ export function editAnchoredText(source: string, threadId: string, next: string)
 export interface LiveSidebarOpts {
   pendingThreadIds?: string[];
   pendingLabel?: string;
-  suggestMode?: boolean;
   /** Overrides the name derived from the document's agent comments. */
   agentName?: string;
 }
@@ -115,7 +114,6 @@ export function liveSidecar(source: string, opts: LiveSidebarOpts = {}): Record<
     ...(opts.pendingLabel ? { pendingLabel: opts.pendingLabel } : {}),
     threads: doc.threads,
     agentName: opts.agentName ?? doc.agentName,
-    suggestMode: opts.suggestMode ?? false,
   };
 }
 

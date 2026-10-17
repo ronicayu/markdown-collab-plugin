@@ -2,6 +2,22 @@
 
 ## 0.35.55 — 2026-10-17 (GitHub only)
 
+### Changed: suggestions are chosen per send, not a mode
+
+Suggest mode was a setting (`markdownCollab.proposeEditsAsSuggestions`). It
+stayed on for later sends, the agent's tools and the Claude Code hook refused
+direct edits while it was on, and the switch for it was easy to miss. Now you
+choose for each send:
+
+- **Send as suggestions** sits under the Send button. A thread card has it in
+  its **⋯** menu, and the palette has **Send Unresolved Comments as
+  Suggestions**. That send's prompt asks the agent to propose each change for
+  you to accept or reject. Plain **Send** asks for edits.
+- The setting and **Toggle Suggest Mode** are gone. A value left in your
+  settings is ignored.
+- The review tools and the plugin's guard hook no longer look at it. The guard
+  is only about comment markers again.
+
 ### Removed: the classic review view
 
 The previous Markdown Collab view (`markdownCollab.classicReviewView`, a

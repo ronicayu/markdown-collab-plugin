@@ -176,28 +176,3 @@ describe("what the refusal says", () => {
   });
 });
 
-describe("suggest mode on for the workspace", () => {
-  const settings = { "/proj/.vscode/settings.json": '{ "markdownCollab.proposeEditsAsSuggestions": true }' };
-
-  it("refuses even a prose-only edit of a reviewed file, pointing at mdc suggest", () => {
-    const r = runGuardHook(edit("A second paragraph.", "Edited."), io({ [FILE]: reviewed().source, ...settings }));
-    expect(r.exitCode).toBe(2);
-    expect(r.stderr).toContain(`mdc suggest ${FILE}`);
-  });
-
-  it("leaves a file with no review data alone", () => {
-    expect(runGuardHook(edit("A second paragraph.", "Edited."), io({ [FILE]: BASE, ...settings })).exitCode).toBe(0);
-  });
-
-  it("names the setting, for a person who wants the edit made directly", () => {
-    const r = runGuardHook(edit("A second paragraph.", "Edited."), io({ [FILE]: reviewed().source, ...settings }));
-    expect(r.stderr).toContain("markdownCollab.proposeEditsAsSuggestions");
-  });
-
-  it("still lets a repair of an already-broken file through", () => {
-    const { source, id } = reviewed();
-    const broken = source.replace(`<!--mc:/a:${id}-->`, "");
-    const r = runGuardHook(edit("backoff with", `backoff<!--mc:/a:${id}--> with`), io({ [FILE]: broken, ...settings }));
-    expect(r.exitCode).toBe(0);
-  });
-});

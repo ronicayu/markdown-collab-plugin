@@ -13,7 +13,7 @@ Click **Ask agent to review**. The agent reads your doc and leaves a comment per
 
 - **Comments stored in the file.** Each thread is an HTML comment wrapped around the exact passage it points at, so it's invisible on GitHub and in every preview. The state stays in the file overnight and across sessions — strip it with **Remove All Review Data** before you commit; staging a file that still carries threads reminds you once. No sidecar, no database.
 - **Your agent as reviewer or as writer.** Ask it to review a document, a folder, or only what changed since its last pass. Or leave comments yourself and send them; the agent edits the document and replies in each thread.
-- **Suggestions you can undo.** In suggest mode, the agent's edits arrive as tracked changes. Accept applies one, Reject keeps your wording, and both are ordinary editor edits, so Cmd+Z takes them back.
+- **Suggestions you can undo.** Send as suggestions, and the agent's edits arrive as tracked changes. Accept applies one, Reject keeps your wording, and both are ordinary editor edits, so Cmd+Z takes them back.
 - **The Markdown Collab view, and the text editor too.** The rendered document with a threads sidebar — read it, or switch to Editing and edit in place — plus dimmed markers, hovers, and a CodeLens in the plain text editor, so a reviewed file never looks corrupted.
 - **Any agent.** Claude Code gets a plugin; Cursor, Windsurf, Codex, Copilot and the rest get the same workflow from `~/.agents/skills` and `AGENTS.md`. Every agent changes a reviewed file with `mdc`, one command that keeps the comment markers intact and makes its edits through this window, so you can undo them. Comments say which agent wrote them.
 
@@ -37,13 +37,13 @@ Without the extension, the Claude Code plugin is also available on its own: `cla
 
 1. **Comment.** Select a passage in the rendered document and write a note. The thread is written into the file, around the exact text it points at — and nothing else in the file changes.
 2. **Send.** One button. Your agent gets your unresolved threads and the document.
-3. **The agent works.** It edits the doc and replies in each thread with what it changed. In suggest mode it proposes changes instead. The thread card shows what the agent is doing while it does it.
+3. **The agent works.** It edits the doc and replies in each thread with what it changed. Sent as suggestions, it proposes changes instead. The thread card shows what the agent is doing while it does it.
 4. **Accept or reject.** A suggestion is a tracked change. Accept applies it; Reject keeps your wording; **Accept all** takes the whole batch after a second click.
 5. **Resolve** when you're satisfied, or reply and go round again.
 
 ![A pending suggestion accepted with a click, then a thread resolved](media/gifs/review-loop.gif)
 
-**Suggest mode** is **Ask for suggestions instead of edits** in the menu beside the Send button — the button then reads *Send 2 comments as suggestions* — or `markdownCollab.proposeEditsAsSuggestions`. Each thread card has its own **Send** button, and it works the same way as sending them all. **Copy prompt** is the copy button beside the Send bar.
+**Send as suggestions**, under the Send button, asks the agent to propose each change for you to accept or reject instead of making it — for that send only. Each thread card has its own **Send** button, and **Send as suggestions** in its **⋯** menu. **Copy prompt** is the copy button beside the Send bar.
 
 ## Reviewing a colleague's PR
 
@@ -142,7 +142,7 @@ The single keys do nothing while you're typing. There's no key for accepting a s
 | Ask Agent to Review This Doc / These Docs | An agent as reviewer, for one file or a folder. |
 | Ask Agent to Review What Changed | Review only what moved since the last pass. |
 | Next Unread from Agent | Jump to the next thread an agent opened that you haven't answered, across every file. |
-| Toggle Suggest Mode | Ask the agent to propose edits instead of applying them. |
+| Send Unresolved Comments as Suggestions | The same send, asking the agent to propose each edit instead of making it. |
 | Reset Send Mode | Forget the remembered send mode; the next Send asks again. |
 | Edit Review Conventions | Create or open `.markdown-collab/conventions.md`. |
 | Review Session Summary | A digest of the thread state, ready to paste. |
@@ -164,7 +164,6 @@ A few commands still exist but are hidden from the palette, now that Connect an 
 | Setting | Default | Does |
 |---|---|---|
 | `markdownCollab.sendMode` | `ask` | `ask`, `headless`, `terminal`, or `clipboard`. |
-| `markdownCollab.proposeEditsAsSuggestions` | `false` | Suggest mode: the agent proposes edits instead of applying them. |
 | `markdownCollab.claudePath` | `""` | Path to `claude` if it isn't on the PATH your editor sees. |
 | `markdownCollab.headlessModel` | `""` | Model for headless runs, such as `sonnet` or `opus`. Empty uses Claude Code's default. |
 | `markdownCollab.showLineNumbers` | `false` | Source line numbers beside each block in the Markdown Collab view. They're lines of the `.md` file, frontmatter and threads block included, so they match Go to Line. |

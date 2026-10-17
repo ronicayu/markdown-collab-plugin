@@ -21,10 +21,6 @@
 // - An edit it can't simulate (its old_string isn't in the file) passes: the
 //   Edit tool refuses that itself.
 //
-// While suggest mode is on for the workspace, every direct edit of such a file
-// is refused: the change belongs in `mdc suggest`, and the message names the
-// setting for a person who does want the direct edit.
-//
 // Not covered: a write through Bash (`sed -i`, `cat >`) — telling one apart
 // from a read means parsing shell, and the prompt and the PostToolUse check
 // are the line there.
@@ -34,7 +30,7 @@
 import * as path from "node:path";
 import { opCheck } from "../inlineComments/docOps";
 import { buildCodeMask } from "../inlineComments/format";
-import { isPlainObject, suggestModeOnDisk, type HookIo, type HookOutcome } from "./checkHook";
+import { isPlainObject, type HookIo, type HookOutcome } from "./checkHook";
 
 const PASS: HookOutcome = { exitCode: 0, stderr: "" };
 
@@ -74,10 +70,8 @@ function decide(stdinText: string, io: HookIo): HookOutcome {
   if (next === null || next === current) return PASS;
 
   // A repair of a file that's already broken goes through whatever it touches
-  // (the check hook asked for it), suggest mode or not.
+  // (the check hook asked for it).
   if (opCheck(current).issues.some((issue) => issue.severity === "error")) return PASS;
-
-  if (suggestModeOnDisk(hookCwd, io)) return { exitCode: 2, stderr: suggestModeRefusal(filePath) };
 
   const after = reviewData(next);
   if (before.length === after.length && before.every((token, i) => token === after[i])) return PASS;
@@ -149,13 +143,4 @@ function refusal(filePath: string, replaceAllHitThreadText: boolean): string {
     "",
   );
   return lines.join("\n");
-}
-
-function suggestModeRefusal(filePath: string): string {
-  return (
-    `Markdown Collab: not applied — suggest mode is on for this workspace, so ${filePath} isn't edited directly. ` +
-    `Propose the change with mdc suggest ${filePath} --quote "…" --with "…" --note "…" (or mc_suggest). ` +
-    "If the human wants this edit made directly, they can turn suggest mode off (the switch above Send, or " +
-    "markdownCollab.proposeEditsAsSuggestions in .vscode/settings.json).\n"
-  );
 }

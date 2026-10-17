@@ -1,5 +1,5 @@
 // The redesigned sidebar chrome: the
-// document toolbar's comments toggle, the footer and its suggest-mode switch,
+// document toolbar's comments toggle, the footer and its two sends,
 // the filter tabs' own counts, and the header-height budget that keeps the
 // clutter this redesign removed from creeping back.
 //
@@ -55,31 +55,28 @@ test.describe("sidebar footer", () => {
   });
 });
 
-test.describe("the footer's suggest-mode switch", () => {
+test.describe("the footer's two sends", () => {
   test.beforeEach(async ({ page }) => {
     const fixture = reviewFixture();
     await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
   });
 
-  // It used to be the only item in a menu behind Send's chevron, and people
-  // didn't find it there.
-  test("is in plain sight above Send, labelled, with no menu to open", async ({ page }) => {
-    const toggle = page.locator("#suggest-mode-toggle");
-    await expect(toggle).toBeVisible();
-    await expect(toggle).toHaveAttribute("role", "switch");
-    await expect(toggle).toHaveAttribute("aria-checked", "false");
-    await expect(page.getByRole("switch", { name: "Ask for suggestions instead of edits" })).toBeVisible();
-    await expect(page.locator("#send-options-btn, #send-options-menu")).toHaveCount(0);
-    const [sw, send] = await Promise.all([toggle.boundingBox(), page.locator("#send-to-claude").boundingBox()]);
-    expect(sw!.y + sw!.height).toBeLessThanOrEqual(send!.y);
-  });
+  // Edits or suggestions is chosen per send, in plain sight: no switch, no
+  // mode remembered for later sends, no menu to open.
+  test("Send as suggestions sits under Send, and each click posts its own choice", async ({ page }) => {
+    const send = page.locator("#send-to-claude");
+    const asSuggestions = page.getByRole("button", { name: "Send as suggestions" });
+    await expect(send).toHaveText("Send 2 comments");
+    await expect(asSuggestions).toBeVisible();
+    await expect(page.locator("#suggest-mode-toggle, #send-options-btn")).toHaveCount(0);
+    const [a, b] = await Promise.all([send.boundingBox(), asSuggestions.boundingBox()]);
+    expect(b!.y).toBeGreaterThanOrEqual(a!.y + a!.height);
 
-  test("clicking the switch, or its words, posts toggle-suggest-mode once", async ({ page }) => {
-    await page.locator("#suggest-mode-toggle").click();
-    expect(await posted(page)).toEqual([{ type: "toggle-suggest-mode" }]);
+    await asSuggestions.click();
+    expect(await posted(page)).toEqual([{ type: "send-to-claude", suggest: true }]);
     await clearPosted(page);
-    await page.locator("#suggest-mode-label").click();
-    expect(await posted(page)).toEqual([{ type: "toggle-suggest-mode" }]);
+    await send.click();
+    expect(await posted(page)).toEqual([{ type: "send-to-claude" }]);
   });
 
   test("the footer's copy button: labelled, visible, one click posts copy-prompt", async ({ page }) => {
@@ -198,24 +195,13 @@ test.describe("header height budget", () => {
   });
 });
 
-test.describe("suggest mode shows in the Send label", () => {
-  test("with the menu closed, the label says the send asks for suggestions", async ({ page }) => {
-    const fixture = reviewFixture();
-    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
-    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments");
-
-    await pushToWebview(page, { type: "sidecar-changed", ...liveSidecar(fixture.source, { suggestMode: true }) });
-    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments as suggestions");
-    await expect(page.locator("#suggest-mode-toggle")).toHaveAttribute("aria-checked", "true");
-  });
-
+test.describe("the footer's layout", () => {
   test("Send and the copy button share one row and height, Send truncating rather than wrapping", async ({
     page,
   }) => {
     const fixture = reviewFixture();
     await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
-    await pushToWebview(page, { type: "sidecar-changed", ...liveSidecar(fixture.source, { suggestMode: true }) });
-    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments as suggestions");
+    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments");
 
     const [send, copy, footer] = await Promise.all([
       page.locator("#send-to-claude").boundingBox(),

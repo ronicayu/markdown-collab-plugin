@@ -111,9 +111,10 @@ async function invokeSendAllToClaude(
   log: Logger,
   tracker: TerminalTracker,
   workspaceState: vscode.Memento,
+  suggest: boolean,
 ): Promise<DispatchOutcome> {
   const folder = folderForDocument(doc.uri);
-  const inlinePayload = buildInlinePayload(doc, { suggestMode: isSuggestMode() });
+  const inlinePayload = buildInlinePayload(doc, { suggestMode: suggest });
   if (!inlinePayload) {
     void vscode.window.showInformationMessage(
       "No unresolved comments on this file.",
@@ -153,10 +154,14 @@ async function markPayloadPending(
   }
 }
 
-function isSuggestMode(): boolean {
-  return vscode.workspace
-    .getConfiguration("markdownCollab")
-    .get<boolean>("proposeEditsAsSuggestions", false);
+/**
+ * Whether a send asks for suggestions — chosen per send ("Send as
+ * suggestions"), carried as `{ suggest: true }` in the argument after the
+ * file. Menus pass their own second argument there (the explorer selection),
+ * so only that exact shape counts.
+ */
+function suggestFrom(arg: unknown): boolean {
+  return !!arg && typeof arg === "object" && !Array.isArray(arg) && (arg as { suggest?: unknown }).suggest === true;
 }
 
 type DispatchIntent =
@@ -427,22 +432,9 @@ async function pickSendMode(
 export function registerSendCommands(deps: CommandDeps): void {
   const { context, sendLog, terminalTracker } = deps;
   context.subscriptions.push(
-    vscode.commands.registerCommand("markdownCollab.toggleSuggestMode", async () => {
-      const next = !isSuggestMode();
-      // Workspace target so the choice is remembered per workspace, like sendMode;
-      // a window with no folder has no workspace settings to write.
-      const target = vscode.workspace.workspaceFolders?.length
-        ? vscode.ConfigurationTarget.Workspace
-        : vscode.ConfigurationTarget.Global;
-      await vscode.workspace
-        .getConfiguration("markdownCollab")
-        .update("proposeEditsAsSuggestions", next, target);
-      void vscode.window.showInformationMessage(
-        next
-          ? "Suggest mode ON — your agent will propose edits for you to accept/reject."
-          : "Suggest mode OFF — your agent applies edits directly.",
-      );
-    }),
+    vscode.commands.registerCommand("markdownCollab.sendAllAsSuggestions", (arg?: vscode.Uri) =>
+      vscode.commands.executeCommand<DispatchOutcome>("markdownCollab.sendAllToClaude", arg, { suggest: true }),
+    ),
     vscode.commands.registerCommand("markdownCollab.copyClaudePrompt", async () => {
       await invokeCopyClaudePrompt();
     }),
@@ -455,7 +447,7 @@ export function registerSendCommands(deps: CommandDeps): void {
     ),
     vscode.commands.registerCommand(
       "markdownCollab.sendAllToClaude",
-      async (arg?: vscode.Uri): Promise<DispatchOutcome> => {
+      async (arg?: vscode.Uri, opts?: unknown): Promise<DispatchOutcome> => {
         const uri = arg instanceof vscode.Uri ? arg : activeMarkdownUri();
         if (!uri) {
           void vscode.window.showWarningMessage(
@@ -477,6 +469,7 @@ export function registerSendCommands(deps: CommandDeps): void {
           sendLog,
           terminalTracker,
           context.workspaceState,
+          suggestFrom(opts),
         );
       },
     ),
@@ -485,7 +478,7 @@ export function registerSendCommands(deps: CommandDeps): void {
     // command palette.
     vscode.commands.registerCommand(
       "markdownCollab.sendThreadToClaude",
-      async (uri?: vscode.Uri, threadId?: string): Promise<DispatchOutcome> => {
+      async (uri?: vscode.Uri, threadId?: string, opts?: unknown): Promise<DispatchOutcome> => {
         if (!(uri instanceof vscode.Uri) || !threadId) return "cancelled";
         let doc: vscode.TextDocument;
         try {
@@ -498,7 +491,7 @@ export function registerSendCommands(deps: CommandDeps): void {
         }
         const folder = folderForDocument(doc.uri);
         const payload = buildSingleThreadPayload(doc, threadId, {
-          suggestMode: isSuggestMode(),
+          suggestMode: suggestFrom(opts),
         });
         if (!payload) {
           void vscode.window.showInformationMessage(
@@ -528,9 +521,7 @@ export function registerSendCommands(deps: CommandDeps): void {
           );
           return;
         }
-        const payload = buildSingleThreadPayload(doc, threadId, {
-          suggestMode: isSuggestMode(),
-        });
+        const payload = buildSingleThreadPayload(doc, threadId);
         if (!payload) {
           void vscode.window.showInformationMessage(
             "Thread not found or already resolved.",

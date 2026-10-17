@@ -100,7 +100,6 @@ interface SuggestionSummary {
 interface SidebarPush {
   /** Every thread with its full comment list; absent, the cards are built from `comments`. */
   threads?: SidebarThread[];
-  suggestMode?: boolean;
   agentName?: string;
 }
 
@@ -304,7 +303,6 @@ const sidebarState: {
 const sidebarPush: Omit<SidebarState, "readOnly"> = {
   threads: [],
   suggestions: [],
-  suggestMode: false,
   pendingThreadIds: [],
 };
 
@@ -1069,7 +1067,6 @@ function takeSidebarPush(
     note: s.note,
     anchored: s.anchorOrdinal >= 0,
   }));
-  sidebarPush.suggestMode = msg.suggestMode ?? false;
   sidebarPush.agentName = msg.agentName;
   sidebarPush.pendingThreadIds = msg.pendingThreadIds ?? [];
   sidebarPush.pendingLabel = msg.pendingLabel;

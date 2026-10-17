@@ -53,21 +53,21 @@ test.describe("with the review fixture", () => {
     expect(await awaitPosted(page, "send-to-claude")).toEqual({ type: "send-to-claude" });
   });
 
-  test("suggest mode posts toggle-suggest-mode, follows the host's answer, and shows in the Send label", async ({ page }) => {
-    const toggle = page.locator("#suggest-mode-toggle");
-    await expect(toggle).toHaveAttribute("role", "switch");
-    await expect(toggle).toHaveAccessibleName("Ask for suggestions instead of edits");
-    await expect(toggle).toHaveAttribute("aria-checked", "false");
-    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments");
+  test("Send as suggestions posts send-to-claude asking for suggestions; a card's menu does the same for one thread", async ({
+    page,
+  }) => {
+    await page.getByRole("button", { name: "Send as suggestions" }).click();
+    expect(await awaitPosted(page, "send-to-claude")).toEqual({ type: "send-to-claude", suggest: true });
+    await clearPosted(page);
 
-    await toggle.click();
-    expect(await awaitPosted(page, "toggle-suggest-mode")).toEqual({ type: "toggle-suggest-mode" });
-    // The setting is the host's: the switch only shows what comes back.
-    await expect(toggle).toHaveAttribute("aria-checked", "false");
-
-    await pushSidecar(page, fixture.source, { suggestMode: true });
-    await expect(toggle).toHaveAttribute("aria-checked", "true");
-    await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments as suggestions");
+    const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
+    await card.locator(".thread-menu-btn").click();
+    await card.getByRole("menuitem", { name: "Send as suggestions" }).click();
+    expect(await awaitPosted(page, "send-to-claude-comment")).toEqual({
+      type: "send-to-claude-comment",
+      threadId: fixture.openThreadId,
+      suggest: true,
+    });
   });
 
   test("replying in a thread posts the reply with its thread id and body", async ({ page }) => {
@@ -140,7 +140,7 @@ test.describe("with the review fixture", () => {
     await expect(resolvedCard.locator(".thread-actions")).toContainText("Reopen");
   });
 
-  test("the per-card \"…\" menu holds Open in editor, Copy prompt, and Delete", async ({ page }) => {
+  test("the per-card \"…\" menu holds Send as suggestions, Open in editor, Copy prompt, and Delete", async ({ page }) => {
     const card = page.locator(`.thread-card[data-thread="${fixture.openThreadId}"]`);
     const menuBtn = card.locator(".thread-menu-btn");
     await expect(menuBtn).toHaveAttribute("aria-haspopup", "menu");
@@ -151,7 +151,7 @@ test.describe("with the review fixture", () => {
     await menuBtn.click();
     await expect(menu).toBeVisible();
     await expect(menuBtn).toHaveAttribute("aria-expanded", "true");
-    await expect(menu.getByRole("menuitem")).toHaveText(["Open in editor", "Copy prompt", "Delete"]);
+    await expect(menu.getByRole("menuitem")).toHaveText(["Send as suggestions", "Open in editor", "Copy prompt", "Delete"]);
   });
 
   test("Escape closes a card's menu and returns focus to its \"…\" button", async ({ page }) => {

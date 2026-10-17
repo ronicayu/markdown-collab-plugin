@@ -1229,7 +1229,6 @@ import * as path from "node:path";
 var SILENT_OK = { exitCode: 0, stderr: "" };
 var THREADS_BEGIN_MARKER = "<!--mc:threads:begin-->";
 var MAX_ISSUE_LINES = 10;
-var SUGGEST_MODE_SETTING = "markdownCollab.proposeEditsAsSuggestions";
 function runCheckHook(stdinText, io) {
   try {
     return decide(stdinText, io);
@@ -1257,62 +1256,10 @@ function decide(stdinText, io) {
   if (content === null) return SILENT_OK;
   if (!content.includes(THREADS_BEGIN_MARKER)) return SILENT_OK;
   const reports = [];
-  if (suggestModeOnDisk(hookCwd, io)) {
-    reports.push(suggestModeReport(filePath));
-  }
   const errors = opCheck(content).issues.filter((issue) => issue.severity === "error");
   if (errors.length > 0) reports.push(formatReport(filePath, errors));
   if (reports.length === 0) return SILENT_OK;
   return { exitCode: 2, stderr: reports.join("") };
-}
-function suggestModeReport(filePath) {
-  return `Markdown Collab: ${filePath} was edited directly, but suggest mode is on for this workspace \u2014 propose edits with mc_suggest / mdc suggest instead of editing directly.
-`;
-}
-function suggestModeOnDisk(hookCwd, io) {
-  const raw = io.readFile(path.join(hookCwd, ".vscode", "settings.json"));
-  if (raw === null) return false;
-  const parsed = parseJsonc(raw);
-  if (!isPlainObject(parsed)) return false;
-  return parsed[SUGGEST_MODE_SETTING] === true;
-}
-function parseJsonc(raw) {
-  let out2 = "";
-  let inString = false;
-  for (let i = 0; i < raw.length; i++) {
-    const c = raw[i];
-    if (inString) {
-      out2 += c;
-      if (c === "\\" && i + 1 < raw.length) {
-        out2 += raw[++i];
-      } else if (c === '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (c === '"') {
-      inString = true;
-      out2 += c;
-      continue;
-    }
-    if (c === "/" && raw[i + 1] === "/") {
-      while (i < raw.length && raw[i] !== "\n") i++;
-      out2 += "\n";
-      continue;
-    }
-    if (c === "/" && raw[i + 1] === "*") {
-      i += 2;
-      while (i < raw.length && !(raw[i] === "*" && raw[i + 1] === "/")) i++;
-      i++;
-      continue;
-    }
-    out2 += c;
-  }
-  try {
-    return JSON.parse(out2.replace(/,(\s*[}\]])/g, "$1"));
-  } catch {
-    return void 0;
-  }
 }
 function formatReport(filePath, errors) {
   const noun = errors.length === 1 ? "problem" : "problems";
@@ -1364,7 +1311,6 @@ function decide2(stdinText, io) {
   const next = afterTool(payload.tool_name, input, current);
   if (next === null || next === current) return PASS;
   if (opCheck(current).issues.some((issue) => issue.severity === "error")) return PASS;
-  if (suggestModeOnDisk(hookCwd, io)) return { exitCode: 2, stderr: suggestModeRefusal(filePath) };
   const after = reviewData(next);
   if (before.length === after.length && before.every((token, i) => token === after[i])) return PASS;
   return { exitCode: 2, stderr: refusal(filePath, usesReplaceAll(input) && after.length === before.length) };
@@ -1427,10 +1373,6 @@ function refusal(filePath, replaceAllHitThreadText) {
     ""
   );
   return lines.join("\n");
-}
-function suggestModeRefusal(filePath) {
-  return `Markdown Collab: not applied \u2014 suggest mode is on for this workspace, so ${filePath} isn't edited directly. Propose the change with mdc suggest ${filePath} --quote "\u2026" --with "\u2026" --note "\u2026" (or mc_suggest). If the human wants this edit made directly, they can turn suggest mode off (the switch above Send, or markdownCollab.proposeEditsAsSuggestions in .vscode/settings.json).
-`;
 }
 
 // src/skillText.ts
