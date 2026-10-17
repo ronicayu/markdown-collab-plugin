@@ -2,7 +2,7 @@
   "name": "markdown-collab-plugin",
   "displayName": "Markdown Collab",
   "description": "Review Markdown with your AI agent — comments anchored in the file itself, suggestions you accept or reject. Works with Claude Code, Cursor, Windsurf, Codex and Copilot.",
-  "version": "0.35.54",
+  "version": "0.35.55",
   "icon": "media/icon.png",
   "publisher": "markdown-collab",
   "license": "MIT",
@@ -85,7 +85,6 @@
         "markdownCollab.claudePath",
         "markdownCollab.headlessModel",
         "markdownCollab.plantuml.serverUrl",
-        "markdownCollab.classicReviewView",
         "markdownCollab.collab.userName",
         "markdownCollab.plantuml.format"
       ]
@@ -117,6 +116,10 @@
       {
         "command": "markdownCollab.sendAllToClaude",
         "title": "Markdown Collab: Send Unresolved Comments to Agent"
+      },
+      {
+        "command": "markdownCollab.sendAllAsSuggestions",
+        "title": "Markdown Collab: Send Unresolved Comments as Suggestions"
       },
       {
         "command": "markdownCollab.startClaudeTerminal",
@@ -222,11 +225,6 @@
         "icon": "$(refresh)"
       },
       {
-        "command": "markdownCollab.toggleSuggestMode",
-        "title": "Markdown Collab: Toggle Suggest Mode (propose edits as suggestions)",
-        "category": "Markdown Collab"
-      },
-      {
         "command": "markdownCollab.registerMcpServer",
         "title": "Markdown Collab: Register Review Tools with Claude Code (.mcp.json)",
         "category": "Markdown Collab"
@@ -328,11 +326,6 @@
           "default": true,
           "description": "Open the Markdown Collab view read-only. Switch to Editing in the toolbar above the document to turn editing on for that panel."
         },
-        "markdownCollab.classicReviewView": {
-          "type": "boolean",
-          "default": false,
-          "description": "Use the previous Markdown Collab view (rendered preview without editing). A later release removes this fallback."
-        },
         "markdownCollab.plantuml.serverUrl": {
           "type": "string",
           "default": "https://www.plantuml.com/plantuml",
@@ -346,11 +339,6 @@
           ],
           "default": "svg",
           "description": "Image format requested from the PlantUML server. SVG scales better; PNG is heavier but renders identically on every browser."
-        },
-        "markdownCollab.proposeEditsAsSuggestions": {
-          "type": "boolean",
-          "default": false,
-          "description": "When on, Send asks the agent to propose its edits as suggestions (accept/reject) instead of applying them directly. Remembered per workspace."
         },
         "markdownCollab.showLineNumbers": {
           "type": "boolean",
@@ -387,7 +375,7 @@
         "command": "markdownCollab.nextUnreadFromClaude",
         "key": "ctrl+k ctrl+alt+n",
         "mac": "cmd+k cmd+alt+n",
-        "when": "editorLangId == markdown || activeCustomEditorId == 'markdownCollab.collabEditor' || activeWebviewPanelId == 'markdownCollab.inlineCommentsView'"
+        "when": "editorLangId == markdown || activeCustomEditorId == 'markdownCollab.collabEditor'"
       },
       {
         "command": "markdownCollab.liveEditor.keyHandledInEditor",
@@ -762,7 +750,7 @@
             "id": "connect-agent",
             "when": "isWorkspaceTrusted",
             "title": "Connect your agent",
-            "description": "Pick your agent — Claude Code, Cursor, Windsurf, Codex, Copilot or another — and Markdown Collab sets up what it needs. No token is written to any file.\n[Connect an Agent…](command:markdownCollab.connectAgent)",
+            "description": "Claude Code, or another agent — Cursor, Windsurf, Codex, Copilot. Markdown Collab installs the review workflow and mdc, the command your agent changes reviewed files with.\n[Connect an Agent…](command:markdownCollab.connectAgent)",
             "media": {
               "markdown": "media/walkthrough/agents.md"
             },
@@ -814,12 +802,11 @@
     ]
   },
   "scripts": {
-    "compile": "npm run bundle:skill-cli && npm run build:plugin && tsc -p . && tsc -p tsconfig.webview.json && npm run bundle:extension && npm run bundle:webview && npm run bundle:inline-comments && npm run bundle:pr-review && npm run copy:shared-css && npm run copy:fixtures",
+    "compile": "npm run bundle:skill-cli && npm run build:plugin && tsc -p . && tsc -p tsconfig.webview.json && npm run bundle:extension && npm run bundle:webview && npm run bundle:pr-review && npm run copy:shared-css && npm run copy:fixtures",
     "watch": "tsc -w -p .",
     "bundle:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --external:bufferutil --external:utf-8-validate --outfile=out/extension.js --minify --sourcemap=linked --legal-comments=none",
     "bundle:webview": "esbuild src/webview/client.ts --bundle --format=iife --outfile=out/webview/client.js --target=es2020 --platform=browser --minify --sourcemap=linked --legal-comments=none",
     "bundle:webview:watch": "npm run bundle:webview -- --watch",
-    "bundle:inline-comments": "esbuild src/inlineComments/webview/client.ts --bundle --format=iife --outfile=out/inlineComments/client.js --target=es2020 --platform=browser --minify --sourcemap=linked --legal-comments=none && node -e \"require('fs').copyFileSync('src/inlineComments/webview/client.css','out/inlineComments/client.css')\"",
     "bundle:pr-review": "esbuild src/pr/webview/client.ts --bundle --format=iife --outfile=out/pr/webview/client.js --target=es2020 --platform=browser --minify --sourcemap=linked --legal-comments=none",
     "copy:fixtures": "node -e \"const fs=require('fs'),p=require('path');function cp(s,d){fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync(s,{withFileTypes:true})){const ss=p.join(s,f.name),dd=p.join(d,f.name);if(f.isDirectory())cp(ss,dd);else fs.copyFileSync(ss,dd);}}cp('src/test/integration/fixtures','out/test/integration/fixtures')\"",
     "test": "vitest run",

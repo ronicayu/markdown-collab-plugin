@@ -5,9 +5,9 @@
 // two-paragraph old/new block. Either view carries a toggle to the other.
 
 import { expect, test, type Page } from "@playwright/test";
-import { addSuggestion, parse } from "../../inlineComments/format";
-import { serialize } from "../../inlineComments/serializeState";
-import { bootInlineView } from "./harness";
+import { addSuggestion } from "../../inlineComments/format";
+import { bootLiveEditor } from "./harness";
+import { liveInit } from "./fixtures";
 
 const TS = "2026-07-01T11:30:00.000Z";
 
@@ -20,19 +20,14 @@ function docWithSuggestion(original: string, proposed: string): string {
 
 async function bootWithSuggestion(page: Page, original: string, proposed: string): Promise<void> {
   const source = docWithSuggestion(original, proposed);
-  await bootInlineView(page, {
-    fileName: "doc.md",
-    state: serialize(parse(source)),
-    user: { name: "ronica" },
-    imageBaseUris: { docDir: "", workspaceFolder: null },
-  });
+  await bootLiveEditor(page, liveInit(source));
 }
 
 const ORIGINAL = "The parser handles nested lists correctly.";
 
 test("a one-word change renders inline with a single <ins> and a single <del>", async ({ page }) => {
   await bootWithSuggestion(page, ORIGINAL, "The parser handles nested lists precisely.");
-  const card = page.locator(".mc-suggestion");
+  const card = page.locator("#threads-list .mc-suggestion");
   const sentence = card.locator(".mc-suggestion__sentence");
   await expect(sentence).toBeVisible();
   await expect(sentence.locator("ins")).toHaveCount(1);
@@ -49,7 +44,7 @@ test("a full rewrite falls back to the old two-paragraph old/new view", async ({
     ORIGINAL,
     "A sleepy turtle crawls beneath a warm blanket, ignoring the weather outside completely.",
   );
-  const card = page.locator(".mc-suggestion");
+  const card = page.locator("#threads-list .mc-suggestion");
   await expect(card.locator(".mc-suggestion__diff")).toBeVisible();
   await expect(card.locator(".mc-suggestion__del")).toContainText(ORIGINAL);
   await expect(card.locator(".mc-suggestion__sentence")).toBeHidden();
@@ -58,7 +53,7 @@ test("a full rewrite falls back to the old two-paragraph old/new view", async ({
 
 test("the toggle switches a small change between the inline and old/new views", async ({ page }) => {
   await bootWithSuggestion(page, ORIGINAL, "The parser handles nested lists precisely.");
-  const card = page.locator(".mc-suggestion");
+  const card = page.locator("#threads-list .mc-suggestion");
   const toggle = card.locator(".mc-suggestion__toggle");
   await expect(toggle).toHaveText("Show old / new");
 
@@ -89,7 +84,7 @@ test("a 100KB-per-side suggestion renders fast, with the inline toggle disabled 
 
   const start = Date.now();
   await bootWithSuggestion(page, original, proposed);
-  const card = page.locator(".mc-suggestion");
+  const card = page.locator("#threads-list .mc-suggestion");
   const toggle = card.locator(".mc-suggestion__toggle");
   // A generous bound, not the unit test's tight one (webview boot + IPC
   // overhead dominates here) — the unfixed bug froze the page for seconds at

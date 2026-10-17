@@ -1,10 +1,9 @@
-// The wire shape the inline-comments webview renders, and the pure function
-// that produces it from a parsed document.
+// A parsed document in prose space: the stripped prose plus every thread and
+// suggestion with its anchor mapped into it. The live editor's sidebar takes
+// its thread list from here (src/collab/sidebarState.ts).
 //
-// Split out of `inlineCommentsPanel.ts` (which imports `vscode`) so anything
-// outside the Extension Host can build a real init payload: the webview e2e
-// harness boots the shipped client bundle against exactly the state the panel
-// would have pushed, instead of a hand-written approximation that drifts.
+// Free of `vscode`, so anything outside the Extension Host — unit tests, the
+// webview e2e fixtures — can build the same state the host would.
 
 import type { InlineComment, ParsedDocument } from "./format";
 import { mapProseToSource, sourceLineForProseLine } from "./proseMapping";

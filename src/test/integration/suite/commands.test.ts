@@ -37,7 +37,7 @@ const ALL_COMMANDS = [
   "markdownCollab.nextUnreadFromClaude",
   "markdownCollab.openInlineCommentsView",
   "markdownCollab.repairInlineComments",
-  "markdownCollab.toggleSuggestMode",
+  "markdownCollab.sendAllAsSuggestions",
   "markdownCollab.startPrReview",
   "markdownCollab.connectAgent",
   "markdownCollab.disconnectAgent",
@@ -197,8 +197,7 @@ suite("All extension commands", () => {
   // ---------------------------------------------------------------------
   // openInlineCommentsView — the review view: the title-bar icon, the
   // right-click action on .md files, the key. It opens the live editor
-  // (custom editor `markdownCollab.collabEditor`); the previous view, a
-  // webview panel, while `markdownCollab.classicReviewView` is on.
+  // (custom editor `markdownCollab.collabEditor`).
   // ---------------------------------------------------------------------
   const LIVE_VIEW_TYPE = "markdownCollab.collabEditor";
 
@@ -297,29 +296,6 @@ suite("All extension commands", () => {
       await vscode.commands.executeCommand("workbench.action.closeAllEditors");
       await rmIfExists(uriA.fsPath);
       await rmIfExists(uriB.fsPath);
-    }
-  });
-
-  test("with classicReviewView on, openInlineCommentsView opens the previous review view", async () => {
-    const uri = await writeFixtureMd("classic-target.md", "# Classic\n\nHello world.\n");
-    const config = vscode.workspace.getConfiguration("markdownCollab");
-    await config.update("classicReviewView", true, vscode.ConfigurationTarget.Workspace);
-    try {
-      await vscode.commands.executeCommand("markdownCollab.openInlineCommentsView", uri);
-      await waitFor(
-        () => {
-          const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
-          // A webview panel's viewType carries a host prefix.
-          return input instanceof vscode.TabInputWebview && input.viewType.endsWith("markdownCollab.inlineCommentsView");
-        },
-        5000,
-        "the active tab isn't the previous review view",
-      );
-      assert.strictEqual(liveTabsFor(uri).length, 0, "the live editor opened although classicReviewView is on");
-    } finally {
-      await config.update("classicReviewView", undefined, vscode.ConfigurationTarget.Workspace);
-      await vscode.commands.executeCommand("workbench.action.closeAllEditors");
-      await rmIfExists(uri.fsPath);
     }
   });
 

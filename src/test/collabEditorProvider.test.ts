@@ -521,7 +521,7 @@ describe("saving", () => {
     await vi.waitFor(() => expect(ofType(h, "send-result")).toHaveLength(1));
     expect(h.doc.text).toBe(spliced(DOC, BETA_BANG));
     expect(h.doc.saves).toBe(1);
-    expect(h.exec).toHaveBeenCalledWith("markdownCollab.sendAllToClaude", h.doc.uri);
+    expect(h.exec).toHaveBeenCalledWith("markdownCollab.sendAllToClaude", h.doc.uri, { suggest: false });
     expect(ofType(h, "send-result")[0]).toEqual({ type: "send-result", outcome: "delivered", saved: true });
   });
 

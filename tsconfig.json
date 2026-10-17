@@ -20,7 +20,6 @@
     "out",
     ".vscode-test",
     "src/webview",
-    "src/inlineComments/webview",
     "src/pr/webview",
     "src/webviewShared",
     "src/test/webview-e2e"

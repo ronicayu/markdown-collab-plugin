@@ -1,7 +1,7 @@
 // The live editor's sidebar, host half: handles every message the sidebar posts
-// (`webviewShared/sidebarProtocol.ts`) the way the review view's panel does —
-// document operations through the pure `applyClientMutation` on the file's own
-// source, sends through the same commands and dispatcher.
+// (`webviewShared/sidebarProtocol.ts`): document operations through the pure
+// `applyClientMutation` on the file's own source, sends through the same
+// commands and dispatcher as everything else.
 //
 // Nothing here reads the editor's serialization: a mutation parses
 // `document.getText()`, rewrites it, and hands the whole new source back to the
@@ -61,7 +61,6 @@ const MUTATIONS: ReadonlySet<string> = new Set<SidebarMutation["type"]>([
 const REQUESTS: ReadonlySet<string> = new Set<SidebarMessage["type"]>([
   "send-to-claude",
   "copy-prompt",
-  "toggle-suggest-mode",
   "remove-resolved",
   "finalize",
   "install-skill",
@@ -102,21 +101,15 @@ export async function handleSidebarMessage(msg: SidebarMessage, ctx: SidebarHost
       // a source computed without it.
       return ctx.exclusive(() => applySidebarMutation(msg, ctx));
     case "send-to-claude":
-      return send(ctx, "markdownCollab.sendAllToClaude", uri);
+      return send(ctx, "markdownCollab.sendAllToClaude", uri, { suggest: msg.suggest === true });
     case "send-to-claude-comment":
-      return send(ctx, "markdownCollab.sendThreadToClaude", uri, msg.threadId);
+      return send(ctx, "markdownCollab.sendThreadToClaude", uri, msg.threadId, { suggest: msg.suggest === true });
     case "copy-prompt":
       await ctx.flush();
       return copyAllPrompt(ctx.document);
     case "copy-claude-comment":
       await ctx.flush();
       await vscode.commands.executeCommand("markdownCollab.copyThreadToClaude", uri, msg.threadId);
-      return;
-    case "toggle-suggest-mode":
-      // The command flips the per-workspace setting and says so; re-push so
-      // the switch shows what it landed on.
-      await vscode.commands.executeCommand("markdownCollab.toggleSuggestMode");
-      ctx.refresh();
       return;
     case "remove-resolved":
       // Straight to the command, so the modal confirm and the undoable write
@@ -183,7 +176,7 @@ async function applySidebarMutation(msg: SidebarMutation, ctx: SidebarHostContex
 }
 
 async function copyAllPrompt(doc: vscode.TextDocument): Promise<void> {
-  const payload = buildInlinePayload(doc, { suggestMode: readSuggestMode() });
+  const payload = buildInlinePayload(doc);
   if (!payload) {
     void vscode.window.showInformationMessage("No open threads to copy.");
     return;
@@ -217,10 +210,6 @@ export async function openThreadInEditor(doc: vscode.TextDocument, threadId: str
 /** Who a reply, an edit, or a resolve is attributed to — the review view's rule. */
 function sidebarAuthor(): string {
   return currentAuthorName();
-}
-
-export function readSuggestMode(): boolean {
-  return vscode.workspace.getConfiguration("markdownCollab").get<boolean>("proposeEditsAsSuggestions", false);
 }
 
 /**

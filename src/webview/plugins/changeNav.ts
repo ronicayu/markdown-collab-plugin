@@ -1,9 +1,7 @@
 // Change-navigation toolbar for the live editor's uncommitted-diff overlay —
-// the same "N changes" / "i / N" counter and prev/next arrows as the review
-// view's #diff-nav (src/inlineComments/webview/client.ts), built as its own DOM
+// an "N changes" / "i / N" counter and prev/next arrows, built as its own DOM
 // island because client.ts assembles the live editor's layout at runtime rather
-// than serving a fixed HTML skeleton the way the review view's webviewShell.ts
-// does.
+// than serving a fixed HTML skeleton.
 //
 // Reuses `createDiffNav` (src/webviewShared/diffNav.ts) for the actual
 // stepping/counting/wrap-around.

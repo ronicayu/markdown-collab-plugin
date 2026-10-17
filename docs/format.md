@@ -2,10 +2,11 @@
 
 # The Markdown Collab file format
 
-Markdown Collab keeps review comments inside the `.md` file they are about. This page is the contract any
-agent writing to such a file is held to. Claude Code gets the `mdc` CLI with its plugin — `mdc` is on PATH
-only inside Claude Code sessions — and an agent the human registered gets the `markdown-collab` MCP tools.
-Both write this format for you. Everyone else writes it by hand, and this page is all there is.
+Markdown Collab keeps review comments inside the `.md` file they are about. This page is the contract the
+format is held to. Agents don't write it by hand: they change a reviewed file with `mdc`, which writes this
+format for them — plain `mdc` in Claude Code with the Markdown Collab plugin, or
+`node ~/.agents/skills/markdown-collab/mdc.mjs` for every agent **Connect an Agent…** set up. This page is for
+reading the format, and for a tool that implements it.
 
 A file is under review when it contains the literal string `<!--mc:threads:begin-->`.
 
@@ -154,6 +155,9 @@ checks a reviewed file whenever it changes on disk, warns, and offers Repair whe
 it never repairs on its own.
 
 ## How to write to this file by hand
+
+For a tool that implements the format. An agent uses `mdc` instead: one dropped `-->` silently orphans a
+reviewer's comment, and `mdc` refuses a change that would.
 
 1. **Reply.** Find the thread's `<!--mc:t {…}-->` line and append one object to its `comments` array:
    `{"id":"c<next>","parent":"<id you answer>","author":"<you>","agent":true,"ts":"<now, ISO-8601 UTC>","body":"<reply>"}`.

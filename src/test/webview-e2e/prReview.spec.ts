@@ -11,7 +11,7 @@
 // Boots the shipped bundle (`out/pr/webview/client.js`) against the exact DOM
 // skeleton the panel serves (`prReviewShell.ts`, imported directly rather than
 // copy-pasted, so a rename there can't silently drift out of sync with this
-// spec) — same approach as harness.ts's bootInlineView/bootLiveEditor, kept
+// spec) — same approach as harness.ts's bootLiveEditor, kept
 // local to this file since prReviewPanel.ts isn't something a webview test
 // can import (it pulls in `vscode`).
 

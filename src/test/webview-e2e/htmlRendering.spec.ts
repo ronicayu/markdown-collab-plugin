@@ -9,8 +9,8 @@
 // tests at the end are what make that safe.
 
 import { expect, test, type Page } from "@playwright/test";
-import { awaitPosted, bootInlineView, bootLiveEditor } from "./harness";
-import { inlineInit, liveInit } from "./fixtures";
+import { awaitPosted, bootLiveEditor } from "./harness";
+import { liveInit } from "./fixtures";
 
 const DOC = `# Probe
 
@@ -122,22 +122,6 @@ test.describe("live editor, Editing", () => {
   });
 });
 
-test.describe("inline comments view", () => {
-  test("renders the same HTML, sanitized", async ({ page }) => {
-    await bootInlineView(page, inlineInit(DOC));
-    const preview = page.locator("#preview");
-    await expect(preview.locator("sup")).toHaveText("2");
-    await expect(preview.locator("kbd")).toHaveText(["Ctrl", "C"]);
-    // markdown-it keeps the blocks between <details> and </details> inside it.
-    await expect(preview.locator("details summary")).toHaveText("More details");
-    await expect(preview.locator("details")).toContainText("Hidden markdown body.");
-    await expect(preview.locator("table td")).toHaveText(["Cell A", "Cell B", "Green", "Plain"]);
-    await expect(preview).not.toContainText("a note");
-    await noUnsafeDom(preview);
-    await expect(preview).toContainText("<script>alert(1)</script>");
-  });
-});
-
 // A document's own CSS, at its most hostile: a full-window overlay on the
 // fragment and on its shadow host (`:host … !important` outranks any outside
 // rule on the host itself), and rules aimed at the app's own classes.
@@ -187,19 +171,5 @@ test.describe("shadow-rendered blocks are contained", () => {
     expect(await receivesPointer(page, "#mdc-comments-toggle")).toBe(true);
     // Text after the block is still reachable too.
     expect(await receivesPointer(page, ".mdc-editor-root .milkdown h1")).toBe(true);
-  });
-
-  test("inline comments view: same containment, and find searches inside the block", async ({ page }) => {
-    await bootInlineView(page, inlineInit(HOSTILE));
-    await expect(page.locator("#preview .card")).toHaveCSS("background-color", "rgb(1, 2, 3)");
-    await hostileHostApplies(page);
-    expect(await receivesPointer(page, "#outline-toggle")).toBe(true);
-    expect(await receivesPointer(page, "#preview h1")).toBe(true);
-    await page.locator("#preview").click({ position: { x: 5, y: 5 } });
-    await page.keyboard.press("ControlOrMeta+f");
-    await expect(page.locator("#find-bar")).toBeVisible();
-    await page.locator("#find-input").fill("styled card");
-    await expect(page.locator("#find-count")).toHaveText("1 / 1");
-    await expect(page.locator("#preview mark.mc-search--current")).toHaveText("styled card");
   });
 });

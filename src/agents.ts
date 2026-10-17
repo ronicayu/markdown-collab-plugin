@@ -1,26 +1,22 @@
 import { createHash } from "crypto";
 import * as fs from "fs/promises";
 import * as path from "path";
-import { FORMAT_SPEC_URL, HAND_EDIT_RULES } from "./handEditRules";
-
 export const AGENTS_SENTINEL = "## Markdown review comments";
 
-export { FORMAT_SPEC_URL };
+/** Where the format contract lives. The `docs/` folder isn't in the .vsix, so
+ *  the link goes to the repository rather than to a path in the workspace. */
+export const FORMAT_SPEC_URL = "https://github.com/ronicayu/markdown-collab-plugin/blob/main/docs/format.md";
 
-// The file format is the API for every agent that isn't Claude Code, and `mdc`
-// is only ever on PATH inside a Claude Code session. So
-// this leads with the contract (docs/format.md), names the tools as the better
-// path when an agent happens to have them, and says plainly who has `mdc` and
-// what to do without it: ask the human to run Repair.
+// Read by every agent in the repository, including a colleague's that never ran
+// Connect. One rule — change a reviewed file only with `mdc` — and where `mdc`
+// is. No rules for editing the markers by hand: an agent without `mdc` asks
+// the human for it rather than doing string surgery on a format that one
+// dropped `-->` breaks. The format spec is linked for reading, not writing.
 export const AGENTS_SNIPPET = `## Markdown review comments
 
-Markdown Collab stores review feedback inline in the \`.md\` file itself — anchored spans wrapped in paired \`<!--mc:a:ID-->…<!--mc:/a:ID-->\` markers, threads recorded one \`<!--mc:t {JSON}-->\` line per thread between \`<!--mc:threads:begin-->\`/\`<!--mc:threads:end-->\` at the end of the file. Detect a reviewed file by the literal string \`<!--mc:threads:begin-->\`.
+Markdown Collab keeps review comments inside the \`.md\` file: \`<!--mc:a:ID-->…<!--mc:/a:ID-->\` markers around each commented passage, and one \`<!--mc:t {JSON}-->\` line per thread between \`<!--mc:threads:begin-->\` and \`<!--mc:threads:end-->\` at the end. A file is reviewed when it contains \`<!--mc:threads:begin-->\`.
 
-**The file format is the contract:** [\`docs/format.md\`](${FORMAT_SPEC_URL}) in the Markdown Collab repository defines every marker and field. If the \`markdown-collab\` MCP tools are in your tool list, use them instead of editing by hand — \`mc_list\`, then \`mc_reply\`/\`mc_open\`/\`mc_rewrite\`/\`mc_edit\`/\`mc_suggest\`, and \`mc_check\` last — they keep the markers intact and the human can undo them. Otherwise edit the file by hand, carefully; one dropped \`-->\` silently orphans a reviewer's comment:
-
-${HAND_EDIT_RULES.map((rule) => `- ${rule}`).join("\n")}
-
-**Then check the file.** The \`mdc\` CLI exists only inside Claude Code sessions: if \`mdc\` is on your PATH, run \`mdc check <file>\`; otherwise ask the human to run "Markdown Collab: Repair Comment Anchors" on the file.
+**Change a reviewed file only with \`mdc\`** — never edit a marker or a thread line yourself; one dropped \`-->\` silently orphans a reviewer's comment. Run \`node ~/.agents/skills/markdown-collab/mdc.mjs <command> <file> …\` (plain \`mdc\` in Claude Code with the Markdown Collab plugin): \`list <file> --actionable\`, then \`reply\`, \`rewrite\`, \`edit\`, \`open\` or \`suggest\`, and \`check <file>\` last; \`help\` lists them all and \`help review\` prints the reviewer's rubric. Plain prose that no marker touches may still be edited as usual. If \`mdc\` isn't there, don't edit the markers — ask the human to run **Markdown Collab: Connect an Agent**, which installs it. The format itself is specified in [\`docs/format.md\`](${FORMAT_SPEC_URL}).
 
 `;
 
@@ -37,6 +33,7 @@ const PRIOR_SNIPPET_HASHES = new Set([
   "04c086242ea7cfed", // 0.34: inline only, hand-editing instructions
   "5b05cecb60496801", // 0.35.12: MCP tools, then mdc, then hand-editing
   "bdb3734674cf348c", // 0.35.41: the format contract and hand-editing steps, before suggestions and heading anchors
+  "237c35f4b22376b6", // 0.35.42: the tools, then hand-editing with suggestions and heading anchors
 ]);
 
 /** Line endings and trailing whitespace don't make a section someone's edit. */

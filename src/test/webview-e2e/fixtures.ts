@@ -1,13 +1,12 @@
 // Fixture documents for the webview e2e suite.
 //
 // Built by running the real format engine over real markdown, then serialized
-// by the same functions the host uses (`serialize` for the inline view,
-// `commentsOf`/`suggestionsOf`/`proseOf` for the live editor). A hand-written
+// by the same functions the host uses (`commentsOf`/`suggestionsOf`/`proseOf`
+// and `sidebarDocumentFields`). A hand-written
 // init payload would let the specs keep passing after a wire-shape change; this
 // way the fixture breaks with the engine.
 
 import { addSuggestion, addThread, appendReply, parse, replaceThread } from "../../inlineComments/format";
-import { serialize } from "../../inlineComments/serializeState";
 import { commentsOf, frontmatterOf, proseOf, suggestionsOf } from "../../collab/inlineBridge";
 import { sidebarDocumentFields } from "../../collab/sidebarState";
 import { withRefreshedAnchorHash } from "../../inlineComments/staleness";
@@ -94,28 +93,10 @@ export function editAnchoredText(source: string, threadId: string, next: string)
   return source.slice(0, a.openEnd) + next + source.slice(a.closeStart);
 }
 
-/** The `init` message body the inline-comments panel would push for `source`. */
-export function inlineInit(
-  source: string,
-  opts: { pendingThreadIds?: string[]; suggestMode?: boolean } = {},
-): Record<string, unknown> {
-  return {
-    fileName: "docs/release-notes.md",
-    state: serialize(parse(source)),
-    user: { name: "ronica" },
-    imageBaseUris: { docDir: "", workspaceFolder: null },
-    plantuml: { serverUrl: "https://www.plantuml.com/plantuml", format: "svg" },
-    skillStatus: "current",
-    suggestMode: opts.suggestMode ?? false,
-    pendingThreadIds: opts.pendingThreadIds ?? [],
-  };
-}
-
 /** The host-side settings the live editor's sidebar shows. */
 export interface LiveSidebarOpts {
   pendingThreadIds?: string[];
   pendingLabel?: string;
-  suggestMode?: boolean;
   /** Overrides the name derived from the document's agent comments. */
   agentName?: string;
 }
@@ -133,7 +114,6 @@ export function liveSidecar(source: string, opts: LiveSidebarOpts = {}): Record<
     ...(opts.pendingLabel ? { pendingLabel: opts.pendingLabel } : {}),
     threads: doc.threads,
     agentName: opts.agentName ?? doc.agentName,
-    suggestMode: opts.suggestMode ?? false,
   };
 }
 
@@ -158,7 +138,7 @@ export function liveProse(source: string): string {
 }
 
 /**
- * Append a human reply to a thread, exactly as the panel's mutation handler
+ * Append a human reply to a thread, exactly as the host's mutation handler
  * would — including refreshing the anchor hash, since the replier has just read
  * the passage as it now stands.
  */

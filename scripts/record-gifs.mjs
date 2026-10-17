@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // Records the two README GIFs from the SHIPPED live-editor
-// bundle (out/webview/client.js — the default view since 0.35.16, not the
-// classic review view), driven through the same stubbed host the webview e2e
+// bundle (out/webview/client.js), driven through the same stubbed host the webview e2e
 // harness uses (src/test/webview-e2e/harness.ts) — real Chromium,
 // `acquireVsCodeApi` stubbed, host pushes simulated with `postMessage`, and a
 // dark VS Code-like theme injected since the bare harness page has none. The

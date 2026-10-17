@@ -4,8 +4,7 @@
 // onto paragraph, heading, table_cell and table_header nodes instead of a
 // second locate-by-text pass.
 //
-// Two mappings, at different granularities (mirroring the review view's
-// DOM-side algorithm in src/inlineComments/webview/client.ts):
+// Two mappings, at different granularities:
 //
 //   - stripes (`stripedBlockRanges`): every block whose own prose lines the
 //     diff touched. A paragraph or heading is the block; a changed table cell
@@ -36,9 +35,9 @@ export interface DiffRemovedRun {
 }
 
 /**
- * Uncommitted-vs-HEAD overlay. The webview bundle can't import the host's
- * vscode-touching `DiffState` (src/inlineComments/inlineCommentsPanel.ts), so
- * this is its own copy of the same wire shape.
+ * Uncommitted-vs-HEAD overlay: the wire shape the host computes (from
+ * `diffProse`, src/uncommitted/proseDiff.ts) and the webview draws. Lives here,
+ * free of `vscode` and the DOM, so both sides import the one definition.
  */
 export interface DiffState {
   addedRanges: DiffLineRange[];

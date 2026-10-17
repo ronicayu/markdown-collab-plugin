@@ -1,4 +1,4 @@
-// "Remove resolved" in the comment panels.
+// "Remove resolved" in the review view's comment sidebar.
 //
 // The action existed as a command only, which meant finding it required
 // knowing its name — while the resolved comments it acts on are sitting in
@@ -6,9 +6,8 @@
 // actually do something.
 
 import { expect, test } from "@playwright/test";
-import { addThread, parse, replaceThread, type InlineThread } from "../../inlineComments/format";
-import { serialize } from "../../inlineComments/serializeState";
-import { awaitPosted, bootInlineView, bootLiveEditor } from "./harness";
+import { addThread, replaceThread, type InlineThread } from "../../inlineComments/format";
+import { awaitPosted, bootLiveEditor } from "./harness";
 import { liveSidecar } from "./fixtures";
 
 const TS = "2026-01-01T00:00:00.000Z";
@@ -33,61 +32,9 @@ function fixture(resolvedCount: number, openCount: number): string {
   return src;
 }
 
-test.describe("inline comments view", () => {
-  test("offers the button only when there is something to remove", async ({ page }) => {
-    await bootInlineView(page, {
-      fileName: "doc.md",
-      state: serialize(parse(fixture(0, 2))),
-      user: { name: "r" },
-      imageBaseUris: { docDir: "", workspaceFolder: null },
-    });
-    // Nothing resolved: no button, rather than a disabled one nobody can use.
-    await expect(page.locator("#remove-resolved")).toBeHidden();
-  });
-
-  test("names the count and posts the request", async ({ page }) => {
-    await bootInlineView(page, {
-      fileName: "doc.md",
-      state: serialize(parse(fixture(2, 1))),
-      user: { name: "r" },
-      imageBaseUris: { docDir: "", workspaceFolder: null },
-    });
-    // round-4 P3.1: lives in the toolbar's "…" overflow menu now.
-    await page.locator("#overflow-menu-btn").click();
-    const btn = page.locator("#remove-resolved");
-    await expect(btn).toBeVisible();
-    await expect(btn).toHaveText("Remove 2 resolved");
-
-    await btn.click();
-    // The host owns the confirm and the write; the webview only asks.
-    expect(await awaitPosted(page, "remove-resolved")).toEqual({ type: "remove-resolved" });
-  });
-
-  test("the count follows the document", async ({ page }) => {
-    await bootInlineView(page, {
-      fileName: "doc.md",
-      state: serialize(parse(fixture(1, 1))),
-      user: { name: "r" },
-      imageBaseUris: { docDir: "", workspaceFolder: null },
-    });
-    await expect(page.locator("#remove-resolved")).toHaveText("Remove 1 resolved");
-
-    // A second thread gets resolved elsewhere — the panel is told, and updates.
-    await page.evaluate((state) => window.postMessage({ type: "update", state }, "*"),
-      serialize(parse(fixture(3, 0))) as unknown as Record<string, unknown>);
-    await expect(page.locator("#remove-resolved")).toHaveText("Remove 3 resolved");
-
-    // And disappears when the last one goes.
-    await page.evaluate((state) => window.postMessage({ type: "update", state }, "*"),
-      serialize(parse(fixture(0, 2))) as unknown as Record<string, unknown>);
-    await expect(page.locator("#remove-resolved")).toBeHidden();
-  });
-});
-
 test.describe("live editor", () => {
-  // The same sidebar as the review view now: the button lives
-  // in the "…" menu and posts the review view's message. Updates re-render the
-  // list, and the button has to follow them — the old live sidebar once kept a
+  // The button lives in the "…" menu and posts `remove-resolved`. Updates
+  // re-render the list, and the button has to follow them — the old live sidebar once kept a
   // stale "Remove N resolved" after the removal had already happened.
   test("the button follows an incremental update, not just the first render", async ({ page }) => {
     const src = fixture(2, 1);

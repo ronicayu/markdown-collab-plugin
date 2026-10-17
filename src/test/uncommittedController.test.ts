@@ -103,13 +103,11 @@ function waitForChange(): Promise<void> {
 async function makeController(opts: {
   repoRoot: string;
   openFile?: (uri: any, o: { showDiff: boolean }) => Promise<void>;
-  openLiveFile?: (uri: any) => Promise<void>;
 }): Promise<UncommittedChangesController> {
   (workspace as any).workspaceFolders = [{ uri: Uri.file(opts.repoRoot), name: "ws", index: 0 }];
   const controller = new UncommittedChangesController(
     opts.openFile ?? (async () => undefined),
     makeLogger(),
-    opts.openLiveFile,
   );
   await waitForChange();
   return controller;

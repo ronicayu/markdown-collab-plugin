@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import * as vscode from "vscode";
-import { AGENTS_SKILL_CONTENT, AGENTS_SKILL_REL_PATH } from "../agentsSkill";
+import { AGENTS_CLI_REL_PATH, AGENTS_SKILL_CONTENT, AGENTS_SKILL_REL_PATH } from "../agentsSkill";
+import { CLI_SCRIPT_CONTENT } from "../skill";
 import { AGENTS_SNIPPET } from "../agents";
 import { registerSetupCommands } from "../commands/setup";
 import { lookupClaude } from "../transports/headlessHost";
@@ -50,7 +51,7 @@ describe("Connect an Agent installs the review skill for the agents that read ~/
     mkdirSync(path.join(homeDir, ".claude"));
     vi.mocked(lookupClaude).mockReset().mockResolvedValue({ ok: false, error: "not on PATH" });
     toasts = [];
-    agent = "codex";
+    agent = "agents";
     ask = vi.fn(async () => "Not now");
     (vscode.Uri as unknown as Record<string, unknown>).joinPath = (base: { fsPath: string }, ...parts: string[]) =>
       vscode.Uri.file(path.join(base.fsPath, ...parts));
@@ -90,16 +91,15 @@ describe("Connect an Agent installs the review skill for the agents that read ~/
     rmSync(homeDir, { recursive: true, force: true });
   });
 
-  it.each(["codex", "cursor-inapp"])("%s: writes AGENTS.md and the skill, and says both in the one question", async (id) => {
-    agent = id;
-
+  it("writes AGENTS.md, the skill and mdc, and says so in one message with nothing to answer", async () => {
     await handlers.get("markdownCollab.connectAgent")!();
 
     expect(readFileSync(path.join(workspaceDir, "AGENTS.md"), "utf8")).toBe(AGENTS_SNIPPET);
     expect(readFileSync(skillFile(), "utf8")).toBe(AGENTS_SKILL_CONTENT);
-    expect(ask).toHaveBeenCalledTimes(1);
+    expect(readFileSync(path.join(homeDir, AGENTS_CLI_REL_PATH), "utf8")).toBe(CLI_SCRIPT_CONTENT);
+    expect(ask).not.toHaveBeenCalled();
     expect(toasts).toHaveLength(1);
-    expect(toasts[0]).toMatch(/Created AGENTS\.md in ws with the review-comment format\. Added the review skill to ~\/\.agents\/skills\. Also register/);
+    expect(toasts[0]).toMatch(/Created AGENTS\.md in ws with the review-comment format\. Added the review skill to ~\/\.agents\/skills\. Agents that read/);
     expect(toasts[0]).not.toContain(homeDir);
   });
 
@@ -133,7 +133,6 @@ describe("Connect an Agent installs the review skill for the agents that read ~/
     expect(readFileSync(skillFile(), "utf8")).toBe(foreign);
     expect(existsSync(path.join(workspaceDir, "AGENTS.md"))).toBe(true);
     expect(toasts[0]).toContain("~/.agents/skills/markdown-collab/SKILL.md is a different skill — left as is.");
-    expect(toasts[0]).toContain("Also register");
   });
 
   it.skipIf(process.platform === "win32")("refuses a symlinked skills directory, says so, and still carries on with Connect", async () => {
@@ -167,12 +166,12 @@ describe("Connect an Agent installs the review skill for the agents that read ~/
     expect(existsSync(path.join(homeDir, ".agents"))).toBe(false);
   });
 
-  it("names the review skill in every picker entry but Claude Code's", async () => {
+  it("names the review skill and mdc in the picker entry for every other agent", async () => {
     await handlers.get("markdownCollab.connectAgent")!();
 
     const others = pickerItems.filter((i) => i.id !== "claude");
-    expect(others.map((i) => i.id)).toEqual(["cursor-inapp", "cursor-cli", "windsurf", "codex", "other"]);
-    for (const item of others) expect(item.description, item.id).toContain("the review skill (~/.agents/skills)");
+    expect(others.map((i) => i.id)).toEqual(["agents"]);
+    expect(others[0]!.description).toContain("the review skill with the mdc command in ~/.agents/skills");
   });
 
   it("Disconnect leaves the skill in place and says so", async () => {

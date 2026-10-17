@@ -14,12 +14,11 @@ node_modules/**
 !node_modules/mermaid/package.json
 !node_modules/mermaid/dist/mermaid.min.js
 # tsc emits one .js per source file into out/, but the host is the single
-# esbuild bundle at out/extension.js and the webviews are three more bundles;
-# nothing loads the per-file output. Ship the four bundles and their CSS only.
+# esbuild bundle at out/extension.js and the webviews are two more bundles;
+# nothing loads the per-file output. Ship the three bundles and their CSS only.
 out/**/*.js
 !out/extension.js
 !out/webview/client.js
-!out/inlineComments/client.js
 !out/pr/webview/client.js
 # Build intermediate: the runtime copy of the CLI is plugin/lib/mdc.mjs.
 out/skill/**
