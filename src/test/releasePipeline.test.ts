@@ -153,3 +153,29 @@ describe("markers are read from the subject line only", () => {
     expect(script).not.toContain('"--pretty=%B"');
   });
 });
+
+// v0.35.56: a Release made in the GitHub UI to push the tag existed already, so
+// `gh release create` failed after both marketplaces had published.
+describe("the GitHub Release", () => {
+  const sync = readFileSync(resolve(ROOT, ".github/workflows/sync-release.yml"), "utf8");
+
+  it("is updated, not re-created, when one already exists for the tag", () => {
+    expect(release).toContain('if gh release view "$GITHUB_REF_NAME"');
+    expect(release).toContain('gh release upload "$GITHUB_REF_NAME" markdown-collab-plugin.vsix --clobber');
+  });
+
+  it("can be synced for a published tag without publishing again", () => {
+    expect(sync).toContain("workflow_dispatch:");
+    expect(sync).not.toMatch(/vsce publish|ovsx publish/);
+    expect(sync).toContain('gh run download "$RUN_ID" --name vsix');
+    // Inputs reach the shell through env, never spliced into a run script.
+    for (const block of sync.split("run: |").slice(1)) expect(block.split("\n      - ")[0]).not.toContain("${{ inputs.");
+  });
+
+  it("takes its notes from the CHANGELOG section, without blank lines around it", () => {
+    const notes = execFileSync("sh", [resolve(ROOT, "scripts/release-notes.sh"), "0.35.56"], { cwd: ROOT, encoding: "utf8" });
+    expect(notes.startsWith("A build on the marketplaces' pre-release channel")).toBe(true);
+    expect(notes.endsWith("No code change since 0.35.55.\n")).toBe(true);
+    expect(execFileSync("sh", [resolve(ROOT, "scripts/release-notes.sh"), "9.9.9"], { cwd: ROOT, encoding: "utf8" })).toBe("");
+  });
+});
