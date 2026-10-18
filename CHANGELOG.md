@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.35.56 — 2026-10-18 (pre-release)
+
+A build on the marketplaces' pre-release channel, carrying 0.35.55, which
+shipped to GitHub only:
+
+- Every agent changes a reviewed file with `mdc`, and nothing else. Connect
+  installs `mdc` for agents other than Claude Code too, and from any terminal it
+  writes through the editor so you can undo it. The skill is one short page; the
+  reviewer's rubric is `mdc help review`. Connect an Agent is two choices.
+- The classic review view is gone; every entry point opens the live editor.
+- Suggestions are chosen per send: **Send as suggestions** replaces the suggest
+  mode setting.
+
+No code change since 0.35.55.
+
 ## 0.35.55 — 2026-10-17 (GitHub only)
 
 ### Changed: suggestions are chosen per send, not a mode
