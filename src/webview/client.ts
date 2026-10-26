@@ -19,7 +19,7 @@ import "./host.css";
 import "./plugins/plugins.css";
 import { NodeSelection, Plugin, PluginKey, TextSelection, type Transaction } from "prosemirror-state";
 import { CellSelection } from "@milkdown/prose/tables";
-import { Decoration, DecorationSet } from "prosemirror-view";
+import { Decoration, DecorationSet, type EditorView } from "prosemirror-view";
 import type { Node as PmDocNode } from "prosemirror-model";
 import { buildComposer, type ComposerHandle } from "../webviewShared/commentUi";
 import { createThreadSidebar } from "../webviewShared/threadSidebar";
@@ -1504,32 +1504,23 @@ function jumpToAnchor(comment: CommentSummary): void {
   });
 }
 
-interface MermaidApi {
-  initialize: (cfg: Record<string, unknown>) => void;
-  render: (id: string, src: string) => Promise<{ svg: string }>;
+// Mermaid fences render with Pele (https://pele.run): a synchronous Mermaid →
+// SVG renderer a fraction of mermaid.js's size. Its colors are CSS variables,
+// mapped onto the editor theme in host.css, so a diagram follows a theme change
+// without re-rendering.
+type PeleRender = (text: string, options?: { idPrefix?: string; fontFamily?: string }) => { svg: string };
+
+let pelePromise: Promise<PeleRender> | null = null;
+function loadPele(): Promise<PeleRender> {
+  if (!pelePromise) pelePromise = import("pele").then((mod) => mod.render as PeleRender);
+  return pelePromise;
 }
 
-let mermaidPromise: Promise<MermaidApi> | null = null;
-function loadMermaid(): Promise<MermaidApi> {
-  if (!mermaidPromise) {
-    mermaidPromise = import("mermaid").then((mod) => {
-      const candidate = (mod as { default?: unknown }).default ?? mod;
-      const api = candidate as MermaidApi;
-      // Follow the editor theme: a light diagram on a dark background reads as
-      // a rendering bug.
-      const isDark =
-        document.body.classList.contains("vscode-dark") ||
-        document.body.classList.contains("vscode-high-contrast") ||
-        window.matchMedia("(prefers-color-scheme: dark)").matches;
-      try {
-        api.initialize({ startOnLoad: false, securityLevel: "strict", theme: isDark ? "dark" : "default" });
-      } catch {
-        /* idempotent */
-      }
-      return api;
-    });
-  }
-  return mermaidPromise;
+/** A Pele error carries the source line; mermaid.js's message never did. */
+function mermaidErrorMessage(e: unknown): string {
+  const err = e as { message?: string; line?: number };
+  const message = err?.message ?? String(e);
+  return err?.line ? `${message} (line ${err.line})` : message;
 }
 
 let mermaidIdCounter = 0;
@@ -1559,11 +1550,13 @@ function makeMermaidPlugin(): Plugin {
   });
 }
 
-function refreshMermaidDecorations(): void {
-  editor?.action((ctx) => {
-    const view = ctx.get(editorViewCtx);
-    view.dispatch(view.state.tr.setMeta(mermaidPluginKey, "refresh"));
-  });
+// Through the widget's own view, not the module's `editor`: a render can
+// settle before `createEditor` resolves and assigns it — Pele, inlined and
+// synchronous, does on a document's first paint — and the refresh would be
+// lost, leaving a rendered diagram's source showing.
+function refreshMermaidDecorations(view: EditorView): void {
+  if (view.isDestroyed) return;
+  view.dispatch(view.state.tr.setMeta(mermaidPluginKey, "refresh"));
 }
 
 // A paragraph whose only inline content is a single link whose href ends in
@@ -1968,7 +1961,7 @@ function buildMermaidDecorations(doc: DocLike): DecorationSet {
       decos.push(Decoration.node(pos, pos + node.nodeSize, { class: "mdc-mermaid-source-hidden" }));
     }
     decos.push(
-      Decoration.widget(pos, () => makeMermaidWidget(src), {
+      Decoration.widget(pos, (view) => makeMermaidWidget(src, view), {
         side: -1,
         ignoreSelection: true,
         key: `mermaid-${pos}-${src.length}`,
@@ -1979,7 +1972,7 @@ function buildMermaidDecorations(doc: DocLike): DecorationSet {
   return DecorationSet.create(doc as never, decos);
 }
 
-function makeMermaidWidget(src: string): HTMLElement {
+function makeMermaidWidget(src: string, view: EditorView): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "mdc-mermaid";
   const target = document.createElement("div");
@@ -1997,27 +1990,31 @@ function makeMermaidWidget(src: string): HTMLElement {
   } else {
     mermaidCache.set(src, { src, status: "pending" });
     target.textContent = "Rendering mermaid…";
-    void loadMermaid()
-      .then(async (mermaid) => {
-        const id = `mdc-mermaid-${++mermaidIdCounter}`;
+    void loadPele()
+      .then((render) => {
         try {
-          const { svg } = await mermaid.render(id, src);
+          // A per-diagram id prefix: two diagrams in one document must not
+          // share marker / gradient ids.
+          const { svg } = render(src, {
+            idPrefix: `mdc-mermaid-${++mermaidIdCounter}-`,
+            fontFamily: getComputedStyle(document.body).fontFamily || undefined,
+          });
           mermaidCache.set(src, { src, status: "ready", svg });
           target.innerHTML = svg;
         } catch (e) {
-          const message = (e as Error).message;
+          const message = mermaidErrorMessage(e);
           mermaidCache.set(src, { src, status: "error", error: message });
           target.innerHTML = `<div class="mdc-mermaid__error">Mermaid render failed: ${escapeHtml(message)}</div>`;
         }
         // Either branch changed this src's cache status, which decides
         // whether the fence source is hidden — repaint the decoration set.
-        refreshMermaidDecorations();
+        refreshMermaidDecorations(view);
       })
       .catch((e) => {
         const message = (e as Error).message;
         mermaidCache.set(src, { src, status: "error", error: message });
-        target.innerHTML = `<div class="mdc-mermaid__error">Failed to load mermaid: ${escapeHtml(message)}</div>`;
-        refreshMermaidDecorations();
+        target.innerHTML = `<div class="mdc-mermaid__error">Failed to load the mermaid renderer: ${escapeHtml(message)}</div>`;
+        refreshMermaidDecorations(view);
       });
   }
   return wrap;

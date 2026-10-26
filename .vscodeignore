@@ -8,11 +8,9 @@ out/test/**
 **/*.map
 # The host extension is bundled into out/extension.js (npm run bundle:extension),
 # so node_modules runtime deps (markdown-it, yjs, y-protocols, lib0, ws, pako, …)
-# are inlined and need not ship. The only exception is mermaid, which the webviews
-# load as a script asset by URI rather than requiring it.
+# are inlined and need not ship. The webviews bundle theirs too (pele, the mermaid
+# renderer, included).
 node_modules/**
-!node_modules/mermaid/package.json
-!node_modules/mermaid/dist/mermaid.min.js
 # tsc emits one .js per source file into out/, but the host is the single
 # esbuild bundle at out/extension.js and the webviews are two more bundles;
 # nothing loads the per-file output. Ship the three bundles and their CSS only.

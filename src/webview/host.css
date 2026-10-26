@@ -677,6 +677,20 @@ button.mdc-banner--jump:hover {
   color: var(--vscode-errorForeground, #f48771);
   font-size: 12px;
 }
+/* Pele (the mermaid renderer) draws in CSS variables; map them onto the
+   editor theme so a diagram follows a theme switch without re-rendering. A
+   variable the theme leaves undefined falls back to Pele's own default. */
+.pele {
+  --pele-bg: var(--vscode-editor-background);
+  --pele-fg: var(--vscode-editor-foreground);
+  --pele-muted: var(--vscode-descriptionForeground);
+  --pele-line: var(--vscode-editor-foreground);
+  --pele-surface: var(--vscode-editorWidget-background);
+  --pele-surface-alt: var(--vscode-input-background);
+  --pele-border: var(--vscode-editorWidget-border, var(--vscode-panel-border));
+  --pele-accent: var(--vscode-textLink-foreground);
+  --pele-font-mono: var(--vscode-editor-font-family);
+}
 
 /* ===========================================================
    Drawio inline viewer

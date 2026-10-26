@@ -76,6 +76,21 @@ button { font: inherit; cursor: pointer; }
 #preview pre { background: var(--card-bg); padding: 12px; border-radius: 4px; overflow-x: auto; }
 #preview pre.mermaid { background: transparent; text-align: center; }
 #preview pre.mermaid svg { max-width: 100%; height: auto; }
+#preview .mdc-mermaid__error { color: var(--vscode-errorForeground, #f48771); font-size: 12px; text-align: left; white-space: pre-wrap; }
+/* Pele (the mermaid renderer) draws in CSS variables; map them onto the
+   editor theme so a diagram follows a theme switch without re-rendering. A
+   variable the theme leaves undefined falls back to Pele's own default. */
+.pele {
+  --pele-bg: var(--vscode-editor-background);
+  --pele-fg: var(--vscode-editor-foreground);
+  --pele-muted: var(--vscode-descriptionForeground);
+  --pele-line: var(--vscode-editor-foreground);
+  --pele-surface: var(--vscode-editorWidget-background);
+  --pele-surface-alt: var(--vscode-input-background);
+  --pele-border: var(--vscode-editorWidget-border, var(--vscode-panel-border));
+  --pele-accent: var(--vscode-textLink-foreground);
+  --pele-font-mono: var(--vscode-editor-font-family);
+}
 #preview blockquote { border-left: 3px solid var(--border); padding-left: 12px; color: var(--muted); margin-left: 0; }
 #preview a { color: var(--accent); }
 #preview table { border-collapse: collapse; }

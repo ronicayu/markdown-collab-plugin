@@ -139,7 +139,6 @@ export class PrReviewPanel {
         retainContextWhenHidden: true,
         localResourceRoots: [
           vscode.Uri.joinPath(context.extensionUri, "out", "pr", "webview"),
-          vscode.Uri.joinPath(context.extensionUri, "node_modules", "mermaid", "dist"),
           ...(folder ? [folder.uri] : [vscode.Uri.file(path.dirname(fullPath))]),
         ],
       },
@@ -319,9 +318,6 @@ export class PrReviewPanel {
     const sharedStyleUri = this.panel.webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, "out", "pr", "webview", "comments-shared.css"),
     );
-    const mermaidUri = this.panel.webview.asWebviewUri(
-      vscode.Uri.joinPath(this.context.extensionUri, "node_modules", "mermaid", "dist", "mermaid.min.js"),
-    );
     const cspSource = this.panel.webview.cspSource;
     const csp =
       `default-src 'none'; ` +
@@ -340,7 +336,6 @@ export class PrReviewPanel {
 </head>
 <body>
 ${prReviewAppBody()}
-<script src="${mermaidUri}"></script>
 <script src="${scriptUri}"></script>
 </body>
 </html>`;

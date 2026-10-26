@@ -29,10 +29,6 @@ interface VsCodeApi {
 declare global {
   interface Window {
     acquireVsCodeApi(): VsCodeApi;
-    mermaid?: {
-      initialize(opts: Record<string, unknown>): void;
-      run(opts?: { querySelector?: string }): Promise<void>;
-    };
   }
 }
 
@@ -644,18 +640,33 @@ function flashCard(el: HTMLElement): void {
   window.setTimeout(() => el.classList.remove("card-jump-flash"), 1500);
 }
 
-let mermaidInitialized = false;
+// Mermaid fences render with Pele (https://pele.run), the same renderer as the
+// live editor: synchronous, themed through the CSS variables in client.css.
+// Loaded lazily so a diff with no diagram never evaluates it.
+let mermaidIdCounter = 0;
 async function runMermaid(): Promise<void> {
-  const m = window.mermaid;
-  if (!m) return;
-  if (!mermaidInitialized) {
-    const isDark = document.body.classList.contains("vscode-dark") || window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const blocks = dom.preview.querySelectorAll<HTMLElement>("pre.mermaid:not([data-processed])");
+  if (blocks.length === 0) return;
+  let render: typeof import("pele").render;
+  try {
+    ({ render } = await import("pele"));
+  } catch { return; }
+  const fontFamily = getComputedStyle(document.body).fontFamily || undefined;
+  for (const pre of blocks) {
+    // A re-render may have replaced the preview while the import settled.
+    if (!pre.isConnected || pre.hasAttribute("data-processed")) continue;
+    pre.setAttribute("data-processed", "true");
+    const src = pre.textContent ?? "";
     try {
-      m.initialize({ startOnLoad: false, theme: isDark ? "dark" : "default", securityLevel: "strict" });
-      mermaidInitialized = true;
-    } catch { /* ignore */ }
+      pre.innerHTML = render(src, { idPrefix: `mdc-mermaid-${++mermaidIdCounter}-`, fontFamily }).svg;
+    } catch (e) {
+      const err = e as { message?: string; line?: number };
+      const error = document.createElement("div");
+      error.className = "mdc-mermaid__error";
+      error.textContent = `Mermaid render failed: ${err?.message ?? String(e)}${err?.line ? ` (line ${err.line})` : ""}\n\n${src}`;
+      pre.replaceChildren(error);
+    }
   }
-  try { await m.run({ querySelector: "pre.mermaid" }); } catch { /* ignore */ }
 }
 
 // Collapsing hides `#drafts-pane` and puts the open-thread count on the toggle's

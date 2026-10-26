@@ -37,10 +37,6 @@ const REQUIRED = [
   "extension/out/pr/webview/client.js",
   "extension/out/pr/webview/client.css",
   "extension/out/pr/webview/comments-shared.css",
-  // Mermaid is the one dependency loaded as a script asset by URI rather than
-  // bundled, so it must ship from node_modules.
-  "extension/node_modules/mermaid/dist/mermaid.min.js",
-  "extension/node_modules/mermaid/package.json",
   // The Claude Code plugin, which Set Up Claude Code copies into a local
   // marketplace and installs from. A package without it
   // silently falls back to the standalone skill on every machine.
@@ -112,15 +108,16 @@ if (shipped.length > 0) {
 
 // The review view's webview bundle has an upper bound, the
 // same one src/test/liveEditorBundle.test.ts checks on out/: this checks what
-// actually shipped. `mermaid` and `mxgraph` stay dynamic imports, guarded by
+// actually shipped. `pele` and `mxgraph` stay dynamic imports, guarded by
 // that test's source checks.
 //
-// Measured 2026-09-29 on branch round-4: `npm run compile` then
-// `wc -c out/webview/client.js` read 4,631,142 bytes. The number below is
+// Measured 2026-10-26, after mermaid.js was replaced by Pele (4,631,142 bytes
+// before): `npm run compile` then `wc -c out/webview/client.js` read
+// 2,301,856 bytes. The number below is
 // that × 1.25, floored — room for the review view to grow, not for a
 // dependency to land in the bundle whole. Raising it is a deliberate act —
 // remeasure, and update the comment and the test alongside it.
-const WEBVIEW_CLIENT_BUDGET_BYTES = 5_788_927;
+const WEBVIEW_CLIENT_BUDGET_BYTES = 2_877_320;
 
 const clientJsBuffer = execFileSync("unzip", ["-p", vsix, "extension/out/webview/client.js"], {
   maxBuffer: 64 * 1024 * 1024,
