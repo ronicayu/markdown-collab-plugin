@@ -21,7 +21,7 @@ export interface ResourceRootInput {
   docFsPath: string;
   /** Absolute paths of every open workspace folder. */
   workspaceFolders: string[];
-  /** Extension-owned directories (bundles, mermaid). Always granted. */
+  /** Extension-owned directories (the webview bundles). Always granted. */
   extensionDirs: string[];
 }
 

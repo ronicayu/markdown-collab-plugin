@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.35.57 — 2026-10-26 (pre-release)
+
+### Changed: mermaid diagrams render with Pele
+
+Mermaid fences in the Markdown Collab view and the PR review view now render
+with [Pele](https://pele.run) instead of mermaid.js.
+
+- **Diagrams look different.** Pele targets Mermaid 12.1 syntax but has its
+  own layout and visual style: node positions, spacing and edge paths change.
+  A diagram Pele can't parse shows the error with its source, as before.
+- **Diagrams follow the theme.** Colors come from your VS Code theme and
+  change with it when you switch themes; mermaid.js picked light or dark once,
+  at first render.
+- **Errors name the line.** A syntax error says which line of the fence it's on.
+- **Smaller and faster.** The review view's script is half its former size
+  (4.6 MB → 2.3 MB), and the PR review view no longer loads a separate
+  mermaid script. Diagrams render synchronously.
+
 ## 0.35.56 — 2026-10-18 (pre-release)
 
 A build on the marketplaces' pre-release channel, carrying 0.35.55, which
