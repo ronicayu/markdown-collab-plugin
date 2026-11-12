@@ -7,7 +7,7 @@
 // sidebar, is covered by modeToggle.spec.ts and liveSidebarToolbar.spec.ts;
 // this file is everything else the redesign touched.
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { parse, replaceThread } from "../../inlineComments/format";
 import { awaitPosted, bootLiveEditor, clearPosted, posted, pushToWebview } from "./harness";
 import { liveInit, liveSidecar, reviewFixture } from "./fixtures";
@@ -157,6 +157,69 @@ test.describe("comments toggle", () => {
     // Collapsed from the start: no click needed (a click would now expand).
     await expect(page.locator(".mdc-layout")).toHaveClass(/mdc-layout--collapsed/);
     await expect(page.locator("#mdc-comments-toggle .mc-badge")).toBeHidden();
+  });
+});
+
+test.describe("starting a comment opens the collapsed sidebar at once", () => {
+  // `code` can't take a comment in Reading mode, so anchoring fails with a
+  // toast — the sidebar opens anyway, the moment the comment is asked for.
+  const DOC = "# Notes\n\nThe parser handles nested lists correctly.\n\nCall `parseList` for each item.\n";
+
+  /** Select `target` in the editor, as a drag would. */
+  async function select(page: Page, target: string): Promise<void> {
+    await page.evaluate((t) => {
+      const root = document.querySelector<HTMLElement>(".milkdown .ProseMirror")!;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const i = (n.textContent ?? "").indexOf(t);
+        if (i < 0) continue;
+        const r = document.createRange();
+        r.setStart(n, i);
+        r.setEnd(n, i + t.length);
+        root.focus();
+        const sel = window.getSelection()!;
+        sel.removeAllRanges();
+        sel.addRange(r);
+        return;
+      }
+      throw new Error(`not in the editor: ${t}`);
+    }, target);
+  }
+
+  test("the floating Comment button expands the sidebar and opens the composer", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(DOC), readOnly: false });
+    const layout = page.locator(".mdc-layout");
+    await expect(layout).toHaveClass(/mdc-layout--collapsed/);
+    await select(page, "nested lists");
+    const add = page.locator(".mdc-add-comment-btn");
+    await expect(add).toBeVisible();
+    await add.click();
+    await expect(layout).not.toHaveClass(/mdc-layout--collapsed/);
+    await expect(page.locator(".mdc-composer-slot .mc-composer")).toBeVisible();
+  });
+
+  test("the floating Comment button expands the sidebar even when the selection can't be anchored", async ({
+    page,
+  }) => {
+    await bootLiveEditor(page, { ...liveInit(DOC), readOnly: true });
+    const layout = page.locator(".mdc-layout");
+    await expect(layout).toHaveClass(/mdc-layout--collapsed/);
+    await select(page, "parseList");
+    const add = page.locator(".mdc-add-comment-btn");
+    await expect(add).toBeVisible();
+    await add.click();
+    await expect(page.locator(".mdc-toast")).toContainText("can't be anchored inside code");
+    await expect(layout).not.toHaveClass(/mdc-layout--collapsed/);
+  });
+
+  test("Cmd/Ctrl+Shift+M expands the sidebar even when the selection can't be anchored", async ({ page }) => {
+    await bootLiveEditor(page, { ...liveInit(DOC), readOnly: true });
+    const layout = page.locator(".mdc-layout");
+    await expect(layout).toHaveClass(/mdc-layout--collapsed/);
+    await select(page, "parseList");
+    await page.keyboard.press("Control+Shift+M");
+    await expect(page.locator(".mdc-toast")).toContainText("can't be anchored inside code");
+    await expect(layout).not.toHaveClass(/mdc-layout--collapsed/);
   });
 });
 

@@ -2118,6 +2118,8 @@ function installAddCommentAffordance(): void {
     updateLastNonEmptySelection();
   });
   button.addEventListener("click", () => {
+    // The panel shows at the click itself — even if anchoring then fails.
+    expandSidebar();
     button.style.display = "none";
     openComposerForCurrentSelection();
   });
@@ -2133,6 +2135,10 @@ const READ_ONLY_REFUSALS = {
 
 function openComposerForCurrentSelection(): void {
   if (!editor || !composerEl) return;
+  // The composer lives in the sidebar, which opens collapsed. Every way in —
+  // the floating button, the sidebar's "+", Cmd/Ctrl+Shift+M — opens it before
+  // anchoring, so it shows even when the selection then can't be anchored.
+  expandSidebar();
   let anchor: import("../types").Anchor | null = null;
   // Read-only mode: the prose span under the selection and the bytes there,
   // taken now — if the file changes before Save, the host sees they differ.
@@ -2211,8 +2217,6 @@ function openComposerForCurrentSelection(): void {
     return;
   }
   setPendingAnchor(selected);
-  // The composer lives in the sidebar, which opens collapsed.
-  expandSidebar();
   const finalAnchor: import("../types").Anchor = anchor;
   const finalRange = proseRange as { start: number; end: number; text: string } | null;
   const finalEditRange = editRange as { first: EditorPoint; last: EditorPoint } | null;
