@@ -107,12 +107,34 @@ test.describe("filter tabs", () => {
 });
 
 test.describe("comments toggle", () => {
+  test("opens with the sidebar collapsed, the open-count badge standing in for it", async ({ page }) => {
+    const fixture = reviewFixture();
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
+    const toggle = page.locator("#mdc-comments-toggle");
+    const badge = toggle.locator(".mc-badge");
+    await expect(page.locator(".mdc-layout")).toHaveClass(/mdc-layout--collapsed/);
+    await expect(page.locator("#mdc-sidebar")).toBeHidden();
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await expect(toggle).toHaveAttribute("aria-label", "Show comments");
+    await expect(badge).toBeVisible();
+    await expect(badge).toHaveText("2");
+
+    await toggle.click();
+    await expect(page.locator(".mdc-layout")).not.toHaveClass(/mdc-layout--collapsed/);
+    await expect(page.locator("#mdc-sidebar")).toBeVisible();
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await expect(badge).toBeHidden();
+  });
+
   test("collapses the sidebar, shows the open-count badge, and the mode switch stays clickable", async ({ page }) => {
     const fixture = reviewFixture();
     await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
     const toggle = page.locator("#mdc-comments-toggle");
     const badge = toggle.locator(".mc-badge");
+    // Opens collapsed; expand first so the click under test is a collapse.
+    await toggle.click();
     await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await expect(toggle).toHaveAttribute("aria-label", "Hide comments");
     await expect(badge).toBeHidden();
 
     await toggle.click();
@@ -132,7 +154,8 @@ test.describe("comments toggle", () => {
     const fixture = reviewFixture();
     const allResolved = resolveThread(resolveThread(fixture.source, fixture.answeredThreadId), fixture.openThreadId);
     await bootLiveEditor(page, { ...liveInit(allResolved), readOnly: true });
-    await page.locator("#mdc-comments-toggle").click();
+    // Collapsed from the start: no click needed (a click would now expand).
+    await expect(page.locator(".mdc-layout")).toHaveClass(/mdc-layout--collapsed/);
     await expect(page.locator("#mdc-comments-toggle .mc-badge")).toBeHidden();
   });
 });

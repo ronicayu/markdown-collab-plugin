@@ -292,7 +292,8 @@ const sidebarState: {
 } = {
   comments: [],
   suggestions: [],
-  collapsed: false,
+  // The document gets the room on open; the toggle's badge carries the open count.
+  collapsed: true,
   notice: null,
 };
 
@@ -968,6 +969,13 @@ function buildCommentsToggle(): HTMLButtonElement {
   return btn;
 }
 
+/** Anything that puts content in the sidebar — a revealed card, the new-comment composer — opens it first. */
+function expandSidebar(): void {
+  if (!sidebarState.collapsed) return;
+  sidebarState.collapsed = false;
+  syncCollapsedClass();
+}
+
 function syncCollapsedClass(): void {
   if (!layoutEl) return;
   const collapsed = sidebarState.collapsed;
@@ -1442,10 +1450,7 @@ function revealThreadFromHost(threadId: string): void {
 
 function revealCommentInSidebar(commentId: string): void {
   if (!sidebarEl) return;
-  if (sidebarState.collapsed) {
-    sidebarState.collapsed = false;
-    syncCollapsedClass();
-  }
+  expandSidebar();
   // The sidebar makes it the current card, widening its filter if that one
   // hides the thread.
   threadSidebar.revealThread(commentId);
@@ -2206,6 +2211,8 @@ function openComposerForCurrentSelection(): void {
     return;
   }
   setPendingAnchor(selected);
+  // The composer lives in the sidebar, which opens collapsed.
+  expandSidebar();
   const finalAnchor: import("../types").Anchor = anchor;
   const finalRange = proseRange as { start: number; end: number; text: string } | null;
   const finalEditRange = editRange as { first: EditorPoint; last: EditorPoint } | null;
