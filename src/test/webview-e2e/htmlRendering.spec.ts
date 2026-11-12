@@ -36,6 +36,8 @@ Hidden **markdown** body.
 <script>alert(1)</script>
 
 <a href="https://example.com/docs">a link</a>
+
+Styled <a href="https://example.com/c" style="color:rgb(200, 0, 0)">red link</a> and <code style="color:rgb(0, 128, 0)">green code</code>, plus a [plain link](https://example.com/plain).
 `;
 
 const editor = (page: Page) => page.locator(".mdc-editor-root .milkdown");
@@ -94,6 +96,12 @@ test.describe("live editor, Reading", () => {
     await editor(page).locator('a[href="https://example.com/docs"]').click();
     expect(await awaitPosted(page, "open-link")).toMatchObject({ type: "open-link", href: "https://example.com/docs" });
   });
+
+  test("an inline style's color wins over the theme's link and code colors", async ({ page }) => {
+    await expect(editor(page).locator("a", { hasText: "red link" })).toHaveCSS("color", "rgb(200, 0, 0)");
+    await expect(editor(page).locator("code", { hasText: "green code" })).toHaveCSS("color", "rgb(0, 128, 0)");
+    await expect(editor(page).locator("a", { hasText: "plain link" })).not.toHaveCSS("color", "rgb(200, 0, 0)");
+  });
 });
 
 test.describe("live editor, Editing", () => {
@@ -135,6 +143,8 @@ test.describe("inline comments view", () => {
     await expect(preview).not.toContainText("a note");
     await noUnsafeDom(preview);
     await expect(preview).toContainText("<script>alert(1)</script>");
+    await expect(preview.locator("a", { hasText: "red link" })).toHaveCSS("color", "rgb(200, 0, 0)");
+    await expect(preview.locator("code", { hasText: "green code" })).toHaveCSS("color", "rgb(0, 128, 0)");
   });
 });
 
