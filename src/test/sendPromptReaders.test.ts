@@ -39,15 +39,15 @@ function expectsEveryKindOfReader(prompt: string): void {
   expect(prompt).toContain(FORMAT_SPEC_URL);
   expect(prompt).not.toContain("if you are not Claude Code");
   expect(prompt).not.toContain("as the skill describes");
-  // The rule comes first, in the prompt itself: tools or `mdc`, never a hand edit
-  // of a marker — and where `mdc` is, for an agent that has the skill only by name.
-  expect(prompt).toContain("only through the `markdown-collab` MCP tools or the `mdc` CLI");
-  expect(prompt).toContain("Change this file's review comments — a reply, a new thread, a rewrite of a commented passage");
-  expect(prompt).toContain("never edit a `<!--mc:…-->` marker or thread line yourself");
-  expect(prompt).toContain("node ~/.claude/skills/vs-markdown-collab/mdc.mjs");
-  expect(prompt).toContain("Only with neither, edit the file by hand");
-  // Named by the directive alone, not again by the opener.
-  expect(prompt.match(/`mdc`/g)).toHaveLength(2);
+  // The one rule in the prompt itself, and where `mdc` is for each kind of
+  // reader — not only in a skill the agent may have only by name.
+  expect(prompt).toContain("Change this file's review comments only with `mdc`");
+  expect(prompt).toContain("plain `mdc` in Claude Code with the Markdown Collab plugin");
+  expect(prompt).toContain("`node ~/.agents/skills/markdown-collab/mdc.mjs` for other agents");
+  expect(prompt).toContain("Never edit a `<!--mc:…-->` marker or thread line yourself");
+  expect(prompt).toContain("If you have neither, stop and ask the human to run Markdown Collab: Connect an Agent.");
+  // No fallback to editing the file by hand.
+  expect(prompt).not.toMatch(/edit the file by hand/i);
 }
 
 describe("the terminal and clipboard prompts, for an agent with the skill, the tools, or neither", () => {

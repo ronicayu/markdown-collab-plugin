@@ -1,4 +1,4 @@
-// Find-in-view state for the inline comments webview.
+// Find-in-view state for a webview.
 //
 // The webview owns Cmd+F because a webview can't reach VS Code's editor find
 // widget. The DOM half (walking text nodes, wrapping matches in <mark>) has to

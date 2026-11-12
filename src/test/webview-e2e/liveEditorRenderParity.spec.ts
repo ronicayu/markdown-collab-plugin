@@ -101,46 +101,33 @@ test("a <br> alone in its own paragraph is still dropped (empty-line placeholder
 });
 
 // ---------------------------------------------------------------------------
-// Mermaid follows the editor theme (client.ts initializes mermaid with
-// `theme: isDark ? "dark" : "default"`, dark for a `vscode-dark` /
-// `vscode-high-contrast` body class). Pinned by comparing the node fill color
-// mermaid 11's default and dark themes actually emit into the rendered SVG's
-// inline <style> — `#ECECFF` vs `#1f2020`, mermaid's own default theme
-// constants (verified by rendering both themes directly against this
-// project's installed mermaid version) — rather than spying on
-// `mermaid.initialize`: esbuild inlines the dynamic `import("mermaid")` into
-// the single-file IIFE bundle (no code splitting in that output format), so
-// there's no separate module load for a `page.addInitScript` to intercept.
+// Mermaid follows the editor theme. Pele draws in CSS variables (`--pele-*`),
+// which host.css maps onto VS Code's theme variables, so a diagram's colors
+// come from whatever theme is active — and change with it, without a
+// re-render. Pinned by setting the theme variables on the body (the harness
+// doesn't load a VS Code theme) and reading the computed fill of a node.
 // ---------------------------------------------------------------------------
 
 const MERMAID_SOURCE = "# Doc\n\n```mermaid\ngraph TD\nA-->B\n```\n";
-const MERMAID_DEFAULT_NODE_FILL = "fill:#ECECFF";
-const MERMAID_DARK_NODE_FILL = "fill:#1f2020";
 
-test("mermaid renders the dark theme when the body carries vscode-dark", async ({ page }) => {
+test("mermaid nodes take their colors from the editor theme, and follow a theme switch", async ({ page }) => {
   await bootLiveEditorShell(page);
-  // Mermaid's theme is read once, at first render, off `document.body`'s
-  // classes (client.ts's `loadMermaid`) — set it before `init` triggers that
-  // first render.
-  await page.evaluate(() => document.body.classList.add("vscode-dark"));
+  await page.evaluate(() => document.body.style.setProperty("--vscode-editorWidget-background", "rgb(1, 2, 3)"));
   await pushToWebview(page, { type: "init", ...liveInit(MERMAID_SOURCE) });
   await awaitPosted(page, "ready-with-content");
   await clearPosted(page);
 
-  const svg = page.locator(".mdc-mermaid svg");
+  const svg = page.locator(".mdc-mermaid svg.pele");
   await expect(svg).toBeVisible({ timeout: 15_000 });
-  const style = await svg.locator("style").first().innerHTML();
-  expect(style).toContain(MERMAID_DARK_NODE_FILL);
-  expect(style).not.toContain(MERMAID_DEFAULT_NODE_FILL);
-});
+  const node = svg.locator(".pele-node rect").first();
+  const fill = (): Promise<string> => node.evaluate((el) => getComputedStyle(el).fill);
+  expect(await fill()).toBe("rgb(1, 2, 3)");
 
-test("mermaid renders the default theme without vscode-dark on the body", async ({ page }) => {
-  await bootLiveEditor(page, liveInit(MERMAID_SOURCE));
-  const svg = page.locator(".mdc-mermaid svg");
-  await expect(svg).toBeVisible({ timeout: 15_000 });
-  const style = await svg.locator("style").first().innerHTML();
-  expect(style).toContain(MERMAID_DEFAULT_NODE_FILL);
-  expect(style).not.toContain(MERMAID_DARK_NODE_FILL);
+  const before = await svg.evaluate((el) => el.outerHTML);
+  await page.evaluate(() => document.body.style.setProperty("--vscode-editorWidget-background", "rgb(4, 5, 6)"));
+  expect(await fill()).toBe("rgb(4, 5, 6)");
+  // Same SVG: the switch is a style change, not a re-render.
+  expect(await svg.evaluate((el) => el.outerHTML)).toBe(before);
 });
 
 // ---------------------------------------------------------------------------

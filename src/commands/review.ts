@@ -11,7 +11,6 @@ import {
   type ReviewFile,
 } from "../multiFileReview";
 import { parse as parseInline } from "../inlineComments/format";
-import { InlineCommentsPanel } from "../inlineComments/inlineCommentsPanel";
 import { CollabEditorProvider } from "../collab/collabEditorProvider";
 import { CONVENTIONS_REL, CONVENTIONS_TEMPLATE } from "../reviewConventions";
 import { buildReviewDigest, type DigestFile } from "../reviewDigest";
@@ -274,12 +273,9 @@ async function invokeAskClaudeToReviewMulti(
 
   const payload = buildMultiFileReviewPayload(files, trimmedFocus);
 
-  // Snapshot thread state in every open panel for the selection, so each one
-  // scrolls to Claude's first new thread when the pass lands.
-  for (const uri of inFolder) {
-    InlineCommentsPanel.notifyReviewPending(uri);
-    CollabEditorProvider.notifyReviewPending(uri);
-  }
+  // Snapshot thread state in every open review view for the selection, so each
+  // one scrolls to Claude's first new thread when the pass lands.
+  for (const uri of inFolder) CollabEditorProvider.notifyReviewPending(uri);
 
   if (skipped > 0) {
     log.warn("review: files outside the folder were skipped", { skipped, folder: folder.name });
@@ -401,10 +397,9 @@ async function invokeAskClaudeToReview(
 
   if (trimmedFocus) await pushRecentFocus(globalState, trimmedFocus);
 
-  // Snapshot current thread state in any open review view or live editor for
-  // this doc BEFORE dispatching. The panel will auto-scroll to the first newly
-  // arrived claude-initiated thread once Claude finishes its pass.
-  InlineCommentsPanel.notifyReviewPending(doc.uri);
+  // Snapshot current thread state in any open review view for this doc BEFORE
+  // dispatching. The view will auto-scroll to the first newly arrived
+  // claude-initiated thread once Claude finishes its pass.
   CollabEditorProvider.notifyReviewPending(doc.uri);
 
   await dispatchReviewPayload(

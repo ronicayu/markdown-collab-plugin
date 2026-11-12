@@ -257,7 +257,7 @@ async function invokeCommentOnSelection(log: Logger): Promise<void> {
   );
   if (!opened) return;
   const threadId = opened.threadId;
-  // Same reasoning as the panel's own mutations (inlineCommentsPanel.ts): the
+  // Same reasoning as the review view's own mutations: the
   // .md file is the source of truth, and a comment sitting in an unsaved
   // buffer is invisible to an agent reading it from disk.
   await saveOrWarn(doc, log, "Comment added");

@@ -1095,6 +1095,64 @@ describe("mdc CLI: writes go through the running extension", () => {
 // and every mutating verb would otherwise POST the document's text, plus the
 // bearer token, there. Forwarding must stay confined to the local tool
 // server: a loopback host, on exactly the path it serves.
+// Outside a VS Code terminal there are no env vars, so the extension is found
+// through the descriptor it writes into the workspace it serves.
+describe("mdc CLI: finds the running extension from any terminal", () => {
+  const writeDescriptor = (dir: string, d: Record<string, unknown>): void => {
+    fs.mkdirSync(path.join(dir, ".markdown-collab"), { recursive: true });
+    fs.writeFileSync(path.join(dir, ".markdown-collab", ".mcp-server.json"), JSON.stringify(d));
+  };
+
+  it("forwards through the nearest workspace's descriptor, from a subfolder, with no env vars", async () => {
+    fs.mkdirSync(path.join(tmp, "docs"), { recursive: true });
+    const doc = writeDoc(path.join("docs", "a.md"), DOC);
+    const fake = await fakeExtension(tools((msg) => toolResult(msg, { action: "reply", threadId: "t1", commentId: "c2" })));
+    try {
+      writeDescriptor(tmp, { url: fake.ext.url, token: fake.ext.token, pid: process.pid });
+      const r = await runAsync(["reply", doc, "t1", "--body", "ok"], cliEnv());
+      expect(r.status).toBe(0);
+      expect(json(r).via).toBe("extension");
+      expect(fake.seen[0]!.headers.authorization).toBe(`Bearer ${TOKEN}`);
+      expect(fs.readFileSync(doc, "utf8")).toBe(DOC);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  it("skips a descriptor whose process is gone and writes directly, quietly", async () => {
+    const doc = writeDoc("a.md", DOC);
+    // Far above any real pid.
+    writeDescriptor(tmp, { url: "http://127.0.0.1:1/mcp", token: TOKEN, pid: 2 ** 30 });
+    const id = json(run(["open", doc, "--quote", "exponential backoff", "--body", "q"])).threadId;
+    const r = run(["reply", doc, id, "--body", "ok"]);
+    expect(r.status).toBe(0);
+    expect(json(r).via).toBeUndefined(); // written here, not forwarded
+    expect(r.stderr).toBe("");
+  });
+
+  it("never forwards to a descriptor that points off the machine", async () => {
+    const doc = writeDoc("a.md", DOC);
+    writeDescriptor(tmp, { url: "http://203.0.113.5:9999/mcp", token: TOKEN, pid: process.pid });
+    const r = await runAsync(["open", doc, "--quote", "exponential backoff", "--body", "q"], cliEnv());
+    expect(r.status).toBe(0);
+    expect(json(r).via).toBeUndefined(); // written here, not forwarded
+    expect(r.stderr).toContain("does not point at the local tool server");
+  });
+
+  it("--direct ignores the descriptor", async () => {
+    const doc = writeDoc("a.md", DOC);
+    const fake = await fakeExtension(tools((msg) => toolResult(msg, { action: "x" })));
+    try {
+      writeDescriptor(tmp, { url: fake.ext.url, token: fake.ext.token, pid: process.pid });
+      const r = await runAsync(["open", doc, "--quote", "exponential backoff", "--body", "q", "--direct"], cliEnv());
+      expect(json(r).via).toBeUndefined(); // written here, not forwarded
+      expect(fake.seen).toHaveLength(0);
+    } finally {
+      await fake.close();
+    }
+  });
+});
+
 describe("mdc CLI: forwards only to the local tool server (L3)", () => {
   it("refuses a non-loopback host, writing directly with no request attempted", async () => {
     const doc = writeDoc("a.md", DOC);

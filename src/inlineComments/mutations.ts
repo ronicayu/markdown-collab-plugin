@@ -1,11 +1,11 @@
-// Document mutations requested by the inline-comments webview.
+// Document mutations requested by the review view's comment sidebar.
 //
 // Every comment operation the human performs arrives as a postMessage and ends
 // as a full-document rewrite. That transform — message + current document in,
 // new document out — lives here as a pure function so the host↔webview protocol
-// can be tested as a contract without an Extension Host. The panel keeps the
-// side effects (applying the edit, showing the warning this returns, and the
-// non-document messages like open-link).
+// can be tested as a contract without an Extension Host. The host
+// (src/collab/sidebarHost.ts) keeps the side effects (applying the edit,
+// showing the warning this returns, and the non-document messages).
 
 import {
   acceptSuggestion,

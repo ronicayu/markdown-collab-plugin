@@ -1,5 +1,5 @@
 // Helpers for classifying threads as "new from Claude" vs "reviewed".
-// Shared by the inline-comments webview and unit tests. Pure functions —
+// Shared by the host, the webviews and unit tests. Pure functions —
 // no DOM, no vscode API dependency — so they work in both contexts.
 //
 // Despite the name (kept: renaming every file that imports this one is

@@ -120,14 +120,14 @@ describe("Set Up Claude Code and Connect an Agent when `claude` isn't found", ()
     expect(info).not.toHaveBeenCalled();
   });
 
-  it("still registers .mcp.json from Connect an Agent when ~/.claude exists", async () => {
+  // The standalone skill is the fallback when `claude` isn't found but
+  // ~/.claude exists; Connect never touches .mcp.json any more.
+  it("falls back to the standalone skill from Connect an Agent when ~/.claude exists, and leaves .mcp.json alone", async () => {
     mkdirSync(path.join(home.dir, ".claude"));
-    vi.mocked(ensureMcpJsonRegistration).mockResolvedValue("registered" as never);
 
     await handlers.get("markdownCollab.connectAgent")!();
 
-    expect(ensureMcpJsonRegistration).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(ensureMcpJsonRegistration).mock.calls[0]).toHaveLength(3);
+    expect(ensureMcpJsonRegistration).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
   });
 

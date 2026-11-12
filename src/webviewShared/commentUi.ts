@@ -296,7 +296,7 @@ export interface SuggestionCardOptions {
   onReject(): void;
   onClick?(): void;
   /**
-   * Collapse support. Omitted (as the classic panel always omits it), the card
+   * Collapse support. Omitted, the card
    * has no collapse chrome at all. Given, `collapsed` is the card's current
    * state and `onToggleCollapse` fires from the chevron or (while collapsed)
    * the header; the caller owns the actual state, the same way

@@ -195,15 +195,6 @@ export function buildToolDeps(deps: McpHostDeps): ToolDeps {
     resolveFile: async (file) => (await resolveWorkspaceFile(file)).toString(),
     readDoc: async (key) => (await vscode.workspace.openTextDocument(vscode.Uri.parse(key))).getText(),
     mutateDoc: mutateForTool,
-    // Read fresh on every call, never cached — the human can flip
-    // `markdownCollab.proposeEditsAsSuggestions` mid-session and the very next tool
-    // call must see it. Resolved against the document's own URI so a future
-    // per-folder scope needs no change here.
-    suggestModeFor: (key) =>
-      vscode.workspace.getConfiguration("markdownCollab", vscode.Uri.parse(key)).get<boolean>(
-        "proposeEditsAsSuggestions",
-        false,
-      ),
     onCall: (event) => {
       // One line per tool call is the transcript of what Claude actually did.
       // Without it a refused or misrouted call is invisible: the model sees the

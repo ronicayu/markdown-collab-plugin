@@ -1,10 +1,10 @@
-// The markdown-it pipeline, built once. The inline comments view and the PR/MR
-// review view render with markdown-it (the live editor is Milkdown/ProseMirror
-// and always will be). One factory means one place to add an embed type, and a
-// test can render exactly what the surfaces render rather than a replica of it.
+// The markdown-it pipeline, built once. The PR/MR review view renders with
+// markdown-it (the live editor is Milkdown/ProseMirror and always will be).
+// One factory means one place to add an embed type, and a test can render
+// exactly what the view renders rather than a replica of it.
 
 import MarkdownIt from "markdown-it";
-import { installSourceOffsetPlugin } from "../inlineComments/webview/renderWithOffsets";
+import { installSourceOffsetPlugin } from "./renderWithOffsets";
 import { installLineNumberPlugin } from "./lineNumbers";
 import { installPlantumlPlugin, type PlantumlOptions } from "../plantumlPlugin";
 import { isBlockHtml, isSelfContained, sanitizeHtml } from "./htmlSanitize";

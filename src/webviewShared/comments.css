@@ -36,6 +36,15 @@
 .mc-btn--primary:hover:not(:disabled) {
   background: var(--vscode-button-hoverBackground, var(--mc-accent));
 }
+/* The second choice beside a primary action: VS Code's secondary button. */
+.mc-btn--secondary {
+  background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.2));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border: none;
+}
+.mc-btn--secondary:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.3));
+}
 .mc-btn--link {
   background: none;
   border: none;
@@ -73,8 +82,8 @@
 /* --- icon buttons ---------------------------------------------------------
    `.mc-icon-btn` used to live in controls.css, loaded only by the live
    editor. The card module's own collapse chevron (below) needs it in every
-   webview that renders a card — including the PR review and classic panels,
-   neither of which loads controls.css — so the base rule lives here instead,
+   webview that renders a card — including the PR review panel, which doesn't
+   load controls.css — so the base rule lives here instead,
    the one stylesheet every card-rendering webview already loads.
    controls.css keeps what's genuinely toolbar-only (the segmented control,
    the collapsed-sidebar count badge). */
@@ -413,7 +422,7 @@ body.vscode-high-contrast-light .mc-suggestion__sentence ins {
 .mc-composer__status--error { color: var(--mc-danger); }
 
 /* --- Table of contents ---------------------------------------------------
-   Shared by the inline comments view and the live editor. Rows are indented by
+   The live editor's outline (outlinePanel.ts). Rows are indented by
    depth via a custom property rather than nested containers, so a deep tree
    stays one flat list the browser can render cheaply. */
 .mc-outline {

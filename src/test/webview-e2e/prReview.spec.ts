@@ -11,7 +11,7 @@
 // Boots the shipped bundle (`out/pr/webview/client.js`) against the exact DOM
 // skeleton the panel serves (`prReviewShell.ts`, imported directly rather than
 // copy-pasted, so a rename there can't silently drift out of sync with this
-// spec) — same approach as harness.ts's bootInlineView/bootLiveEditor, kept
+// spec) — same approach as harness.ts's bootLiveEditor, kept
 // local to this file since prReviewPanel.ts isn't something a webview test
 // can import (it pulls in `vscode`).
 
@@ -690,4 +690,21 @@ test("raw HTML in the reviewed file renders sanitized, with HTML images resolved
   await expect(preview.locator("img")).toHaveAttribute("src", "https://example.invalid/doc/shot.png");
   await expect(preview.locator("[onerror], script")).toHaveCount(0);
   await expect(preview).toContainText("<script>alert(1)</script>");
+});
+
+// Mermaid fences render with Pele, bundled into client.js (mermaid.js used to
+// be a separate script the panel loaded, which this harness never did).
+test("a mermaid fence renders as an SVG in place of its source", async ({ page }) => {
+  await bootPrReview(page, { source: "# Title\n\n```mermaid\ngraph TD\nA-->B\n```\n" });
+  const block = page.locator("#preview pre.mermaid");
+  await expect(block.locator("svg.pele")).toBeVisible();
+  await expect(block).toHaveAttribute("data-processed", "true");
+  await expect(block).not.toContainText("graph TD");
+});
+
+test("an invalid mermaid fence shows the error and its source", async ({ page }) => {
+  await bootPrReview(page, { source: "# Title\n\n```mermaid\nthis is not a diagram at all {{{\n```\n" });
+  const error = page.locator("#preview pre.mermaid .mdc-mermaid__error");
+  await expect(error).toContainText("Mermaid render failed");
+  await expect(error).toContainText("this is not a diagram at all {{{");
 });

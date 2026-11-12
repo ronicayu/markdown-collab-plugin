@@ -13,7 +13,6 @@ export interface DiagnosticsSnapshot {
   nodeVersion: string;
   sendMode: string;
   rememberedSendMode: string | null;
-  suggestMode: boolean;
   skillStatus: "missing" | "outdated" | "current" | "unknown";
   /**
    * The Claude Code plugin as Claude Code's registry records it; null when not
@@ -95,7 +94,6 @@ export function formatDiagnostics(s: DiagnosticsSnapshot): string {
   lines.push("");
   lines.push("## Configuration");
   lines.push(`- Send mode: ${s.sendMode}${s.rememberedSendMode ? ` (remembered: ${s.rememberedSendMode})` : ""}`);
-  lines.push(`- Suggest mode: ${yesNo(s.suggestMode)}`);
   lines.push(`- Review conventions file: ${yesNo(s.conventionsPresent)}`);
   lines.push("");
   lines.push("## Claude wiring");

@@ -14,15 +14,12 @@
 
 import * as path from "path";
 import { expect, type Page } from "@playwright/test";
-// Statically imported, deliberately. This was `await import(...)` inside
-// bootInlineView, and on the v0.34.72 tag every inline-view spec died there
-// with `SyntaxError: Unexpected token 'export'` on GitHub's runner while all
-// 24 passed locally — a runtime module resolution that only agreed with one of
-// the two environments. A static import is resolved by Playwright's own
-// transform, the same way every spec imports this file, so there is no
-// resolution left to disagree about. `webviewShell` imports nothing, so there
-// was never a host build to be lazy about.
-import { inlineCommentsAppBody } from "../../inlineComments/webviewShell";
+// Statically imported, deliberately: on the v0.34.72 tag a runtime
+// `await import(...)` of a shell module here died with `SyntaxError: Unexpected
+// token 'export'` on GitHub's runner while every spec passed locally — a
+// runtime module resolution that only agreed with one of the two environments.
+// A static import is resolved by Playwright's own transform, the same way every
+// spec imports this file, so there is no resolution left to disagree about.
 import { liveEditorShellBody } from "../../collab/liveEditorShell";
 
 export const REPO_ROOT = path.resolve(__dirname, "../../..");
@@ -30,10 +27,9 @@ const outFile = (...parts: string[]): string => path.join(REPO_ROOT, "out", ...p
 
 /**
  * The `acquireVsCodeApi` stand-in. Records every posted message on
- * `window.__mcPosted` and keeps `setState`/`getState` honest (the inline
- * client persists collapsed threads, the outline, and — round-4 P3.5 — the
- * keyboard hint's dismissal through them, so a no-op stub would change
- * behavior). The state itself is on `window.__mcState` too, so a spec can
+ * `window.__mcPosted` and keeps `setState`/`getState` honest (the client
+ * persists collapsed threads, the outline, and — round-4 P3.5 — the keyboard
+ * hint's dismissal through them, so a no-op stub would change behavior). The state itself is on `window.__mcState` too, so a spec can
  * read back what the client persisted without a real webview reload.
  */
 const VSCODE_API_STUB = `
@@ -105,33 +101,6 @@ async function bootPage(page: Page, body: string, styles: string[], script: stri
   await page.addScriptTag({ content: VSCODE_API_STUB });
   if ("state" in opts) await page.addScriptTag({ content: `window.__mcState = ${JSON.stringify(opts.state)};` });
   await page.addScriptTag({ path: script });
-}
-
-/**
- * Boot the inline-comments webview shell (panel DOM + client bundle) without
- * pushing an `init` yet. Split out of `bootInlineView` so a spec can assert
- * the pre-init state — the "Loading…" placeholder (round-4 P3.3) — before
- * sending the message that replaces it.
- */
-export async function bootInlineViewShell(page: Page): Promise<void> {
-  await bootPage(
-    page,
-    inlineCommentsAppBody(),
-    [outFile("inlineComments", "comments-shared.css"), outFile("inlineComments", "client.css")],
-    outFile("inlineComments", "client.js"),
-  );
-  await awaitPosted(page, "ready");
-  await clearPosted(page);
-}
-
-/**
- * Boot the inline-comments webview with the panel's own DOM skeleton and push
- * an `init`. Resolves once the thread list has rendered.
- */
-export async function bootInlineView(page: Page, init: Record<string, unknown>): Promise<void> {
-  await bootInlineViewShell(page);
-  await pushToWebview(page, { type: "init", ...init });
-  await expect(page.locator("#preview")).not.toBeEmpty();
 }
 
 /**

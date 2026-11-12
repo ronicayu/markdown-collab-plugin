@@ -172,19 +172,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          # Pull the section starting with "## $VERSION " (followed by space or end-of-line)
-          # up to (but not including) the next "## " heading. Empty if no match —
-          # the next step then falls back to --generate-notes.
-          awk -v ver="$VERSION" '
-            BEGIN { capture = 0 }
-            /^## / {
-              if (capture) exit
-              if ($2 == ver) { capture = 1; next }
-            }
-            capture { print }
-          ' CHANGELOG.md > release-notes.md
-          # Trim trailing blank lines.
-          sed -e :a -e '/^$/N;/\n$/ba' -i.bak release-notes.md && rm -f release-notes.md.bak
+          scripts/release-notes.sh "$VERSION" > release-notes.md
           if [ -s release-notes.md ]; then
             echo "Release notes for $VERSION:"
             cat release-notes.md
@@ -192,6 +180,9 @@ jobs:
             echo "No CHANGELOG entry for $VERSION; will fall back to auto-generated notes."
           fi
 
+      # A Release for the tag may already exist — made in the GitHub UI to
+      # push the tag, say. It is then brought in line rather than failing the
+      # job after both marketplaces already published.
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
@@ -199,11 +190,19 @@ jobs:
         run: |
           # A pre-release tag makes a GitHub pre-release too, so the two
           # channels agree about what "latest" means.
-          PRERELEASE=""
+          PRERELEASE="--prerelease=false"
           if [ "${{ steps.gate.outputs.channel }}" != "stable" ]; then
             PRERELEASE="--prerelease"
           fi
-          if [ -s release-notes.md ]; then
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "A release for $GITHUB_REF_NAME already exists — updating it."
+            if [ -s release-notes.md ]; then
+              gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" $PRERELEASE --notes-file release-notes.md
+            else
+              gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" $PRERELEASE
+            fi
+            gh release upload "$GITHUB_REF_NAME" markdown-collab-plugin.vsix --clobber
+          elif [ -s release-notes.md ]; then
             gh release create "$GITHUB_REF_NAME" \
               markdown-collab-plugin.vsix \
               --title "$GITHUB_REF_NAME" \

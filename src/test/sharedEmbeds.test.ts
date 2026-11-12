@@ -60,7 +60,7 @@ describe("both markdown-it surfaces render the corpus identically", () => {
 });
 
 describe("mermaid", () => {
-  it("emits a bare pre.mermaid the client can hand to mermaid.run", () => {
+  it("emits a bare pre.mermaid the client can hand to the mermaid renderer", () => {
     const html = render();
     expect(html).toContain('<pre class="mermaid">');
     const block = html.slice(html.indexOf('<pre class="mermaid">'));
@@ -68,7 +68,7 @@ describe("mermaid", () => {
   });
 
   it("does not wrap the diagram source in an offset span", () => {
-    // mermaid v11 replaces the <pre> wholesale; a nested span would be lost
+    // The client replaces the <pre>'s children with the SVG; a nested span would be lost
     // and take the anchoring offsets with it.
     const html = render();
     const start = html.indexOf('<pre class="mermaid">');

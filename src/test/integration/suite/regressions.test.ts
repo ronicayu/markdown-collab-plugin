@@ -291,7 +291,9 @@ suite("Historical regressions (real host)", () => {
   //    the transport actually sends, across the setting → command → payload
   //    chain that unit tests only cover one link of at a time.
   // -------------------------------------------------------------------
-  test("suggest mode reaches the dispatched prompt", async () => {
+  // Suggestions are asked for per send: { suggest: true } after the file (the
+  // "Send as suggestions" button), on the send-all path and the per-thread one.
+  test("a send asking for suggestions reaches the dispatched prompt", async () => {
     const name = "reg-suggest-dispatch.md";
     const body = "# Guide\n\nThe retry uses exponential backoff.\n";
     const { source } = addThread(body, body.indexOf("exponential"), body.indexOf("backoff") + 7, {
@@ -302,73 +304,38 @@ suite("Historical regressions (real host)", () => {
     const doc = await openFixture(name, source);
     const config = vscode.workspace.getConfiguration("markdownCollab");
     const prevMode = config.inspect("sendMode")?.workspaceValue;
-    const prevSuggest = config.inspect("proposeEditsAsSuggestions")?.workspaceValue;
+    const sent = async (command: string, ...args: unknown[]): Promise<string> => {
+      await vscode.env.clipboard.writeText("cleared-by-test");
+      await vscode.commands.executeCommand(command, ...args);
+      await waitFor(
+        async () => (await vscode.env.clipboard.readText()) !== "cleared-by-test",
+        5000,
+        `clipboard never updated by ${command}`,
+      );
+      return vscode.env.clipboard.readText();
+    };
     try {
       await config.update("sendMode", "clipboard", vscode.ConfigurationTarget.Workspace);
-      await config.update("proposeEditsAsSuggestions", false, vscode.ConfigurationTarget.Workspace);
       await vscode.window.showTextDocument(doc);
 
-      await vscode.env.clipboard.writeText("cleared-by-test");
-      await vscode.commands.executeCommand("markdownCollab.sendAllToClaude", doc.uri);
-      await waitFor(
-        async () => (await vscode.env.clipboard.readText()) !== "cleared-by-test",
-        5000,
-        "clipboard never updated with the plain prompt",
-      );
-      const plain = await vscode.env.clipboard.readText();
+      const plain = await sent("markdownCollab.sendAllToClaude", doc.uri);
       assert.ok(plain.includes(name), `prompt missing the file: ${plain}`);
-      assert.ok(!/suggest mode/i.test(plain), `plain prompt should not request suggest mode: ${plain}`);
+      assert.ok(!/suggest mode/i.test(plain), `plain prompt should not request suggestions: ${plain}`);
 
-      // Flip the toggle through the command the UI uses.
-      await vscode.commands.executeCommand("markdownCollab.toggleSuggestMode");
-      await waitFor(
-        () =>
-          vscode.workspace
-            .getConfiguration("markdownCollab")
-            .get<boolean>("proposeEditsAsSuggestions", false) === true,
-        5000,
-        "toggleSuggestMode did not flip the setting",
-      );
-
-      await vscode.env.clipboard.writeText("cleared-by-test");
-      await vscode.commands.executeCommand("markdownCollab.sendAllToClaude", doc.uri);
-      await waitFor(
-        async () => (await vscode.env.clipboard.readText()) !== "cleared-by-test",
-        5000,
-        "clipboard never updated with the suggest-mode prompt",
-      );
-      const suggesting = await vscode.env.clipboard.readText();
+      const suggesting = await sent("markdownCollab.sendAllToClaude", doc.uri, { suggest: true });
       assert.ok(/suggest mode/i.test(suggesting), `prompt missing the suggest directive: ${suggesting}`);
       assert.ok(suggesting.includes("mdc suggest"), `prompt should name the helper: ${suggesting}`);
 
-      // ...and the per-thread path too. This one silently ignored the toggle
-      // until v0.34.59: suggest mode is a property of the request, not of how
-      // many threads it covers.
+      const viaPalette = await sent("markdownCollab.sendAllAsSuggestions", doc.uri);
+      assert.ok(/suggest mode/i.test(viaPalette), `palette command lost the suggest directive: ${viaPalette}`);
+
+      // The per-thread path too: it once ignored suggestions (v0.34.59).
       const threadId = parse(doc.getText()).threads[0]!.id;
-      await vscode.env.clipboard.writeText("cleared-by-test");
-      await vscode.commands.executeCommand(
-        "markdownCollab.copyThreadToClaude",
-        doc.uri,
-        threadId,
-      );
-      await waitFor(
-        async () => (await vscode.env.clipboard.readText()) !== "cleared-by-test",
-        5000,
-        "clipboard never updated with the per-thread prompt",
-      );
-      const perThread = await vscode.env.clipboard.readText();
+      const perThread = await sent("markdownCollab.sendThreadToClaude", doc.uri, threadId, { suggest: true });
       assert.ok(perThread.includes(threadId), `per-thread prompt lost its scope: ${perThread}`);
-      assert.ok(
-        /suggest mode/i.test(perThread),
-        `per-thread prompt ignored the suggest toggle: ${perThread}`,
-      );
+      assert.ok(/suggest mode/i.test(perThread), `per-thread prompt lost the suggest directive: ${perThread}`);
     } finally {
       await config.update("sendMode", prevMode, vscode.ConfigurationTarget.Workspace);
-      await config.update(
-        "proposeEditsAsSuggestions",
-        prevSuggest,
-        vscode.ConfigurationTarget.Workspace,
-      );
       await rmIfExists(doc.uri.fsPath);
     }
   });

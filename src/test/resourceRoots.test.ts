@@ -48,10 +48,10 @@ describe("imageResourceRootPaths", () => {
     const roots = imageResourceRootPaths({
       docFsPath: "/a/x.md",
       workspaceFolders: ["/a"],
-      extensionDirs: ["/ext/out/webview", "/ext/node_modules/mermaid/dist"],
+      extensionDirs: ["/ext/out/webview", "/ext/media"],
     });
     expect(roots).toContain(path.resolve("/ext/out/webview"));
-    expect(roots).toContain(path.resolve("/ext/node_modules/mermaid/dist"));
+    expect(roots).toContain(path.resolve("/ext/media"));
   });
 
   it("collapses a directory already covered by an ancestor", () => {

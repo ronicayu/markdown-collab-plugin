@@ -2,7 +2,7 @@
 //
 // The tracker itself is pure and lives in `inlineComments/claudePending.ts`.
 // This module owns the single host-wide instance and the fan-out to whichever
-// views are open, so the inline comments panel and the live editor show the
+// views are open, so every open review view shows the
 // same "Claude is working…" state for the same document — including when the
 // send came from a command palette invocation with no panel open at all.
 

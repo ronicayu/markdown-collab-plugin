@@ -1,7 +1,7 @@
-// The table-of-contents panel in both rendered surfaces.
+// The table-of-contents panel in the review view (the live editor).
 
 import { expect, test } from "@playwright/test";
-import { bootInlineView, bootLiveEditor } from "./harness";
+import { bootLiveEditor } from "./harness";
 import { liveSidecar } from "./fixtures";
 
 const DOC = `# Guide
@@ -21,253 +21,19 @@ Details.
 More prose.
 `;
 
-test.describe("inline comments view", () => {
-  test.beforeEach(async ({ page }) => {
-    await bootInlineView(page, {
-      fileName: "doc.md",
-      state: { prose: DOC, threads: [], suggestions: [] },
-      user: { name: "r" },
-      imageBaseUris: { docDir: "", workspaceFolder: null },
-    });
+async function boot(page: import("@playwright/test").Page, text: string): Promise<void> {
+  await bootLiveEditor(page, {
+    text,
+    user: { name: "r", color: "#fff" },
+    ...liveSidecar(text),
+    frontmatter: "",
+    imageBaseUris: { docDir: "", workspaceFolder: null },
   });
-
-  test("is hidden until asked for, then lists the headings nested", async ({ page }) => {
-    await expect(page.locator("#outline-pane")).toBeHidden();
-    await page.locator("#outline-toggle").click();
-    await expect(page.locator("#outline-pane")).toBeVisible();
-
-    const rows = page.locator(".mc-outline__row");
-    await expect(rows).toHaveCount(4);
-    await expect(rows.nth(0).locator(".mc-outline__label")).toHaveText("Guide");
-    await expect(rows.nth(1).locator(".mc-outline__label")).toHaveText("Setup");
-    // Depth is what conveys nesting.
-    await expect(rows.nth(1)).toHaveAttribute("style", /--mc-outline-depth: 1/);
-    await expect(rows.nth(2)).toHaveAttribute("style", /--mc-outline-depth: 2/);
-  });
-
-  test("collapsing a section hides its children but keeps the section", async ({ page }) => {
-    await page.locator("#outline-toggle").click();
-    const setupRow = page.locator(".mc-outline__row", { hasText: "Setup" }).first();
-    await setupRow.locator(".mc-outline__twisty").click();
-
-    await expect(page.locator(".mc-outline__row", { hasText: "Prerequisites" })).toHaveCount(0);
-    await expect(setupRow).toBeVisible();
-    await expect(page.locator(".mc-outline__row")).toHaveCount(3);
-  });
-
-
-  test("a leaf heading has no expander to click", async ({ page }) => {
-    await page.locator("#outline-toggle").click();
-    const leaf = page.locator(".mc-outline__row", { hasText: "Prerequisites" }).first();
-    await expect(leaf.locator(".mc-outline__twisty--leaf")).toHaveCount(1);
-  });
-
-});
-
-// Separate describe: these boot their own document, and booting twice in one
-// page re-injects the client bundle (`__mcState already declared`).
-test.describe("inline comments view — other documents", () => {
-  test("clicking a heading scrolls the preview to it", async ({ page }) => {
-    // A document short enough to fit the viewport cannot scroll, and the
-    // assertion would be measuring a no-op.
-    const filler = Array.from({ length: 60 }, (_, i) => `Filler line ${i}.`).join("\n\n");
-    await bootInlineView(page, {
-      fileName: "long.md",
-      state: {
-        prose: `# Guide\n\n${filler}\n\n## Usage\n\nAt the bottom.\n`,
-        threads: [],
-        suggestions: [],
-      },
-      user: { name: "r" },
-      imageBaseUris: { docDir: "", workspaceFolder: null },
-    });
-    await page.locator("#outline-toggle").click();
-    await page.locator(".mc-outline__row", { hasText: "Usage" }).first().click();
-    // The pane scrolls, and the heading ends up on screen. Not "at the top":
-    // the last heading in a document cannot reach the top, because the pane
-    // runs out of content to scroll past and stops at its limit.
-    await expect
-      .poll(async () =>
-        page.evaluate(() => {
-          const pane = document.getElementById("preview-pane")!;
-          const usage = Array.from(pane.querySelectorAll("h2")).find(
-            (h) => h.textContent === "Usage",
-          )!;
-          const paneBox = pane.getBoundingClientRect();
-          const top = usage.getBoundingClientRect().top - paneBox.top;
-          return { scrolled: pane.scrollTop > 100, visible: top >= 0 && top < paneBox.height };
-        }),
-      )
-      .toEqual({ scrolled: true, visible: true });
-  });
-
-  test("says what to do when the document has no headings", async ({ page }) => {
-    await bootInlineView(page, {
-      fileName: "doc.md",
-      state: { prose: "Just prose, no headings.\n", threads: [], suggestions: [] },
-      user: { name: "r" },
-      imageBaseUris: { docDir: "", workspaceFolder: null },
-    });
-    await page.locator("#outline-toggle").click();
-    await expect(page.locator(".mc-outline__empty")).toContainText("Add one with #");
-  });
-
-  test("ignores a heading inside a code fence", async ({ page }) => {
-    await bootInlineView(page, {
-      fileName: "doc.md",
-      state: {
-        prose: "# Real\n\n```sh\n# not a heading\n```\n",
-        threads: [],
-        suggestions: [],
-      },
-      user: { name: "r" },
-      imageBaseUris: { docDir: "", workspaceFolder: null },
-    });
-    await page.locator("#outline-toggle").click();
-    await expect(page.locator(".mc-outline__row")).toHaveCount(1);
-  });
-});
-
-// The bug this file did not catch the first time: `#app` is a grid with a
-// fixed column list, and adding the outline as a third child auto-placed every
-// pane one slot across — outline in the 1fr column, preview squeezed into the
-// 360px comments column, comments wrapped onto a second row. Every structural
-// assertion above still passed, because the rows and clicks were all present
-// and correct. Only the geometry was wrong, so the geometry is asserted here.
-test.describe("layout", () => {
-  const boot = async (page: import("@playwright/test").Page): Promise<void> => {
-    await page.setViewportSize({ width: 1400, height: 700 });
-    await bootInlineView(page, {
-      fileName: "doc.md",
-      state: { prose: DOC, threads: [], suggestions: [] },
-      user: { name: "r" },
-      imageBaseUris: { docDir: "", workspaceFolder: null },
-    });
-  };
-
-  const widths = (page: import("@playwright/test").Page) =>
-    page.evaluate(() => ({
-      outline: Math.round(document.getElementById("outline-pane")!.getBoundingClientRect().width),
-      preview: Math.round(document.getElementById("preview-pane")!.getBoundingClientRect().width),
-      threads: Math.round(document.getElementById("threads-pane")!.getBoundingClientRect().width),
-    }));
-
-  test("the preview keeps most of the width when the outline opens", async ({ page }) => {
-    await boot(page);
-    const before = await widths(page);
-    expect(before.threads).toBe(360);
-
-    await page.locator("#outline-toggle").click();
-    const after = await widths(page);
-
-    // The outline takes its own column; the preview gives up that much and
-    // stays the widest pane. The comments pane is untouched.
-    expect(after.threads).toBe(360);
-    expect(after.outline).toBeGreaterThan(100);
-    expect(after.preview).toBeGreaterThan(after.outline);
-    expect(after.preview).toBeGreaterThan(before.preview - after.outline - 40);
-  });
-
-  test("every pane stays on one row", async ({ page }) => {
-    await boot(page);
-    await page.locator("#outline-toggle").click();
-    // Grid auto-placement pushed the comments pane onto a second row, which is
-    // invisible to a width check but obvious as a vertical offset.
-    const tops = await page.evaluate(() =>
-      ["outline-pane", "preview-pane", "threads-pane"].map((id) =>
-        Math.round(document.getElementById(id)!.getBoundingClientRect().top),
-      ),
-    );
-    expect(new Set(tops).size).toBe(1);
-  });
-
-  test("closing the outline gives the width back", async ({ page }) => {
-    await boot(page);
-    const before = await widths(page);
-    await page.locator("#outline-toggle").click();
-    await page.locator("#outline-toggle").click();
-    expect(await widths(page)).toEqual(before);
-  });
-
-  // round-4 P3.4, verified bug: `#app.with-outline` (0,1,1) out-specificities
-  // the narrow-viewport `#app { grid-template-columns: 1fr }` rule (0,1,0), so
-  // turning the outline on at a narrow width kept three columns instead of
-  // collapsing to one — the media query fired, but never won.
-  test("at 700px, the outline still collapses the layout to a single column", async ({ page }) => {
-    await page.setViewportSize({ width: 700, height: 700 });
-    await bootInlineView(page, {
-      fileName: "doc.md",
-      state: { prose: DOC, threads: [], suggestions: [] },
-      user: { name: "r" },
-      imageBaseUris: { docDir: "", workspaceFolder: null },
-    });
-    await page.locator("#outline-toggle").click();
-    await expect(page.locator("#outline-pane")).toBeVisible();
-
-    const columns = await page.evaluate(() =>
-      getComputedStyle(document.getElementById("app")!).gridTemplateColumns.trim().split(/\s+/),
-    );
-    expect(columns).toHaveLength(1);
-  });
-});
-
-// Two sections with the same name is ordinary in a structured document
-// ("What changed", "Security assessment", "Open questions"). Navigation used to
-// match by re-slugifying the rendered heading text, so the outline's
-// disambiguated `what-changed-1` matched nothing and the entry was inert —
-// clicking it did not move the view at all.
-test.describe("repeated heading names", () => {
-  const F = "Filler.\n\n".repeat(15);
-  const DUPES = `# Doc\n\n## Section A\n\n${F}\n### What changed\n\nAAA marker\n\n${F}\n## Section B\n\n${F}\n### What changed\n\nBBB marker\n\n${F}\n`;
-
-  test("each entry navigates to its own section, not to the first match", async ({ page }) => {
-    await page.setViewportSize({ width: 1400, height: 700 });
-    await bootInlineView(page, {
-      fileName: "doc.md",
-      state: { prose: DUPES, threads: [], suggestions: [] },
-      user: { name: "r" },
-      imageBaseUris: { docDir: "", workspaceFolder: null },
-    });
-    await page.locator("#outline-toggle").click();
-
-    const rows = page.locator(".mc-outline__row", { hasText: "What changed" });
-    await expect(rows).toHaveCount(2);
-
-    /** The marker paragraph visible in the pane after clicking row `i`. */
-    const clickAndRead = async (i: number): Promise<string[]> => {
-      await page.evaluate(() => {
-        document.getElementById("preview-pane")!.scrollTop = 0;
-      });
-      await rows.nth(i).click();
-      await page.waitForTimeout(600);
-      return page.evaluate(() => {
-        const pane = document.getElementById("preview-pane")!;
-        const paneTop = pane.getBoundingClientRect().top;
-        return Array.from(pane.querySelectorAll("p"))
-          .filter((p) => /AAA|BBB/.test(p.textContent ?? ""))
-          .filter((p) => {
-            const t = p.getBoundingClientRect().top - paneTop;
-            return t > -20 && t < pane.clientHeight;
-          })
-          .map((p) => (p.textContent ?? "").trim());
-      });
-    };
-
-    expect(await clickAndRead(0)).toEqual(["AAA marker"]);
-    // This is the one that used to scroll nowhere.
-    expect(await clickAndRead(1)).toEqual(["BBB marker"]);
-  });
-});
+}
 
 test.describe("live editor", () => {
   test("toggles an outline listing the document's headings", async ({ page }) => {
-    await bootLiveEditor(page, {
-      text: DOC,
-      user: { name: "r", color: "#fff" },
-      ...liveSidecar(DOC),
-      frontmatter: "",
-      imageBaseUris: { docDir: "", workspaceFolder: null },
-    });
+    await boot(page, DOC);
     await expect(page.locator(".mdc-outline-pane")).toBeHidden();
     await page.locator("[data-action='toggle-outline']").click();
     await expect(page.locator(".mdc-outline-pane")).toBeVisible();
@@ -276,17 +42,44 @@ test.describe("live editor", () => {
     await expect(rows).toHaveCount(4);
     await expect(rows.nth(0).locator(".mc-outline__label")).toHaveText("Guide");
     await expect(rows.nth(3).locator(".mc-outline__label")).toHaveText("Usage");
+    // Depth is what conveys nesting.
+    await expect(rows.nth(1)).toHaveAttribute("style", /--mc-outline-depth: 1/);
+    await expect(rows.nth(2)).toHaveAttribute("style", /--mc-outline-depth: 2/);
+  });
+
+  test("collapsing a section hides its children but keeps the section", async ({ page }) => {
+    await boot(page, DOC);
+    await page.locator("[data-action='toggle-outline']").click();
+    const setupRow = page.locator(".mc-outline__row", { hasText: "Setup" }).first();
+    await setupRow.locator(".mc-outline__twisty").click();
+
+    await expect(page.locator(".mc-outline__row", { hasText: "Prerequisites" })).toHaveCount(0);
+    await expect(setupRow).toBeVisible();
+    await expect(page.locator(".mc-outline__row")).toHaveCount(3);
+  });
+
+  test("a leaf heading has no expander to click", async ({ page }) => {
+    await boot(page, DOC);
+    await page.locator("[data-action='toggle-outline']").click();
+    const leaf = page.locator(".mc-outline__row", { hasText: "Prerequisites" }).first();
+    await expect(leaf.locator(".mc-outline__twisty--leaf")).toHaveCount(1);
+  });
+
+  test("says what to do when the document has no headings", async ({ page }) => {
+    await boot(page, "Just prose, no headings.\n");
+    await page.locator("[data-action='toggle-outline']").click();
+    await expect(page.locator(".mc-outline__empty")).toContainText("Add one with #");
+  });
+
+  test("ignores a heading inside a code fence", async ({ page }) => {
+    await boot(page, "# Real\n\n```sh\n# not a heading\n```\n");
+    await page.locator("[data-action='toggle-outline']").click();
+    await expect(page.locator(".mc-outline__row")).toHaveCount(1);
   });
 
   test("the editor keeps its width and every pane stays on one row", async ({ page }) => {
     await page.setViewportSize({ width: 1400, height: 700 });
-    await bootLiveEditor(page, {
-      text: DOC,
-      user: { name: "r", color: "#fff" },
-      ...liveSidecar(DOC),
-      frontmatter: "",
-      imageBaseUris: { docDir: "", workspaceFolder: null },
-    });
+    await boot(page, DOC);
     await page.locator("[data-action='toggle-outline']").click();
     const box = await page.evaluate(() => {
       const rect = (sel: string) => document.querySelector(sel)!.getBoundingClientRect();

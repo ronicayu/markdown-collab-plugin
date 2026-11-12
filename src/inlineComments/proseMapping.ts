@@ -1,4 +1,4 @@
-// Prose ↔ source offset mapping for the inline-comments view.
+// Prose ↔ source offset mapping for the review view.
 //
 // The webview renders the document with all `mc:` markup, the threads region,
 // and frontmatter stripped, so every offset it reports is in "prose space" and
@@ -6,7 +6,7 @@
 // translation wrong is how a comment ends up anchored to the wrong words, or
 // swallowing a marker.
 //
-// Pure and vscode-free so both the panel and the mutation handlers can use it
+// Pure and vscode-free so the host and the mutation handlers can use it
 // and it can be tested directly.
 
 import type { ParsedDocument } from "./format";

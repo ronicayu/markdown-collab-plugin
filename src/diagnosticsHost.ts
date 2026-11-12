@@ -155,7 +155,6 @@ export async function collectDiagnostics(
     nodeVersion: process.versions.node,
     sendMode: String(config.get("sendMode", "ask")),
     rememberedSendMode: (context.workspaceState.get<string>(REMEMBERED_SEND_MODE_KEY) ?? null),
-    suggestMode: config.get<boolean>("proposeEditsAsSuggestions", false),
     skillStatus,
     claudePlugin,
     claudeBinary,

@@ -30,7 +30,7 @@ import { markdownBlocks, type EditorPoint, type MarkdownBlock } from "./sourcePo
 export type { DrawioReadResult };
 import { claudePending, onPendingChanged } from "../claudePendingService";
 import { pendingLabel } from "../inlineComments/claudePending";
-import type { DiffState } from "../inlineComments/inlineCommentsPanel";
+import type { DiffState } from "./diffStripes";
 import { diffProse } from "../uncommitted/proseDiff";
 import { headFileContent, repoRootFor } from "../uncommitted/gitUncommitted";
 import { classifyLink } from "./linkRouter";
@@ -45,7 +45,6 @@ import {
   handleSidebarMessage,
   isSidebarMessage,
   postSkillStatus,
-  readSuggestMode,
   type SidebarHostContext,
 } from "./sidebarHost";
 import { sidebarDocumentFields, type SidebarDocumentFields } from "./sidebarState";
@@ -79,18 +78,15 @@ interface InitPayload extends SidebarFields {
    */
   epoch: number;
   /**
-   * Uncommitted-vs-HEAD diff overlay, in the payload shape the inline panel
-   * sends (`DiffState`). Null when the panel wasn't opened in diff mode, or
-   * the file isn't inside a git work tree.
+   * Uncommitted-vs-HEAD diff overlay (`DiffState`, src/collab/diffStripes.ts).
+   * Null when the panel wasn't opened in diff mode, or the file isn't inside
+   * a git work tree.
    */
   diff: DiffState | null;
 }
 
-/** The sidebar's half of `init` and of every `sidecar-changed`: the same fields the review view's panel pushes. */
-interface SidebarFields extends SidebarDocumentFields {
-  /** Whether Send asks the agent for suggestions instead of edits. */
-  suggestMode: boolean;
-}
+/** The sidebar's half of `init` and of every `sidecar-changed`. */
+type SidebarFields = SidebarDocumentFields;
 
 const EDIT_LOST = "Markdown Collab couldn't save your last edit — the view was reloaded from the file.";
 
@@ -884,10 +880,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     panelsForDoc.add(livePanel);
     openPanels.set(document.uri.toString(), panelsForDoc);
 
-    const sidebarFields = (source: string): SidebarFields => ({
-      ...sidebarDocumentFields(source),
-      suggestMode: readSuggestMode(),
-    });
+    const sidebarFields = (source: string): SidebarFields => sidebarDocumentFields(source);
 
     const pushComments = (): void => {
       const source = document.getText();
@@ -1208,8 +1201,6 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
 
     const configSub = vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("markdownCollab.showLineNumbers")) pushLineMap();
-      // The sidebar's suggest-mode switch follows the setting wherever it changed.
-      if (e.affectsConfiguration("markdownCollab.proposeEditsAsSuggestions")) pushComments();
       // `markdownCollab.liveEditor.readOnly` isn't followed here: it only seeds
       // a newly opened panel, and an open one keeps the mode its switch chose.
     });
@@ -1427,8 +1418,7 @@ export class CollabEditorProvider implements vscode.CustomTextEditorProvider {
     try {
       const targetUri = vscode.Uri.file(decision.targetFsPath);
       if (decision.targetFsPath.toLowerCase().endsWith(".md")) {
-        // Another document stays in the review view — through the command, which
-        // honours `markdownCollab.classicReviewView`.
+        // Another document stays in the review view — through its command.
         await vscode.commands.executeCommand("markdownCollab.openInlineCommentsView", targetUri);
       } else {
         // vscode.open respects the user's editor associations.

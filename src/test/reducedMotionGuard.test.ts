@@ -1,5 +1,5 @@
 // Guard for the reduced-motion pass: every `scrollIntoView`
-// call across the three review surfaces must respect
+// call across the review surfaces must respect
 // `prefers-reduced-motion`, which only happens if it goes through the shared
 // `smoothScrollIntoView` helper. A literal `behavior: "smooth"` anywhere else
 // in these directories is a call site that slipped past that helper — this
@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 
 const SRC_ROOT = resolve(__dirname, "..");
 
-const SCAN_DIRS = ["inlineComments/webview", "webview", "pr/webview", "webviewShared"];
+const SCAN_DIRS = ["webview", "pr/webview", "webviewShared"];
 
 const HELPER_FILE = "webviewShared/scrollIntoView.ts";
 

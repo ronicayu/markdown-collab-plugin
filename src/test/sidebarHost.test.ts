@@ -161,11 +161,18 @@ describe("handleSidebarMessage: document operations", () => {
   });
 });
 
-describe("handleSidebarMessage: sends and settings", () => {
+describe("handleSidebarMessage: sends", () => {
   // The last column: what the webview is told afterwards (the sends' "Sent" notice waits on it).
   const cases: Array<[SidebarMessage, string, unknown[], string[]]> = [
-    [{ type: "send-to-claude" }, "markdownCollab.sendAllToClaude", [], ["post:send-result"]],
-    [{ type: "send-to-claude-comment", threadId: "t1" }, "markdownCollab.sendThreadToClaude", ["t1"], ["post:send-result"]],
+    [{ type: "send-to-claude" }, "markdownCollab.sendAllToClaude", [{ suggest: false }], ["post:send-result"]],
+    [{ type: "send-to-claude", suggest: true }, "markdownCollab.sendAllToClaude", [{ suggest: true }], ["post:send-result"]],
+    [{ type: "send-to-claude-comment", threadId: "t1" }, "markdownCollab.sendThreadToClaude", ["t1", { suggest: false }], ["post:send-result"]],
+    [
+      { type: "send-to-claude-comment", threadId: "t1", suggest: true },
+      "markdownCollab.sendThreadToClaude",
+      ["t1", { suggest: true }],
+      ["post:send-result"],
+    ],
     [{ type: "copy-claude-comment", threadId: "t1" }, "markdownCollab.copyThreadToClaude", ["t1"], []],
     [{ type: "remove-resolved" }, "markdownCollab.removeResolvedComments", [], []],
     [{ type: "finalize" }, "markdownCollab.finalizeDocument", [], []],
@@ -219,12 +226,4 @@ describe("handleSidebarMessage: sends and settings", () => {
     exec.mockRestore();
   });
 
-  it("toggle-suggest-mode flips the setting through the command, then re-pushes", async () => {
-    const host = fakeHost(DOC);
-    const exec = vi.spyOn(vscode.commands, "executeCommand").mockResolvedValue(undefined);
-    await handleSidebarMessage({ type: "toggle-suggest-mode" }, host.ctx);
-    expect(exec).toHaveBeenCalledWith("markdownCollab.toggleSuggestMode");
-    expect(host.calls).toEqual(["refresh"]);
-    exec.mockRestore();
-  });
 });

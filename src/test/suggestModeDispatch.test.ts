@@ -1,12 +1,6 @@
-// Suggest mode has to survive the trip from the toggle to the prompt, on
-// EVERY send path — regression guard for v0.34.59.
-//
-// The toggle, the setting, and the badge were all correct; four of the five
-// send paths simply never read the flag, including the "Send to Claude" button
-// sitting next to the toggle in the inline comments panel. Only the command
-// palette passed it, so the feature looked inert from the UI that advertises
-// it. Builder-level tests didn't catch it because the builders were fine — the
-// call sites were the bug, which is what the last test here pins.
+// A send that asks for suggestions has to carry that to the prompt. It used to
+// be a setting that four of five send paths forgot to read (v0.34.59); it is
+// now chosen per send — "Send as suggestions" — and passed along explicitly.
 
 import * as fs from "fs";
 import * as path from "path";
@@ -85,52 +79,15 @@ describe("buildSingleThreadPayload", () => {
 // The actual regression: the call sites, not the builders.
 // ---------------------------------------------------------------------------
 
-/** Every `buildInlinePayload(` / `buildSingleThreadPayload(` call in a file. */
-function payloadCallSites(file: string): Array<{ file: string; call: string; line: number }> {
-  const source = fs.readFileSync(path.join(__dirname, "..", file), "utf8");
-  const lines = source.split("\n");
-  const out: Array<{ file: string; call: string; line: number }> = [];
-  for (let i = 0; i < lines.length; i++) {
-    const m = /\b(buildInlinePayload|buildSingleThreadPayload)\s*\(/.exec(lines[i]);
-    if (!m) continue;
-    if (/^\s*(import|export)\b/.test(lines[i])) continue;
-    // Calls span a few lines once an options object is passed; take a window.
-    out.push({ file, call: lines.slice(i, i + 4).join("\n"), line: i + 1 });
-  }
-  return out;
-}
-
-describe("every send path reads the suggest-mode toggle", () => {
-  // A source-level guard, deliberately: the bug was a caller forgetting an
-  // optional argument, which type-checks fine and which builder tests can't
-  // see. Anything that dispatches a payload has to consult the setting.
-  //
-  // "extension.ts" until these call sites moved into
-  // src/commands/send.ts along with the rest of the send family.
-  const HOSTS = ["commands/send.ts", "inlineComments/inlineCommentsPanel.ts"];
-
-  it("finds the call sites it means to guard", () => {
-    const sites = HOSTS.flatMap(payloadCallSites);
-    // 2 in commands/send.ts (per-thread send + copy) + 1 (send all)
-    // + 4 in the panel (send, copy, per-thread send, per-thread copy).
-    expect(sites.length).toBeGreaterThanOrEqual(6);
-  });
-
-  it("passes a suggestMode option at every call site", () => {
-    const missing = HOSTS.flatMap(payloadCallSites).filter(
-      (site) => !/suggestMode/.test(site.call),
-    );
-    expect(
-      missing.map((m) => `${m.file}:${m.line}`),
-      "a send path that ignores the suggest-mode toggle makes the toggle a lie",
-    ).toEqual([]);
-  });
-
-  it("reads it from the setting, not from a literal", () => {
-    // `{ suggestMode: true }` in a host would pin the mode on regardless of
-    // what the user chose; it must come from isSuggestMode()/readSuggestMode().
-    for (const site of HOSTS.flatMap(payloadCallSites)) {
-      expect(site.call, `${site.file}:${site.line}`).not.toMatch(/suggestMode:\s*(true|false)\b/);
+// Suggestions are chosen per send, not by a setting: the two sends that can
+// ask for them take the choice from their caller, and nothing reads a mode.
+describe("the sends that can ask for suggestions take the choice per send", () => {
+  it("send-all and send-thread pass the caller's choice; nothing reads a suggest-mode setting", () => {
+    const send = fs.readFileSync(path.join(__dirname, "..", "commands/send.ts"), "utf8");
+    expect(send).toContain("buildInlinePayload(doc, { suggestMode: suggest })");
+    expect(send).toContain("suggestMode: suggestFrom(opts),");
+    for (const host of ["commands/send.ts", "collab/sidebarHost.ts", "mcpServer/index.ts", "skillCli/guardHook.ts"]) {
+      expect(fs.readFileSync(path.join(__dirname, "..", host), "utf8"), host).not.toContain("proposeEditsAsSuggestions");
     }
   });
 });

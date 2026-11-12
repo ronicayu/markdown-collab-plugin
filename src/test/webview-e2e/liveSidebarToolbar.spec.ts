@@ -1,7 +1,6 @@
-// The live editor's sidebar toolbar: the
-// review view's toolbar.spec.ts — filter segments, Send named after the agent,
-// the suggest-mode switch, the "…" menu, the keyboard hint — plus the one
-// control only the live editor has, the Reading/Editing mode control.
+// The live editor's sidebar toolbar: filter segments, Send named after the
+// agent, the two sends, the "…" menu, the keyboard hint, and the
+// Reading/Editing mode control.
 
 import { expect, test } from "@playwright/test";
 import { addThread, replaceThread, type InlineThread } from "../../inlineComments/format";
@@ -25,15 +24,15 @@ test.describe("no agent has written in the file", () => {
     });
   });
 
-  test("Send and the suggest-mode item are worded generically", async ({ page }) => {
+  test("both sends are worded generically", async ({ page }) => {
     await expect(page.locator("#send-to-claude")).toHaveText("Send 1 comment");
     await expect(page.locator("#send-to-claude")).toHaveAttribute(
       "title",
       "Send the prompt to your agent's terminal (or your configured send mode).",
     );
-    await expect(page.locator("#suggest-mode-toggle")).toHaveAttribute(
+    await expect(page.locator("#send-as-suggestions")).toHaveAttribute(
       "title",
-      "When on, Send asks the agent to propose edits as suggestions you accept or reject.",
+      "Send, asking the agent to propose each edit as a suggestion you accept or reject.",
     );
     const card = page.locator(`.thread-card[data-thread="${human.thread.id}"]`);
     await expect(card.locator(".thread-send")).toHaveAttribute("title", "Send this thread to your agent");
@@ -94,17 +93,17 @@ test.describe("with the review fixture, read-only", () => {
     expect(state?.threadFilter).toBe("all");
   });
 
-  test("agentName from the host renames the Send button's and suggest item's titles, never the Send label", async ({ page }) => {
+  test("agentName from the host renames both sends' titles, never the Send label", async ({ page }) => {
     // The fixture has 2 open threads (neither resolved). The label names the
     // count and no agent: agentName is who wrote here last, not who a send goes to.
     await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments");
     await expect(page.locator("#send-to-claude")).toHaveAttribute("title", /Claude/);
-    await expect(page.locator("#suggest-mode-toggle")).toHaveAttribute("title", /Claude/);
+    await expect(page.locator("#send-as-suggestions")).toHaveAttribute("title", /Claude/);
 
     await pushToWebview(page, { type: "sidecar-changed", ...liveSidecar(fixture.source, { agentName: "Codex" }) });
     await expect(page.locator("#send-to-claude")).toHaveText("Send 2 comments");
     await expect(page.locator("#send-to-claude")).toHaveAttribute("title", /Codex/);
-    await expect(page.locator("#suggest-mode-toggle")).toHaveAttribute("title", /Codex/);
+    await expect(page.locator("#send-as-suggestions")).toHaveAttribute("title", /Codex/);
   });
 
   test("without a host-computed pendingLabel, the waiting row says '<agentName> is working…'", async ({ page }) => {

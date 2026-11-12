@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import MarkdownIt from "markdown-it";
-import { installSourceOffsetPlugin } from "../inlineComments/webview/renderWithOffsets";
+import { installSourceOffsetPlugin } from "../webviewShared/renderWithOffsets";
 
 function mkRenderer(): MarkdownIt {
   const md = new MarkdownIt({ html: false, linkify: false, breaks: false });
@@ -21,7 +21,7 @@ function spans(html: string, source: string): Array<{ start: number; end: number
   return out;
 }
 
-describe("inlineComments/webview/renderWithOffsets", () => {
+describe("webviewShared/renderWithOffsets", () => {
   it("annotates plain paragraph text", () => {
     const src = "Hello world.";
     const html = mkRenderer().render(src);

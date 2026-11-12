@@ -6,9 +6,9 @@
 // one of the lazy imports below turned into a static one.
 // scripts/verify-package.mjs checks the same number on the packaged .vsix.
 //
-// The two heaviest dependencies stay lazy: `mermaid` and `mxgraph` are
-// dynamic imports, loaded only when a document has a mermaid or draw.io
-// block. A regular `import` would put them in the bundle for every document;
+// The two heaviest dependencies stay lazy: `pele` (the mermaid renderer) and
+// `mxgraph` are dynamic imports, loaded only when a document has a mermaid or
+// draw.io block. A regular `import` would put them in the bundle for every document;
 // the source-text checks catch that before the size does.
 
 import * as fs from "fs";
@@ -18,11 +18,12 @@ import { describe, expect, it } from "vitest";
 const ROOT = path.resolve(__dirname, "..", "..");
 const BUNDLE = path.join(ROOT, "out", "webview", "client.js");
 
-// Measured 2026-09-29 on branch round-4, after the review-view switch:
-// `npm run compile` then `wc -c out/webview/client.js` read 4,631,142 bytes.
+// Measured 2026-10-26, after mermaid.js was replaced by Pele (4,631,142 bytes
+// before): `npm run compile` then `wc -c out/webview/client.js` read
+// 2,301,856 bytes.
 // The bound is that × 1.25, floored. Raising it is a deliberate act — remeasure,
 // update this comment and scripts/verify-package.mjs with it.
-const WEBVIEW_CLIENT_MAX_BYTES = 5_788_927;
+const WEBVIEW_CLIENT_MAX_BYTES = 2_877_320;
 
 function read(rel: string): string {
   return fs.readFileSync(path.join(ROOT, rel), "utf8");
@@ -44,10 +45,10 @@ describe("the review view's webview bundle", () => {
     expect(fs.statSync(BUNDLE).size).toBeLessThanOrEqual(WEBVIEW_CLIENT_MAX_BYTES);
   });
 
-  it("src/webview/client.ts loads mermaid only via a dynamic import", () => {
+  it("src/webview/client.ts loads the mermaid renderer (pele) only via a dynamic import", () => {
     const source = read("src/webview/client.ts");
-    expect(source).toMatch(/import\(\s*["']mermaid["']\s*\)/);
-    expect(staticImportOf(source, "mermaid")).toBe(false);
+    expect(source).toMatch(/import\(\s*["']pele["']\s*\)/);
+    expect(staticImportOf(source, "pele")).toBe(false);
   });
 
   it("src/webview/drawioRenderer.ts loads mxgraph only via a dynamic import", () => {

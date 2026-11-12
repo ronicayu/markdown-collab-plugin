@@ -15,6 +15,7 @@ import {
   skillFingerprint,
 } from "../skill";
 import { createHash } from "crypto";
+import { renderReviewGuide } from "../skillText";
 
 // Stale helpers from the deleted channel transports.
 // installClaudeSkill must clean these up if they're left over from an older
@@ -34,19 +35,15 @@ afterEach(async () => {
 
 describe("SKILL_CONTENT instructions", () => {
   it("documents the inline format only — no sidecar references remain", () => {
-    expect(SKILL_CONTENT).toContain("Comments are stored INLINE");
+    expect(SKILL_CONTENT).toContain("Comments live inside the `.md` file");
     expect(SKILL_CONTENT).toContain("<!--mc:threads:begin-->");
-    // The legacy sidecar workflow / reference doc are fully removed. (The
-    // `mdc.mjs` helper is unrelated to the old sidecar CLI of the same name —
-    // it is the marker-safe mutation CLI added in 0.34.42, and the skill is
-    // expected to reference it.)
     expect(SKILL_CONTENT).not.toContain("Sidecar-mode workflow");
     expect(SKILL_CONTENT).not.toContain("SIDECAR.md");
   });
 
   it("preserves the orphan-on-deletion rule", () => {
     // A deleted passage's thread orphans; never re-anchor to nearby text.
-    expect(SKILL_CONTENT).toContain("Deletions become orphans by design");
+    expect(SKILL_CONTENT).toContain("Removing the passage leaves the thread unanchored, which is correct: never re-anchor it to nearby text.");
   });
 
   // The channel transports (event log + MCP channel) were
@@ -70,81 +67,65 @@ describe("SKILL_CONTENT instructions", () => {
     }
   });
 
-  // Target (6,477 words before the shrink, 4,570
-  // after). Every sentence is one an agent can misread, so the ceiling is a
-  // real constraint, not a vanity number — keep cutting rather than raising
-  // it. Counted in words, not lines: un-wrapping a paragraph shrinks the line
-  // count without removing a single thing Claude has to read.
-  it("fits within the word-count ceiling", () => {
-    const words = SKILL_CONTENT.split(/\s+/).filter(Boolean).length;
-    expect(words).toBeLessThanOrEqual(5000);
+  // It was 30 KB: the whole review rubric and a hand-editing appendix, loaded on
+  // every turn the skill triggered. The rubric is now `mdc help review`, read
+  // only for a review pass. Keep cutting rather than raising this.
+  it("stays short", () => {
+    expect(SKILL_CONTENT.length).toBeLessThanOrEqual(6000);
   });
 });
 
-// The tools enforce what the prose used to warn about, so the
-// happy path should read as orchestration — and the marker-surgery lore has to
-// stay quarantined in the appendix, or Claude will reach for it while holding a
-// tool that does the same thing safely.
-describe("SKILL_CONTENT — tools-first structure", () => {
-  const appendixStart = SKILL_CONTENT.indexOf("## Appendix: hand-editing markers");
-  const body = SKILL_CONTENT.slice(0, appendixStart);
-  const appendix = SKILL_CONTENT.slice(appendixStart);
-
-  it("has a fallback appendix, at the end", () => {
-    expect(appendixStart).toBeGreaterThan(0);
-    expect(appendix).toContain("last resort");
-    // The body is the thing Claude reads first; the appendix must not dominate.
-    expect(appendix.length).toBeLessThan(body.length / 2);
+// The one path an agent is shown is the safe one. Hand-editing instructions
+// anywhere in the skill compete with a command that does the same thing and
+// can't drop a marker — so there are none.
+describe("SKILL_CONTENT — mdc is the only way to change a reviewed file", () => {
+  it("says so, and how to run it from the standalone skill", () => {
+    expect(SKILL_CONTENT).toContain("## The one rule: change a reviewed file only with `mdc`");
+    expect(SKILL_CONTENT).toContain("`node ~/.claude/skills/vs-markdown-collab/mdc.mjs <command> <file> …`");
+    expect(SKILL_CONTENT).toContain("never edit a marker or a thread line yourself");
   });
 
-  it("names every tool the server exposes", () => {
-    for (const tool of [
-      "mc_list",
-      "mc_reply",
-      "mc_open",
-      "mc_rewrite",
-      "mc_resolve",
-      "mc_suggest",
-      "mc_check",
-      "mc_status",
-    ]) {
-      expect(body, `body should mention ${tool}`).toContain(tool);
+  it("names every mdc verb, and the rubric command", () => {
+    for (const verb of ["list", "reply", "rewrite", "edit", "open", "suggest", "resolve", "check", "help review"]) {
+      expect(SKILL_CONTENT, `should name ${verb}`).toContain(`| \`${verb}`);
     }
   });
 
-  it("keeps marker surgery out of the happy path", () => {
-    // These are the instructions that told Claude to build an Edit around raw
-    // markers. Anywhere but the appendix, they compete with a tool call that
-    // does the same thing and can't drop a marker. (Describing the storage
-    // format is fine and stays — knowing what the file looks like is not the
-    // same as being told to hand-edit it.)
-    for (const phrase of ["old_string", "new_string", "base36 id", "Edit the passage to"]) {
-      expect(body, `body should not carry ${phrase}`).not.toContain(phrase);
-      expect(appendix, `appendix should carry ${phrase}`).toContain(phrase);
+  it("carries no marker surgery and no fallback to it", () => {
+    for (const phrase of ["old_string", "new_string", "base36 id", "Appendix", "by hand as"]) {
+      expect(SKILL_CONTENT, `should not carry ${phrase}`).not.toContain(phrase);
     }
+    expect(SKILL_CONTENT).toContain("instead of editing markers by hand");
   });
 
-  it("tells Claude that the closing check is what ends the human's wait", () => {
-    expect(body).toMatch(/mc_check[\s\S]{0,400}Waiting\s+for\s+the\s+agent/);
+  it("tells the agent that the closing check is what ends the human's wait", () => {
+    expect(SKILL_CONTENT).toMatch(/check <file>[\s\S]{0,200}Waiting for the agent/);
   });
+
+  it("sends a review pass to the rubric rather than carrying it", () => {
+    expect(SKILL_CONTENT).toContain("Run `node ~/.claude/skills/vs-markdown-collab/mdc.mjs help review` first and follow it.");
+    expect(SKILL_CONTENT).not.toContain("Worked examples");
+  });
+});
+
+describe("the review rubric, from mdc help review", () => {
+  const guide = renderReviewGuide();
 
   it("caps Review Mode at five threads, with a summary thread for the rest (10x-plan-6 P3)", () => {
-    // The grill overturned the old never-ration rule: too
-    // many comments landed even though most were sound findings.
-    expect(SKILL_CONTENT).toContain("Rank concerns by severity and open threads for the **five** that matter most.");
-    expect(SKILL_CONTENT).toContain("Also noticed (N): …");
-    expect(SKILL_CONTENT).not.toContain("There is **no maximum number of threads**");
-    expect(SKILL_CONTENT).not.toContain('Do not "leave the top N"');
+    expect(guide).toContain("Rank concerns by severity and open threads for the **five** that matter most.");
+    expect(guide).toContain("Also noticed (N): …");
   });
 
   it("keeps the focus directive as the primary filter", () => {
-    expect(SKILL_CONTENT).toContain("It is the **primary filter**");
-    expect(SKILL_CONTENT).toContain("Do not fabricate threads to feel productive.");
+    expect(guide).toContain("It is the **primary filter**");
+    expect(guide).toContain("Do not fabricate threads to feel productive.");
   });
 
-  it("still documents the CLI as a first-class path, not a deprecation", () => {
-    expect(body).toContain("mdc.mjs");
-    expect(body).toMatch(/CLI[\s\S]{0,200}same verbs/i);
+  it("is written for mdc: no tool names, no workflow phases", () => {
+    expect(guide).toContain("mdc open <file>");
+    expect(guide).toContain("`mdc check`");
+    expect(guide).not.toMatch(/\bmc_[a-z]+/);
+    expect(guide).not.toContain("Phase 5 constraints");
   });
 });
 

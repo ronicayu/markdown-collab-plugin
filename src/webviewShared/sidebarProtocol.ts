@@ -61,8 +61,6 @@ export type SkillStatus = "missing" | "outdated" | "current";
 export interface SidebarState {
   threads: SidebarThread[];
   suggestions: SidebarSuggestion[];
-  /** Whether Send asks the agent to propose edits as suggestions. */
-  suggestMode: boolean;
   /** Threads sent to an agent and not yet answered. */
   pendingThreadIds: string[];
   /** The host's wording for the waiting row; absent means "<agentName> is working…". */
@@ -75,15 +73,15 @@ export interface SidebarState {
 
 /** Messages the sidebar posts. Every one of them is also a review-view message except `set-read-only`. */
 export type SidebarMessage =
-  | { type: "send-to-claude" }
+  /** `suggest`: ask the agent to propose each edit as a suggestion instead of making it. */
+  | { type: "send-to-claude"; suggest?: boolean }
   | { type: "copy-prompt" }
-  | { type: "toggle-suggest-mode" }
   | { type: "set-read-only"; readOnly: boolean }
   | { type: "remove-resolved" }
   | { type: "finalize" }
   | { type: "install-skill" }
   | { type: "empty-state-review" }
-  | { type: "send-to-claude-comment"; threadId: string }
+  | { type: "send-to-claude-comment"; threadId: string; suggest?: boolean }
   | { type: "copy-claude-comment"; threadId: string }
   | { type: "open-in-editor"; threadId: string }
   | SidebarMutation;

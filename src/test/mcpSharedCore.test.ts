@@ -71,9 +71,9 @@ describe("the skill and the server agree on the tool names", () => {
   // other telling Claude to call something that doesn't exist — and the failure
   // mode is Claude quietly falling back to hand-editing markers. Checked on
   // every rendering, since each is read by a different kind of session.
+  // The mdc skills (plugin, standalone, agents) name the mdc verbs, not the
+  // tools; the headless workflow is the rendering that drives the tools.
   const renderings = {
-    legacy: renderSkill("legacy"),
-    plugin: renderSkill("plugin"),
     headless: renderSkill("headless"),
   };
   const advertised = read("mcpServer/tools.ts")

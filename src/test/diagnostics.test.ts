@@ -12,7 +12,6 @@ function snapshot(o: Partial<DiagnosticsSnapshot> = {}): DiagnosticsSnapshot {
     nodeVersion: "20.11.0",
     sendMode: "ask",
     rememberedSendMode: "terminal",
-    suggestMode: false,
     skillStatus: "current",
     mcpServer: { port: 7391, registered: true },
     claudeTerminalVisible: true,

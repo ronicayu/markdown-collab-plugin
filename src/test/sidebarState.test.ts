@@ -3,8 +3,8 @@ import { addThread, appendReply, parse, replaceThread } from "../inlineComments/
 import { serialize } from "../inlineComments/serializeState";
 import { mostRecentAgentName, sidebarDocumentFields, skillBannerStatus } from "../collab/sidebarState";
 
-// The live editor's sidebar renders from the same thread list
-// the review view's panel serializes, plus the agent name for its toolbar.
+// The live editor's sidebar renders from the thread list `serialize` maps into
+// prose space, plus the agent name for its toolbar.
 describe("sidebarDocumentFields", () => {
   const DOC = "# Doc\n\nAlpha sentence.\n\nBeta sentence.\n";
   const TS = "2026-01-01T00:00:00.000Z";
@@ -46,13 +46,36 @@ describe("sidebarDocumentFields", () => {
   });
 });
 
-// The live editor's copy of the review view panel's helper — the same cases.
+// The host tells the sidebar who to name instead of it hardcoding "Claude" —
+// the agent behind whichever comment or suggestion in the file has the latest
+// timestamp, among agent-authored ones only.
 describe("mostRecentAgentName (sidebarState)", () => {
   const withThreadsBlock = (...lines: string[]) =>
     ["Plain.", "", "<!--mc:threads:begin-->", ...lines, "<!--mc:threads:end-->"].join("\n");
 
   it("is undefined when no agent has written to the file", () => {
     expect(mostRecentAgentName(parse("No threads at all."))).toBeUndefined();
+  });
+
+  it("is undefined when every comment is a human's", () => {
+    const md = withThreadsBlock(
+      `<!--mc:t {"id":"t1","quote":"a","status":"open","comments":[{"id":"c1","author":"ronica","ts":"2026-01-01T00:00:00Z","body":"note"}]}-->`,
+    );
+    expect(mostRecentAgentName(parse(md))).toBeUndefined();
+  });
+
+  it("names the agent behind the single agent-authored comment", () => {
+    const md = withThreadsBlock(
+      `<!--mc:t {"id":"t1","quote":"a","status":"open","comments":[{"id":"c1","author":"codex","agent":true,"ts":"2026-01-01T00:00:00Z","body":"fixed"}]}-->`,
+    );
+    expect(mostRecentAgentName(parse(md))).toBe("Codex");
+  });
+
+  it("recognizes a known agent slug written before the explicit `agent` flag existed", () => {
+    const md = withThreadsBlock(
+      `<!--mc:t {"id":"t1","quote":"a","status":"open","comments":[{"id":"c1","author":"codex","ts":"2026-01-01T00:00:00Z","body":"legacy"}]}-->`,
+    );
+    expect(mostRecentAgentName(parse(md))).toBe("Codex");
   });
 
   it("picks the latest-timestamped agent write across threads", () => {

@@ -1,0 +1,85 @@
+name: Sync GitHub Release
+
+# Brings the GitHub Release of an already-published tag in line with what the
+# Release workflow would have made: its title, the CHANGELOG section as notes,
+# pre-release or not, and the exact .vsix that run packaged and published.
+# For when the Release workflow published to the marketplaces but its last
+# step couldn't make the GitHub Release — re-running that workflow would try
+# to publish the same version again.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag whose GitHub Release to sync, e.g. v0.35.56'
+        required: true
+        type: string
+      run_id:
+        description: 'ID of the Release workflow run whose vsix artifact to attach'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark the Release as a pre-release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      # main, for the notes script; the tag's own CHANGELOG is read below.
+      - uses: actions/checkout@v4
+
+      # Inputs reach the shell as environment variables, never spliced into
+      # the script, so a crafted value can't run as a command.
+      - name: Check the inputs
+        env:
+          TAG: ${{ inputs.tag }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::tag must look like v1.2.3"; exit 1; }
+          printf '%s' "$RUN_ID" | grep -Eq '^[0-9]+$' || { echo "::error::run_id must be a number"; exit 1; }
+
+      - name: Release notes from the tag's CHANGELOG.md
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          git fetch --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
+          git show "$TAG:CHANGELOG.md" > tag-CHANGELOG.md
+          scripts/release-notes.sh "${TAG#v}" tag-CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::the CHANGELOG at $TAG has no section for ${TAG#v}"
+            exit 1
+          fi
+          cat release-notes.md
+
+      - name: Fetch the vsix that run published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          gh run download "$RUN_ID" --name vsix --dir dist
+          ls -l dist/markdown-collab-plugin.vsix
+
+      - name: Create or update the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          PRERELEASE_INPUT: ${{ inputs.prerelease }}
+        run: |
+          PRERELEASE="--prerelease=false"
+          if [ "$PRERELEASE_INPUT" = "true" ]; then PRERELEASE="--prerelease"; fi
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TAG" $PRERELEASE --notes-file release-notes.md
+            gh release upload "$TAG" dist/markdown-collab-plugin.vsix --clobber
+          else
+            gh release create "$TAG" dist/markdown-collab-plugin.vsix --title "$TAG" $PRERELEASE --notes-file release-notes.md
+          fi
+          gh release view "$TAG"

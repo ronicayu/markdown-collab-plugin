@@ -12,7 +12,6 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
 import type { ChangedFile } from "../pr/diff";
-import { InlineCommentsPanel } from "../inlineComments/inlineCommentsPanel";
 import { CollabEditorProvider } from "../collab/collabEditorProvider";
 import type { Logger } from "../logging";
 import { requireTrust } from "../trust";
@@ -64,15 +63,9 @@ export class UncommittedChangesController implements vscode.Disposable {
   private readonly threadReminders = new SessionThreadReminderGate();
 
   constructor(
-    /** Open a file in the review view — whichever one `markdownCollab.classicReviewView` picks. */
+    /** Open a file in the review view. */
     private readonly openFile: (uri: vscode.Uri, opts: { showDiff: boolean }) => Promise<void>,
     private readonly log: Logger,
-    /**
-     * Open a file in the live editor with the diff overlay, whatever
-     * `markdownCollab.classicReviewView` says. When absent, `openInLiveEditor`
-     * silently does nothing.
-     */
-    private readonly openLiveFile?: (uri: vscode.Uri) => Promise<void>,
   ) {
     this.tree = new UncommittedTreeProvider();
     this.view = vscode.window.createTreeView(VIEW_ID, {
@@ -90,13 +83,6 @@ export class UncommittedChangesController implements vscode.Disposable {
       vscode.commands.registerCommand(
         "markdownCollab.openUncommittedFile",
         (file: ChangedFile) => this.open(file),
-      ),
-      // The command above goes through the review view's router, which picks
-      // the previous view while `markdownCollab.classicReviewView` is on; this
-      // one always opens the live editor. No tree item or menu uses it.
-      vscode.commands.registerCommand(
-        "markdownCollab.openUncommittedFileInLiveEditor",
-        (file: ChangedFile) => this.openInLiveEditor(file),
       ),
       vscode.commands.registerCommand(
         "markdownCollab.stageUncommittedFile",
@@ -167,7 +153,6 @@ export class UncommittedChangesController implements vscode.Disposable {
       const stages = await stageStates(this.repoRoot).catch(() => new Map<string, StageState>());
       const threadCounts = await this.readThreadCounts(files);
       this.setTreeState({ kind: "files", repoRoot: this.repoRoot, files, stages, threadCounts });
-      InlineCommentsPanel.refreshDiffPanels();
       CollabEditorProvider.refreshDiffPanels();
     } catch (e) {
       this.log.warn(`uncommitted refresh failed: ${(e as Error).message}`);
@@ -220,13 +205,6 @@ export class UncommittedChangesController implements vscode.Disposable {
     if (!this.repoRoot) return;
     const abs = path.join(this.repoRoot, ...file.path.split("/"));
     await this.openFile(vscode.Uri.file(abs), { showDiff: true });
-  }
-
-  /** Open a file in the live editor with the uncommitted-diff overlay, even while `markdownCollab.classicReviewView` is on. */
-  private async openInLiveEditor(file: ChangedFile): Promise<void> {
-    if (!this.repoRoot || !this.openLiveFile) return;
-    const abs = path.join(this.repoRoot, ...file.path.split("/"));
-    await this.openLiveFile(vscode.Uri.file(abs));
   }
 
   /** Stage/unstage one file from its tree row, then re-query so the badge follows. */

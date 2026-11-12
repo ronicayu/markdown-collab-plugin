@@ -5,10 +5,6 @@ import * as path from "path";
 import { existsSync, readFileSync } from "fs";
 import { AGENTS_SENTINEL, AGENTS_SNIPPET, FORMAT_SPEC_URL, ensureAgentsSnippet, refuseSymlink, sectionHash } from "../agents";
 import { AGENTS_SKILL_CONTENT } from "../agentsSkill";
-import { HAND_EDIT_RULES } from "../handEditRules";
-import { opAccept, opCheck, opList } from "../inlineComments/docOps";
-import { addThread, parse } from "../inlineComments/format";
-import { serialize } from "../inlineComments/serializeState";
 
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, "../../package.json"), "utf8"));
 
@@ -28,64 +24,41 @@ describe("AGENTS_SNIPPET constant", () => {
   });
 });
 
-// The format is the API for every agent that isn't Claude
-// Code. The snippet leads with the contract, doesn't pretend `mdc` is on every
-// agent's PATH, and gives the human's Repair command as the check for everyone
-// else.
-describe("AGENTS_SNIPPET: the format is the contract", () => {
+// Read by every agent in the repository, including a colleague's that never
+// ran Connect. One rule: change a reviewed file only with `mdc`; no recipe for
+// editing the markers by hand.
+describe("AGENTS_SNIPPET: mdc is the only way to change a reviewed file", () => {
   it("links docs/format.md, and the link points at a file in this repository", () => {
     expect(AGENTS_SNIPPET).toContain(`[\`docs/format.md\`](${FORMAT_SPEC_URL})`);
     const rel = FORMAT_SPEC_URL.split("/blob/main/")[1]!;
     expect(existsSync(path.resolve(__dirname, "../..", rel)), `${rel} is missing`).toBe(true);
   });
 
-  it("says mdc exists only inside Claude Code sessions", () => {
-    expect(AGENTS_SNIPPET).toMatch(/`mdc` CLI exists only inside Claude Code sessions/);
+  it("says where mdc is for an agent Connect set up, and for Claude Code", () => {
+    expect(AGENTS_SNIPPET).toContain("`node ~/.agents/skills/markdown-collab/mdc.mjs <command> <file> …`");
+    expect(AGENTS_SNIPPET).toContain("plain `mdc` in Claude Code with the Markdown Collab plugin");
   });
 
-  it("falls back to the Repair command by its exact palette title", () => {
-    const repair = pkg.contributes.commands.find(
-      (c: { command: string }) => c.command === "markdownCollab.repairInlineComments",
-    );
-    expect(AGENTS_SNIPPET).toContain(`"${repair.title}"`);
+  it("sends an agent without mdc to the human, by Connect's exact palette title", () => {
+    const connect = pkg.contributes.commands.find((c: { command: string }) => c.command === "markdownCollab.connectAgent");
+    expect(connect.title.replace(/…$/, "")).toBe("Markdown Collab: Connect an Agent");
+    expect(AGENTS_SNIPPET).toContain("If `mdc` isn't there, don't edit the markers — ask the human to run **Markdown Collab: Connect an Agent**");
   });
 
-  it("no longer ranks hand-editing as the last resort after mdc", () => {
-    expect(AGENTS_SNIPPET).not.toMatch(/only when neither exists/i);
-    expect(AGENTS_SNIPPET).not.toContain("list / reply / open / rewrite / edit / resolve / suggest / check");
-  });
-
-  it("points at the MCP tools before the hand-editing steps, for an agent that has them", () => {
-    const toolsAt = AGENTS_SNIPPET.indexOf("MCP tools");
-    const replyAt = AGENTS_SNIPPET.indexOf("**Reply:**");
-    expect(toolsAt).toBeGreaterThan(-1);
-    expect(toolsAt).toBeLessThan(replyAt);
-  });
-
-  it("a hand-written reply is marked as an agent's", () => {
-    expect(AGENTS_SNIPPET).toContain('"agent":true');
-  });
-
-  it("a hand-written new thread's first comment restates agent true", () => {
-    const bullet = AGENTS_SNIPPET.split("\n").find((l) => l.startsWith("- **New thread**"))!;
-    expect(bullet).toContain('"comments":[{"id":"c1","author":"<you>","agent":true,');
-  });
-
-  it("tells an agent how to suggest an edit by hand and where a heading's markers go", () => {
-    expect(AGENTS_SNIPPET).toContain("**Suggesting an edit**");
-    expect(AGENTS_SNIPPET).toContain("<!--mc:s {");
-    expect(AGENTS_SNIPPET).toContain("## <!--mc:a:ID-->Title<!--mc:/a:ID-->");
-  });
-
-  it("lists the same by-hand rules as the skill every agent reads, from one source", () => {
-    for (const rule of HAND_EDIT_RULES) {
-      expect(AGENTS_SNIPPET).toContain(`- ${rule}`);
-      expect(AGENTS_SKILL_CONTENT).toContain(`- ${rule}`);
+  it("carries no recipe for editing markers or thread lines by hand", () => {
+    for (const phrase of ["**Reply:**", "**New thread**", "<!--mc:s {", "Repair Comment Anchors", "by hand, carefully"]) {
+      expect(AGENTS_SNIPPET, phrase).not.toContain(phrase);
     }
+    expect(AGENTS_SNIPPET).toContain("never edit a marker or a thread line yourself");
   });
 
-  it("stays under ~35 lines", () => {
-    expect(AGENTS_SNIPPET.split("\n").length).toBeLessThanOrEqual(35);
+  it("matches the skill every agent reads on the one rule", () => {
+    expect(AGENTS_SKILL_CONTENT).toContain("change a reviewed file only with `mdc`");
+    expect(AGENTS_SKILL_CONTENT).toContain("node ~/.agents/skills/markdown-collab/mdc.mjs");
+  });
+
+  it("stays short", () => {
+    expect(AGENTS_SNIPPET.length).toBeLessThanOrEqual(1600);
   });
 
   // The refresh path recognizes an untouched earlier snippet by its hash. If
@@ -93,76 +66,7 @@ describe("AGENTS_SNIPPET: the format is the contract", () => {
   // PRIOR_SNIPPET_HASHES in agents.ts (so workspaces holding it get
   // refreshed), then update the pin to the new value this prints.
   it("is pinned, so a change to it can't skip PRIOR_SNIPPET_HASHES", () => {
-    expect(sectionHash(AGENTS_SNIPPET)).toBe("237c35f4b22376b6");
-  });
-});
-
-const RECIPE_TS = "2026-10-05T09:00:00.000Z";
-
-function recipeLine(prefix: "s" | "t", id: string, fill: Record<string, string>): string {
-  const template = new RegExp("`(<!--mc:" + prefix + ' \\{"[^`]*\\}-->)`').exec(AGENTS_SNIPPET)![1];
-  return Object.entries({ '"ID"': `"${id}"`, "<you>": "cursor", "<ISO-8601 UTC>": RECIPE_TS, ...fill }).reduce(
-    (line, [from, to]) => line.split(from).join(to),
-    template,
-  );
-}
-
-describe("AGENTS_SNIPPET: a file edited exactly per its recipes", () => {
-  const block = (record: string) => `\n<!--mc:threads:begin-->\n${record}\n<!--mc:threads:end-->\n`;
-  const wrap = (id: string, text: string) => `<!--mc:a:${id}-->${text}<!--mc:/a:${id}-->`;
-
-  it("a suggestion written by hand parses as a pending suggestion the editor can accept", () => {
-    const record = recipeLine("s", "k3x9q", { "<the wrapped text>": "30 seconds", "<the replacement>": "60 seconds" });
-    const source = `# Retries\n\nWait ${wrap("k3x9q", "30 seconds")} between retries.\n${block(record)}`;
-
-    const parsed = parse(source);
-    expect(parsed.suggestions).toHaveLength(1);
-    expect(parsed.suggestions[0]).toMatchObject({
-      anchorId: "k3x9q",
-      author: "cursor",
-      agent: true,
-      original: "30 seconds",
-      proposed: "60 seconds",
-    });
-    expect(opCheck(source).ok).toBe(true);
-    expect(opList(source).suggestions).toMatchObject([{ anchorId: "k3x9q", anchored: true }]);
-    expect(serialize(parsed).suggestions[0]!.anchor).not.toBeNull();
-
-    const accepted = opAccept(source, "k3x9q").next;
-    expect(accepted).toContain("Wait 60 seconds between retries.");
-    expect(accepted).not.toContain("mc:s");
-    expect(accepted).not.toContain("mc:a:k3x9q");
-  });
-
-  it("the optional threadId and note on a suggestion are kept", () => {
-    const record = recipeLine("s", "k3x9q", { "<the wrapped text>": "30 seconds", "<the replacement>": "60 seconds" }).replace(
-      '"proposed"',
-      '"threadId":"t1111","note":"matches config","proposed"',
-    );
-    const parsed = parse(`Wait ${wrap("k3x9q", "30 seconds")}.\n${block(record)}`);
-    expect(parsed.suggestions[0]).toMatchObject({ threadId: "t1111", note: "matches config" });
-  });
-
-  it("a heading anchored per the heading rule parses with the thread anchored to the heading", () => {
-    const rule = /`(## <!--mc:a:ID-->Title<!--mc:\/a:ID-->)`/.exec(AGENTS_SNIPPET)![1]
-      .replace(/ID/g, "h4d1n")
-      .replace("Title", "Setup");
-    const thread = recipeLine("t", "h4d1n", { "<the passage>": "Setup", "<the comment>": "Which setup?" });
-    const source = `# Guide\n\n${rule}\n\nBody.\n${block(thread)}`;
-
-    const parsed = parse(source);
-    expect(parsed.threads).toMatchObject([{ id: "h4d1n", quote: "Setup" }]);
-    const a = parsed.anchors.get("h4d1n")!;
-    expect(source.slice(a.openEnd, a.closeStart)).toBe("Setup");
-    expect(opCheck(source).ok).toBe(true);
-    expect(serialize(parsed).prose).toContain("## Setup\n");
-  });
-
-  it("the heading rule puts the markers where the tools put them", () => {
-    const rule = /`(## <!--mc:a:ID-->Title<!--mc:\/a:ID-->)`/.exec(AGENTS_SNIPPET)![1];
-    const byTool = addThread("# Guide\n\n## Setup\n\nBody.\n", 9, 17, { author: "cursor", body: "x", ts: RECIPE_TS });
-    const toolLine = byTool.source.split("\n").find((l) => l.startsWith("## "))!;
-    expect(toolLine.split(byTool.thread.id).join("ID")).toBe(rule.replace("Title", "Setup"));
+    expect(sectionHash(AGENTS_SNIPPET)).toBe("3bbe4c72ad42baae");
   });
 });
 

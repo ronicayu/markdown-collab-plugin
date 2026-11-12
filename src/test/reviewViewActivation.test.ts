@@ -5,7 +5,6 @@ import { addThread } from "../inlineComments/format";
 
 vi.mock("../editorPresence");
 vi.mock("../collab/collabEditorProvider");
-vi.mock("../inlineComments/inlineCommentsPanel");
 vi.mock("../pr/prReviewController");
 vi.mock("../uncommitted/uncommittedController");
 vi.mock("../mcpServer", () => ({

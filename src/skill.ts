@@ -219,7 +219,7 @@ async function deleteStaleHelpers(homeDir: string): Promise<void> {
   }
 }
 
-async function syncScript(target: string, content: string): Promise<void> {
+export async function syncScript(target: string, content: string): Promise<void> {
   let existing: string | null = null;
   try {
     existing = await fs.readFile(target, "utf8");

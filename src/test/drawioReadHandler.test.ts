@@ -1,6 +1,5 @@
 // Tests for the extension-side drawio-read handler. We run the shared
-// service that backs `handleDrawioRead` in BOTH the live editor and the
-// inline comments view, injecting an in-memory file reader so the test stays
+// service that backs `handleDrawioRead` in the live editor, injecting an in-memory file reader so the test stays
 // independent of the VS Code workspace API.
 //
 // What we pin here:

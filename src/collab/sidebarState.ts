@@ -1,5 +1,5 @@
-// What the live editor's sidebar needs from the document — the same thread list
-// the review view's panel serializes, plus the agent name its toolbar shows.
+// What the live editor's sidebar needs from the document — the thread list
+// `serialize` maps into prose space, plus the agent name its toolbar shows.
 // Free of `vscode` so the webview e2e fixtures build real payloads from it.
 
 import { agentDisplayName, isAgentComment } from "../agentIdentity";

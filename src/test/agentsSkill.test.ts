@@ -2,7 +2,14 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AGENTS_SKILL_CONTENT, AGENTS_SKILL_REL_PATH, installAgentsSkill, refreshAgentsSkill } from "../agentsSkill";
+import {
+  AGENTS_CLI_REL_PATH,
+  AGENTS_SKILL_CONTENT,
+  AGENTS_SKILL_REL_PATH,
+  installAgentsSkill,
+  refreshAgentsSkill,
+} from "../agentsSkill";
+import { CLI_SCRIPT_CONTENT } from "../skill";
 
 let home: string;
 let elsewhere: string;
@@ -39,6 +46,32 @@ afterEach(async () => {
 describe("the skill's location", () => {
   it("is ~/.agents/skills/markdown-collab/SKILL.md, where Codex, Cursor, Copilot and Windsurf read user skills", () => {
     expect(path.relative(home, skillPath).split(path.sep)).toEqual([".agents", "skills", "markdown-collab", "SKILL.md"]);
+  });
+});
+
+describe("the mdc CLI beside it", () => {
+  it("is written next to the skill on install, so these agents can run it", async () => {
+    await installAgentsSkill(home);
+    expect(await fs.readFile(path.join(home, AGENTS_CLI_REL_PATH), "utf8")).toBe(CLI_SCRIPT_CONTENT);
+    expect(path.relative(home, path.join(home, AGENTS_CLI_REL_PATH)).split(path.sep)).toEqual([
+      ".agents",
+      "skills",
+      "markdown-collab",
+      "mdc.mjs",
+    ]);
+  });
+
+  it("is brought up to date even when the skill text is unchanged", async () => {
+    await put(AGENTS_SKILL_CONTENT);
+    await fs.writeFile(path.join(home, AGENTS_CLI_REL_PATH), "old cli", "utf8");
+    expect((await installAgentsSkill(home)).action).toBe("already-present");
+    expect(await fs.readFile(path.join(home, AGENTS_CLI_REL_PATH), "utf8")).toBe(CLI_SCRIPT_CONTENT);
+  });
+
+  it("is not written beside someone else's skill", async () => {
+    await put(FOREIGN);
+    expect((await installAgentsSkill(home)).action).toBe("exists-differs");
+    expect(await exists(path.join(home, AGENTS_CLI_REL_PATH))).toBe(false);
   });
 });
 

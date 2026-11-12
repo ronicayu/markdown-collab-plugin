@@ -1,10 +1,10 @@
-// Reverse navigation, host side: "Open in editor" from an
-// inline-comments thread card opens a real text editor with the anchored
+// Reverse navigation, host side: "Open in editor" from a
+// thread card in the review view's sidebar opens a real text editor with the anchored
 // text selected, and an unanchored thread (its marker text has been edited
 // away) shows an information toast instead of opening anything.
 //
 // Drives `openThreadInEditor` directly against a real `vscode.TextDocument`
-// rather than through a live webview panel — the panel has no public seam for
+// rather than through a live webview panel — the view has no public seam for
 // injecting a webview→host message from test code (that side of the click is
 // covered by the webview e2e suite instead, which drives the real bundle in
 // real Chromium and asserts the posted message).
@@ -14,7 +14,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
 import { addThread, parse } from "../../../inlineComments/format";
-import { openThreadInEditor } from "../../../inlineComments/inlineCommentsPanel";
+import { openThreadInEditor } from "../../../collab/sidebarHost";
 
 function fixturePath(name: string): string {
   return path.resolve(__dirname, "..", "fixtures", name);

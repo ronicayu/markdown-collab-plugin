@@ -176,10 +176,9 @@ describe("logging invariants", () => {
 // on a developer's machine and only there.
 describe("the webview e2e harness resolves its imports the same way everywhere", () => {
   it("imports TypeScript statically, never through a runtime import()", () => {
-    // A runtime `await import("../../inlineComments/webviewShell")` passed
-    // locally and failed on GitHub's runner with `SyntaxError: Unexpected
-    // token 'export'`, taking all 13 inline-view specs with it on the v0.34.72
-    // tag. Static imports go through Playwright's transform, which is the one
+    // A runtime `await import(...)` of a shell module passed locally and
+    // failed on GitHub's runner with `SyntaxError: Unexpected token 'export'`,
+    // taking 13 specs with it on the v0.34.72 tag. Static imports go through Playwright's transform, which is the one
     // path both environments agree on.
     const harness = readFileSync(
       resolve(__dirname, "webview-e2e/harness.ts"),
@@ -190,6 +189,6 @@ describe("the webview e2e harness resolves its imports the same way everywhere",
     // that gets deleted.
     const code = harness.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
     expect(code).not.toMatch(/await import\(/);
-    expect(harness).toContain('import { inlineCommentsAppBody } from "../../inlineComments/webviewShell"');
+    expect(harness).toContain('import { liveEditorShellBody } from "../../collab/liveEditorShell"');
   });
 });
