@@ -31,7 +31,7 @@ body { overflow: hidden; }
   color: var(--vscode-editor-foreground) !important;
 }
 .milkdown a {
-  color: var(--vscode-textLink-foreground, #4e9eff) !important;
+  color: var(--vscode-textLink-foreground, #4e9eff);
 }
 .milkdown blockquote {
   border-left-color: var(--vscode-textBlockQuote-border, #555) !important;
@@ -40,7 +40,7 @@ body { overflow: hidden; }
 .milkdown code,
 .milkdown pre {
   background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.12)) !important;
-  color: var(--vscode-editor-foreground) !important;
+  color: var(--vscode-editor-foreground);
 }
 /* The Nord theme zebra-stripes table COLUMNS with a hardcoded near-black
    (`:nth-child(odd) { background: var(--color-gray-900) }`) that ignores the
@@ -806,7 +806,7 @@ button.mdc-banner--jump:hover {
   padding: 4px 8px;
 }
 .mdc-html code {
-  color: inherit !important;
+  color: inherit;
 }
 .mdc-html summary {
   font-weight: 600;

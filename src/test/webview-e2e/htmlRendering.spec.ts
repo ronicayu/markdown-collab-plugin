@@ -36,6 +36,12 @@ Hidden **markdown** body.
 <script>alert(1)</script>
 
 <a href="https://example.com/docs">a link</a>
+
+Styled <a href="https://example.com/c" style="color:rgb(200, 0, 0)">red link</a> and <code style="color:rgb(0, 128, 0)">green code</code>, plus a [plain link](https://example.com/plain) and \`inline code\`.
+
+\`\`\`text
+fenced text
+\`\`\`
 `;
 
 const editor = (page: Page) => page.locator(".mdc-editor-root .milkdown");
@@ -93,6 +99,26 @@ test.describe("live editor, Reading", () => {
   test("a link in raw HTML is a real link, opened through the host", async ({ page }) => {
     await editor(page).locator('a[href="https://example.com/docs"]').click();
     expect(await awaitPosted(page, "open-link")).toMatchObject({ type: "open-link", href: "https://example.com/docs" });
+  });
+
+  test("an inline style's color wins over the theme's link and code colors", async ({ page }) => {
+    await expect(editor(page).locator("a", { hasText: "red link" })).toHaveCSS("color", "rgb(200, 0, 0)");
+    await expect(editor(page).locator("code", { hasText: "green code" })).toHaveCSS("color", "rgb(0, 128, 0)");
+    await expect(editor(page).locator("a", { hasText: "plain link" })).not.toHaveCSS("color", "rgb(200, 0, 0)");
+  });
+
+  // Positive theme-color guards for the unstyled case: the !important removals
+  // must not let nord's rules (or anything else) win where the document carries
+  // no style=. The pre>code one is the load-bearing case — there the winning
+  // rule changes to nord's `.milkdown-theme-nord pre code { color: inherit }`.
+  test("plain markdown link, inline code and a fence keep the theme colors", async ({ page }) => {
+    await page.evaluate(() => {
+      document.body.style.setProperty("--vscode-textLink-foreground", "rgb(1, 2, 3)");
+      document.body.style.setProperty("--vscode-editor-foreground", "rgb(4, 5, 6)");
+    });
+    await expect(editor(page).locator("a", { hasText: "plain link" })).toHaveCSS("color", "rgb(1, 2, 3)");
+    await expect(editor(page).locator("code", { hasText: "inline code" })).toHaveCSS("color", "rgb(4, 5, 6)");
+    await expect(editor(page).locator("pre code", { hasText: "fenced text" })).toHaveCSS("color", "rgb(4, 5, 6)");
   });
 });
 
