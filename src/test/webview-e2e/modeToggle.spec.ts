@@ -180,7 +180,7 @@ test("an edit still in the debounce is posted before the mode switch", async ({ 
 test("the mode control is still visible and clickable with the sidebar collapsed", async ({ page }) => {
   const { source } = fixture();
   await bootLiveEditor(page, { ...liveInit(source), epoch: 1 });
-  await page.locator("#mdc-comments-toggle").click();
+  // The sidebar opens collapsed: no toggle click needed to get there.
   await expect(page.locator(".mdc-layout")).toHaveClass(/mdc-layout--collapsed/);
 
   const group = page.locator("#edit-mode-toggle");

@@ -120,6 +120,17 @@ export async function bootLiveEditorShell(page: Page, opts: BootOptions = {}): P
 }
 
 /**
+ * The live editor opens with its comments sidebar collapsed; a spec that reads
+ * or drives the sidebar expands it first, the way a user would.
+ */
+export async function expandComments(page: Page): Promise<void> {
+  const layout = page.locator(".mdc-layout");
+  await expect(layout).toHaveClass(/mdc-layout--collapsed/);
+  await page.locator("#mdc-comments-toggle").click();
+  await expect(layout).not.toHaveClass(/mdc-layout--collapsed/);
+}
+
+/**
  * Boot the live (Milkdown) editor and push an `init`. Resolves once Milkdown
  * has mounted and reported its post-init content back to the host — the same
  * signal the integration suite waits on.
