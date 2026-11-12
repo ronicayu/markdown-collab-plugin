@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.35.58 — 2026-11-12 (pre-release)
+
+### Fixed: inline style colors win over the theme in the live editor
+
+The live editor forced its theme colors with `!important` on links and code,
+so an inline style like `<a style="color:red">` or `<code style="color:green">`
+in a document rendered in the theme's link blue / editor foreground instead of
+the color it was written with. Three rules are relaxed: Markdown without
+inline styles still follows your VS Code theme, and an explicit inline color
+now wins. The HTML sanitizer's allowlist is unchanged.
+
 ## 0.35.57 — 2026-10-26 (pre-release)
 
 ### Changed: mermaid diagrams render with Pele
