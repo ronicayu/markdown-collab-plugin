@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.35.59 — 2026-11-27 (pre-release)
+
+### Changed: the comments panel starts hidden
+
+The Markdown Collab view and the PR review view now open with the comments
+panel hidden, so the document gets the full width. The comments button in the
+toolbar shows the number of open threads while the panel is hidden, and opens
+it. The panel also opens by itself when you start a comment (the floating
+Comment button, `+`, or Cmd/Ctrl+Shift+M) or jump to one (a line marker, or a
+thread revealed from the editor). The choice is not saved: each view opens
+hidden again.
+
 ## 0.35.58 — 2026-11-12 (pre-release)
 
 ### Fixed: inline style colors win over the theme in the live editor
