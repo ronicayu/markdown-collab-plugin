@@ -109,7 +109,7 @@ test.describe("filter tabs", () => {
 test.describe("comments toggle", () => {
   test("opens with the sidebar collapsed, the open-count badge standing in for it", async ({ page }) => {
     const fixture = reviewFixture();
-    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
+    await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true }, { comments: "collapsed" });
     const toggle = page.locator("#mdc-comments-toggle");
     const badge = toggle.locator(".mc-badge");
     await expect(page.locator(".mdc-layout")).toHaveClass(/mdc-layout--collapsed/);
@@ -131,8 +131,6 @@ test.describe("comments toggle", () => {
     await bootLiveEditor(page, { ...liveInit(fixture.source), readOnly: true });
     const toggle = page.locator("#mdc-comments-toggle");
     const badge = toggle.locator(".mc-badge");
-    // Opens collapsed; expand first so the click under test is a collapse.
-    await toggle.click();
     await expect(toggle).toHaveAttribute("aria-pressed", "true");
     await expect(toggle).toHaveAttribute("aria-label", "Hide comments");
     await expect(badge).toBeHidden();
@@ -153,8 +151,7 @@ test.describe("comments toggle", () => {
   test("badge stays hidden collapsed with no open threads", async ({ page }) => {
     const fixture = reviewFixture();
     const allResolved = resolveThread(resolveThread(fixture.source, fixture.answeredThreadId), fixture.openThreadId);
-    await bootLiveEditor(page, { ...liveInit(allResolved), readOnly: true });
-    // Collapsed from the start: no click needed (a click would now expand).
+    await bootLiveEditor(page, { ...liveInit(allResolved), readOnly: true }, { comments: "collapsed" });
     await expect(page.locator(".mdc-layout")).toHaveClass(/mdc-layout--collapsed/);
     await expect(page.locator("#mdc-comments-toggle .mc-badge")).toBeHidden();
   });
@@ -187,7 +184,7 @@ test.describe("starting a comment opens the collapsed sidebar at once", () => {
   }
 
   test("the floating Comment button expands the sidebar and opens the composer", async ({ page }) => {
-    await bootLiveEditor(page, { ...liveInit(DOC), readOnly: false });
+    await bootLiveEditor(page, { ...liveInit(DOC), readOnly: false }, { comments: "collapsed" });
     const layout = page.locator(".mdc-layout");
     await expect(layout).toHaveClass(/mdc-layout--collapsed/);
     await select(page, "nested lists");
@@ -201,7 +198,7 @@ test.describe("starting a comment opens the collapsed sidebar at once", () => {
   test("the floating Comment button expands the sidebar even when the selection can't be anchored", async ({
     page,
   }) => {
-    await bootLiveEditor(page, { ...liveInit(DOC), readOnly: true });
+    await bootLiveEditor(page, { ...liveInit(DOC), readOnly: true }, { comments: "collapsed" });
     const layout = page.locator(".mdc-layout");
     await expect(layout).toHaveClass(/mdc-layout--collapsed/);
     await select(page, "parseList");
@@ -213,7 +210,7 @@ test.describe("starting a comment opens the collapsed sidebar at once", () => {
   });
 
   test("Cmd/Ctrl+Shift+M expands the sidebar even when the selection can't be anchored", async ({ page }) => {
-    await bootLiveEditor(page, { ...liveInit(DOC), readOnly: true });
+    await bootLiveEditor(page, { ...liveInit(DOC), readOnly: true }, { comments: "collapsed" });
     const layout = page.locator(".mdc-layout");
     await expect(layout).toHaveClass(/mdc-layout--collapsed/);
     await select(page, "parseList");

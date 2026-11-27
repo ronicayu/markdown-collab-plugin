@@ -88,6 +88,12 @@ export interface BootOptions {
    * finds, including state an older build (or a corrupted store) left behind.
    */
   state?: unknown;
+  /**
+   * The comments sidebar opens collapsed. `bootLiveEditor` expands it, as a
+   * user reviewing comments would, unless a spec about the default asks for
+   * `"collapsed"`. `bootLiveEditorShell` never touches it.
+   */
+  comments?: "open" | "collapsed";
 }
 
 async function bootPage(page: Page, body: string, styles: string[], script: string, opts: BootOptions = {}): Promise<void> {
@@ -121,12 +127,13 @@ export async function bootLiveEditorShell(page: Page, opts: BootOptions = {}): P
 
 /**
  * The live editor opens with its comments sidebar collapsed; a spec that reads
- * or drives the sidebar expands it first, the way a user would.
+ * or drives the sidebar expands it first. A DOM click rather than a pointer
+ * click, so focus stays in the editor for specs that type next.
  */
 export async function expandComments(page: Page): Promise<void> {
   const layout = page.locator(".mdc-layout");
   await expect(layout).toHaveClass(/mdc-layout--collapsed/);
-  await page.locator("#mdc-comments-toggle").click();
+  await page.locator("#mdc-comments-toggle").evaluate((b: HTMLElement) => b.click());
   await expect(layout).not.toHaveClass(/mdc-layout--collapsed/);
 }
 
@@ -140,5 +147,6 @@ export async function bootLiveEditor(page: Page, init: Record<string, unknown>, 
   await pushToWebview(page, { type: "init", ...init });
   await awaitPosted(page, "ready-with-content");
   await expect(page.locator(".mdc-editor-root .milkdown")).toBeVisible();
+  if (opts.comments !== "collapsed") await expandComments(page);
   await clearPosted(page);
 }
