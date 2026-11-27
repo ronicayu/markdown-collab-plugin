@@ -292,7 +292,8 @@ const sidebarState: {
 } = {
   comments: [],
   suggestions: [],
-  collapsed: false,
+  // The document gets the room on open; the toggle's badge carries the open count.
+  collapsed: true,
   notice: null,
 };
 
@@ -968,6 +969,13 @@ function buildCommentsToggle(): HTMLButtonElement {
   return btn;
 }
 
+/** Anything that puts content in the sidebar — a revealed card, the new-comment composer — opens it first. */
+function expandSidebar(): void {
+  if (!sidebarState.collapsed) return;
+  sidebarState.collapsed = false;
+  syncCollapsedClass();
+}
+
 function syncCollapsedClass(): void {
   if (!layoutEl) return;
   const collapsed = sidebarState.collapsed;
@@ -1442,10 +1450,7 @@ function revealThreadFromHost(threadId: string): void {
 
 function revealCommentInSidebar(commentId: string): void {
   if (!sidebarEl) return;
-  if (sidebarState.collapsed) {
-    sidebarState.collapsed = false;
-    syncCollapsedClass();
-  }
+  expandSidebar();
   // The sidebar makes it the current card, widening its filter if that one
   // hides the thread.
   threadSidebar.revealThread(commentId);
@@ -2113,6 +2118,8 @@ function installAddCommentAffordance(): void {
     updateLastNonEmptySelection();
   });
   button.addEventListener("click", () => {
+    // The panel shows at the click itself — even if anchoring then fails.
+    expandSidebar();
     button.style.display = "none";
     openComposerForCurrentSelection();
   });
@@ -2128,6 +2135,10 @@ const READ_ONLY_REFUSALS = {
 
 function openComposerForCurrentSelection(): void {
   if (!editor || !composerEl) return;
+  // The composer lives in the sidebar, which opens collapsed. Every way in —
+  // the floating button, the sidebar's "+", Cmd/Ctrl+Shift+M — opens it before
+  // anchoring, so it shows even when the selection then can't be anchored.
+  expandSidebar();
   let anchor: import("../types").Anchor | null = null;
   // Read-only mode: the prose span under the selection and the bytes there,
   // taken now — if the file changes before Save, the host sees they differ.

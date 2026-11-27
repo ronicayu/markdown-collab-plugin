@@ -604,10 +604,7 @@ function markerTitle(targets: MarkerTarget[]): string {
 function revealComments(targets: MarkerTarget[]): void {
   // A marker clicked while the sidebar is hidden would scroll and flash a
   // card nobody can see — bring the sidebar back first.
-  if (sidebarCollapsed) {
-    sidebarCollapsed = false;
-    syncSidebarCollapsedUi();
-  }
+  expandSidebar();
   // A targeted thread may be hidden by the open/resolved filter — widen to
   // "all" so every target has a card on screen.
   const hidden = targets.some((t) =>
@@ -670,10 +667,17 @@ async function runMermaid(): Promise<void> {
 }
 
 // Collapsing hides `#drafts-pane` and puts the open-thread count on the toggle's
-// badge so the number isn't lost. Not persisted, matching the live editor's
-// comments toggle (src/webview/client.ts, syncCollapsedClass).
+// badge so the number isn't lost. Starts collapsed (the shell markup matches) and
+// is not persisted, like the live editor's comments toggle
+// (src/webview/client.ts, syncCollapsedClass).
 
-let sidebarCollapsed = false;
+let sidebarCollapsed = true;
+
+function expandSidebar(): void {
+  if (!sidebarCollapsed) return;
+  sidebarCollapsed = false;
+  syncSidebarCollapsedUi();
+}
 
 function openExistingThreadCount(): number {
   if (!existingComments) return 0;
@@ -850,6 +854,8 @@ function showToast(text: string): void {
 }
 
 function openComposer(sel: PendingSelection): void {
+  // The composer lives in the sidebar, which opens collapsed.
+  expandSidebar();
   editingDraftId = null;
   dom.composer.hidden = false;
   dom.composer.innerHTML = "";

@@ -32,7 +32,7 @@ const PLUS_SVG =
  * down, minus the `<script>` tags (whose URIs are webview-specific).
  */
 export function prReviewAppBody(): string {
-  return `<div id="app">
+  return `<div id="app" class="sidebar-collapsed">
   <div id="preview-pane">
     <header id="preview-toolbar">
       <span id="diff-nav" hidden>
@@ -40,7 +40,7 @@ export function prReviewAppBody(): string {
         <span id="diff-nav-count"></span>
         <button id="diff-next" type="button" class="mc-icon-btn" title="Next change (n)" aria-label="Next change">${ARROW_DOWN_SVG}</button>
       </span>
-      <button id="comments-toggle" type="button" class="mc-icon-btn" aria-pressed="true" aria-controls="drafts-pane" aria-label="Hide comments" title="Hide comments">${SPEECH_BUBBLE_SVG}<span class="mc-badge mc-badge--count" hidden></span></button>
+      <button id="comments-toggle" type="button" class="mc-icon-btn" aria-pressed="false" aria-controls="drafts-pane" aria-label="Show comments" title="Show comments">${SPEECH_BUBBLE_SVG}<span class="mc-badge mc-badge--count" hidden></span></button>
     </header>
     <article id="preview"></article>
     <button id="floating-add" type="button" class="pr-floating-add" hidden>+ Comment on selection</button>

@@ -75,15 +75,27 @@ function baseInit(overrides: Record<string, unknown> = {}): Record<string, unkno
   };
 }
 
-/** Boot the shell and push an `init`. Resolves once the preview has rendered. */
+/**
+ * Boot the shell and push an `init`. Resolves once the preview has rendered.
+ * The comments pane opens collapsed; this expands it, as a reviewer would,
+ * unless a spec about the default asks for `comments: "collapsed"`.
+ */
 async function bootPrReview(
   page: Page,
   overrides: Record<string, unknown> = {},
-  opts: { state?: unknown } = {},
+  opts: { state?: unknown; comments?: "open" | "collapsed" } = {},
 ): Promise<void> {
   await bootPrReviewShell(page, opts);
   await pushToWebview(page, baseInit(overrides));
   await expect(page.locator("#preview")).not.toBeEmpty();
+  if (opts.comments !== "collapsed") await expandPane(page);
+}
+
+/** A DOM click rather than a pointer click, so focus stays where the spec expects it. */
+async function expandPane(page: Page): Promise<void> {
+  await expect(page.locator("#app")).toHaveClass(/sidebar-collapsed/);
+  await page.locator("#comments-toggle").evaluate((b: HTMLElement) => b.click());
+  await expect(page.locator("#app")).not.toHaveClass(/sidebar-collapsed/);
 }
 
 function githubComment(over: Record<string, unknown> = {}): Record<string, unknown> {
@@ -386,6 +398,7 @@ test("malformed persisted state doesn't break rendering, and collapse still work
   });
   await pushToWebview(page, baseInit());
   await expect(page.locator("#preview")).not.toBeEmpty();
+  await expandPane(page);
 
   await pushToWebview(page, { type: "existing-comments", comments: [githubComment()] });
   const card = page.locator("#existing-list .thread-card").first();
@@ -554,6 +567,28 @@ test.describe("submit footer", () => {
 // --- comments toggle (new) -----------------------------------------------------
 
 test.describe("comments toggle", () => {
+  test("opens with the pane collapsed, the open-thread badge standing in for it", async ({ page }) => {
+    await bootPrReview(page, {}, { comments: "collapsed" });
+    await pushToWebview(page, {
+      type: "existing-comments",
+      comments: [githubComment({ id: "1", threadId: "1" }), githubComment({ id: "2", threadId: "2", resolved: true })],
+    });
+    const toggle = page.locator("#comments-toggle");
+    await expect(page.locator("#app")).toHaveClass(/sidebar-collapsed/);
+    await expect(page.locator("#drafts-pane")).toBeHidden();
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await expect(toggle).toHaveAttribute("aria-label", "Show comments");
+    await expect(toggle.locator(".mc-badge")).toHaveText("1");
+  });
+
+  test("the floating Comment button expands the collapsed pane and opens the composer", async ({ page }) => {
+    await bootPrReview(page, {}, { comments: "collapsed" });
+    await selectPreviewText(page, "Some body text");
+    await page.locator("#floating-add").click();
+    await expect(page.locator("#app")).not.toHaveClass(/sidebar-collapsed/);
+    await expect(page.locator("#composer .mc-composer")).toBeVisible();
+  });
+
   test("collapses the pane, shows the open-thread badge, and restores", async ({ page }) => {
     await bootPrReview(page);
     await pushToWebview(page, {
